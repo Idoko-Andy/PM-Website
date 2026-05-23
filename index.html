@@ -533,7 +533,11 @@ let _myProfile     = null; // the signed-in user's profile row (or null)
 let _sessionCache  = null; // { id: uuid } when signed in
 
 // Clean up any stale localStorage data from the old localStorage-based system
-try { localStorage.removeItem("lh_users"); localStorage.removeItem("lh_session"); } catch(e) {}
+try {
+  localStorage.removeItem("lh_users");
+  localStorage.removeItem("lh_session");
+  localStorage.removeItem("lh_monthly_reports");
+} catch(e) {}
 
 function getUsers()   { return _profilesCache; }
 function getSession() { return _sessionCache; }
@@ -645,8 +649,11 @@ async function init() {
       <div class="ubtn" onclick="doSignOut()">Sign Out</div>
     `;
     document.getElementById("nav").style.display = "flex";
-    // Populate the properties cache from Supabase before rendering the home
-    await loadPropertiesFromSupabase();
+    // Populate the Supabase-backed caches before rendering the home
+    await Promise.all([
+      loadPropertiesFromSupabase(),
+      loadMonthlyReportsFromSupabase()
+    ]);
     document.getElementById("dash-body").innerHTML = renderGenericHome(user);
   } else {
     renderLoggedOut();
@@ -2795,11 +2802,56 @@ function searchGo(i) {
 // ===================== MONTHLY REPORTS =====================
 const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 
-function getMRData() {
-  try { return JSON.parse(localStorage.getItem("lh_monthly_reports") || "{}"); } catch(e) { return {}; }
-}
-function saveMRData(d) { localStorage.setItem("lh_monthly_reports", JSON.stringify(d)); }
+// ===================== MONTHLY REPORTS — Supabase-backed =====================
+// In-memory cache populated from public.pm_monthly_reports for the signed-in
+// user. Keyed by `${year}_${monthIdx}` to match the existing UI key format.
+let _mrCache = {};
+
 function mrKey(year, month) { return String(year) + "_" + String(month); }
+function getMRData() { return _mrCache; }
+
+async function loadMonthlyReportsFromSupabase() {
+  if (!_myProfile) { _mrCache = {}; return; }
+  const { data, error } = await supabase
+    .from("pm_monthly_reports")
+    .select("year,month_idx,payload,submitted")
+    .eq("user_id", _myProfile.id);
+  if (error) {
+    console.error("loadMonthlyReportsFromSupabase failed:", error);
+    _mrCache = {};
+    return;
+  }
+  _mrCache = {};
+  for (const r of (data || [])) {
+    // Merge payload + submitted flag into one object to mirror the old shape
+    _mrCache[mrKey(r.year, r.month_idx)] = { ...(r.payload || {}), submitted: !!r.submitted };
+  }
+}
+
+async function upsertMonthlyReport(year, monthIdx, payload, submitted) {
+  if (!_myProfile) { alert("You must be signed in to save reports."); return false; }
+  const { error } = await supabase
+    .from("pm_monthly_reports")
+    .upsert({
+      user_id:   _myProfile.id,
+      year:      parseInt(year, 10),
+      month_idx: parseInt(monthIdx, 10),
+      payload:   payload,
+      submitted: !!submitted
+    }, { onConflict: "user_id,year,month_idx" });
+  if (error) {
+    alert("Failed to save report: " + (error.message || "unknown error"));
+    return false;
+  }
+  await loadMonthlyReportsFromSupabase();
+  return true;
+}
+
+// Legacy no-op kept so any stragglers don't crash. The real writes go through
+// upsertMonthlyReport above.
+function saveMRData(_d) {
+  console.warn("saveMRData() is deprecated — writes now go through upsertMonthlyReport()");
+}
 
 function openMonthlyReports() {
   document.querySelectorAll(".dd").forEach(x => x.classList.remove("open"));
@@ -3109,10 +3161,9 @@ function collectMRForm() {
   };
 }
 
-function saveMRDraft(year, monthIdx, btnEl) {
-  const data = getMRData();
-  data[mrKey(year, monthIdx)] = { ...collectMRForm(), submitted: false };
-  saveMRData(data);
+async function saveMRDraft(year, monthIdx, btnEl) {
+  const ok = await upsertMonthlyReport(year, monthIdx, collectMRForm(), false);
+  if (!ok) return;
   renderMRSidebar();
   if (btnEl) {
     btnEl.textContent = "✓ Draft Saved!"; btnEl.style.color = "#2ecc71"; btnEl.style.borderColor = "#27ae60";
@@ -3120,19 +3171,22 @@ function saveMRDraft(year, monthIdx, btnEl) {
   }
 }
 
-function submitMR(year, monthIdx) {
+async function submitMR(year, monthIdx) {
   if (!confirm(`Submit the ${MONTHS[monthIdx]} ${year} report? You can reopen it to edit later.`)) return;
-  const data = getMRData();
-  data[mrKey(year, monthIdx)] = { ...collectMRForm(), submitted: true };
-  saveMRData(data);
+  const ok = await upsertMonthlyReport(year, monthIdx, collectMRForm(), true);
+  if (!ok) return;
   renderMRSidebar();
   showMRForm(year, monthIdx);
 }
 
-function clearMRSubmit(year, monthIdx) {
+async function clearMRSubmit(year, monthIdx) {
   if (!confirm("Reopen this report for editing?")) return;
-  const data = getMRData();
-  if (data[mrKey(year, monthIdx)]) { data[mrKey(year, monthIdx)].submitted = false; saveMRData(data); }
+  // Preserve existing payload — just flip the submitted flag.
+  const existing = _mrCache[mrKey(year, monthIdx)] || {};
+  // Drop the synthetic "submitted" key before sending the payload back as JSON.
+  const { submitted: _drop, ...payload } = existing;
+  const ok = await upsertMonthlyReport(year, monthIdx, payload, false);
+  if (!ok) return;
   renderMRSidebar();
   showMRForm(year, monthIdx);
 }
