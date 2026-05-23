@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Legacy Homes PM Dashboard</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.7"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
 body{background:#1a1a1a;color:#fff;min-height:100vh}
@@ -408,10 +409,7 @@ body{background:#1a1a1a;color:#fff;min-height:100vh}
     <p class="sub">Use your @legacyohiohomes.com Google account</p>
     <div class="error-msg" id="signin-error"></div>
     <div class="success-msg" id="signin-success"></div>
-    <button class="btn-full" onclick="doGoogleSignIn()" style="display:flex;align-items:center;justify-content:center;gap:10px;background:#fff;color:#111">
-      <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg"><path fill="#4285F4" d="M16.51 8H8.98v3h4.3c-.18 1-.74 1.85-1.58 2.41v2h2.55c1.49-1.37 2.35-3.4 2.35-5.81 0-.56-.05-1.1-.14-1.6z"/><path fill="#34A853" d="M8.98 17c2.15 0 3.95-.71 5.27-1.93l-2.55-2c-.71.48-1.62.76-2.72.76-2.09 0-3.86-1.41-4.5-3.3H1.85v2.07C3.16 14.99 5.85 17 8.98 17z"/><path fill="#FBBC05" d="M4.48 10.53a5.4 5.4 0 0 1 0-3.46V5H1.85a8 8 0 0 0 0 7.07l2.63-2.07z"/><path fill="#EA4335" d="M8.98 3.85c1.18 0 2.24.4 3.07 1.21l2.3-2.3C12.93 1.4 11.12.7 8.98.7 5.85.7 3.16 2.71 1.85 5.93l2.63 2.07c.64-1.89 2.41-4.15 4.5-4.15z"/></svg>
-      Sign in with Google
-    </button>
+    <div id="modal-gsi-btn" style="display:flex;justify-content:center;margin:10px 0 4px"></div>
     <p style="font-size:11px;color:#666;margin-top:14px;text-align:center;line-height:1.5">Only @legacyohiohomes.com Google accounts are permitted.<br/>First-time sign-ins create an account in <i>pending</i> status and require admin approval.</p>
   </div>
 </div>
@@ -522,6 +520,7 @@ const LOGO_B64 = "iVBORw0KGgoAAAANSUhEUgAAAIMAAABpCAYAAAAZQpCCAAAAtGVYSWZJSSoACA
 // ===================== SUPABASE CLIENT =====================
 const SUPABASE_URL = "https://kwhgymympuhfvqbedwpd.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable__DNUtcdM8SqCMzTZM4gtXw_1wf9IWa9";
+const GOOGLE_CLIENT_ID = "894060704626-6fc5c51jofbq6a6fl6632ahfl5nfn3mi.apps.googleusercontent.com";
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
 });
@@ -708,26 +707,75 @@ function openModal(id) { document.getElementById(id).classList.add("show"); }
 function closeModal(id) { document.getElementById(id).classList.remove("show"); }
 function switchModal(from, to) { closeModal(from); openModal(to); }
 
-// ===================== SIGN IN (Google SSO via Supabase) =====================
-async function doGoogleSignIn() {
-  const err = document.getElementById("signin-error");
-  if (err) err.style.display = "none";
-  const { error } = await supabase.auth.signInWithOAuth({
-    provider: "google",
-    options: {
-      redirectTo: window.location.origin,
-      queryParams: {
-        // Restrict the Google account picker to the company workspace.
-        // Server-side enforcement is in the auth trigger in Supabase too.
-        hd: "legacyohiohomes.com",
-        prompt: "select_account"
-      }
-    }
-  });
-  if (error && err) showErr(err, error.message || "Sign-in failed. Please try again.");
+// ===================== SIGN IN (Google Identity Services + Supabase signInWithIdToken) =====================
+// This flow uses Google Identity Services (GSI) to obtain an ID token directly
+// from Google, then passes it to Supabase via signInWithIdToken. This avoids
+// the server-side OAuth code exchange (which requires a Client Secret).
+
+async function _generateGsiNonce() {
+  const nonce = crypto.randomUUID();
+  const hashBuf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(nonce));
+  const hashedNonce = Array.from(new Uint8Array(hashBuf))
+    .map(b => b.toString(16).padStart(2, "0")).join("");
+  return { nonce, hashedNonce };
 }
 
-// Backwards-compat shim — older inline handlers may still call doSignIn().
+async function _initGoogleSignIn(currentNonce, hashedNonce) {
+  window.google.accounts.id.initialize({
+    client_id: GOOGLE_CLIENT_ID,
+    nonce: hashedNonce,
+    callback: async (resp) => {
+      const err = document.getElementById("signin-error");
+      if (err) err.style.display = "none";
+      const { error } = await supabase.auth.signInWithIdToken({
+        provider: "google",
+        token: resp.credential,
+        nonce: currentNonce
+      });
+      if (error) {
+        console.error("signInWithIdToken failed:", error);
+        if (err) showErr(err, error.message || "Sign-in failed. Please try again.");
+        return;
+      }
+      closeModal("signin-modal");
+      // init() will be called via onAuthStateChange.
+    },
+    auto_select: false,
+    use_fedcm_for_prompt: true,
+    cancel_on_tap_outside: true
+  });
+}
+
+async function _renderGoogleButton() {
+  if (!window.google?.accounts?.id) {
+    setTimeout(_renderGoogleButton, 250);
+    return;
+  }
+  const { nonce, hashedNonce } = await _generateGsiNonce();
+  await _initGoogleSignIn(nonce, hashedNonce);
+  ["modal-gsi-btn", "hero-gsi-btn"].forEach(id => {
+    const c = document.getElementById(id);
+    if (c) {
+      c.innerHTML = "";
+      window.google.accounts.id.renderButton(c, {
+        theme: "filled_white",
+        size: "large",
+        text: "signin_with",
+        logo_alignment: "left",
+        width: 280
+      });
+    }
+  });
+}
+
+// Triggered by the legacy "Sign in with Google" buttons (top nav and hero).
+// Opens the sign-in modal and ensures the Google-rendered button is visible.
+async function doGoogleSignIn() {
+  openModal("signin-modal");
+  await _renderGoogleButton();
+}
+
+// Backwards-compat shims for any older inline handlers.
 function doSignIn() { doGoogleSignIn(); }
 
 // ===================== REGISTER =====================
@@ -3046,6 +3094,9 @@ function propDrop(event, targetPhase) {
 
 // ===================== BOOT =====================
 init();
+// Pre-warm the Google sign-in button so it's ready when the user opens the modal.
+// _renderGoogleButton retries until GSI script is loaded.
+_renderGoogleButton();
 </script>
 </body>
 </html>
