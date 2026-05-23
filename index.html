@@ -645,6 +645,8 @@ async function init() {
       <div class="ubtn" onclick="doSignOut()">Sign Out</div>
     `;
     document.getElementById("nav").style.display = "flex";
+    // Populate the properties cache from Supabase before rendering the home
+    await loadPropertiesFromSupabase();
     document.getElementById("dash-body").innerHTML = renderGenericHome(user);
   } else {
     renderLoggedOut();
@@ -1100,18 +1102,96 @@ const PROP_TYPE_STYLE = {
   "Full Rehab Permit":     "background:#CECBF6;color:#26215C",
 };
 
-let propCards = [
-  {id:1,addr:"1421 Birchwood Dr",phase:"Framing, MEPS, Insulation",type:"Full Rehab Permit",pm:"Andrew",position:"",budget:"$65,000",spent:"$28,000",start:"2026-03-01",end:"2026-06-15",companyCam:"",notes:"Plumbing rough-in complete. Electrical in progress.",subPhases:[{name:"SOW Approval",due:"2026-03-05"},{name:"Budget Approval",due:"2026-03-10"}]},
-  {id:2,addr:"834 Meadowview Ln",phase:"Pre Construction",type:"Full Rehab No Permit",pm:"Isaiah",position:"",budget:"$72,000",spent:"$4,500",start:"2026-04-10",end:"2026-07-20",companyCam:"",notes:"",subPhases:[{name:"SOW Creation",due:"2026-04-12"}]},
-  {id:3,addr:"2209 Crestline Ave",phase:"Finishes",type:"Quick Cosmetic",pm:"Andrew",position:"",budget:"$48,000",spent:"$41,000",start:"2025-12-01",end:"2026-05-30",companyCam:"",notes:"",subPhases:[]},
-  {id:4,addr:"107 Sunrise Ridge Ct",phase:"Waiting Permits",type:"Full Rehab Permit",pm:"Bruce",position:"",budget:"$88,000",spent:"$2,000",start:"2026-05-01",end:"2026-09-01",companyCam:"",notes:"",subPhases:[{name:"Drawing / Structural Phase",due:"2026-04-20"},{name:"Pending Permit Approval",due:"2026-05-01"}]},
-  {id:5,addr:"3315 Oakhill Blvd",phase:"Pre List / Punchout Process",type:"Full Cosmetic",pm:"Isaiah",position:"",budget:"$55,000",spent:"$52,000",start:"2025-10-15",end:"2026-05-10",companyCam:"",notes:"",subPhases:[]},
-  {id:6,addr:"612 Springwater Rd",phase:"Upcoming Takedowns",type:"Rental Turn / Flip",pm:"Bruce",position:"",budget:"$40,000",spent:"$0",start:"",end:"",companyCam:"",notes:"",subPhases:[]},
-  {id:7,addr:"445 Elmwood Ct",phase:"In Contract",type:"Whole Tail / Flip",pm:"Bruce",position:"",budget:"$62,000",spent:"$58,000",start:"2025-11-01",end:"2026-05-15",companyCam:"",notes:"",subPhases:[]},
-  {id:8,addr:"1902 Cedar Hill Rd",phase:"RTR In Process",type:"Full Rehab No Permit",pm:"Andrew",position:"",budget:"$71,000",spent:"$68,000",start:"2025-09-15",end:"2026-04-30",companyCam:"",notes:"",subPhases:[]},
-  {id:9,addr:"78 Valley View Dr",phase:"Closed",type:"Full Rehab Permit",pm:"Isaiah",position:"",budget:"$53,000",spent:"$51,200",start:"2025-07-01",end:"2026-03-15",companyCam:"",notes:"Closed Mar 15.",subPhases:[]},
-];
+// propCards is populated from Supabase (table public.pm_properties) by
+// loadPropertiesFromSupabase(). The rest of the UI keeps reading from this
+// in-memory array synchronously; every write helper updates Supabase and
+// refreshes the cache.
+let propCards = [];
 let propEditingId = null;
+
+function _propRowToCard(r) {
+  return {
+    id:         r.id,
+    addr:       r.addr || "",
+    phase:      r.phase || "",
+    type:       r.type || "",
+    pm:         r.pm || "",
+    position:   r.position || "",
+    budget:     r.budget || "",
+    spent:      r.spent || "",
+    start:      r.start_date || "",
+    end:        r.end_date || "",
+    companyCam: r.company_cam || "",
+    notes:      r.notes || "",
+    subPhases:  Array.isArray(r.sub_phases) ? r.sub_phases : []
+  };
+}
+
+function _propCardToRow(p) {
+  return {
+    addr:        p.addr || "",
+    phase:       p.phase || "",
+    type:        p.type || "",
+    pm:          p.pm || "",
+    position:    p.position || "",
+    budget:      p.budget || "",
+    spent:       p.spent || "",
+    start_date:  p.start || "",
+    end_date:    p.end || "",
+    company_cam: p.companyCam || "",
+    notes:       p.notes || "",
+    sub_phases:  p.subPhases || []
+  };
+}
+
+async function loadPropertiesFromSupabase() {
+  const { data, error } = await supabase
+    .from("pm_properties")
+    .select("id,addr,phase,type,pm,position,budget,spent,start_date,end_date,company_cam,notes,sub_phases")
+    .order("created_at", { ascending: true });
+  if (error) {
+    console.error("loadPropertiesFromSupabase failed:", error);
+    propCards = [];
+    return;
+  }
+  propCards = (data || []).map(_propRowToCard);
+}
+
+async function savePropertyToSupabase(id, data) {
+  if (id) {
+    const { error } = await supabase.from("pm_properties").update(_propCardToRow(data)).eq("id", id);
+    if (error) { alert("Failed to save property: " + (error.message || "unknown error")); return false; }
+  } else {
+    const { error } = await supabase.from("pm_properties").insert(_propCardToRow(data));
+    if (error) { alert("Failed to create property: " + (error.message || "unknown error")); return false; }
+  }
+  await loadPropertiesFromSupabase();
+  return true;
+}
+
+async function updatePropertyPhaseInSupabase(id, newPhase) {
+  const { error } = await supabase.from("pm_properties").update({ phase: newPhase }).eq("id", id);
+  if (error) { alert("Failed to update phase: " + (error.message || "unknown error")); return false; }
+  await loadPropertiesFromSupabase();
+  return true;
+}
+
+async function setPropertyCompanyCamInSupabase(id, url) {
+  const { error } = await supabase.from("pm_properties").update({ company_cam: url }).eq("id", id);
+  if (error) { alert("Failed to save link: " + (error.message || "unknown error")); return false; }
+  await loadPropertiesFromSupabase();
+  return true;
+}
+
+async function addPropertySubPhaseInSupabase(id, name, due) {
+  const card = propCards.find(p => p.id === id);
+  if (!card) return false;
+  const newSubPhases = [...(card.subPhases || []), { name, due }];
+  const { error } = await supabase.from("pm_properties").update({ sub_phases: newSubPhases }).eq("id", id);
+  if (error) { alert("Failed to add sub phase: " + (error.message || "unknown error")); return false; }
+  await loadPropertiesFromSupabase();
+  return true;
+}
 
 function phInfo(name){ return PROP_PHASES.find(p=>p.name===name)||{bg:"#f4f5f7",text:"#555",cnt:"#aaa",dot:"#aaa"}; }
 
@@ -1235,7 +1315,7 @@ function renderMainDashboard() {
 function renderPropertyBoard() {
   const sidebar = [...propCards].sort((a,b)=>a.addr.localeCompare(b.addr)).map((c,i) => {
     const p = phInfo(c.phase);
-    return `<div onclick="openPropDetail(${c.id})" style="padding:8px 10px;cursor:pointer;border-bottom:0.5px solid #f4f5f7;display:flex;align-items:center;gap:7px">
+    return `<div onclick="openPropDetail('${c.id}')" style="padding:8px 10px;cursor:pointer;border-bottom:0.5px solid #f4f5f7;display:flex;align-items:center;gap:7px">
       <span style="font-size:10px;color:#aaa;min-width:16px;font-weight:500">${String(i+1).padStart(2,'0')}</span>
       <div style="width:10px;height:10px;border-radius:50%;background:${p.dot};box-shadow:0 0 0 2px ${p.dot}44;flex-shrink:0"></div>
       <div style="flex:1;min-width:0">
@@ -1264,11 +1344,11 @@ function renderPropertyBoard() {
             `<div style="font-size:10px;color:#888;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">· ${sp.name}${sp.due?' ('+sp.due+')':''}</div>`
           ).join('');
           return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid ${ph.dot};border-radius:6px;overflow:hidden">
-            <div draggable="true" ondragstart="propDragStart(event,${c.id})" style="background:#f9f9f9;border-bottom:0.5px solid #f0f0f0;padding:5px 10px;cursor:grab;display:flex;align-items:center;gap:6px;user-select:none" title="Drag to move phase">
+            <div draggable="true" ondragstart="propDragStart(event,'${c.id}')" style="background:#f9f9f9;border-bottom:0.5px solid #f0f0f0;padding:5px 10px;cursor:grab;display:flex;align-items:center;gap:6px;user-select:none" title="Drag to move phase">
               <span style="font-size:14px;color:#ccc;letter-spacing:-2px;line-height:1">⠿</span>
               <span style="font-size:10px;color:#bbb;text-transform:uppercase;letter-spacing:0.05em">Drag to move</span>
             </div>
-            <div onclick="openPropDetail(${c.id})" style="padding:8px 10px;cursor:pointer">
+            <div onclick="openPropDetail('${c.id}')" style="padding:8px 10px;cursor:pointer">
             <div style="font-size:11.5px;font-weight:500;color:#111;margin-bottom:4px;line-height:1.3">${c.addr}</div>
             <div style="margin-bottom:5px">
               ${activeSubPhases || '<div style="font-size:10px;color:#ccc">No sub phases set</div>'}
@@ -1437,10 +1517,10 @@ function openPropModal(mode, id) {
         <input id="pm-companycam" type="url" placeholder="https://app.companycam.com/projects/..." value="${c?c.companyCam||'':''}" style="width:100%;padding:7px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:13px;color:#111;background:#fff;outline:none" />
       </div>
       <div style="font-size:11px;color:#aaa">Once your boss builds the auto-linking system, this will populate automatically when a CompanyCam folder is created for this property.</div>`;
-    document.getElementById("prop-modal-save").onclick = () => {
+    document.getElementById("prop-modal-save").onclick = async () => {
       const url = document.getElementById("pm-companycam").value.trim();
-      const idx = propCards.findIndex(x => x.id === id);
-      if (idx >= 0) propCards[idx].companyCam = url;
+      const ok = await setPropertyCompanyCamInSupabase(id, url);
+      if (!ok) return;
       closePropModal();
       openPropDetail(id);
     };
@@ -1464,15 +1544,12 @@ function openPropModal(mode, id) {
         <input id="pm-sub-due" type="date" style="width:100%;padding:7px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:13px;color:#111;background:#fff;outline:none" />
       </div>
       <div style="font-size:11px;color:#aaa;margin-top:4px">This sub phase will auto-populate on the Main Dashboard board it belongs to.</div>`;
-    document.getElementById("prop-modal-save").onclick = () => {
+    document.getElementById("prop-modal-save").onclick = async () => {
       const sub = document.getElementById("pm-sub-select").value;
       const due = document.getElementById("pm-sub-due").value;
       if (!sub) { alert("Please select a sub phase."); return; }
-      const idx = propCards.findIndex(x => x.id === id);
-      if (idx >= 0) {
-        propCards[idx].subPhases = propCards[idx].subPhases || [];
-        propCards[idx].subPhases.push({name: sub, due: due});
-      }
+      const ok = await addPropertySubPhaseInSupabase(id, sub, due);
+      if (!ok) return;
       closePropModal();
       openPropDetail(id);
     };
@@ -1539,7 +1616,7 @@ function openPropModal(mode, id) {
       <textarea id="pm-notes" placeholder="Additional notes..." style="width:100%;padding:7px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:13px;color:#111;background:#fff;outline:none;min-height:55px;resize:vertical">${c?c.notes:''}</textarea>
     </div>`;
 
-  document.getElementById("prop-modal-save").onclick = () => {
+  document.getElementById("prop-modal-save").onclick = async () => {
     const data = {
       addr:     document.getElementById("pm-addr").value.trim(),
       phase:    document.getElementById("pm-phase").value,
@@ -1552,6 +1629,7 @@ function openPropModal(mode, id) {
       end:      document.getElementById("pm-end").value,
       notes:    document.getElementById("pm-notes").value,
       companyCam: c ? c.companyCam || '' : '',
+      subPhases: c ? (c.subPhases || []) : []
     };
     if (!data.addr || !data.phase) { alert("Address and Main Phase are required."); return; }
     // CompanyCam auto-folder creation — will trigger automatically once backend is connected
@@ -1559,12 +1637,8 @@ function openPropModal(mode, id) {
     if (!propEditingId) {
       data.companyCam = ""; // Will auto-populate when CompanyCam integration is live
     }
-    if (propEditingId) {
-      const idx = propCards.findIndex(x => x.id === propEditingId);
-      if (idx >= 0) propCards[idx] = { ...propCards[idx], ...data };
-    } else {
-      propCards.push({ id: Date.now(), subPhases: [], ...data });
-    }
+    const ok = await savePropertyToSupabase(propEditingId, data);
+    if (!ok) return;
     closePropModal();
     openProjectDashboard('trello');
   };
@@ -3083,13 +3157,22 @@ function propDrop(event, targetPhase) {
   if (idx < 0) { propDragId = null; return; }
 
   const oldPhase = propCards[idx].phase;
-  if (oldPhase === targetPhase) { propDragId = null; return; }
-
-  propCards[idx].phase = targetPhase;
+  const draggedId = propDragId;
   propDragId = null;
+  if (oldPhase === targetPhase) return;
 
-  // Re-render the board and refresh main dashboard if open
+  // Optimistic local update so the UI reflects the drop immediately
+  propCards[idx].phase = targetPhase;
   openProjectDashboard('trello');
+
+  // Persist to Supabase; on failure roll back the local change
+  updatePropertyPhaseInSupabase(draggedId, targetPhase).then(ok => {
+    if (!ok) {
+      const i = propCards.findIndex(c => c.id === draggedId);
+      if (i >= 0) propCards[i].phase = oldPhase;
+      openProjectDashboard('trello');
+    }
+  });
 }
 
 // ===================== BOOT =====================
