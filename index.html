@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Legacy Homes PM Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.7"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
 body{background:#1a1a1a;color:#fff;min-height:100vh}
@@ -404,13 +405,14 @@ body{background:#1a1a1a;color:#fff;min-height:100vh}
   <div class="modal">
     <button class="modal-close" onclick="closeModal('signin-modal')">✕</button>
     <h2>Sign in</h2>
-    <p class="sub">Use your @legacyohiohomes.com email</p>
+    <p class="sub">Use your @legacyohiohomes.com Google account</p>
     <div class="error-msg" id="signin-error"></div>
     <div class="success-msg" id="signin-success"></div>
-    <div class="form-row"><label>Email</label><input type="email" id="signin-email" placeholder="you@legacyohiohomes.com" /></div>
-    <div class="form-row"><label>Password</label><input type="password" id="signin-pass" placeholder="••••••••" /></div>
-    <button class="btn-full" onclick="doSignIn()">Sign In</button>
-    <div class="form-switch">Don't have an account? <a onclick="switchModal('signin-modal','register-modal')">Register here</a></div>
+    <button class="btn-full" onclick="doGoogleSignIn()" style="display:flex;align-items:center;justify-content:center;gap:10px;background:#fff;color:#111">
+      <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg"><path fill="#4285F4" d="M16.51 8H8.98v3h4.3c-.18 1-.74 1.85-1.58 2.41v2h2.55c1.49-1.37 2.35-3.4 2.35-5.81 0-.56-.05-1.1-.14-1.6z"/><path fill="#34A853" d="M8.98 17c2.15 0 3.95-.71 5.27-1.93l-2.55-2c-.71.48-1.62.76-2.72.76-2.09 0-3.86-1.41-4.5-3.3H1.85v2.07C3.16 14.99 5.85 17 8.98 17z"/><path fill="#FBBC05" d="M4.48 10.53a5.4 5.4 0 0 1 0-3.46V5H1.85a8 8 0 0 0 0 7.07l2.63-2.07z"/><path fill="#EA4335" d="M8.98 3.85c1.18 0 2.24.4 3.07 1.21l2.3-2.3C12.93 1.4 11.12.7 8.98.7 5.85.7 3.16 2.71 1.85 5.93l2.63 2.07c.64-1.89 2.41-4.15 4.5-4.15z"/></svg>
+      Sign in with Google
+    </button>
+    <p style="font-size:11px;color:#666;margin-top:14px;text-align:center;line-height:1.5">Only @legacyohiohomes.com Google accounts are permitted.<br/>First-time sign-ins create an account in <i>pending</i> status and require admin approval.</p>
   </div>
 </div>
 
@@ -517,61 +519,68 @@ body{background:#1a1a1a;color:#fff;min-height:100vh}
 // ===================== DATA STORE =====================
 const LOGO_B64 = "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";
 
-// Seed: Bruce as super admin, already approved
-const SEED_USERS = [
-  {
-    id: 1,
-    firstName: "Bruce",
-    lastName: "",
-    email: "bruce@legacyohiohomes.com",
-    phone: "(614) 000-0000",
-    role: "Project Director",
-    password: "Legacy2024!",
-    status: "approved",
-    accessLevel: "full",
-    isSuperAdmin: true,
-    createdAt: "2024-01-01"
-  },
-  {
-    id: 2,
-    firstName: "Tommy",
-    lastName: "Harr",
-    email: "tom@legacyohiohomes.com",
-    phone: "",
-    role: "Project Director",
-    password: "Legacy2024!",
-    status: "approved",
-    accessLevel: "full",
-    isSuperAdmin: true,
-    createdAt: "2024-01-01"
+// ===================== SUPABASE CLIENT =====================
+const SUPABASE_URL = "https://kwhgymympuhfvqbedwpd.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable__DNUtcdM8SqCMzTZM4gtXw_1wf9IWa9";
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
+});
+
+// In-memory caches kept in sync with Supabase. The rest of the app reads
+// from these via the synchronous getUsers() / getSession() / currentUser()
+// helpers, so the original UI code keeps working unchanged.
+let _profilesCache = [];   // [{id, email, firstName, lastName, ...}]
+let _myProfile     = null; // the signed-in user's profile row (or null)
+let _sessionCache  = null; // { id: uuid } when signed in
+
+// Clean up any stale localStorage data from the old localStorage-based system
+try { localStorage.removeItem("lh_users"); localStorage.removeItem("lh_session"); } catch(e) {}
+
+function getUsers()   { return _profilesCache; }
+function getSession() { return _sessionCache; }
+
+// snake_case row → camelCase object used throughout the front-end
+function _mapProfileRow(r) {
+  return {
+    id:           r.id,
+    email:        r.email,
+    firstName:    r.first_name || "",
+    lastName:     r.last_name  || "",
+    phone:        r.phone      || "",
+    role:         r.role       || "",
+    status:       r.status     || "pending",
+    accessLevel:  r.access_level || "standard",
+    isSuperAdmin: !!r.is_super_admin,
+    createdAt:    (r.created_at || "").slice(0, 10),
+    password:     "" // legacy field — never read meaningfully anymore
+  };
+}
+
+async function loadProfilesFromSupabase() {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id,email,first_name,last_name,phone,role,status,access_level,is_super_admin,created_at")
+    .order("created_at", { ascending: true });
+  if (error) {
+    console.error("Failed to load profiles:", error);
+    _profilesCache = [];
+    return;
   }
-];
-
-function getUsers() {
-  const s = localStorage.getItem("lh_users");
-  return s ? JSON.parse(s) : SEED_USERS;
+  _profilesCache = (data || []).map(_mapProfileRow);
 }
-function saveUsers(u) { localStorage.setItem("lh_users", JSON.stringify(u)); }
-function getSession() {
-  const s = localStorage.getItem("lh_session");
-  return s ? JSON.parse(s) : null;
+
+async function refreshAuthState() {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) {
+    _sessionCache = null;
+    _myProfile = null;
+    _profilesCache = [];
+    return;
+  }
+  await loadProfilesFromSupabase();
+  _myProfile = _profilesCache.find(u => u.id === session.user.id) || null;
+  _sessionCache = _myProfile ? { id: _myProfile.id } : null;
 }
-function saveSession(u) { localStorage.setItem("lh_session", JSON.stringify(u)); }
-function clearSession() { localStorage.removeItem("lh_session"); }
-
-
-// ===================== KNOWN ROLE EMAILS =====================
-const KNOWN_ROLE_EMAILS = {
-  "bruce@legacyohiohomes.com":       { role: "Project Director",                    name: "Bruce" },
-  "tom@legacyohiohomes.com":         { role: "Project Director",                    name: "Tommy Harr" },
-  "andrewscrape@legacyohiohomes.com":{ role: "Project Manager",                     name: "Andrew" },
-  "isaiah@legacyohiohomes.com":      { role: "Project Manager",                     name: "Isaiah" },
-  "marlo@legacyohiohomes.com":       { role: "Senior Administrative Assistant",     name: "Marlo" },
-  "idoko@legacyohiohomes.com":      { role: "Senior Virtual Administrative Assistant", name: "Idoko" },
-};
-
-// Init users if not set
-if (!localStorage.getItem("lh_users")) saveUsers(SEED_USERS);
 
 // ===================== LOGO =====================
 document.getElementById("site-logo").src = "data:image/png;base64," + LOGO_B64;
@@ -609,15 +618,22 @@ function countActiveForPM(pmName) {
 }
 
 // ===================== INIT =====================
-function init() {
-  const session = getSession();
+async function init() {
+  await refreshAuthState();
+  const session = _sessionCache;
   const utilRight = document.getElementById("util-right");
   if (session) {
-    const users = getUsers();
-    const user = users.find(u => u.id === session.id);
+    const user = _myProfile;
     if (!user || user.status !== "approved") {
-      clearSession();
-      renderLoggedOut();
+      // Pending / denied / revoked → sign back out and show a notice
+      const status = user ? user.status : null;
+      await supabase.auth.signOut();
+      _sessionCache = null; _myProfile = null;
+      let msg = null;
+      if (status === "pending")  msg = "Your account is pending admin approval. You will be able to sign in once Bruce or another admin approves you.";
+      if (status === "denied")   msg = "Your account was not approved. Please contact Bruce@legacyohiohomes.com.";
+      if (status === "revoked")  msg = "Your access has been revoked. Please contact Bruce@legacyohiohomes.com.";
+      renderLoggedOut(msg);
       document.getElementById("nav").style.display = "none";
       return;
     }
@@ -636,17 +652,23 @@ function init() {
   }
 }
 
-function renderLoggedOut() {
+// React to OAuth callback + token refresh + sign-out from other tabs
+supabase.auth.onAuthStateChange((event) => {
+  if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "TOKEN_REFRESHED" || event === "USER_UPDATED") {
+    init();
+  }
+});
+
+function renderLoggedOut(noticeMsg) {
   const nav = document.getElementById("nav");
   if (nav) nav.style.display = "none";
   const utilRight = document.getElementById("util-right");
   utilRight.innerHTML = `
-    <div class="ubtn" onclick="openModal('signin-modal')">👤 My Account</div>
-    <div class="udiv"></div>
-    <div class="ubtn" onclick="openModal('signin-modal')">Sign In</div>
-    <div class="udiv"></div>
-    <div class="ubtn primary" onclick="openModal('register-modal')">Register</div>
+    <div class="ubtn primary" onclick="openModal('signin-modal')">Sign In with Google</div>
   `;
+  const notice = noticeMsg
+    ? `<div style="margin:24px auto 0;max-width:520px;padding:14px 18px;background:#241a0a;border:1px solid #4a3a1a;border-radius:8px;color:#f0c674;font-size:13px;text-align:center">${noticeMsg}</div>`
+    : "";
   document.getElementById("dash-body").innerHTML = `
     <div style="min-height:500px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:48px 24px;text-align:center;background:linear-gradient(180deg,#111 0%,#1a1a1a 100%)">
       <div style="margin-bottom:28px">
@@ -658,9 +680,9 @@ function renderLoggedOut() {
       <div style="font-size:13px;color:#555;max-width:380px;line-height:1.7;margin-bottom:36px">
         A centralized platform for project tracking, reporting, team management, and operations — built exclusively for the Legacy Homes team.
       </div>
-      <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap">
-        <button onclick="openModal('signin-modal')" style="padding:12px 32px;background:#fff;color:#111;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;letter-spacing:0.02em">Sign In</button>
-        <button onclick="openModal('register-modal')" style="padding:12px 32px;background:transparent;color:#888;border:1px solid #2a2a2a;border-radius:8px;font-size:14px;cursor:pointer;letter-spacing:0.02em">Request Access</button>
+      ${notice}
+      <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:${noticeMsg ? '24px' : '0'}">
+        <button onclick="doGoogleSignIn()" style="padding:12px 32px;background:#fff;color:#111;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;letter-spacing:0.02em;display:inline-flex;align-items:center;gap:10px"><svg width="16" height="16" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg"><path fill="#4285F4" d="M16.51 8H8.98v3h4.3c-.18 1-.74 1.85-1.58 2.41v2h2.55c1.49-1.37 2.35-3.4 2.35-5.81 0-.56-.05-1.1-.14-1.6z"/><path fill="#34A853" d="M8.98 17c2.15 0 3.95-.71 5.27-1.93l-2.55-2c-.71.48-1.62.76-2.72.76-2.09 0-3.86-1.41-4.5-3.3H1.85v2.07C3.16 14.99 5.85 17 8.98 17z"/><path fill="#FBBC05" d="M4.48 10.53a5.4 5.4 0 0 1 0-3.46V5H1.85a8 8 0 0 0 0 7.07l2.63-2.07z"/><path fill="#EA4335" d="M8.98 3.85c1.18 0 2.24.4 3.07 1.21l2.3-2.3C12.93 1.4 11.12.7 8.98.7 5.85.7 3.16 2.71 1.85 5.93l2.63 2.07c.64-1.89 2.41-4.15 4.5-4.15z"/></svg>Sign in with Google</button>
       </div>
       <div style="margin-top:48px;display:grid;grid-template-columns:repeat(3,1fr);gap:16px;max-width:640px;width:100%">
         <div style="background:#111;border:1px dashed #2a2a2a;border-radius:10px;overflow:hidden;aspect-ratio:4/3;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;cursor:default">
@@ -686,78 +708,44 @@ function openModal(id) { document.getElementById(id).classList.add("show"); }
 function closeModal(id) { document.getElementById(id).classList.remove("show"); }
 function switchModal(from, to) { closeModal(from); openModal(to); }
 
-// ===================== SIGN IN =====================
-function doSignIn() {
-  const email = document.getElementById("signin-email").value.trim().toLowerCase();
-  const pass = document.getElementById("signin-pass").value;
+// ===================== SIGN IN (Google SSO via Supabase) =====================
+async function doGoogleSignIn() {
   const err = document.getElementById("signin-error");
-  const ok = document.getElementById("signin-success");
-  err.style.display = "none"; ok.style.display = "none";
-
-  if (!email || !pass) { showErr(err, "Please fill in all fields."); return; }
-  if (!email.endsWith("@legacyohiohomes.com")) { showErr(err, "Only @legacyohiohomes.com email addresses are allowed."); return; }
-
-  const users = getUsers();
-  const user = users.find(u => u.email === email && u.password === pass);
-  if (!user) { showErr(err, "Invalid email or password."); return; }
-  if (user.status === "pending") { showErr(err, "Your account is pending admin approval. You will be notified once approved."); return; }
-  if (user.status === "denied") { showErr(err, "Your account registration was not approved. Contact Bruce@legacyohiohomes.com."); return; }
-
-  saveSession({ id: user.id });
-  closeModal("signin-modal");
-  init();
+  if (err) err.style.display = "none";
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider: "google",
+    options: {
+      redirectTo: window.location.origin,
+      queryParams: {
+        // Restrict the Google account picker to the company workspace.
+        // Server-side enforcement is in the auth trigger in Supabase too.
+        hd: "legacyohiohomes.com",
+        prompt: "select_account"
+      }
+    }
+  });
+  if (error && err) showErr(err, error.message || "Sign-in failed. Please try again.");
 }
 
+// Backwards-compat shim — older inline handlers may still call doSignIn().
+function doSignIn() { doGoogleSignIn(); }
+
 // ===================== REGISTER =====================
+// With Google SSO, account creation happens automatically the first time
+// someone signs in with their @legacyohiohomes.com Google account. The
+// auth trigger in Supabase creates a profile row with status="pending"
+// (or auto-approves it if the email is in the known-roles list).
 function doRegister() {
-  const first = document.getElementById("reg-first").value.trim();
-  const last = document.getElementById("reg-last").value.trim();
-  const email = document.getElementById("reg-email").value.trim().toLowerCase();
-  const phone = document.getElementById("reg-phone").value.trim();
-  const role = document.getElementById("reg-role").value;
-  const pass = document.getElementById("reg-pass").value;
-  const pass2 = document.getElementById("reg-pass2").value;
-  const err = document.getElementById("reg-error");
-  const ok = document.getElementById("reg-success");
-  err.style.display = "none"; ok.style.display = "none";
-
-  if (!first || !last || !email || !phone || !role || !pass || !pass2) { showErr(err, "Please fill in all fields."); return; }
-  if (!email.endsWith("@legacyohiohomes.com")) { showErr(err, "Registration is only open to @legacyohiohomes.com email addresses."); return; }
-  if (pass.length < 8) { showErr(err, "Password must be at least 8 characters."); return; }
-  if (pass !== pass2) { showErr(err, "Passwords do not match."); return; }
-
-  const users = getUsers();
-  if (users.find(u => u.email === email)) { showErr(err, "An account with this email already exists."); return; }
-
-  const newUser = {
-    id: Date.now(),
-    firstName: first,
-    lastName: last,
-    email: email,
-    phone: phone,
-    role: role,
-    password: pass,
-    status: "pending",
-    accessLevel: "standard",
-    isSuperAdmin: false,
-    createdAt: new Date().toISOString().split("T")[0]
-  };
-  users.push(newUser);
-  saveUsers(users);
-
-  ok.textContent = "Registration submitted! Bruce@legacyohiohomes.com will review and approve your account.";
-  ok.style.display = "block";
-  document.getElementById("reg-first").value = "";
-  document.getElementById("reg-last").value = "";
-  document.getElementById("reg-email").value = "";
-  document.getElementById("reg-phone").value = "";
-  document.getElementById("reg-role").value = "";
-  document.getElementById("reg-pass").value = "";
-  document.getElementById("reg-pass2").value = "";
+  closeModal("register-modal");
+  openModal("signin-modal");
 }
 
 // ===================== SIGN OUT =====================
-function doSignOut() { clearSession(); init(); }
+async function doSignOut() {
+  await supabase.auth.signOut();
+  _sessionCache = null; _myProfile = null; _profilesCache = [];
+  init();
+}
 
 // ===================== ACCOUNT =====================
 function openAccount() {
@@ -782,53 +770,38 @@ function openAccount() {
   openModal("account-modal");
 }
 
-function saveProfile() {
-  const session = getSession();
-  const users = getUsers();
-  const idx = users.findIndex(u => u.id === session.id);
+async function saveProfile() {
   const err = document.getElementById("profile-error");
   const ok = document.getElementById("profile-success");
   err.style.display="none"; ok.style.display="none";
+  if (!_myProfile) { showErr(err, "Not signed in."); return; }
 
   const first = document.getElementById("acct-first").value.trim();
-  const last = document.getElementById("acct-last").value.trim();
+  const last  = document.getElementById("acct-last").value.trim();
   const phone = document.getElementById("acct-phone").value.trim();
   if (!first || !last) { showErr(err, "First and last name are required."); return; }
 
-  users[idx].firstName = first;
-  users[idx].lastName = last;
-  users[idx].phone = phone;
-  saveUsers(users);
-  saveSession({ id: users[idx].id });
+  const { error } = await supabase
+    .from("profiles")
+    .update({ first_name: first, last_name: last, phone: phone })
+    .eq("id", _myProfile.id);
+  if (error) { showErr(err, error.message || "Failed to update profile."); return; }
+
+  await refreshAuthState();
   ok.textContent = "Profile updated successfully.";
   ok.style.display = "block";
   init();
 }
 
+// Passwords are managed by Google now (SSO). Surface that to the user.
 function changePassword() {
-  const session = getSession();
-  const users = getUsers();
-  const idx = users.findIndex(u => u.id === session.id);
   const err = document.getElementById("pw-error");
-  const ok = document.getElementById("pw-success");
-  err.style.display="none"; ok.style.display="none";
-
-  const cur = document.getElementById("pw-current").value;
-  const nw = document.getElementById("pw-new").value;
-  const conf = document.getElementById("pw-confirm").value;
-
-  if (!cur || !nw || !conf) { showErr(err, "Please fill in all fields."); return; }
-  if (users[idx].password !== cur) { showErr(err, "Current password is incorrect."); return; }
-  if (nw.length < 8) { showErr(err, "New password must be at least 8 characters."); return; }
-  if (nw !== conf) { showErr(err, "New passwords do not match."); return; }
-
-  users[idx].password = nw;
-  saveUsers(users);
-  ok.textContent = "Password updated successfully.";
-  ok.style.display = "block";
-  document.getElementById("pw-current").value = "";
-  document.getElementById("pw-new").value = "";
-  document.getElementById("pw-confirm").value = "";
+  const ok  = document.getElementById("pw-success");
+  if (ok)  ok.style.display="none";
+  if (err) {
+    err.innerHTML = 'Your password is managed by Google. Visit <a href="https://myaccount.google.com/security" target="_blank" style="color:#6ab0ff;text-decoration:underline">myaccount.google.com</a> to change it.';
+    err.style.display = "block";
+  }
 }
 
 // ===================== ADMIN PANEL =====================
@@ -866,8 +839,8 @@ function renderAdminPending() {
           <td><span class="role-pill">${u.role}</span></td>
           <td style="color:#666">${u.createdAt}</td>
           <td>
-            <button class="action-btn approve-btn" onclick="approveUser(${u.id})">✓ Approve</button>
-            <button class="action-btn deny-btn" onclick="denyUser(${u.id})">✕ Deny</button>
+            <button class="action-btn approve-btn" onclick="approveUser('${u.id}')">✓ Approve</button>
+            <button class="action-btn deny-btn" onclick="denyUser('${u.id}')">✕ Deny</button>
           </td>
         </tr>`).join("")}
       </tbody>
@@ -890,7 +863,7 @@ function renderAdminUsers() {
           <td><span class="role-pill">${u.role}</span></td>
           <td>
             ${u.isSuperAdmin ? '<span style="color:#f39c12;font-size:12px">Super Admin</span>' :
-              `<select class="access-select" onchange="updateAccess(${u.id}, this.value)">
+              `<select class="access-select" onchange="updateAccess('${u.id}', this.value)">
                 <option value="readonly" ${u.accessLevel==="readonly"?"selected":""}>Read Only</option>
                 <option value="standard" ${u.accessLevel==="standard"?"selected":""}>Standard</option>
                 <option value="full" ${u.accessLevel==="full"?"selected":""}>Full Access</option>
@@ -898,7 +871,7 @@ function renderAdminUsers() {
           </td>
           <td><span class="approved-badge">Active</span></td>
           <td>
-            ${(!u.isSuperAdmin && u.id !== me.id) ? `<button class="revoke-btn" onclick="revokeUser(${u.id})">Revoke Access</button>` : `<span style="color:#444;font-size:11px">—</span>`}
+            ${(!u.isSuperAdmin && u.id !== me.id) ? `<button class="revoke-btn" onclick="revokeUser('${u.id}')">Revoke Access</button>` : `<span style="color:#444;font-size:11px">—</span>`}
           </td>
         </tr>`).join("")}
       </tbody>
@@ -906,42 +879,36 @@ function renderAdminUsers() {
     <p style="font-size:11px;color:#444;margin-top:12px">Full Access users can access the Admin Panel and approve registrations.</p>`;
 }
 
-function approveUser(id) {
-  const users = getUsers();
-  const idx = users.findIndex(u => u.id === id);
-  if (idx < 0) return;
-  users[idx].status = "approved";
-  saveUsers(users);
+async function approveUser(id) {
+  const { error } = await supabase.rpc("admin_set_status", { target: id, new_status: "approved" });
+  if (error) { alert("Failed to approve: " + (error.message || "unknown error")); return; }
+  await loadProfilesFromSupabase();
   renderAdminPending();
   renderAdminUsers();
 }
 
-function denyUser(id) {
-  const users = getUsers();
-  const idx = users.findIndex(u => u.id === id);
-  if (idx < 0) return;
-  users[idx].status = "denied";
-  saveUsers(users);
+async function denyUser(id) {
+  const { error } = await supabase.rpc("admin_set_status", { target: id, new_status: "denied" });
+  if (error) { alert("Failed to deny: " + (error.message || "unknown error")); return; }
+  await loadProfilesFromSupabase();
   renderAdminPending();
+  renderAdminUsers();
 }
 
-function updateAccess(id, level) {
-  const users = getUsers();
-  const idx = users.findIndex(u => u.id === id);
-  if (idx < 0) return;
-  users[idx].accessLevel = level;
-  saveUsers(users);
+async function updateAccess(id, level) {
+  const { error } = await supabase.rpc("admin_set_access_level", { target: id, new_level: level });
+  if (error) { alert("Failed to update access: " + (error.message || "unknown error")); return; }
+  await loadProfilesFromSupabase();
   renderAdminUsers();
+  // If the admin updated themselves we don't need to re-init the nav, but it's cheap and safe.
   init();
 }
 
-function revokeUser(id) {
+async function revokeUser(id) {
   if (!confirm("Revoke this user's access? They will no longer be able to sign in.")) return;
-  const users = getUsers();
-  const idx = users.findIndex(u => u.id === id);
-  if (idx < 0) return;
-  users[idx].status = "revoked";
-  saveUsers(users);
+  const { error } = await supabase.rpc("admin_set_status", { target: id, new_status: "revoked" });
+  if (error) { alert("Failed to revoke: " + (error.message || "unknown error")); return; }
+  await loadProfilesFromSupabase();
   renderAdminUsers();
 }
 
