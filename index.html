@@ -460,6 +460,7 @@ body{background:#1a1a1a;color:#fff;min-height:100vh}
 
     <div class="tab-row">
       <div class="tab active" onclick="switchTab('tab-profile')">Profile</div>
+      <div class="tab" onclick="switchTab('tab-calendar')">Calendar</div>
       <div class="tab" onclick="switchTab('tab-password')">Change Password</div>
     </div>
 
@@ -478,6 +479,36 @@ body{background:#1a1a1a;color:#fff;min-height:100vh}
       </div>
       <div class="form-row"><label>Phone number</label><input type="tel" id="acct-phone" /></div>
       <button class="btn-full" onclick="saveProfile()">Save Changes</button>
+    </div>
+
+    <!-- CALENDAR TAB -->
+    <div class="tab-content" id="tab-calendar">
+      <div class="error-msg" id="cal-error"></div>
+      <div class="success-msg" id="cal-success"></div>
+      <div class="section-label">Google Calendar subscription</div>
+      <p style="font-size:12px;color:#999;line-height:1.6;margin-bottom:14px">
+        Subscribe to this private URL in Google Calendar to see your property deadlines (sub-phases and target close dates) on your calendar. Google polls the feed every few hours, so changes will appear within that window.
+      </p>
+      <div class="form-row">
+        <label>Your calendar URL</label>
+        <div style="display:flex;gap:6px;align-items:stretch">
+          <input type="text" id="cal-url" readonly style="flex:1;padding:7px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:12px;color:#111;background:#f4f5f7;font-family:'Courier New',monospace" placeholder="Loading..." />
+          <button id="cal-copy-btn" onclick="copyCalendarUrl()" style="padding:7px 14px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:500;cursor:pointer;white-space:nowrap">Copy</button>
+        </div>
+      </div>
+      <div class="section-label" style="margin-top:20px">How to subscribe</div>
+      <ol style="font-size:12px;color:#888;line-height:1.8;padding-left:18px;margin-bottom:18px">
+        <li>Copy the URL above.</li>
+        <li>Open <a href="https://calendar.google.com" target="_blank" style="color:#6ab0ff;text-decoration:underline">Google Calendar</a>.</li>
+        <li>In the left sidebar, click the <b>+</b> next to "Other calendars" → <b>From URL</b>.</li>
+        <li>Paste the URL → <b>Add calendar</b>.</li>
+        <li>Your deadlines appear as a new calendar (named "Legacy Homes — [your name]"). You can rename or color it like any other calendar.</li>
+      </ol>
+      <div class="section-label" style="margin-top:14px;color:#c0392b">Regenerate URL</div>
+      <p style="font-size:11px;color:#666;line-height:1.5;margin-bottom:10px">
+        If you ever need to invalidate this URL (for example if you shared it accidentally), regenerate it. The old URL stops working immediately — you'll need to re-subscribe in Google Calendar with the new one.
+      </p>
+      <button onclick="regenerateCalendarUrl()" style="padding:8px 16px;background:transparent;border:1px solid #c0392b;color:#c0392b;border-radius:6px;font-size:12px;cursor:pointer">Regenerate URL</button>
     </div>
 
     <!-- PASSWORD TAB -->
@@ -977,9 +1008,68 @@ function switchTab(id) {
   document.querySelectorAll("#account-modal .tab").forEach(t => t.classList.remove("active"));
   const target = document.getElementById(id);
   if (target) target.classList.add("active");
-  const idx = ["tab-profile","tab-password"].indexOf(id);
+  const idx = ["tab-profile","tab-calendar","tab-password"].indexOf(id);
   const tabs = document.querySelectorAll("#account-modal .tab");
   if (tabs[idx]) tabs[idx].classList.add("active");
+  // Lazy-load the calendar URL the first time the user opens the Calendar tab
+  if (id === "tab-calendar") loadCalendarUrl();
+}
+
+// ===================== CALENDAR SUBSCRIPTION =====================
+const ICS_FEED_BASE = SUPABASE_URL + "/functions/v1/ics-feed?token=";
+
+async function loadCalendarUrl(force) {
+  const err = document.getElementById("cal-error");
+  const input = document.getElementById("cal-url");
+  if (!input) return;
+  if (input.value && !force) return; // already loaded
+  err.style.display = "none";
+  input.value = "Loading...";
+  const { data, error } = await supabase.rpc("get_or_create_my_calendar_token");
+  if (error || !data) {
+    input.value = "";
+    showErr(err, (error && error.message) || "Could not load your calendar token.");
+    return;
+  }
+  input.value = ICS_FEED_BASE + data;
+}
+
+async function copyCalendarUrl() {
+  const input = document.getElementById("cal-url");
+  const ok = document.getElementById("cal-success");
+  const err = document.getElementById("cal-error");
+  err.style.display = "none";
+  if (!input || !input.value || input.value === "Loading...") {
+    showErr(err, "URL is not ready yet — please wait a moment.");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(input.value);
+  } catch (e) {
+    // Fallback: select the input text so the user can copy manually
+    input.select();
+    document.execCommand && document.execCommand("copy");
+  }
+  ok.textContent = "Copied! Now paste it into Google Calendar.";
+  ok.style.display = "block";
+  setTimeout(() => { ok.style.display = "none"; }, 3000);
+}
+
+async function regenerateCalendarUrl() {
+  if (!confirm("Regenerate your calendar URL? The old URL stops working immediately — anyone who subscribed will need the new one.")) return;
+  const err = document.getElementById("cal-error");
+  const ok = document.getElementById("cal-success");
+  err.style.display = "none"; ok.style.display = "none";
+  const { data, error } = await supabase.rpc("regenerate_my_calendar_token");
+  if (error || !data) {
+    showErr(err, (error && error.message) || "Failed to regenerate the URL.");
+    return;
+  }
+  const input = document.getElementById("cal-url");
+  if (input) input.value = ICS_FEED_BASE + data;
+  ok.textContent = "New URL generated. Re-subscribe in Google Calendar with this one.";
+  ok.style.display = "block";
+  setTimeout(() => { ok.style.display = "none"; }, 5000);
 }
 
 function switchAdminTab(id) {
