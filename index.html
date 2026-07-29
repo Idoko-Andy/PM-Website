@@ -271,6 +271,8 @@ body{background:#1a1a1a;color:#fff;min-height:100vh}
   </div>
   <div class="ni has-dd" id="tools-t">🔧 Tools ▾
     <div class="dd" id="tools-d" style="min-width:220px">
+      <div class="ddl">Directory</div>
+      <div class="ddi" onclick="openContractorDirectory()">📇 Contractor Directory</div>
       <div class="ddl">External Tools</div>
       <div class="ddi" onclick="window.open('https://signin.eagleview.com/','_blank')">🦅 Eagleview ↗</div>
       <div class="ddi" onclick="window.open('https://www.lowes.com','_blank')">🔨 Lowes ↗</div>
@@ -547,6 +549,11 @@ body{background:#1a1a1a;color:#fff;min-height:100vh}
 <!-- ===== PERMISSION EDITOR MODAL ===== -->
 <div class="overlay" id="perm-modal">
   <div class="modal" style="max-width:560px" id="perm-modal-inner"></div>
+</div>
+
+<!-- ===== CALENDAR EVENT MODAL ===== -->
+<div class="overlay" id="calevent-modal">
+  <div class="modal" style="max-width:460px" id="calevent-inner"></div>
 </div>
 
 <script>
@@ -1377,7 +1384,8 @@ function openProjectDashboard(activeTab) {
     { id: 'isaiah', label: 'Isaiah',            icon: '👤' },
     { id: 'sow',    label: 'SOW / Budgets',     icon: '💰' },
     { id: 'trello', label: 'Property Dashboard',icon: '🏗' },
-    { id: 'tasks',  label: 'Tasks / Scheduling',icon: '📅' },
+    { id: 'construction', label: 'Construction Calendar (CAL)', icon: '📅' },
+    { id: 'taskcal',      label: 'Task Calendar',               icon: '🗓' },
   ];
 
   const tabBar = tabs.map(t => `
@@ -2027,7 +2035,8 @@ function getPDContent(tab) {
     case 'isaiah': return pmTabContent('Isaiah');
     case 'sow':    return placeholder('💰','SOW / Budgets — This section will link to the platform your boss is building.');
     case 'trello': return renderPropertyBoard();
-    case 'tasks':  return placeholder('📅','Tasks / Scheduling — Internal calendar being built out.');
+    case 'construction': return renderConstructionCalendar();
+    case 'taskcal':      return placeholder('🗓','Task Calendar — internal team tasks calendar, coming next.');
     default:       return placeholder('📊','Select a tab above to get started.');
   }
 }
@@ -3601,6 +3610,238 @@ function propDrop(event, targetPhase) {
       openProjectDashboard('trello');
     }
   });
+}
+
+// ===================== CONTRACTORS + CONSTRUCTION CALENDAR =====================
+let _contractorsCache = [];
+let _calEventsCache = [];
+function _calEsc(s){ return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+async function loadContractorsFromSupabase(){
+  const { data, error } = await supabase.from("pm_contractors").select("id,name,phone,trade").order("name",{ascending:true});
+  _contractorsCache = error ? [] : (data||[]);
+}
+async function loadCalendarEventsFromSupabase(){
+  const { data, error } = await supabase.from("pm_calendar_events").select("id,property_id,event_date,kind,title,contractor_id,notes").order("event_date",{ascending:true});
+  _calEventsCache = error ? [] : (data||[]);
+}
+function _contractorName(id){ const c=_contractorsCache.find(x=>x.id===id); return c?c.name:"Contractor"; }
+function _propAddr(id){ const p=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===id); return p?p.addr:""; }
+
+// ---- Contractor Directory (Tools menu) ----
+async function openContractorDirectory(){
+  document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
+  document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
+  await loadContractorsFromSupabase();
+  renderContractorDirectory();
+}
+function renderContractorDirectory(){
+  const ro = isReadOnly();
+  const rows = _contractorsCache.map(c=>
+    `<tr>
+      <td style="padding:10px 12px;border-bottom:0.5px solid #eee;font-weight:500;color:#111">${_calEsc(c.name)}</td>
+      <td style="padding:10px 12px;border-bottom:0.5px solid #eee">${c.phone?`<a href="tel:${_calEsc(c.phone)}" style="color:#185FA5;text-decoration:none">${_calEsc(c.phone)}</a>`:'<span style="color:#bbb">—</span>'}</td>
+      <td style="padding:10px 12px;border-bottom:0.5px solid #eee;color:#777">${_calEsc(c.trade||"")}</td>
+      ${ro?"":`<td style="padding:10px 12px;border-bottom:0.5px solid #eee;text-align:right"><span onclick="deleteContractor('${c.id}')" style="cursor:pointer;color:#c0392b;font-size:12px">Remove</span></td>`}
+    </tr>`).join("");
+  const addForm = ro ? "" :
+    `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:14px;margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+      <div style="flex:2;min-width:150px"><label style="font-size:11px;color:#888;display:block;margin-bottom:4px">Name</label><input id="ct-name" placeholder="Company or person" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px"/></div>
+      <div style="flex:1;min-width:120px"><label style="font-size:11px;color:#888;display:block;margin-bottom:4px">Phone</label><input id="ct-phone" placeholder="(614) 555-0100" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px"/></div>
+      <div style="flex:1;min-width:120px"><label style="font-size:11px;color:#888;display:block;margin-bottom:4px">Trade (optional)</label><input id="ct-trade" placeholder="Plumbing, HVAC…" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:13px"/></div>
+      <button onclick="saveContractor()" style="padding:9px 16px;background:#111;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer">+ Add</button>
+    </div>`;
+  document.getElementById("dash-body").innerHTML =
+    `<div style="background:#f4f5f7;min-height:500px;padding:24px">
+      <div style="max-width:820px;margin:0 auto">
+        <div style="font-size:18px;font-weight:500;color:#111;margin-bottom:4px">📇 Contractor Directory</div>
+        <div style="font-size:12px;color:#888;margin-bottom:18px">Names and phone numbers for every contractor we work with.</div>
+        ${addForm}
+        <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden">
+          <table style="width:100%;border-collapse:collapse;font-size:13px">
+            <thead><tr style="background:#fafbfc">
+              <th style="text-align:left;padding:9px 12px;font-size:11px;color:#999;text-transform:uppercase;letter-spacing:.04em">Name</th>
+              <th style="text-align:left;padding:9px 12px;font-size:11px;color:#999;text-transform:uppercase;letter-spacing:.04em">Phone</th>
+              <th style="text-align:left;padding:9px 12px;font-size:11px;color:#999;text-transform:uppercase;letter-spacing:.04em">Trade</th>
+              ${ro?"":"<th></th>"}
+            </tr></thead>
+            <tbody>${rows || `<tr><td colspan="4" style="padding:24px;text-align:center;color:#bbb;font-size:13px">No contractors yet.${ro?"":" Add your first one above."}</td></tr>`}</tbody>
+          </table>
+        </div>
+      </div>
+    </div>`;
+}
+async function saveContractor(){
+  if(_blockIfReadOnly()) return;
+  const name=(document.getElementById("ct-name").value||"").trim();
+  const phone=(document.getElementById("ct-phone").value||"").trim();
+  const trade=(document.getElementById("ct-trade").value||"").trim();
+  if(!name){ alert("Enter a contractor name."); return; }
+  const { error } = await supabase.from("pm_contractors").insert({name, phone, trade});
+  if(error){ alert("Failed to add contractor: "+(error.message||"unknown error")); return; }
+  await loadContractorsFromSupabase();
+  renderContractorDirectory();
+}
+async function deleteContractor(id){
+  if(_blockIfReadOnly()) return;
+  if(!confirm("Remove this contractor from the directory?")) return;
+  const { error } = await supabase.from("pm_contractors").delete().eq("id",id);
+  if(error){ alert("Failed to remove: "+(error.message||"unknown error")); return; }
+  await loadContractorsFromSupabase();
+  renderContractorDirectory();
+}
+
+// ---- Construction Calendar (Project Dashboard tab) ----
+const _calState = { y:null, m:null, prop:"all", filter:"all", loaded:false };
+const _CAL_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+function _calRerender(){ const el=document.getElementById("pd-content"); if(el) el.innerHTML=renderConstructionCalendar(); }
+function calSelectProp(id){ _calState.prop=id; _calRerender(); }
+function calSetFilter(f){ _calState.filter=f; _calRerender(); }
+function calPrevMonth(){ _calState.m--; if(_calState.m<0){_calState.m=11;_calState.y--;} _calRerender(); }
+function calNextMonth(){ _calState.m++; if(_calState.m>11){_calState.m=0;_calState.y++;} _calRerender(); }
+
+function renderConstructionCalendar(){
+  const st=_calState;
+  if(st.y==null){ const d=new Date(); st.y=d.getFullYear(); st.m=d.getMonth(); }
+  if(!st.loaded){ st.loaded=true; Promise.all([loadContractorsFromSupabase(), loadCalendarEventsFromSupabase()]).then(_calRerender); }
+  const props=(typeof propCards!=='undefined'?propCards:[]);
+  const ro=isReadOnly();
+  // property selector
+  const propPill=(id,label,active)=>`<div onclick="calSelectProp('${id}')" style="padding:6px 12px;font-size:11.5px;white-space:nowrap;cursor:pointer;border-radius:999px;${active?'background:#111;color:#fff':'background:#fff;color:#555;border:0.5px solid #ddd'}">${_calEsc(label)}</div>`;
+  let propPills=propPill("all","All Properties", st.prop==="all");
+  props.forEach(p=>{ propPills+=propPill(p.id, p.addr, st.prop===p.id); });
+  // filter chips
+  const chip=(f,label)=>`<div onclick="calSetFilter('${f}')" style="padding:5px 12px;font-size:11px;cursor:pointer;border-radius:999px;${st.filter===f?'background:#1a2744;color:#fff':'background:#fff;color:#666;border:0.5px solid #ddd'}">${label}</div>`;
+  // month grid
+  const first=new Date(st.y,st.m,1), startDow=first.getDay(), daysInMonth=new Date(st.y,st.m+1,0).getDate();
+  const todayStr=(()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;})();
+  const eventsForDay=(day)=>{
+    const ds=`${st.y}-${String(st.m+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+    return _calEventsCache.filter(e=> e.event_date===ds
+      && (st.prop==="all"||e.property_id===st.prop)
+      && (st.filter==="all"||e.kind===st.filter));
+  };
+  const evChip=(e)=>{
+    if(e.kind==="contractor"){ return `<div style="font-size:10px;background:#1a2744;color:#fff;border-radius:4px;padding:2px 5px;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_calEsc(_contractorName(e.contractor_id))}">★ ${_calEsc(_contractorName(e.contractor_id))}</div>`; }
+    return `<div style="font-size:10px;background:#E6F1FB;color:#0C447C;border-radius:4px;padding:2px 5px;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_calEsc(e.title||'Material delivery')}">📦 ${_calEsc(e.title||'Material')}</div>`;
+  };
+  const cells=[];
+  for(let i=0;i<startDow;i++){ cells.push(`<div style="background:#fafbfc;min-height:92px;border:0.5px solid #edf0f4"></div>`); }
+  for(let day=1; day<=daysInMonth; day++){
+    const evs=eventsForDay(day);
+    const ds=`${st.y}-${String(st.m+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+    const isToday=ds===todayStr;
+    const shown=evs.slice(0,3).map(evChip).join("");
+    const more=evs.length>3?`<div style="font-size:10px;color:#999">+${evs.length-3} more</div>`:"";
+    const addBtn=ro?"":`<div onclick="openAddCalEvent('${ds}')" style="position:absolute;top:4px;right:5px;font-size:12px;color:#bbb;cursor:pointer" title="Add to this day">＋</div>`;
+    cells.push(`<div style="position:relative;background:#fff;min-height:92px;border:0.5px solid #edf0f4;padding:4px 5px">
+      <div style="font-size:11px;font-weight:${isToday?'600':'400'};color:${isToday?'#185FA5':'#999'};margin-bottom:3px">${day}</div>
+      ${shown}${more}${addBtn}
+    </div>`);
+  }
+  const weekdays=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d=>`<div style="text-align:center;font-size:10px;color:#999;text-transform:uppercase;letter-spacing:.05em;padding:6px 0">${d}</div>`).join("");
+  const addTop=ro?"":`<button onclick="openAddCalEvent('')" style="padding:7px 14px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;white-space:nowrap">+ Add</button>`;
+  return `<div style="padding:20px">
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;overflow-x:auto">${propPills}</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div onclick="calPrevMonth()" style="cursor:pointer;font-size:16px;color:#888;padding:2px 8px;border:0.5px solid #ddd;border-radius:6px;background:#fff">‹</div>
+          <div style="font-size:15px;font-weight:500;color:#111;min-width:130px;text-align:center">${_CAL_MONTHS[st.m]} ${st.y}</div>
+          <div onclick="calNextMonth()" style="cursor:pointer;font-size:16px;color:#888;padding:2px 8px;border:0.5px solid #ddd;border-radius:6px;background:#fff">›</div>
+        </div>
+        <div style="display:flex;gap:6px">${chip("all","All")}${chip("material","📦 Material Deliveries")}${chip("contractor","★ Contractor Starts")}</div>
+      </div>
+      ${addTop}
+    </div>
+    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden">
+      <div style="display:grid;grid-template-columns:repeat(7,1fr);background:#fafbfc;border-bottom:0.5px solid #edf0f4">${weekdays}</div>
+      <div style="display:grid;grid-template-columns:repeat(7,1fr)">${cells.join("")}</div>
+    </div>
+    <div style="font-size:11px;color:#aaa;margin-top:10px">Showing ${st.prop==="all"?"all properties":(_calEsc(_propAddr(st.prop))||"selected property")}. Manage contractors in Tools → Contractor Directory.</div>
+  </div>`;
+}
+
+// ---- Add calendar event dialog ----
+function openAddCalEvent(dateStr){
+  if(_blockIfReadOnly()) return;
+  const props=(typeof propCards!=='undefined'?propCards:[]);
+  const propOpts=props.map(p=>`<option value="${p.id}" ${_calState.prop===p.id?"selected":""}>${_calEsc(p.addr)}</option>`).join("");
+  const contractorOpts=_contractorsCache.map(c=>`<option value="${c.id}">${_calEsc(c.name)}</option>`).join("");
+  const html=`
+    <button class="modal-close" onclick="closeModal('calevent-modal')">✕</button>
+    <h2>Add to construction calendar</h2>
+    <div class="error-msg" id="cal-err"></div>
+    <div class="form-row"><label>Date</label><input type="date" id="cal-date" value="${_calEsc(dateStr||"")}" /></div>
+    <div class="form-row"><label>Property</label><select id="cal-prop"><option value="">— Select property —</option>${propOpts}</select></div>
+    <div class="form-row"><label>Type</label>
+      <select id="cal-kind" onchange="_calToggleKind()">
+        <option value="material">📦 Material delivery</option>
+        <option value="contractor">★ Contractor start</option>
+      </select>
+    </div>
+    <div class="form-row" id="cal-material-row"><label>What's being delivered</label><input type="text" id="cal-title" placeholder="e.g. Cabinets, flooring, windows" /></div>
+    <div id="cal-contractor-row" style="display:none">
+      <div class="form-row"><label>Contractor</label>
+        <select id="cal-contractor" onchange="_calContractorChange()">
+          <option value="">— Select saved contractor —</option>
+          ${contractorOpts}
+          <option value="__new">＋ Add new contractor…</option>
+        </select>
+      </div>
+      <div id="cal-newc" style="display:none">
+        <div class="form-two">
+          <div class="form-row"><label>New contractor name</label><input type="text" id="cal-newc-name" placeholder="Company or person" /></div>
+          <div class="form-row"><label>Phone</label><input type="text" id="cal-newc-phone" placeholder="(614) 555-0100" /></div>
+        </div>
+      </div>
+    </div>
+    <div class="form-row"><label>Notes (optional)</label><input type="text" id="cal-notes" placeholder="Anything the team should know" /></div>
+    <button class="btn-full" onclick="saveCalEvent()">Add to calendar</button>`;
+  document.getElementById("calevent-inner").innerHTML=html;
+  openModal("calevent-modal");
+}
+function _calToggleKind(){
+  const kind=document.getElementById("cal-kind").value;
+  document.getElementById("cal-material-row").style.display = kind==="material"?"":"none";
+  document.getElementById("cal-contractor-row").style.display = kind==="contractor"?"":"none";
+}
+function _calContractorChange(){
+  const v=document.getElementById("cal-contractor").value;
+  document.getElementById("cal-newc").style.display = v==="__new"?"":"none";
+}
+async function saveCalEvent(){
+  if(_blockIfReadOnly()) return;
+  const err=document.getElementById("cal-err");
+  const showE=(m)=>{ if(err){err.textContent=m;err.style.display="block";} };
+  if(err) err.style.display="none";
+  const date=document.getElementById("cal-date").value;
+  const prop=document.getElementById("cal-prop").value;
+  const kind=document.getElementById("cal-kind").value;
+  const notes=(document.getElementById("cal-notes").value||"").trim();
+  if(!date){ showE("Pick a date."); return; }
+  if(!prop){ showE("Pick a property."); return; }
+  let title=null, contractorId=null;
+  if(kind==="material"){
+    title=(document.getElementById("cal-title").value||"").trim();
+    if(!title){ showE("Enter what's being delivered."); return; }
+  } else {
+    contractorId=document.getElementById("cal-contractor").value;
+    if(contractorId==="__new"){
+      const nm=(document.getElementById("cal-newc-name").value||"").trim();
+      const ph=(document.getElementById("cal-newc-phone").value||"").trim();
+      if(!nm){ showE("Enter the new contractor's name."); return; }
+      const ins=await supabase.from("pm_contractors").insert({name:nm,phone:ph}).select("id").single();
+      if(ins.error){ showE("Couldn't save contractor: "+(ins.error.message||"")); return; }
+      contractorId=ins.data.id;
+      await loadContractorsFromSupabase();
+    } else if(!contractorId){ showE("Pick a contractor (or add a new one)."); return; }
+  }
+  const { error } = await supabase.from("pm_calendar_events").insert({ property_id:prop, event_date:date, kind, title, contractor_id:contractorId, notes });
+  if(error){ showE("Failed to save: "+(error.message||"unknown error")); return; }
+  await loadCalendarEventsFromSupabase();
+  closeModal("calevent-modal");
+  _calRerender();
 }
 
 // ===================== BOOT =====================
