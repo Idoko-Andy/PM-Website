@@ -935,6 +935,7 @@ const PERM_ALL = PERM_ITEMS.map(p => p.key);
 // nobody by default — only full-access Directors get it (via the override
 // below), matching: only Bruce, Tom, Andy, Idoko see it unless explicitly given.
 const ROLE_DEFAULTS = {
+  "CEO":                                       PERM_ALL.slice(),
   "Project Director":                          PERM_ALL.slice(),
   "Administrative Manager":                    ["dash_project","dash_design","dash_tv","dash_pmassistant","dash_admin","data_pmoverview","rep_all","sops_view"],
   "Project Manager":                           ["dash_project","dash_design","dash_tv","dash_pmassistant","data_pmoverview","rep_all","sops_view"],
@@ -1076,7 +1077,7 @@ function exitPreview() {
 
 // ===================== JOB ROLES (editable) =====================
 const BASE_ROLES = [
-  "Project Director","Administrative Manager","Project Manager","PM Assistant",
+  "CEO","Project Director","Administrative Manager","Project Manager","PM Assistant",
   "Senior Administrative Assistant","Administrative Assistant",
   "Senior Virtual Administrative Assistant","Virtual Administrative Assistant",
   "Start of Project Assistant","End of Project Assistant","Architect","Assistant / Intern"
@@ -1201,11 +1202,10 @@ function renderAdminUsers() {
           <td style="color:#888;font-size:12px">${u.email}</td>
           <td><select class="access-select" style="max-width:150px" onchange="changeUserRole('${u.id}', this.value)">${roleOptions(u.role)}</select></td>
           <td>
-            ${u.isSuperAdmin ? '<span style="color:#f39c12;font-size:12px">Super Admin</span>' :
+            ${(u.isSuperAdmin || u.accessLevel==="full") ? '<span style="color:#f39c12;font-size:12px">Admin</span>' :
               `<select class="access-select" onchange="updateAccess('${u.id}', this.value)">
                 <option value="readonly" ${u.accessLevel==="readonly"?"selected":""}>Read Only</option>
-                <option value="standard" ${u.accessLevel==="standard"?"selected":""}>Standard</option>
-                <option value="full" ${u.accessLevel==="full"?"selected":""}>Full Access</option>
+                <option value="standard" ${u.accessLevel!=="readonly"?"selected":""}>Edits Allowed</option>
               </select>`}
           </td>
           <td><span class="approved-badge">Active</span></td>
@@ -1518,6 +1518,7 @@ async function loadPropertiesFromSupabase() {
 }
 
 async function savePropertyToSupabase(id, data) {
+  if (_blockIfReadOnly()) return false;
   if (id) {
     const { error } = await supabase.from("pm_properties").update(_propCardToRow(data)).eq("id", id);
     if (error) { alert("Failed to save property: " + (error.message || "unknown error")); return false; }
@@ -1530,6 +1531,7 @@ async function savePropertyToSupabase(id, data) {
 }
 
 async function updatePropertyPhaseInSupabase(id, newPhase) {
+  if (_blockIfReadOnly()) return false;
   const { error } = await supabase.from("pm_properties").update({ phase: newPhase }).eq("id", id);
   if (error) { alert("Failed to update phase: " + (error.message || "unknown error")); return false; }
   await loadPropertiesFromSupabase();
@@ -1537,6 +1539,7 @@ async function updatePropertyPhaseInSupabase(id, newPhase) {
 }
 
 async function setPropertyCompanyCamInSupabase(id, url) {
+  if (_blockIfReadOnly()) return false;
   const { error } = await supabase.from("pm_properties").update({ company_cam: url }).eq("id", id);
   if (error) { alert("Failed to save link: " + (error.message || "unknown error")); return false; }
   await loadPropertiesFromSupabase();
@@ -1544,6 +1547,7 @@ async function setPropertyCompanyCamInSupabase(id, url) {
 }
 
 async function addPropertySubPhaseInSupabase(id, name, due) {
+  if (_blockIfReadOnly()) return false;
   const card = propCards.find(p => p.id === id);
   if (!card) return false;
   const newSubPhases = [...(card.subPhases || []), { name, due }];
@@ -1755,7 +1759,7 @@ function renderPropertyBoard() {
       </div>
     </div>
     <div style="display:flex;justify-content:flex-end;margin-top:10px">
-      <button onclick="openPropModal()" style="display:flex;align-items:center;gap:5px;padding:6px 14px;font-size:12px;border-radius:6px;cursor:pointer;border:0.5px solid #ccc;background:#111;color:#fff">+ Add Property</button>
+      ${isReadOnly() ? "" : '<button onclick="openPropModal()" style="display:flex;align-items:center;gap:5px;padding:6px 14px;font-size:12px;border-radius:6px;cursor:pointer;border:0.5px solid #ccc;background:#111;color:#fff">+ Add Property</button>'}
     </div>`;
 }
 
@@ -2230,6 +2234,20 @@ function isBruceOrSeniorVA(u) {
   if (!u) return false;
   if (isBruce(u)) return true;
   return u.role === "Senior Virtual Administrative Assistant" || u.email === "idoko@legacyohiohomes.com";
+}
+
+// Read-only enforcement: "Read Only" users can view (per their checkboxes) but
+// cannot add, edit, move, or submit anything. Super admins can always edit.
+function isReadOnly(u) {
+  u = u || currentUser();
+  return !!(u && !u.isSuperAdmin && u.accessLevel === "readonly");
+}
+function _blockIfReadOnly() {
+  if (isReadOnly()) {
+    showAccessDenied("Your access is Read Only — you can view this but can't make changes. Ask an admin for edit access.");
+    return true;
+  }
+  return false;
 }
 
 // Hide restricted items based on logged-in user
@@ -3183,6 +3201,7 @@ async function loadMonthlyReportsFromSupabase() {
 
 async function upsertMonthlyReport(year, monthIdx, payload, submitted) {
   if (!_myProfile) { alert("You must be signed in to save reports."); return false; }
+  if (_blockIfReadOnly()) return false;
   const { error } = await supabase
     .from("pm_monthly_reports")
     .upsert({
@@ -3551,6 +3570,7 @@ function printMR() { window.print(); }
 let propDragId = null;
 
 function propDragStart(event, id) {
+  if (isReadOnly()) { event.preventDefault(); return; }
   propDragId = id;
   event.dataTransfer.effectAllowed = "move";
   event.target.style.opacity = "0.5";
@@ -3559,6 +3579,7 @@ function propDragStart(event, id) {
 
 function propDrop(event, targetPhase) {
   event.preventDefault();
+  if (isReadOnly()) { propDragId = null; return; }
   if (!propDragId) return;
   const idx = propCards.findIndex(c => c.id === propDragId);
   if (idx < 0) { propDragId = null; return; }
