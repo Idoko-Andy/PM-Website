@@ -544,6 +544,11 @@ body{background:#1a1a1a;color:#fff;min-height:100vh}
   </div>
 </div>
 
+<!-- ===== PERMISSION EDITOR MODAL ===== -->
+<div class="overlay" id="perm-modal">
+  <div class="modal" style="max-width:560px" id="perm-modal-inner"></div>
+</div>
+
 <script>
 // ===================== DATA STORE =====================
 const LOGO_B64 = "iVBORw0KGgoAAAANSUhEUgAAAIMAAABpCAYAAAAZQpCCAAAAtGVYSWZJSSoACAAAAAYAEgEDAAEAAAABAAAAGgEFAAEAAABWAAAAGwEFAAEAAABeAAAAKAEDAAEAAAACAAAAEwIDAAEAAAABAAAAaYcEAAEAAABmAAAAAAAAAPJ2AQDoAwAA8nYBAOgDAAAGAACQBwAEAAAAMDIxMAGRBwAEAAAAAQIDAACgBwAEAAAAMDEwMAGgAwABAAAA//8AAAKgBAABAAAAgwAAAAOgBAABAAAAaQAAAAAAAAAJrOXNAAAACXBIWXMAAA7DAAAOwwHHb6hkAAAbIElEQVR4nO1dB5hURbbuSYg55wDqmhbZp6Jrds1rWNQ1oM91DftU5D3TsrjB7BP8WMNbXbOoGPCZFx8gA4oEFcGIgmEUYTAguwgiwQFmmHve+bvO6Xu6+nZPz8j07Z7p831nbs8NdU9V/XXq1KmqcxOJMhWMiEi5grkqCAJ7rhvzycxPMS8mQ3zfUj6skH+flOeTz5WpxMhUuAIhIUDYg/kPzI/y/7M9ADQwj2bG9ROYP5FLLwJIZTCUGHkgqAQABATQAkOY51E6BcyvM1/CvCffu4Z5frLcg+s1ZTCUEFlNwJWqLXld5gH8/9cGAKuYoRXuZd6XuYvRHEkQyXPj5f4PmNeIDQwW3aKiCsmVwql+shRahCkv/X0487umG4AWeIW5r1S235XYPKPyR8mjdcxdYykHT8iEZ/S0yK29v7XpFBN5slWK3GvycSAf1QBsZH6E+URK1wIZYDf/o1t4RkAELbKmlkdcGVyH+U7mR5mfY36eeTjzCyzYP/hYyzyWf49hxu/RcpzAPFGO4/kcWsM44ZfI9YVTmF9lHiPpjJG0H2O+g/ka5oOYq71Cq6IiAYYPAqnkn0veSCqylnl/D+TV2fLgpfmoJIMuZq1Y8myE7kYhwfABQj/l8+/zcRJAICAZxnwf89+Yb+TzVzNfzr/78vEsPp7K/CvmI1HBfG5vPvZk3pGcYQXuzryFvPNn8sw4aVGXy7MqWxpA4qAoIDBfyLxEyms+cz9b6fnI7d1/r0lr7VjBwLybCIMKX5srqqsnbFbVnquraMU1FN5+fO5g5v78+xbmXubejIK1aRWgjCwQbtdWw3IBxD1Mfirzlckrj9skye/JaelYwKCFvK8Ic6NkqoaiDcrKLFyRhfOxGSojzkG7PMj8EPNeLdzbLt1JxDvRQJ6mkAZRaPlXt/b9XoMYKOD6oRjAcIxkcID836WArc4WunLSjuHCOYqPw/j4Vwr70mopSAD4JwYQeXUnEe+s9tiCXj2JGBGMkgpD93C2pmGGlm3Ju8p8paS9kg/rxw2G0wUMl2iBF1aSaGvdFPjF5LqwA9W5w/wZ/z+dj/uZe7MCQs9Z4OU5GtqUnJEMwjsPNGm02Z7x5L1c0gcYNosbDOeLMGoIFRwMnlwZlcsVdwi5UQhGIDBib2K+mc9/x8dbyeu3c6VlGLbSacg/P3sOH0/m4xHM6Jq2IWcPvCllg5HSjvKOH+0y9kDf14Bhm7jAoMJcIsJcWAxgsETpdsEGzBeQ8+erhvg3/v0V8zNGZeuxgjybQs4lRzB8/0LKpCZyk0lfMuv1+0mcR23tFqLyxWlp+f/WgGGH2MAgSP+jCPO7IgVDhqEosuu5rZg/JTfRo/ZOjXc/WtyfKJwzWMLPPynAQPeDvN8nw2j4R+Aifk6GzBkyrKZ8aXqnQCCxGXaNy+mkyLxehDmn2MCgZFq1NTKtJb8Jy/8OOXW+uZzbkNzIxI4CcM+1zFt4YGmJK1Z3BRkwHC+yNULTxQ2Gv4ow2gqKDgxKfsv0Wtha8JgyQ8Vj7UCd5Au2BrqXX5Jx6lD0sDhq2NxeeVG5jxI5MbG1j7qw2+WlOYRRMPxdhDlDBClaMPgUpcLJLSR5hPk65t2JMpxcNRSzZ1NkV5kPk/JvZj5ANVGhhVEwPCjCnFpqYAB5LT2bmq+hVvgjCiS3+jEOppAOiw0MIswTIsivtZUVVJDVQF7FV/i/i5GMZthftALo6LjAoML8QwTpXapgsGSBUcxkyv/nZhr82LjBUCuCHKdOlYIK0knJdGtwci31GmRsYJggghzTETRDqZABA6by1cF1UtxgeIPcgs0jy2AoHBkw/JT5n0ACa+ZT4wbDO2LAHFYGQ+FIwcAA2IWcSx10RtxgmE7O4XFIGQyFI6MZsBJslmiGswoOBq10OX5MboLmoDIYCkcGDN0o9JaeGxcYVE3VySTJ/mUwFI4o9PNszTxDNMN/xAWGCl0owrxcVg8lhSyYIJ2YKHSOYdJM9130LfjcBKV77GZh/R1zrzIYCkcGDJhxnSpg+K+4NENyHoK5ntyCjp66WqhggnRiMmDAop3XBAyXxAEGFQS7gjDli+Vju5Q1Q+HI1ME6sgEJ9Ps4wbAeCzKXj98yb18GQ+HI1AGW4Y8RMAyIEwwbM/+TATFPrNrCOzw6KWkdcNljen2kgOHPcYIBliy2dWGf36ZlMBSOTB3gqDPHVxdcOxtBtsEqYeYvKNzAUXJgMAaxroi2m2KKZkGLJW9E95SA4frYwMAggJ2APX6zxJgsKTB4BVrt/W+5aHZ1e3KrF/JZAcPAOMCgQuxMbtn4Z9SGPYNxk9EGyd91jz9e07x0aa/mhobe4KChYe+3Bg/WvFYGq1bFnr8IgKJBzhEw3BwnGLCraBmD4ZNiajn5kG1Zs4YPxyZYbFObxPwvCgn2EGJHYG9Comn+/DTwxCi3auZ9+PiWkffuWMAgrugeiD5GzjeeErKYyVexzStWYKXQmxQEtGjYMHrvqGPo1Q13aJ68U8/mz/r1I/rqq1RBv3frbdVNCxcm4tQQpiEex7zAAGEp18UFBe+qjUAIpoH1dx9Y1VXMJC3KTbKtXInJtYU0cyaNTWzaPDGRaHovkWhmDqYxv8W/R/O5mRdfrAX+YJyg97qHpKNJJgkRvSW1safQQikYEK8QwrxNxggrVtKKhFZrmDcPO6am05w5NMqBIJjOt7zKxymJzYJJDgzBhxUVNIFB8e7xvZORt8htNI4lrx4Y7hYwzJXuOrWXs9BCKRh6AZnME1XQwkrSOkrKGMZKugKF+XJi66Z3udI/YB6XqApW1Y4mamzkMdL39PEpp9FrAERlJY1jwHz38MN4ZNrizz/fKGhuLvjIyWolcn6duaKxTo6tMRow7CPLtF8sETAkC/L9O++EwVj7/bPP0vhEovFDvsStP6A6t0Zk/pAhRB9/nPw9+8ILaaqA5RUGDs41L19+ShzdonYDFK4leUzA8Ac5XxMnGPYTm+HpEgFDUu7l9fWI2jL7/d4n0tuJxCpohroTf50s1SmHH021fOszzE2TJ3PuVrB2qE52IeMTNSupKYmHG+OyHTztMFDA8N9xgFMFUmQiEsly5odLCQwNc+Zgefl3U3v0IhiMAMOs08/gJt9MwxNr0Rt86wjmxS+8QKj8qetsQ9AMryYqmmBsMj0x9rTTY/OrqN0TuPjRRKGzKVYwHCxguKsUNtCo3D/U12N5+b/eP/woeofBMIMremKiJlnxNH8+jdu+B82/XQKzTZgAo5JmJMGQaGqamlxH8uTok06JLU4zhX6GfgKGK+O0GdSiPZQZfobB2pcVVpLWkRbidx99hOAb0+sHXEFTuJtgAxEjB5px9DE8Wl/qQAGeNImBsCG0AsCQtC8a38bAie4x/Xds+SAXKwJ0kdoM7fnCjDB8ck3BcIQ4na4pETBgNKF5eS7gikUFo6J5CBmw/UCvME/dbAeanNiUJvJvdA8fVlUFGHqOTqy/ktwAMxXMzC+jtHeFnFGWPyoPYTr3CBh0W1377ID3MuOzguFoAUP/kgFDOIcyABX7UqJLE7qAD8WngJHFdGFoDAABmgHOp2BKMsLvD03Llu0lQ8sfzW3Mg4IBrnLspmrfVWbkpkURl+hxafk/MYIoGLC/EsEo+5YCGECQMUB/29gIu2Hu3GuuZS2QaIYvIakhHAgcEKqroREwumhqfMWtLOPnEJF1Dy6XPnz8d2FEfesZUdlwbGGnGVzHx0t57UNtnNTz0kYaWHs6WVdE/xiN09KLlZ6SzNugVxooAhlcxtwnlvAxbSDIz61awTyMFi2iMWJEQjvMcBoCGgH+BRqbWLuRPsOkLDU0NzRcSs5wQyVj95JueP0/MpHWTMvFtP4dpiy/pzDcUVvBoGV/mqSpS93abyTBL1wlL9vPvsz7fYJEPT1cC6F9pFl9ZCurecUKhP5bPqd/f3qds/xRTU2yq5iedDAlmt886NBVSW8k0Rerliw5kjJD/k9PaoswuKgtowqpNKxe/lLKcqS5p9Ut2QMa+iysMGv/4OEiPJC/N3ldgGaIM4uYiovIzVGUBBhAtmUSjDDWDi8nKpumwXjk0QV3C6sWDR2qrfmZJZ9+uu2qxYvRtVSprcB5RwhiqIwGk38/FJD+r9vf/pdMdNk2yJ3aK8F8A7kup327CHkxCaJ3ywYG5mM5Y5jz3zaiENCnaVDxKOPJDzaeFlXdZLLSv2bksPfp+6q88364P221VcQVO2/yZAwz5309aBA9nUg0zOx7EYk2wNy1i225bJkDgkxdC8Ol/Tm5leGRBpx57ztSnmmznlnKLHKpnS9/BOD8PGd0RS3dk63cFAxYzqaGY2VEJo9g/oZMNPMslW+/zJZWEDliMOcKuGWfz/e+jN9mRHBmcsi4ILk8AItb7lmxYAGChSb6pOfXPg8wzJb1n2ovKPiV1c6aIOU5JKIyMyomS/4rvWesPNolqTMwG+BaSjf5v18nCgZETs3YD2ESOJQffJ25i5cg3NTw3yOUvlVlFhQHJCvBRVlFLEPEJkpFRTebSg8J3IdIoipYC2E7csNbvA+BzbvKeczxo9Uicuom5ll8wGQPifOs5xDtfWDz8uV7kC0oT6Ub2ZBnAGEG/7+Onlf25NQ1ig94lWnLA1+nwajsNxQGBLfxrzU9XWu6HrnQhH7Zb8737mafiQDHtpL3tEi45h3Y5n8oOROhi4LhQwq7AAsGrQQNpq3gQOLoyxBcG/EahpKbZj3MvAwvwqeLYAUj3jSc/TBWp1E4KsHGEITfRUvCDBLmPiaQ2ZthMoedxzDMLiMXuxHN+3W5hiEx4h0B1EcYGXoHznl0//d1dTVNCxduUDdsmPv8gNMWsNgjHUSm8LqK7DCgETgU4YMRg/ppZXLfj3qCf8+KAIO2QAxxERcLMabPlbKB7+AsUzkwErEMHivKEMQL8aI/4Ovoyj6RikNk2yGSV2g3fNppA607BQHzC+TWSuJbWE9yGtd6QMHQ+RGRBd3bCAUDPi20ZQQYsqmeuyRT9tpHEEznLuQFd5vrR8q78JyOv9G6byTzNTZyi2j+Jr/XkIpFpJKXKQzxi3MAWb38v5UUDIZ0u6XSCgKM+wOueLxnrLwf/pIbl9bX51wJ7YEBlQzw4cMr/ZkRR/sKZfkfayt1l/T9Ug6aT3QvaCxPeWWm4RQ1yOeWRs43OA1sloFmQCMD2LGmBCCAZukilQnqY9LEV4JGUxjw3Zb9mfI/PKtYtabf50CMqLsVDKi4lMrKUjBaeHuSG1l8KYUBfzl2BT9H4ZQvVlOjSepiDPC6IoBWNCp0O88W+KXIM9KoYTw322REPyyCQtrPqEiNen++SW8wAwEzUY/DVphyWp9g0fPPJ2/i4WbO8HkmDQASLRNgX58op/2jm1weMF2MtkLSMg7C4Oaw06Ath1LYlaC7A6if8NIGMDC87WPyDM0HK/hqI9evRF64AQAyaIYX5dnTKR2EtvtM2Qz4XsLGfuFkybB+96C/vBAzmtimv50ppG3kngvMc+jLoRZ15s0aMOhHgXIs4sAQbrR5Dg6vRhU8hyGJSkPrHZkCURDUNi1duneyMObOpbsSiZW13XqoX0W3tUd6U03hIl206joKv/MAQFoDUjXABEn7AXleuzloNbuyXNU1ult8vaZe7TEZyn4ilaj34IhuFFottQaS790/cJ8pus2kPYjPYTHG7YGLgo8Gez05kOgnknbmazMDt64ypUEUDAiXr/1ORcTwQzUCjuifyaDbFpytKEyuzBKbAkDDwgwgdievEgfzPSgsDRyGueNXTLo6lx/l8NH3qW2jQN2V8FGQcJneZVjDMO2ifrR4VPLLQfP4WmqY3IJm6ErukwMAQ+Q+UyPH2/L+IeZ5GIKvkvt2RVRZoRGgi1MtgvJ+j+9Rt7cC7UQ+h+Xy65pGhA+foPt42LxvrMjRldIN17T65HPockdIXUKrb6BggLBq4dvvL60hCQGVQyWRiyWBI9QIFFQraDSTGwXuM4eIKYCpbyBQuyJF+zVS0FsYgT8P3PcctODOERlVxXWh0HfhW+vQPvNF1rsCmfKdPWIEriMqPkYFKFANUpYPGNBSEaQEYNjOB4N9P4UfL3/MlKV2H7PtO80zMD4nm/MYscDjqT4NBQNGY/BG6igD+d1dZBtmnp8icmwchB+WS/PLeOAYIDKPUTC8ZAW1CBa1hUI8X87vFTjX9LsYIpqE8ULb6u+UQskYBxvjCmAZaa5tK/LYbmJ3OfcWZQ6vLFeJvFfK/bMYsUkXbnNDQ/IethN2XP7tt2o0ZfWieumuI+l9acAQ1VWtaUYTz1HoWMK138v5nb3n0QDn8HMXmXQAgjkk37kyGvg/RQZb5iibBnmfnlP75HeUKWN3c7Q+I4w0AgUD4jWh5Z4n/Qz6+kslYQiGvnhL8/D18hzQPtyw+gn2l+voz+C9A1Kh+tBCzjKFBETD0LyKnDWe3FgqfR6MHN3xfYOcnygF+xf+fat5ny20PaUf1W9SqdawFZj2jaocQMB9N0le8P6/2OueuodFr4G+rRMvqT3JgRm22ebyDPpvGLdoDKkPnnKaf5I0bjfPA8AT5fzx5vxxck73s+B5jKzgPodthM88wjZC60fD1Hhc+Erx1cYvAYP3KvzzqFQCzGyo55eFx4kAaL2XeYWEl8Jpglk8fOb4OnJ+BXsPrsHwqxNhMXaeHbiB/3BJYz0pbPRzKGjYFpdKmqd678NKZYzx0c/BQDuBzNfitfKk8qFZennXtOJyLjyhdABhBDOKjygbjNsx52A/UahpdZd8PMLnUJ4PyejGarItpazfEwCgfNFNrmnuQf7/h5zNBJf2DvKefeUcGCDXofiZfG2EVLR+kAT3by3pg2CPoBHuZTTKn/n3AmZ0KQBocp1KNpWb0WW08hoqapIxgiwDlbATuvjPewZW3nIIqx2CArzI/J+tN8hHM+T11d487qsw51H53Sjze1p51UUeZWNtN4z2ds2SHkYlv6DQKE5Zwrk4m9B2ksN6Cjci5617OOIZpAVtc54RuILSW6z/f0vvS3URUiiwGXqa9FsFBg8Q9p2pd2cBjn9vaobR3OPPfaSsfaOybVr+s365ZJ2gi3g21/WWZ0MpXKrdUyo5a0vzEofqmh84L+HBgkCoV6izM717W11Z5p1qaWP4CePqfX7nbw3w2px2e1COyrC8NpkG+CPekWps9pq5J6PRtZSoFjY8i2qsteSxA6Mvh50BXzz8BrBBYBjZOYdWZzTineq4gmwYWw+g1QS0QpAFhzQ6+FIwn7BVrrIuONnWRc4gyvmRLL8S8ujjV5eMUTN+RQ+GCJmx6Pg8o4GLJ+yBCKp9DYaA6gHMiVZPRanbNm1Ry+rKpKd2sy6OKTYy5aO/4dQ7xgCjeIAA8loYhkQ6VMtbdRWqlRarJvBlMnJaoxwjn6MpHdjFlRdPOHxkvGdrwdAZySs31YwZQAhcyACdTPI1RdzZSCdPeAzXdiyDITt5FR5lx9jhIuZQMGcz1p/gK0oyGYEXDRtINi9qgWOmCCBgWr5W5krSDEXmr/l/jH7Slr0VLZnMYZi4MxnXapkyidINbqwcwgIgJUwEwaX8jPyP3WvqUi5urQDyjb+i7c9iJK9cdAUW1n0skUrHRNFnBhQzRctmjCiKmrw+b20qwWCg7U0RDaWay2u8VPwdcg5L+bCiBhNwm3pu57izkB8ZgbEk+2zmDa1Tp7OT17K7Mz/G5fOBAAHL5HTrgUaE1zmItHDFRU+UPhaG5xHTz5t45+MWM1YyjQWLTfQLMSCsK0yF8zX3lYxTLI28Sj9bMmnXNEQuSu0sZPPMQNBVTKCbA/cNL90kmzEhVXLkZeDvktEV0vdtb5atZSxO7ejklQ0W59RL+dRq5ftzJCVNBvVYbqVfP1kuR+y+2sPco74IHNM24HZUMnnHms8mKZdDKRyKdwwggLz+cDp5xOewzv9cctu/4Kq+gf+3K2pKy1rOgzyNoPk7VcoDS/u6q4aMW9bVSp7qxwLWe4WxLuEHA4oF4mHDgpVP+DfW9O0kraa4vWp5kgWBjAa0a8Qaim+kHCZSuNq4Y7nrvczbAsFWt90CF+cIK3M3Mtc0vjGW1e/ZEQrG13KmgaT2jwi9YO/tUBSR+UjDiIznjdyspn4gY2JH6CpMHhDb6XHOP7aqqWY4RDUDufUeqRFYh6SIirfr5uyiVDUaoSqnSAEdWaraISLf8CZie+BrDIgHzPlJktf7yDiXOhX5Ld7TEJjUgl3xrD1fSuR1D1iKdpP8xiwj9iFgTwT2dTYIGNTJ1PnA4FNEl4FYx9hVlLGzu9jJ0wiQHxt+1jPgwIYjeBl1NzcAoftAizqmdsFIW4QpSOzSOdDrRoraGWNk0w042N7ez9MUiNSinwl6wnSHRZmn2CiqwltYJb3ajEwvzbRNNvmmT2ZILIzK/pkHaMzVYGq6d1T+ymTIVAKcULeQG4/bMD2rDRBeOjm3q7UhPURDuTJXmmTD5pUpk4xGqJJuAiur4cXE9C7m+p+V3di3ULgP0O9GYHt0EU7tUNb07Xu8Z7GeALufT+IjWm7XoBXT7hTuiewhWkFtoArvfRrTsqwRclFU98C/EYwDewMQse0E2XaO1UDYpa2xlapMZUR1MVVepVhvIBhOMCwrQ1+udJ0BVz6y2yg1N8g7UiOEtmqcTk1R3UCE7fBTPvcNc7NUpAUArHPEhrgjcHEjuuVQ1Qh48RClk1r6k6z2yENuBSMCZiDSfmp3UwGKrWOTV2l2Z1WNuLphT/wgjPB+CCyKGBHJ4I2BfmHSbaodSmGwCQXOAczTPCCgO/pCfmNRjoYIymcnmGoGBAlBjIdfBCXwGaaSJA8cquIvpmhCgAwEv/jKnIMWwWQZPtz1ktEAIEyxD5I0rzIg8gNlZZUrYiTxG302huLqHOSBAhWAAGD4wGQ9ufB59lsN2LyDoJvjKQyTY8EBWgybxHRFCBG8VK4dS+naKaO/p/RuDEYrNBaCjaS+ehtjcXV88gABRnCvXWVBjYLEGoioJKsllKApDjaVra1bI7xjJINIb6nPI/iA8MDyqEn7hDIYCkAeEFIBQs2SupTmCMIA5mixCHyF7gAxl3cx11IxIeV4vAcahAQ8R2wVf1pa33cOuc0v2P+ISGqxfcaw05EPCNuyI+7RgBZRWiVb1FhULqbVl4gxij/nWtAELmK9LlXDTqexBpSpY5mKiCIqOtLl7F3X3xpPGbTMBB6xlY69pFigMzQKWGUqUYrQNviN2JRfCiBq5Rw0wkHkwg5OlWt/7Kybhf4fjqs6WowkF/UAAAC0ZVhJZklJKgAIAAAABgASAQMAAQAAAAEAAAAaAQUAAQAAAFYAAAAbAQUAAQAAAF4AAAAoAQMAAQAAAAIAAAATAgMAAQAAAAEAAABphwQAAQAAAGYAAAAAAAAA8nYBAOgDAADydgEA6AMAAAYAAJAHAAQAAAAwMjEwAZEHAAQAAAABAgMAAKAHAAQAAAAwMTAwAaADAAEAAAD//wAAAqAEAAEAAACDAAAAA6AEAAEAAABpAAAAAAAAAAms5c0AAAAASUVORK5CYII=";
@@ -585,16 +590,26 @@ function _mapProfileRow(r) {
     status:       r.status     || "pending",
     accessLevel:  r.access_level || "standard",
     isSuperAdmin: !!r.is_super_admin,
+    permissions:  (r.permissions && typeof r.permissions === "object") ? r.permissions : null,
     createdAt:    (r.created_at || "").slice(0, 10),
     password:     "" // legacy field — never read meaningfully anymore
   };
 }
 
 async function loadProfilesFromSupabase() {
-  const { data, error } = await supabase
+  const cols = "id,email,first_name,last_name,phone,role,status,access_level,is_super_admin,created_at";
+  // Try to include the per-user permissions column; if it doesn't exist yet
+  // (migration not applied), fall back to the base columns so nothing breaks.
+  let { data, error } = await supabase
     .from("profiles")
-    .select("id,email,first_name,last_name,phone,role,status,access_level,is_super_admin,created_at")
+    .select(cols + ",permissions")
     .order("created_at", { ascending: true });
+  if (error) {
+    ({ data, error } = await supabase
+      .from("profiles")
+      .select(cols)
+      .order("created_at", { ascending: true }));
+  }
   if (error) {
     console.error("Failed to load profiles:", error);
     _profilesCache = [];
@@ -686,6 +701,7 @@ async function init() {
       loadMonthlyReportsFromSupabase()
     ]);
     document.getElementById("dash-body").innerHTML = renderGenericHome(user);
+    applyPermissionsUI();
   } else {
     renderLoggedOut();
   }
@@ -892,6 +908,241 @@ function changePassword() {
   }
 }
 
+// ===================== PER-USER PERMISSIONS =====================
+// Each "thing you can click" is a permission key. Some things are grouped
+// into a single checkbox (Reporting, SOPs); Tools is always on for everyone;
+// Data Dash items are individual. Dashboards that appear under multiple role
+// menus are a single key (deduped).
+const PERM_ITEMS = [
+  { key:"dash_project",     label:"Project Dashboard",       group:"Dashboards" },
+  { key:"dash_design",      label:"Design Dashboard",        group:"Dashboards" },
+  { key:"dash_tv",          label:"TV Dashboard",            group:"Dashboards" },
+  { key:"dash_pmassistant", label:"PM Assistant Dashboard",  group:"Dashboards" },
+  { key:"dash_admin",       label:"Admin Dashboard",         group:"Dashboards" },
+  { key:"dash_seniorva",    label:"Senior VA Dashboard",     group:"Dashboards" },
+  { key:"dash_vaadmin",     label:"VA Admin Dashboard",      group:"Dashboards" },
+  { key:"dash_architect",   label:"Architect Dashboard",     group:"Dashboards" },
+  { key:"data_overhead",    label:"PT Overhead & Expenses",  group:"Data Dash" },
+  { key:"data_teamspent",   label:"Project Team Spent",      group:"Data Dash" },
+  { key:"data_pmoverview",  label:"PM Team Overview",        group:"Data Dash" },
+  { key:"rep_all",          label:"Reporting (all reports)", group:"Reporting" },
+  { key:"sops_view",        label:"SOPs (default on for everyone)", group:"Defaults" },
+];
+const PERM_ALL = PERM_ITEMS.map(p => p.key);
+
+// Default permission set per job role. Users can be customized individually
+// after signup. SOPs is on for everyone. Data-dash "overhead" is granted to
+// nobody by default — only full-access Directors get it (via the override
+// below), matching: only Bruce, Tom, Andy, Idoko see it unless explicitly given.
+const ROLE_DEFAULTS = {
+  "Project Director":                          PERM_ALL.slice(),
+  "Administrative Manager":                    ["dash_project","dash_design","dash_tv","dash_pmassistant","dash_admin","data_pmoverview","rep_all","sops_view"],
+  "Project Manager":                           ["dash_project","dash_design","dash_tv","dash_pmassistant","data_pmoverview","rep_all","sops_view"],
+  "PM Assistant":                              ["dash_project","dash_pmassistant","sops_view"],
+  "Senior Virtual Administrative Assistant":   ["dash_project","dash_pmassistant","dash_seniorva","dash_vaadmin","data_pmoverview","data_teamspent","rep_all","sops_view"],
+  "Virtual Administrative Assistant":          ["dash_project","dash_pmassistant","dash_vaadmin","data_pmoverview","sops_view"],
+  "Senior Administrative Assistant":           ["dash_project","dash_pmassistant","dash_admin","rep_all","sops_view"],
+  "Administrative Assistant":                  ["dash_project","dash_pmassistant","sops_view"],
+  "Start of Project Assistant":                ["dash_project","dash_pmassistant","sops_view"],
+  "End of Project Assistant":                  ["dash_project","dash_pmassistant","sops_view"],
+  "Architect":                                 ["dash_project","dash_design","dash_architect","sops_view"],
+  "Assistant / Intern":                        ["dash_project","sops_view"],
+};
+const ROLE_FALLBACK = ["dash_project","dash_pmassistant","sops_view"]; // acquisitions / unknown = view what PM assistants see
+
+// Maps a nav item's onclick signature to the permission key that gates it.
+const ONCLICK_PERM = [
+  ["openProjectDashboard",      "dash_project"],
+  ["openDesignDashboard",       "dash_design"],
+  ["openTVDashboard",           "dash_tv"],
+  ["openPMAssistantDashboard",  "dash_pmassistant"],
+  ["openAdminDashboard",        "dash_admin"],
+  ["openSeniorVADashboard",     "dash_seniorva"],
+  ["openVAAdminDashboard",      "dash_vaadmin"],
+  ["openArchitectDashboard",    "dash_architect"],
+  ["openDataSection('overhead')","data_overhead"],
+  ["openDataSection('teamspent')","data_teamspent"],
+  ["openPMDashboard",           "data_pmoverview"],
+];
+
+let _previewPerms = null; // {name, perms} — session-only "preview as user"
+function _viewUser() { return _previewPerms ? { id:"__preview", __preview:true, perms:_previewPerms.perms } : currentUser(); }
+function _permObjFrom(keys) { const o={}; PERM_ALL.forEach(k => o[k] = keys.indexOf(k) >= 0); return o; }
+function _normPerms(p)      { const o={}; PERM_ALL.forEach(k => o[k] = !!p[k]); return o; }
+function rolePermDefault(role) { return ROLE_DEFAULTS[role] || ROLE_FALLBACK; }
+function effectivePerms(u) {
+  if (!u) return _permObjFrom([]);
+  if (u.__preview) return _normPerms(u.perms);
+  if (u.isSuperAdmin || u.accessLevel === "full") return _permObjFrom(PERM_ALL); // Directors always full
+  if (u.permissions && typeof u.permissions === "object") return _normPerms(u.permissions);
+  return _permObjFrom(rolePermDefault(u.role));
+}
+function hasPerm(u, key) { return !!effectivePerms(u)[key]; }
+
+// Show/hide nav items and whole menus based on the viewing user's permissions.
+function applyPermissionsUI() {
+  const u = _viewUser();
+  if (!u) return;
+  document.querySelectorAll(".nav .ddi").forEach(el => {
+    const oc = el.getAttribute("onclick") || "";
+    let key = null;
+    for (const [sig,k] of ONCLICK_PERM) { if (oc.indexOf(sig) >= 0) { key = k; break; } }
+    if (key) el.style.display = hasPerm(u,key) ? "" : "none";
+  });
+  const setMenu = (id, show) => { const e = document.getElementById(id); if (e) e.style.display = show ? "" : "none"; };
+  setMenu("rep-t",  hasPerm(u,"rep_all"));   // Reporting = single toggle
+  setMenu("sop-t",  hasPerm(u,"sops_view")); // SOPs = single toggle (default on)
+  // Tools tab (tools-t) is always available — never hidden.
+  // Hide any role/data menu whose gateable items are all hidden.
+  document.querySelectorAll(".nav .ni.has-dd").forEach(ni => {
+    if (ni.id === "rep-t" || ni.id === "sop-t" || ni.id === "tools-t") return;
+    const items = Array.from(ni.querySelectorAll(".ddi"));
+    const gateable = items.filter(i => { const oc = i.getAttribute("onclick") || ""; return ONCLICK_PERM.some(([s]) => oc.indexOf(s) >= 0); });
+    if (gateable.length === 0) { ni.style.display = ""; return; }
+    ni.style.display = gateable.some(i => i.style.display !== "none") ? "" : "none";
+  });
+}
+
+// ---- Admin Panel: per-user permission editor ----
+function openPermEditor(id) {
+  const u = getUsers().find(x => x.id === id);
+  if (!u) return;
+  const eff = effectivePerms(u);
+  const isFull = u.isSuperAdmin || u.accessLevel === "full";
+  const groups = {};
+  PERM_ITEMS.forEach(it => { (groups[it.group] = groups[it.group] || []).push(it); });
+  let html = `
+    <button class="modal-close" onclick="closeModal('perm-modal')">✕</button>
+    <h2>Access — ${u.firstName} ${u.lastName}</h2>
+    <p class="sub">${u.email} &nbsp;·&nbsp; <span class="role-pill">${u.role || "—"}</span></p>
+    <div class="error-msg" id="perm-error"></div>
+    <div class="success-msg" id="perm-success"></div>`;
+  if (isFull) html += `<div style="background:#0f2d1a;border:1px solid #27ae60;color:#2ecc71;border-radius:6px;padding:10px 12px;font-size:12px;margin-bottom:14px">This user is a Director / Super Admin and always has full access — these boxes won't restrict them.</div>`;
+  html += `<div style="background:#1a1a1a;border:1px dashed #333;border-radius:6px;padding:8px 12px;font-size:11px;color:#888;margin-bottom:8px">🛠 <b>Tools</b> is available to everyone and can't be switched off.</div>`;
+  for (const g in groups) {
+    html += `<div class="section-label" style="margin-top:14px">${g}</div>`;
+    groups[g].forEach(it => {
+      html += `<label style="display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid #1e1e1e;font-size:13px;color:#ccc;cursor:pointer">
+        <input type="checkbox" data-perm="${it.key}" ${eff[it.key] ? "checked" : ""} style="width:16px;height:16px;cursor:pointer" /> ${it.label}</label>`;
+    });
+  }
+  html += `<div style="display:flex;gap:10px;margin-top:20px">
+      <button class="btn-full" onclick="savePermissions('${u.id}')">Save Access</button>
+      <button class="btn-full outline" onclick="previewAsUser('${u.id}')">👁 Preview this access</button>
+    </div>`;
+  document.getElementById("perm-modal-inner").innerHTML = html;
+  openModal("perm-modal");
+}
+
+function _collectPermsFromEditor() {
+  const perms = {}; PERM_ALL.forEach(k => perms[k] = false);
+  document.querySelectorAll("#perm-modal-inner input[data-perm]").forEach(cb => { perms[cb.getAttribute("data-perm")] = cb.checked; });
+  return perms;
+}
+
+async function savePermissions(id) {
+  const err = document.getElementById("perm-error"), ok = document.getElementById("perm-success");
+  if (err) err.style.display = "none"; if (ok) ok.style.display = "none";
+  const perms = _collectPermsFromEditor();
+  const u = getUsers().find(x => x.id === id); if (u) u.permissions = perms; // reflect immediately this session
+  const { error } = await supabase.rpc("admin_set_permissions", { target: id, perms });
+  if (error) {
+    console.warn("admin_set_permissions not deployed yet:", error.message);
+    if (ok) { ok.textContent = "Saved for this session. To make it stick permanently, the database update still needs to be applied."; ok.style.display = "block"; }
+  } else {
+    await loadProfilesFromSupabase();
+    if (ok) { ok.textContent = "Access saved."; ok.style.display = "block"; }
+  }
+  renderAdminUsers();
+  applyPermissionsUI();
+}
+
+function previewAsUser(id) {
+  const u = getUsers().find(x => x.id === id); if (!u) return;
+  _previewPerms = { name: `${u.firstName} ${u.lastName}`, perms: _collectPermsFromEditor() };
+  closeModal("perm-modal"); closeModal("admin-modal");
+  applyPermissionsUI();
+  let b = document.getElementById("preview-banner");
+  if (!b) { b = document.createElement("div"); b.id = "preview-banner"; b.style.cssText = "position:fixed;bottom:0;left:0;right:0;background:#1a2744;border-top:1px solid #2e4070;color:#8da4c8;padding:10px 16px;font-size:13px;display:flex;align-items:center;justify-content:center;gap:14px;z-index:2000"; document.body.appendChild(b); }
+  b.innerHTML = `👁 Previewing the menus <b style="color:#fff;margin:0 4px">${_previewPerms.name}</b> would see. <button onclick="exitPreview()" style="background:#fff;color:#111;border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer">Exit preview</button>`;
+  b.style.display = "flex";
+}
+
+function exitPreview() {
+  _previewPerms = null;
+  const b = document.getElementById("preview-banner"); if (b) b.style.display = "none";
+  applyPermissionsUI();
+}
+
+// ===================== JOB ROLES (editable) =====================
+const BASE_ROLES = [
+  "Project Director","Administrative Manager","Project Manager","PM Assistant",
+  "Senior Administrative Assistant","Administrative Assistant",
+  "Senior Virtual Administrative Assistant","Virtual Administrative Assistant",
+  "Start of Project Assistant","End of Project Assistant","Architect","Assistant / Intern"
+];
+let ROLE_LIST = BASE_ROLES.slice();
+
+async function loadRolesFromSupabase() {
+  const { data, error } = await supabase.from("pm_roles").select("name").order("sort", { ascending: true });
+  if (error) { ROLE_LIST = BASE_ROLES.slice(); return; } // pm_roles table not created yet
+  const names = (data || []).map(r => r.name).filter(Boolean);
+  const merged = names.slice();
+  BASE_ROLES.forEach(r => { if (merged.indexOf(r) < 0) merged.push(r); });
+  ROLE_LIST = merged.length ? merged : BASE_ROLES.slice();
+}
+
+function roleOptions(selected) {
+  return ROLE_LIST.map(r => `<option value="${r.replace(/"/g,'&quot;')}" ${r===selected?"selected":""}>${r}</option>`).join("");
+}
+
+// Fill the sign-up role dropdown from the current list.
+function renderRoleSelects() {
+  const reg = document.getElementById("reg-role");
+  if (reg) { const keep = reg.value; reg.innerHTML = `<option value="">— Select your role —</option>` + roleOptions(keep); }
+}
+
+// Admin: reassign a user's role (fixes a wrong pick at signup).
+async function changeUserRole(id, role) {
+  const { error } = await supabase.rpc("admin_set_role", { target: id, new_role: role });
+  if (error) { alert("Failed to change role: " + (error.message || "unknown error")); return; }
+  await loadProfilesFromSupabase();
+  renderAdminUsers();
+  applyPermissionsUI();
+}
+
+// Admin: add a new job role name to the list.
+async function addRole() {
+  const inp = document.getElementById("new-role-input");
+  const msg = document.getElementById("role-mgr-msg");
+  const name = (inp ? inp.value : "").trim();
+  if (!name) return;
+  if (ROLE_LIST.indexOf(name) >= 0) { if (msg) { msg.textContent = "That role already exists."; msg.style.color = "#f39c12"; } return; }
+  ROLE_LIST.push(name);                 // reflect immediately this session
+  if (inp) inp.value = "";
+  renderRoleSelects(); renderRoleManager();
+  const { error } = await supabase.rpc("admin_add_role", { role_name: name });
+  if (msg) {
+    if (error) { msg.textContent = 'Added for now. Run the DB migration to keep new roles permanently.'; msg.style.color = "#f39c12"; }
+    else { msg.textContent = "Role added."; msg.style.color = "#2ecc71"; }
+  }
+}
+
+async function removeRole(name) {
+  if (!confirm('Remove the role "' + name + '"? Anyone already assigned keeps it until you reassign them.')) return;
+  const i = ROLE_LIST.indexOf(name); if (i >= 0) ROLE_LIST.splice(i, 1);
+  renderRoleSelects(); renderRoleManager();
+  await supabase.rpc("admin_remove_role", { role_name: name });
+}
+
+function renderRoleManager() {
+  const el = document.getElementById("role-mgr-list");
+  if (!el) return;
+  el.innerHTML = ROLE_LIST.map(r =>
+    `<span style="display:inline-flex;align-items:center;gap:6px;background:#1a2744;border:1px solid #2e4070;color:#8da4c8;font-size:11px;padding:3px 6px 3px 10px;border-radius:99px;margin:0 6px 6px 0">${r}<span onclick="removeRole('${r.replace(/'/g,"\\'")}')" style="cursor:pointer;color:#e74c3c;font-weight:600;padding:0 2px" title="Remove role">✕</span></span>`
+  ).join("");
+}
+
 // ===================== ADMIN PANEL =====================
 function openAdmin() {
   const session = getSession();
@@ -948,7 +1199,7 @@ function renderAdminUsers() {
         <tr>
           <td>${u.firstName} ${u.lastName}${u.isSuperAdmin ? ' <span style="color:#f39c12;font-size:10px">★ SUPER ADMIN</span>' : ""}</td>
           <td style="color:#888;font-size:12px">${u.email}</td>
-          <td><span class="role-pill">${u.role}</span></td>
+          <td><select class="access-select" style="max-width:150px" onchange="changeUserRole('${u.id}', this.value)">${roleOptions(u.role)}</select></td>
           <td>
             ${u.isSuperAdmin ? '<span style="color:#f39c12;font-size:12px">Super Admin</span>' :
               `<select class="access-select" onchange="updateAccess('${u.id}', this.value)">
@@ -958,13 +1209,25 @@ function renderAdminUsers() {
               </select>`}
           </td>
           <td><span class="approved-badge">Active</span></td>
-          <td>
-            ${(!u.isSuperAdmin && u.id !== me.id) ? `<button class="revoke-btn" onclick="revokeUser('${u.id}')">Revoke Access</button>` : `<span style="color:#444;font-size:11px">—</span>`}
+          <td style="white-space:nowrap">
+            <button class="action-btn" style="background:#1a2744;color:#8da4c8;border:1px solid #2e4070" onclick="openPermEditor('${u.id}')">🔧 Edit Access</button>
+            ${(!u.isSuperAdmin && u.id !== me.id) ? `<button class="revoke-btn" onclick="revokeUser('${u.id}')">Revoke</button>` : ``}
           </td>
         </tr>`).join("")}
       </tbody>
     </table>
-    <p style="font-size:11px;color:#444;margin-top:12px">Full Access users can access the Admin Panel and approve registrations.</p>`;
+    <p style="font-size:11px;color:#444;margin-top:12px">Full Access users can access the Admin Panel and approve registrations.</p>
+    <div style="margin-top:22px;padding-top:16px;border-top:1px solid #2a2a2a">
+      <div style="font-size:13px;color:#fff;font-weight:500;margin-bottom:8px">Manage job roles</div>
+      <div style="font-size:11px;color:#666;margin-bottom:10px">Add roles here and they appear in the sign-up form and every role dropdown.</div>
+      <div style="display:flex;gap:8px;margin-bottom:8px">
+        <input id="new-role-input" type="text" placeholder="New role name, e.g. Acquisitions VA" style="flex:1;padding:8px 10px;background:#111;border:1px solid #333;border-radius:6px;color:#fff;font-size:13px" onkeydown="if(event.key==='Enter'){event.preventDefault();addRole();}" />
+        <button class="action-btn approve-btn" onclick="addRole()">+ Add role</button>
+      </div>
+      <div id="role-mgr-msg" style="font-size:11px;margin-bottom:8px"></div>
+      <div id="role-mgr-list"></div>
+    </div>`;
+  renderRoleManager();
 }
 
 async function approveUser(id) {
@@ -3321,6 +3584,9 @@ function propDrop(event, targetPhase) {
 
 // ===================== BOOT =====================
 init();
+// Load the job-role list (falls back to BASE_ROLES if pm_roles isn't created yet)
+// and fill the sign-up role dropdown.
+loadRolesFromSupabase().then(renderRoleSelects).catch(renderRoleSelects);
 // Pre-warm the Google sign-in button so it's ready when the user opens the modal.
 // _renderGoogleButton retries until GSI script is loaded.
 _renderGoogleButton();
