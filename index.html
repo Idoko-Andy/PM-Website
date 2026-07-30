@@ -4048,10 +4048,12 @@ async function deleteContractor(id){
 }
 
 // ---- Construction Calendar (Project Dashboard tab) ----
-const _calState = { y:null, m:null, prop:"all", filter:"all", loaded:false };
+const _calState = { y:null, m:null, prop:"all", pm:"all", filter:"all", loaded:false };
 const _CAL_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 function _calRerender(){ const el=document.getElementById("pd-content"); if(el) el.innerHTML=renderConstructionCalendar(); }
-function calSelectProp(id){ if(id==='__pick') return; _calState.prop=id; _calRerender(); }
+function _propPM(id){ const p=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===id); return p?p.pm:""; }
+function calSelectProp(id){ if(id==='__pick') return; _calState.prop=id; if(id!=="all") _calState.pm="all"; _calRerender(); }
+function calSelectPM(name){ _calState.pm=name; if(name!=="all") _calState.prop="all"; _calRerender(); }
 function calSetFilter(f){ _calState.filter=f; _calRerender(); }
 function calPrevMonth(){ _calState.m--; if(_calState.m<0){_calState.m=11;_calState.y--;} _calRerender(); }
 function calNextMonth(){ _calState.m++; if(_calState.m>11){_calState.m=0;_calState.y++;} _calRerender(); }
@@ -4063,11 +4065,17 @@ function renderConstructionCalendar(){
   const props=(typeof propCards!=='undefined'?propCards:[]);
   const ro=isReadOnly();
   // property selector: All Properties button + a "Select a property" dropdown (scales to 50+)
-  const allActive = st.prop==="all";
-  const allBtn = `<div onclick="calSelectProp('all')" style="padding:7px 14px;font-size:12px;cursor:pointer;border-radius:8px;${allActive?'background:#111;color:#fff':'background:#fff;color:#555;border:0.5px solid #ddd'}">All Properties</div>`;
+  const allActive = st.prop==="all" && st.pm==="all";
+  const allBtn = `<div onclick="calSelectProp('all');calSelectPM('all')" style="padding:7px 14px;font-size:12px;cursor:pointer;border-radius:8px;${allActive?'background:#111;color:#fff':'background:#fff;color:#555;border:0.5px solid #ddd'}">All Properties</div>`;
   const propSelect = `<select onchange="calSelectProp(this.value)" style="padding:7px 12px;font-size:12px;border:0.5px solid #ddd;border-radius:8px;background:#fff;color:#333;max-width:300px">
-    <option value="__pick" ${allActive?"selected":""}>Select a property…</option>
+    <option value="__pick" ${st.prop==="all"?"selected":""}>Select a property…</option>
     ${props.map(p=>`<option value="${p.id}" ${st.prop===p.id?"selected":""}>${_calEsc(p.addr)}</option>`).join("")}
+  </select>`;
+  // Project-manager selector: pick a PM to see all of that manager's properties at once.
+  const pmNames = (typeof PM_MANAGERS!=='undefined'?PM_MANAGERS:[]);
+  const pmSelect = `<select onchange="calSelectPM(this.value)" style="padding:7px 12px;font-size:12px;border:0.5px solid #ddd;border-radius:8px;background:#fff;color:#333;max-width:220px">
+    <option value="all" ${st.pm==="all"?"selected":""}>All project managers…</option>
+    ${pmNames.map(nm=>`<option value="${_calEsc(nm)}" ${st.pm===nm?"selected":""}>👤 ${_calEsc(nm)}</option>`).join("")}
   </select>`;
   // filter chips
   const chip=(f,label)=>`<div onclick="calSetFilter('${f}')" style="padding:5px 12px;font-size:11px;cursor:pointer;border-radius:999px;${st.filter===f?'background:#1a2744;color:#fff':'background:#fff;color:#666;border:0.5px solid #ddd'}">${label}</div>`;
@@ -4083,6 +4091,7 @@ function renderConstructionCalendar(){
     const ds=`${st.y}-${String(st.m+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
     return _calEventsCache.filter(e=> e.event_date===ds
       && (st.prop==="all"||e.property_id===st.prop)
+      && (st.pm==="all"||_propPM(e.property_id)===st.pm)
       && _matchFilter(e));
   };
   const evChip=(e)=>{
@@ -4107,7 +4116,7 @@ function renderConstructionCalendar(){
   const weekdays=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d=>`<div style="text-align:center;font-size:10px;color:#999;text-transform:uppercase;letter-spacing:.05em;padding:6px 0">${d}</div>`).join("");
   const addTop=ro?"":`<button onclick="openAddCalEvent('')" style="padding:7px 14px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;white-space:nowrap">+ Add</button>`;
   return `<div style="padding:20px">
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">${allBtn}${propSelect}</div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">${allBtn}${propSelect}${pmSelect}</div>
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px">
       <div style="display:flex;align-items:center;gap:12px">
         <div style="display:flex;align-items:center;gap:8px">
@@ -4123,7 +4132,7 @@ function renderConstructionCalendar(){
       <div style="display:grid;grid-template-columns:repeat(7,1fr);background:#fafbfc;border-bottom:0.5px solid #edf0f4">${weekdays}</div>
       <div style="display:grid;grid-template-columns:repeat(7,1fr)">${cells.join("")}</div>
     </div>
-    <div style="font-size:11px;color:#aaa;margin-top:10px">Showing ${st.prop==="all"?"all properties":(_calEsc(_propAddr(st.prop))||"selected property")}. Manage contractors in Tools → Contractor Directory.</div>
+    <div style="font-size:11px;color:#aaa;margin-top:10px">Showing ${st.pm!=="all"?("all of "+_calEsc(st.pm)+"'s properties"):(st.prop==="all"?"all properties":(_calEsc(_propAddr(st.prop))||"selected property"))}. Manage contractors in Tools → Contractor Directory.</div>
   </div>`;
 }
 
