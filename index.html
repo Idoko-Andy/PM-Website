@@ -3282,12 +3282,13 @@ function _assistantRole(name){
   return u ? u.role : (name==="Alex"?"Start of Project Assistant":name==="Gabe"?"End of Project Assistant":"PM Assistant");
 }
 function openPMAssistantDashboard(activeTab){
-  activeTab = activeTab || 'sop';
+  activeTab = activeTab || 'main';
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
   // Tabs are the assistant JOB ROLES (not person names). Each role tab shows the
   // property-phase boards for that stage of the project, matching the Property Dashboard.
   const tabs=[
+    {id:'main',         label:'Main Dashboard',          icon:'📊'},
     {id:'sop',          label:'Start of Project Assistant', icon:'🧱'},
     {id:'eop',          label:'End of Project Assistant',   icon:'🏁'},
     {id:'property',     label:'Property Dashboard',      icon:'🏗'},
@@ -3319,13 +3320,73 @@ const _ASSISTANT_ROLE_BOARDS = {
   ]},
 };
 function getPMAContent(tab){
+  if(tab==='main') return pmAssistantMainDashboard();
   if(tab==='sop'||tab==='eop') return pmAssistantRoleContent(tab);
   switch(tab){
     case 'property':     return renderPropertyBoard();
     case 'construction': return renderConstructionCalendar();
     case 'taskcal':      return renderTaskCalendar();
-    default:             return pmAssistantRoleContent('sop');
+    default:             return pmAssistantMainDashboard();
   }
+}
+// Assign (or reassign) a task from the PM Assistant main dashboard.
+async function assignTask(id, name){
+  if(_blockIfReadOnly()) return;
+  if(!name) return;
+  const { error } = await supabase.from("pm_tasks").update({ assignee:name, assignees:[name] }).eq("id",id);
+  if(error){ alert("Couldn't assign task: "+(error.message||"")); return; }
+  const t=(_tasksCache||[]).find(x=>x.id===id);
+  _logAudit("assigned","task", t?t.title:id, "Assigned to "+name);
+  await loadTasks();
+  const el=document.getElementById("pd-content"); if(el) el.innerHTML=pmAssistantMainDashboard();
+}
+function pmAssistantMainDashboard(){
+  const ro=isReadOnly();
+  const countPhases=(phases)=>(propCards||[]).filter(c=>phases.includes(c.phase)).length;
+  const roleSection=(cfg)=>{
+    const holders=getUsers().filter(u=>u.status==='approved' && u.role===cfg.role).map(u=>(u.firstName||'').trim()).filter(Boolean);
+    const who=holders.length?holders.join(', '):cfg.seed;
+    const tiles=cfg.boards.map(b=>{
+      const n=countPhases(b.phases); const p=phInfo(b.phases[0]);
+      return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;border-top:3px solid ${p.dot};padding:12px 14px">
+        <div style="font-size:11px;color:#888;margin-bottom:6px">${_calEsc(b.title)}</div>
+        <div style="font-size:26px;font-weight:600;color:#111">${n}</div>
+      </div>`;
+    }).join('');
+    return `<div style="margin-bottom:20px">
+      <div style="font-size:14px;font-weight:500;color:#111;margin-bottom:2px">${_calEsc(cfg.role)}</div>
+      <div style="font-size:11px;color:#999;margin-bottom:10px">${_calEsc(who)}</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">${tiles}</div>
+    </div>`;
+  };
+  // Unassigned open tasks — surfaced here so they can be handed out in the Monday meeting.
+  const unassigned=(_tasksCache||[]).filter(t=>t.status!=="done" && taskAssignees(t).length===0)
+    .sort((a,b)=>(a.due_date||'9999')<(b.due_date||'9999')?-1:1);
+  const team=teamMembers();
+  const asgSelect=(id)=>ro?'':`<select onchange="assignTask('${id}', this.value)" style="font-size:11px;padding:5px 8px;border:0.5px solid #ddd;border-radius:6px;background:#fff;color:#333">
+      <option value="">Assign to…</option>${team.map(n=>`<option value="${_calEsc(n)}">${_calEsc(n)}</option>`).join('')}
+    </select>`;
+  const unassignedRows = unassigned.length? unassigned.map(t=>`
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:0.5px solid #f4f5f7">
+      <div style="min-width:0;flex:1">
+        <div style="font-size:13px;color:#111;font-weight:500">${t.category?`<span style="font-size:10px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:6px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div>
+        <div style="font-size:11px;color:#888;margin-top:2px">${t.property_id?_calEsc(_propAddr(t.property_id))+' · ':''}${t.due_date?('Due '+t.due_date):'No due date'}</div>
+      </div>
+      ${asgSelect(t.id)}
+    </div>`).join('')
+    : `<div style="text-align:center;color:#ccc;font-size:12px;padding:20px 0">No unassigned tasks — all handed out.</div>`;
+  return `<div style="padding:20px">
+    <div style="font-size:17px;font-weight:500;color:#111;margin-bottom:14px">📊 PM Assistant — Main Dashboard</div>
+    ${roleSection(_ASSISTANT_ROLE_BOARDS.sop)}
+    ${roleSection(_ASSISTANT_ROLE_BOARDS.eop)}
+    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden;margin-top:6px">
+      <div style="padding:10px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between">
+        <div style="font-size:13px;font-weight:500;color:#111">🗂 Unassigned Tasks</div>
+        <span style="font-size:10px;background:#FAEEDA;color:#633806;padding:2px 8px;border-radius:99px">${unassigned.length}</span>
+      </div>
+      <div style="padding:4px 14px 12px">${unassignedRows}</div>
+    </div>
+  </div>`;
 }
 function pmAssistantRoleContent(key){
   const cfg=_ASSISTANT_ROLE_BOARDS[key]; if(!cfg) return '';
