@@ -721,7 +721,7 @@ async function init() {
     utilRight.innerHTML = `
       <div class="ubtn" onclick="goHome()" title="Home">🏠 Home</div>
       <div class="udiv"></div>
-      ${user.accessLevel === "full" || user.isSuperAdmin ? `<div class="ubtn" onclick="openAdmin()">⚙ Admin Panel</div><div class="udiv"></div>` : ""}
+      ${canSeeAdmin(user) ? `<div class="ubtn" onclick="openAdmin()">⚙ Admin Panel</div><div class="udiv"></div>` : ""}
       <div class="ubtn" onclick="openAccount()">👤 ${user.firstName} ${user.lastName}</div>
       <div class="udiv"></div>
       <div class="ubtn" onclick="doSignOut()">Sign Out</div>
@@ -1130,14 +1130,22 @@ async function loadRolesFromSupabase() {
   ROLE_LIST = merged.length ? merged : BASE_ROLES.slice();
 }
 
-function roleOptions(selected) {
-  return ROLE_LIST.map(r => `<option value="${r.replace(/"/g,'&quot;')}" ${r===selected?"selected":""}>${r}</option>`).join("");
+// Roles that only an admin can assign — they can never be self-selected at sign-up,
+// and only these roles (plus super admins) can open the Admin Panel.
+const ELEVATED_ROLES = ["CEO","Project Director"];
+function canSeeAdmin(u){ return !!(u && (ELEVATED_ROLES.indexOf(u.role) >= 0 || u.isSuperAdmin)); }
+
+function roleOptions(selected, excludeElevated) {
+  return ROLE_LIST
+    .filter(r => !(excludeElevated && ELEVATED_ROLES.indexOf(r) >= 0))
+    .map(r => `<option value="${r.replace(/"/g,'&quot;')}" ${r===selected?"selected":""}>${r}</option>`).join("");
 }
 
-// Fill the sign-up role dropdown from the current list.
+// Fill the sign-up role dropdown from the current list. CEO and Project Director are
+// withheld here — those can only be assigned by an admin in the Admin Panel.
 function renderRoleSelects() {
   const reg = document.getElementById("reg-role");
-  if (reg) { const keep = reg.value; reg.innerHTML = `<option value="">— Select your role —</option>` + roleOptions(keep); }
+  if (reg) { const keep = reg.value; reg.innerHTML = `<option value="">— Select your role —</option>` + roleOptions(keep, true); }
 }
 
 // Admin: reassign a user's role (fixes a wrong pick at signup).
@@ -1188,7 +1196,7 @@ function openAdmin() {
   if (!session) return;
   const users = getUsers();
   const me = users.find(u => u.id === session.id);
-  if (!me || (me.accessLevel !== "full" && !me.isSuperAdmin)) return;
+  if (!canSeeAdmin(me)) return;
 
   renderAdminPending();
   renderAdminUsers();
@@ -1254,7 +1262,7 @@ function renderAdminUsers() {
         </tr>`).join("")}
       </tbody>
     </table>
-    <p style="font-size:11px;color:#444;margin-top:12px">Full Access users can access the Admin Panel and approve registrations.</p>
+    <p style="font-size:11px;color:#444;margin-top:12px">Only CEO and Project Director roles (and super admins) can open the Admin Panel and approve registrations.</p>
     <div style="margin-top:22px;padding-top:16px;border-top:1px solid #2a2a2a">
       <div style="font-size:13px;color:#fff;font-weight:500;margin-bottom:8px">Manage job roles</div>
       <div style="font-size:11px;color:#666;margin-bottom:10px">Add roles here and they appear in the sign-up form and every role dropdown.</div>
