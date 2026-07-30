@@ -3767,6 +3767,31 @@ async function loadCalendarEventsFromSupabase(){
 }
 function _contractorName(id){ const c=_contractorsCache.find(x=>x.id===id); return c?c.name:"Contractor"; }
 function _propAddr(id){ const p=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===id); return p?p.addr:""; }
+// Distinct custom construction-calendar types currently in use. Derived from the
+// events themselves, so a type stays selectable while any event uses it and
+// disappears automatically once none remain.
+function _customCalTypes(){
+  const set=new Set();
+  _calEventsCache.forEach(e=>{ if(e.kind==="custom" && e.title){ set.add(e.title.trim()); } });
+  return Array.from(set).sort((a,b)=>a.localeCompare(b));
+}
+// Names of everyone on the team who can own a task: every approved user whose
+// job role is not "Other". Used for the task assignee filter + dropdowns.
+function teamMembers(){
+  return getUsers()
+    .filter(u => u.status==="approved" && (u.role||"").trim().toLowerCase()!=="other")
+    .map(u => (`${u.firstName||""} ${u.lastName||""}`).trim())
+    .filter(n => n)
+    .sort((a,b)=>a.localeCompare(b));
+}
+// Distinct task categories/headers in use (e.g. "Build Scope of Work"), plus a
+// couple of sensible seeds so the list is never empty on a fresh install.
+const _TASK_CATEGORY_SEEDS = ["Build Scope of Work","Walkthrough","Punch List","Inspection","Follow Up"];
+function _taskCategories(){
+  const set=new Set(_TASK_CATEGORY_SEEDS);
+  _tasksCache.forEach(t=>{ if(t.category){ set.add(t.category.trim()); } });
+  return Array.from(set).sort((a,b)=>a.localeCompare(b));
+}
 
 // ---- Contractor Directory (Tools menu) ----
 async function openContractorDirectory(){
@@ -3859,11 +3884,16 @@ function renderConstructionCalendar(){
   // month grid
   const first=new Date(st.y,st.m,1), startDow=first.getDay(), daysInMonth=new Date(st.y,st.m+1,0).getDate();
   const todayStr=(()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;})();
+  const _matchFilter=(e)=>{
+    if(st.filter==="all") return true;
+    if(st.filter.indexOf("custom::")===0) return e.kind==="custom" && (e.title||"").trim()===st.filter.slice(8);
+    return e.kind===st.filter;
+  };
   const eventsForDay=(day)=>{
     const ds=`${st.y}-${String(st.m+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
     return _calEventsCache.filter(e=> e.event_date===ds
       && (st.prop==="all"||e.property_id===st.prop)
-      && (st.filter==="all"||e.kind===st.filter));
+      && _matchFilter(e));
   };
   const evChip=(e)=>{
     if(e.kind==="contractor"){ return `<div style="font-size:10px;background:#1a2744;color:#fff;border-radius:4px;padding:2px 5px;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_calEsc(_contractorName(e.contractor_id))}">★ ${_calEsc(_contractorName(e.contractor_id))}</div>`; }
@@ -3895,7 +3925,7 @@ function renderConstructionCalendar(){
           <div style="font-size:15px;font-weight:500;color:#111;min-width:130px;text-align:center">${_CAL_MONTHS[st.m]} ${st.y}</div>
           <div onclick="calNextMonth()" style="cursor:pointer;font-size:16px;color:#888;padding:2px 8px;border:0.5px solid #ddd;border-radius:6px;background:#fff">›</div>
         </div>
-        <div style="display:flex;gap:6px">${chip("all","All")}${chip("material","📦 Material Deliveries")}${chip("contractor","★ Contractor Starts")}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">${chip("all","All")}${chip("material","📦 Material Deliveries")}${chip("contractor","★ Contractor Starts")}${_customCalTypes().map(t=>chip("custom::"+t,"• "+t)).join("")}</div>
       </div>
       ${addTop}
     </div>
@@ -3923,11 +3953,12 @@ function openAddCalEvent(dateStr){
       <select id="cal-kind" onchange="_calToggleKind()">
         <option value="material">📦 Material delivery</option>
         <option value="contractor">★ Contractor start</option>
-        <option value="custom">＋ Add custom type…</option>
+        ${(()=>{ const ct=_customCalTypes(); return ct.length?('<optgroup label="Your custom types">'+ct.map(t=>`<option value="custom::${_calEsc(t)}">• ${_calEsc(t)}</option>`).join("")+'</optgroup>'):""; })()}
+        <option value="__newcustom">＋ Add custom type…</option>
       </select>
     </div>
     <div class="form-row" id="cal-material-row"><label>What's being delivered</label><input type="text" id="cal-title" placeholder="e.g. Cabinets, flooring, windows" /></div>
-    <div class="form-row" id="cal-custom-row" style="display:none"><label>Type / description</label><input type="text" id="cal-custom" placeholder="e.g. Inspection, dumpster pickup, walkthrough" /></div>
+    <div class="form-row" id="cal-custom-row" style="display:none"><label>New custom type</label><input type="text" id="cal-custom" placeholder="e.g. Drawings due, inspection, dumpster pickup" /><div style="font-size:11px;color:#999;margin-top:4px">This becomes a reusable type you can pick next time.</div></div>
     <div id="cal-contractor-row" style="display:none">
       <div class="form-row"><label>Contractor</label>
         <select id="cal-contractor" onchange="_calContractorChange()">
@@ -3951,7 +3982,7 @@ function openAddCalEvent(dateStr){
 function _calToggleKind(){
   const kind=document.getElementById("cal-kind").value;
   document.getElementById("cal-material-row").style.display = kind==="material"?"":"none";
-  document.getElementById("cal-custom-row").style.display = kind==="custom"?"":"none";
+  document.getElementById("cal-custom-row").style.display = kind==="__newcustom"?"":"none";
   document.getElementById("cal-contractor-row").style.display = kind==="contractor"?"":"none";
 }
 function _calContractorChange(){
@@ -3965,17 +3996,21 @@ async function saveCalEvent(){
   if(err) err.style.display="none";
   const date=document.getElementById("cal-date").value;
   const prop=document.getElementById("cal-prop").value;
-  const kind=document.getElementById("cal-kind").value;
+  const kindSel=document.getElementById("cal-kind").value;
   const notes=(document.getElementById("cal-notes").value||"").trim();
   if(!date){ showE("Pick a date."); return; }
   if(!prop){ showE("Pick a property."); return; }
-  let title=null, contractorId=null;
-  if(kind==="material"){
+  let kind=kindSel, title=null, contractorId=null;
+  if(kindSel==="material"){
     title=(document.getElementById("cal-title").value||"").trim();
     if(!title){ showE("Enter what's being delivered."); return; }
-  } else if(kind==="custom"){
+  } else if(kindSel==="__newcustom"){
+    kind="custom";
     title=(document.getElementById("cal-custom").value||"").trim();
-    if(!title){ showE("Enter a type or description."); return; }
+    if(!title){ showE("Type a name for your custom type."); return; }
+  } else if(kindSel.indexOf("custom::")===0){
+    kind="custom";
+    title=kindSel.slice(8);
   } else {
     contractorId=document.getElementById("cal-contractor").value;
     if(contractorId==="__new"){
@@ -3999,7 +4034,7 @@ async function saveCalEvent(){
 // ===================== TASK SYSTEM + TASK CALENDAR =====================
 let _tasksCache = [];
 async function loadTasks(){
-  const { data, error } = await supabase.from("pm_tasks").select("id,title,assignee,due_date,status,property_id,notes").order("due_date",{ascending:true});
+  const { data, error } = await supabase.from("pm_tasks").select("id,title,assignee,due_date,start_date,category,refer_to,status,property_id,notes").order("due_date",{ascending:true});
   _tasksCache = error ? [] : (data||[]);
 }
 const _taskCal = { y:null, m:null, assignee:"all", loaded:false };
@@ -4013,20 +4048,32 @@ function renderTaskCalendar(){
   if(st.y==null){ const d=new Date(); st.y=d.getFullYear(); st.m=d.getMonth(); }
   if(!st.loaded){ st.loaded=true; loadTasks().then(_taskRerender); }
   const ro=isReadOnly();
-  const assignees=["all"].concat(PM_MANAGERS).concat(["Unassigned"]);
+  const assignees=["all"].concat(teamMembers()).concat(["Unassigned"]);
   const chip=(a)=>{ const lbl=a==="all"?"All":a; return `<div onclick="taskSetAssignee('${_calEsc(a).replace(/'/g,"\\'")}')" style="padding:5px 12px;font-size:11px;cursor:pointer;border-radius:999px;${st.assignee===a?'background:#111;color:#fff':'background:#fff;color:#666;border:0.5px solid #ddd'}">${_calEsc(lbl)}</div>`; };
   const filterBar=assignees.map(chip).join("");
   const first=new Date(st.y,st.m,1),startDow=first.getDay(),daysInMonth=new Date(st.y,st.m+1,0).getDate();
   const todayStr=(()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;})();
+  const _asgMatch=(t)=> st.assignee==="all" || (st.assignee==="Unassigned"? !t.assignee : t.assignee===st.assignee);
+  // A task can appear twice: a "start" marker on its start date and a "due"
+  // marker on its due date. It does NOT fill in the days between.
   const tasksForDay=(day)=>{
     const ds=`${st.y}-${String(st.m+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
-    return _tasksCache.filter(t=> t.due_date===ds && (st.assignee==="all" || (st.assignee==="Unassigned"? !t.assignee : t.assignee===st.assignee)));
+    const out=[];
+    _tasksCache.forEach(t=>{
+      if(!_asgMatch(t)) return;
+      if(t.start_date===ds && t.start_date!==t.due_date) out.push({t, marker:"start"});
+      if(t.due_date===ds) out.push({t, marker: t.start_date && t.start_date!==t.due_date ? "due" : "single"});
+    });
+    return out;
   };
-  const taskChip=(t)=>{
-    const done=t.status==="done";
+  const taskChip=(entry)=>{
+    const t=entry.t, done=t.status==="done";
     const bg=done?"#EAF3DE":"#FAEEDA", col=done?"#3B6D11":"#633806", deco=done?"text-decoration:line-through;opacity:0.8;":"";
     const who=t.assignee?(" · "+t.assignee):"";
-    return `<div onclick="event.stopPropagation();toggleTaskDone('${t.id}')" title="Click to mark ${done?'open':'done'}" style="font-size:10px;background:${bg};color:${col};border-radius:4px;padding:2px 5px;margin-bottom:2px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${deco}">${done?'✓ ':''}${_calEsc(t.title)}${_calEsc(who)}</div>`;
+    const label=t.category?t.category:t.title;
+    const mk=entry.marker==="start"?"▶ ":(entry.marker==="due"?"■ ":"");
+    const tip=`${t.category?t.category+" — ":""}${t.title}${entry.marker==="start"?" (start)":entry.marker==="due"?" (due)":""}`;
+    return `<div onclick="event.stopPropagation();toggleTaskDone('${t.id}')" title="${_calEsc(tip)} · click to mark ${done?'open':'done'}" style="font-size:10px;background:${bg};color:${col};border-radius:4px;padding:2px 5px;margin-bottom:2px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${deco}">${done?'✓ ':mk}${_calEsc(label)}${_calEsc(who)}</div>`;
   };
   const cells=[];
   for(let i=0;i<startDow;i++) cells.push(`<div style="background:#fafbfc;min-height:92px;border:0.5px solid #edf0f4"></div>`);
@@ -4071,19 +4118,38 @@ async function toggleTaskDone(id){
   await loadTasks(); _taskRerender();
 }
 
+function _taskCatToggle(){
+  const v=document.getElementById("task-cat").value;
+  document.getElementById("task-cat-new-row").style.display = v==="__new"?"":"none";
+}
 function openAddTask(dateStr){
   if(_blockIfReadOnly()) return;
   const props=(typeof propCards!=='undefined'?propCards:[]);
   const propOpts=props.map(p=>`<option value="${p.id}">${_calEsc(p.addr)}</option>`).join("");
-  const asgOpts=PM_MANAGERS.map(n=>`<option>${_calEsc(n)}</option>`).join("");
+  const team=teamMembers();
+  const asgOpts=team.map(n=>`<option>${_calEsc(n)}</option>`).join("");
+  const catOpts=_taskCategories().map(c=>`<option>${_calEsc(c)}</option>`).join("");
+  const referList=team.map(n=>`<option value="${_calEsc(n)}"></option>`).join("");
   document.getElementById("task-inner").innerHTML=`
     <button class="modal-close" onclick="closeModal('task-modal')">✕</button>
     <h2>Add task</h2>
     <div class="error-msg" id="task-err"></div>
     <div class="form-row"><label>Task</label><input type="text" id="task-title" placeholder="What needs to get done" /></div>
+    <div class="form-row"><label>Header / category</label>
+      <select id="task-cat" onchange="_taskCatToggle()">
+        <option value="">— None —</option>
+        ${catOpts}
+        <option value="__new">＋ Add new header…</option>
+      </select>
+    </div>
+    <div class="form-row" id="task-cat-new-row" style="display:none"><label>New header</label><input type="text" id="task-cat-new" placeholder="e.g. Build Scope of Work" /><div style="font-size:11px;color:#999;margin-top:4px">Saved so you can reuse it. This is what shows on the calendar.</div></div>
     <div class="form-row"><label>Assign to</label><select id="task-asg"><option value="">— Unassigned —</option>${asgOpts}</select></div>
-    <div class="form-row"><label>Due date</label><input type="date" id="task-due" value="${_calEsc(dateStr||"")}" /></div>
+    <div class="form-two">
+      <div class="form-row"><label>Start date (optional)</label><input type="date" id="task-start" /></div>
+      <div class="form-row"><label>Due date</label><input type="date" id="task-due" value="${_calEsc(dateStr||"")}" /></div>
+    </div>
     <div class="form-row"><label>Property (optional)</label><select id="task-prop"><option value="">— None —</option>${propOpts}</select></div>
+    <div class="form-row"><label>Refer questions to (optional)</label><input type="text" id="task-refer" list="task-refer-list" placeholder="Type or pick a name" /><datalist id="task-refer-list">${referList}</datalist></div>
     <div class="form-row"><label>Notes (optional)</label><input type="text" id="task-notes" placeholder="Details" /></div>
     <button class="btn-full" onclick="saveTask()">Add task</button>`;
   openModal("task-modal");
@@ -4094,14 +4160,21 @@ async function saveTask(){
   const showE=(m)=>{ if(err){err.textContent=m;err.style.display="block";} };
   if(err) err.style.display="none";
   const title=(document.getElementById("task-title").value||"").trim();
+  const catSel=document.getElementById("task-cat").value;
+  let category = catSel==="__new" ? (document.getElementById("task-cat-new").value||"").trim() : (catSel||"");
+  category = category || null;
   const asg=document.getElementById("task-asg").value||null;
+  const start=document.getElementById("task-start").value||null;
   const due=document.getElementById("task-due").value||null;
   const prop=document.getElementById("task-prop").value||null;
+  const refer=(document.getElementById("task-refer").value||"").trim()||null;
   const notes=(document.getElementById("task-notes").value||"").trim()||null;
   if(!title){ showE("Enter a task."); return; }
-  const { error } = await supabase.from("pm_tasks").insert({ title, assignee:asg, due_date:due, property_id:prop, notes });
+  if(!due){ showE("Pick a due date."); return; }
+  if(start && start>due){ showE("Start date can't be after the due date."); return; }
+  const { error } = await supabase.from("pm_tasks").insert({ title, category, assignee:asg, start_date:start, due_date:due, property_id:prop, refer_to:refer, notes });
   if(error){ showE("Failed to save: "+(error.message||"")); return; }
-  _logAudit("created","task", title, asg?("Assigned to "+asg):"Unassigned");
+  _logAudit("created","task", category?(category+": "+title):title, asg?("Assigned to "+asg):"Unassigned");
   await loadTasks();
   closeModal("task-modal");
   _taskRerender();
