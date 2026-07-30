@@ -45,6 +45,10 @@ body{background:#1a1a1a;color:#fff;min-height:100vh}
 .ddi{padding:9px 14px;font-size:12px;color:#ccc;cursor:pointer;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;gap:8px}
 .ddi:last-child{border-bottom:none}
 .ddi:hover{background:#2a2a2a;color:#fff}
+.sop-flyout{position:relative}
+.sop-sub{display:none;position:absolute;top:-1px;right:100%;background:#1e1e1e;border:1px solid #333;border-radius:8px 0 0 8px;min-width:255px;z-index:200;box-shadow:-4px 4px 14px rgba(0,0,0,0.45)}
+.sop-flyout:hover .sop-sub{display:block}
+#sop-t:hover > .dd{display:block}
 
 /* MODALS */
 .overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:1000;align-items:center;justify-content:center}
@@ -253,19 +257,24 @@ body{background:#1a1a1a;color:#fff;min-height:100vh}
     </div>
   </div>
   <div class="ni has-dd" id="sop-t">📖 SOPs ▾
-    <div class="dd" id="sop-d" style="min-width:280px">
-      <div class="ddl">Job Role SOPs</div>
-      <div class="ddi" onclick="openSOP('role','Project Director')">⬡ Project Director SOP</div>
-      <div class="ddi" onclick="openSOP('role','Project Manager')">🏗 Project Manager SOP</div>
-      <div class="ddi" onclick="openSOP('role','Administrative Assistant')">🏢 Administrative Assistant SOP</div>
-      <div class="ddi" onclick="openSOP('role','Senior Administrative Assistant')">🏢 Senior Administrative Assistant SOP</div>
-      <div class="ddi" onclick="openSOP('role','Virtual Administrative Assistant')">💻 Virtual Administrative Assistant SOP</div>
-      <div class="ddi" onclick="openSOP('role','Senior Virtual Administrative Assistant')">💻 Senior Virtual Administrative Assistant SOP</div>
-      <div class="ddi" onclick="openSOP('role','Start of Project Assistant')">🚀 Start of Project Assistant SOP</div>
-      <div class="ddi" onclick="openSOP('role','End of Project Assistant')">🏁 End of Project Assistant SOP</div>
-      <div class="ddi" onclick="openSOP('role','Assistant / Intern')">🎓 Assistant / Intern SOP</div>
-      <div class="ddi" onclick="openSOP('role','VA Assistant')">💻 VA Assistant SOP</div>
-      <div class="ddi" onclick="openSOP('role','Architect')">📐 Architect SOP</div>
+    <div class="dd" id="sop-d" style="min-width:235px">
+      <div class="ddi sop-flyout" style="justify-content:space-between">
+        <span>📋 Job Role SOPs</span><span style="opacity:0.45;font-size:13px">‹</span>
+        <div class="sop-sub">
+          <div class="ddl">Job Role SOPs</div>
+          <div class="ddi" onclick="openSOP('role','Project Director')">⬡ Project Director SOP</div>
+          <div class="ddi" onclick="openSOP('role','Project Manager')">🏗 Project Manager SOP</div>
+          <div class="ddi" onclick="openSOP('role','Administrative Assistant')">🏢 Administrative Assistant SOP</div>
+          <div class="ddi" onclick="openSOP('role','Senior Administrative Assistant')">🏢 Senior Administrative Assistant SOP</div>
+          <div class="ddi" onclick="openSOP('role','Virtual Administrative Assistant')">💻 Virtual Administrative Assistant SOP</div>
+          <div class="ddi" onclick="openSOP('role','Senior Virtual Administrative Assistant')">💻 Senior Virtual Administrative Assistant SOP</div>
+          <div class="ddi" onclick="openSOP('role','Start of Project Assistant')">🚀 Start of Project Assistant SOP</div>
+          <div class="ddi" onclick="openSOP('role','End of Project Assistant')">🏁 End of Project Assistant SOP</div>
+          <div class="ddi" onclick="openSOP('role','Assistant / Intern')">🎓 Assistant / Intern SOP</div>
+          <div class="ddi" onclick="openSOP('role','VA Assistant')">💻 VA Assistant SOP</div>
+          <div class="ddi" onclick="openSOP('role','Architect')">📐 Architect SOP</div>
+        </div>
+      </div>
       <div class="ddl" style="margin-top:4px">Systems &amp; Processes</div>
       <div class="ddi" onclick="openSOP('systems','')">⚙️ Systems &amp; Processes SOPs →</div>
     </div>
@@ -3805,6 +3814,7 @@ function renderConstructionCalendar(){
   };
   const evChip=(e)=>{
     if(e.kind==="contractor"){ return `<div style="font-size:10px;background:#1a2744;color:#fff;border-radius:4px;padding:2px 5px;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_calEsc(_contractorName(e.contractor_id))}">★ ${_calEsc(_contractorName(e.contractor_id))}</div>`; }
+    if(e.kind==="custom"){ return `<div style="font-size:10px;background:#EEEDFE;color:#3C3489;border-radius:4px;padding:2px 5px;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_calEsc(e.title||'Event')}">• ${_calEsc(e.title||'Event')}</div>`; }
     return `<div style="font-size:10px;background:#E6F1FB;color:#0C447C;border-radius:4px;padding:2px 5px;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_calEsc(e.title||'Material delivery')}">📦 ${_calEsc(e.title||'Material')}</div>`;
   };
   const cells=[];
@@ -3860,9 +3870,11 @@ function openAddCalEvent(dateStr){
       <select id="cal-kind" onchange="_calToggleKind()">
         <option value="material">📦 Material delivery</option>
         <option value="contractor">★ Contractor start</option>
+        <option value="custom">＋ Add custom type…</option>
       </select>
     </div>
     <div class="form-row" id="cal-material-row"><label>What's being delivered</label><input type="text" id="cal-title" placeholder="e.g. Cabinets, flooring, windows" /></div>
+    <div class="form-row" id="cal-custom-row" style="display:none"><label>Type / description</label><input type="text" id="cal-custom" placeholder="e.g. Inspection, dumpster pickup, walkthrough" /></div>
     <div id="cal-contractor-row" style="display:none">
       <div class="form-row"><label>Contractor</label>
         <select id="cal-contractor" onchange="_calContractorChange()">
@@ -3886,6 +3898,7 @@ function openAddCalEvent(dateStr){
 function _calToggleKind(){
   const kind=document.getElementById("cal-kind").value;
   document.getElementById("cal-material-row").style.display = kind==="material"?"":"none";
+  document.getElementById("cal-custom-row").style.display = kind==="custom"?"":"none";
   document.getElementById("cal-contractor-row").style.display = kind==="contractor"?"":"none";
 }
 function _calContractorChange(){
@@ -3907,6 +3920,9 @@ async function saveCalEvent(){
   if(kind==="material"){
     title=(document.getElementById("cal-title").value||"").trim();
     if(!title){ showE("Enter what's being delivered."); return; }
+  } else if(kind==="custom"){
+    title=(document.getElementById("cal-custom").value||"").trim();
+    if(!title){ showE("Enter a type or description."); return; }
   } else {
     contractorId=document.getElementById("cal-contractor").value;
     if(contractorId==="__new"){
@@ -3921,7 +3937,7 @@ async function saveCalEvent(){
   }
   const { error } = await supabase.from("pm_calendar_events").insert({ property_id:prop, event_date:date, kind, title, contractor_id:contractorId, notes });
   if(error){ showE("Failed to save: "+(error.message||"unknown error")); return; }
-  _logAudit("created","calendar", _propAddr(prop), kind==="material"?("Material delivery: "+title):("Contractor start: "+_contractorName(contractorId)));
+  _logAudit("created","calendar", _propAddr(prop), kind==="contractor"?("Contractor start: "+_contractorName(contractorId)):(kind==="custom"?("Custom: "+title):("Material delivery: "+title)));
   await loadCalendarEventsFromSupabase();
   closeModal("calevent-modal");
   _calRerender();
