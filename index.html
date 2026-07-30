@@ -1118,6 +1118,7 @@ async function changeUserRole(id, role) {
   const { error } = await supabase.rpc("admin_set_role", { target: id, new_role: role });
   if (error) { alert("Failed to change role: " + (error.message || "unknown error")); return; }
   await loadProfilesFromSupabase();
+  await loadPMManagers(); // setting someone to "Project Manager" auto-adds their dashboard tab
   renderAdminUsers();
   applyPermissionsUI();
 }
@@ -1461,12 +1462,23 @@ const SUB_PHASE_BOARD = {
   "Design Budget Approval":     "Design Budgets & Design Status",
 };
 
-let PM_MANAGERS = ["Andrew","Isaiah","Alex","Gabe"];
+let PM_MANAGERS = ["Andrew","Isaiah"];
 async function loadPMManagers(){
-  const { data, error } = await supabase.from("pm_managers").select("name").order("sort",{ascending:true});
-  if(error) return; // table not created yet → keep defaults
-  const names=(data||[]).map(r=>r.name).filter(Boolean);
-  if(names.length) PM_MANAGERS = names;
+  // The Project Manager tabs are driven primarily by JOB ROLE: anyone whose role
+  // is "Project Manager" auto-appears (their first name). Plus any manually-added
+  // names in pm_managers, for PMs who don't have a login account yet (e.g. Andrew/Isaiah).
+  let roleNames = [];
+  try {
+    const { data } = await supabase.from("profiles")
+      .select("first_name,role,status").eq("role","Project Manager").eq("status","approved");
+    roleNames = (data||[]).map(r=>(r.first_name||"").trim()).filter(Boolean);
+  } catch(e){}
+  let manual = [];
+  const { data: mgr, error } = await supabase.from("pm_managers").select("name").order("sort",{ascending:true});
+  if(!error) manual = (mgr||[]).map(r=>r.name).filter(Boolean);
+  const merged = [];
+  manual.concat(roleNames).forEach(n=>{ if(merged.indexOf(n)<0) merged.push(n); });
+  PM_MANAGERS = merged.length ? merged : ["Andrew","Isaiah"];
 }
 async function addPMManager(){
   if(_blockIfReadOnly()) return;
