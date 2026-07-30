@@ -1629,6 +1629,53 @@ async function addPropertySubPhaseInSupabase(id, name, due) {
   return true;
 }
 
+// Save start/finish dates for every subphase on a property. Any subphase with BOTH
+// a start and finish date becomes (or updates) a task on the Task Calendar, assigned
+// to the property's Project Manager. Clearing the dates removes that task. The task's
+// id is stored back on the subphase so re-saving never creates duplicates.
+async function saveSubPhaseSchedule(id){
+  if (_blockIfReadOnly()) return false;
+  const card = propCards.find(p => p.id === id);
+  if (!card) return false;
+  const prevById = {}; (card.subPhases||[]).forEach(sp=>{ prevById[sp.name]=sp; });
+  const newSubPhases = [];
+  for(let i=0;i<SUB_PHASES.length;i++){
+    const name=SUB_PHASES[i];
+    const prev=prevById[name]||{};
+    const startEl=document.getElementById("sp-start-"+i);
+    const dueEl=document.getElementById("sp-due-"+i);
+    const start=startEl?startEl.value||"":(prev.start||"");
+    const due=dueEl?dueEl.value||"":(prev.due||"");
+    let taskId=prev.taskId||null;
+    const scheduled = start && due;
+    if(scheduled){
+      const payload={ title:name, category:name, assignee:card.pm||null, start_date:start, due_date:due, property_id:id, notes:"Auto-created from "+(card.addr||"property")+" subphase schedule" };
+      if(taskId){
+        const { error } = await supabase.from("pm_tasks").update(payload).eq("id",taskId);
+        if(error){ // task may have been deleted; insert a fresh one
+          const ins=await supabase.from("pm_tasks").insert(payload).select("id").single();
+          if(!ins.error) taskId=ins.data.id;
+        }
+      } else {
+        const ins=await supabase.from("pm_tasks").insert(payload).select("id").single();
+        if(ins.error){ alert("Couldn't schedule "+name+": "+(ins.error.message||"")); return false; }
+        taskId=ins.data.id;
+      }
+    } else if(taskId){
+      await supabase.from("pm_tasks").delete().eq("id",taskId);
+      taskId=null;
+    }
+    const rec={name}; if(start) rec.start=start; if(due) rec.due=due; if(taskId) rec.taskId=taskId;
+    newSubPhases.push(rec);
+  }
+  const { error } = await supabase.from("pm_properties").update({ sub_phases: newSubPhases }).eq("id", id);
+  if (error) { alert("Failed to save subphase dates: " + (error.message || "unknown error")); return false; }
+  _logAudit("updated","property", card.addr||"", "Updated subphase schedule");
+  await Promise.all([loadPropertiesFromSupabase(), loadTasks()]);
+  openPropDetail(id);
+  return true;
+}
+
 function phInfo(name){ return PROP_PHASES.find(p=>p.name===name)||{bg:"#f4f5f7",text:"#555",cnt:"#aaa",dot:"#aaa"}; }
 
 // ===================== MAIN DASHBOARD 5 BOARDS =====================
@@ -1856,18 +1903,29 @@ function openPropDetail(id) {
   const typeStyle = PROP_TYPE_STYLE[c.type] || "background:#f4f5f7;color:#555";
   const pmColor = PROP_PM_COLORS[c.pm] || "#ccc";
 
-  const subPhaseRows = (c.subPhases||[]).map(sp => {
-    const board = SUB_PHASE_BOARD[sp.name] || '—';
-    return `<div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:12px">
-      <div>
-        <div style="color:#111;font-weight:500">${sp.name}</div>
-        <div style="font-size:10px;color:#aaa;margin-top:1px">Feeds → ${board}</div>
-      </div>
-      <div style="text-align:right">
-        ${sp.due ? `<div style="font-size:11px;color:#888">${sp.due}</div>` : '<div style="font-size:11px;color:#ccc">No due date</div>'}
+  // Every property shows the full standard subphase list, prefilled. Each row has a
+  // start and finish date; filling both auto-creates a task for this property's PM.
+  const _ro_sp = isReadOnly();
+  const _savedSub = (name)=> (c.subPhases||[]).find(sp=>sp.name===name) || {};
+  const subPhaseRows = SUB_PHASES.map((name,i) => {
+    const sp=_savedSub(name);
+    const board = SUB_PHASE_BOARD[name] || '—';
+    const dateInput=(kind,val)=> _ro_sp
+      ? `<span style="font-size:11px;color:${val?'#111':'#ccc'}">${val||'—'}</span>`
+      : `<input type="date" id="sp-${kind}-${i}" value="${val||''}" style="font-size:11px;padding:3px 5px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none" />`;
+    return `<div style="padding:8px 0;border-bottom:0.5px solid #f4f5f7">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+        <div style="min-width:150px">
+          <div style="color:#111;font-weight:500;font-size:12px">${name}</div>
+          <div style="font-size:10px;color:#aaa;margin-top:1px">Feeds → ${board}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <div style="text-align:center"><div style="font-size:9px;color:#aaa;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px">Start</div>${dateInput('start',sp.start)}</div>
+          <div style="text-align:center"><div style="font-size:9px;color:#aaa;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px">Finish</div>${dateInput('due',sp.due)}</div>
+        </div>
       </div>
     </div>`;
-  }).join('') || '<div style="font-size:12px;color:#ccc;padding:8px 0">No sub phases set</div>';
+  }).join('');
 
   document.getElementById("pd-content").innerHTML = `
     <div style="background:#fff;min-height:520px;border-radius:8px;overflow:hidden;margin-top:0">
@@ -1924,9 +1982,10 @@ function openPropDetail(id) {
           <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden">
             <div style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;font-size:12px;font-weight:500;color:#111;display:flex;align-items:center;justify-content:space-between">
               Sub Phases
-              <button onclick="openPropModal('subphase',${c.id})" style="font-size:11px;padding:2px 8px;border-radius:4px;background:#111;color:#fff;border:none;cursor:pointer">+ Add</button>
+              ${_ro_sp?'':`<button onclick="saveSubPhaseSchedule('${c.id}')" style="font-size:11px;padding:3px 10px;border-radius:4px;background:#111;color:#fff;border:none;cursor:pointer">Save dates</button>`}
             </div>
             <div style="padding:10px 14px">${subPhaseRows}</div>
+            ${_ro_sp?'':`<div style="padding:0 14px 10px;font-size:10px;color:#aaa">Set a start &amp; finish date, then Save. Each scheduled subphase becomes a task for ${c.pm?_calEsc(c.pm):'this property\'s PM'} on the Task Calendar.</div>`}
           </div>
         </div>
         <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden;margin-top:12px">
@@ -3786,7 +3845,9 @@ function teamMembers(){
 }
 // Distinct task categories/headers in use (e.g. "Build Scope of Work"), plus a
 // couple of sensible seeds so the list is never empty on a fresh install.
-const _TASK_CATEGORY_SEEDS = ["Build Scope of Work","Walkthrough","Punch List","Inspection","Follow Up"];
+const _TASK_CATEGORY_SEEDS = ["Material Delivery","Build Scope of Work","Walkthrough","Punch List","Inspection","Follow Up"];
+// Task headers that also drop a matching event onto the Construction Calendar.
+const _MATERIAL_TASK_CATEGORY = "Material Delivery";
 function _taskCategories(){
   const set=new Set(_TASK_CATEGORY_SEEDS);
   _tasksCache.forEach(t=>{ if(t.category){ set.add(t.category.trim()); } });
@@ -4175,6 +4236,12 @@ async function saveTask(){
   const { error } = await supabase.from("pm_tasks").insert({ title, category, assignee:asg, start_date:start, due_date:due, property_id:prop, refer_to:refer, notes });
   if(error){ showE("Failed to save: "+(error.message||"")); return; }
   _logAudit("created","task", category?(category+": "+title):title, asg?("Assigned to "+asg):"Unassigned");
+  // Material deliveries entered on the task list also drop onto the Construction
+  // Calendar so it only has to be entered once.
+  if(category===_MATERIAL_TASK_CATEGORY && prop && due){
+    const { error:ce } = await supabase.from("pm_calendar_events").insert({ property_id:prop, event_date:due, kind:"material", title, contractor_id:null, notes: notes || (asg?("Pickup/delivery: "+asg):null) });
+    if(!ce){ _logAudit("created","calendar", _propAddr(prop), "Material delivery (from task): "+title); await loadCalendarEventsFromSupabase(); }
+  }
   await loadTasks();
   closeModal("task-modal");
   _taskRerender();
