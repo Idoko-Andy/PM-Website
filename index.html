@@ -49,6 +49,16 @@ body{background:#1a1a1a;color:#fff;min-height:100vh}
 .sop-sub{display:none;position:absolute;top:-1px;right:100%;background:#1e1e1e;border:1px solid #333;border-radius:8px 0 0 8px;min-width:255px;z-index:200;box-shadow:-4px 4px 14px rgba(0,0,0,0.45)}
 .sop-flyout:hover .sop-sub{display:block}
 #sop-t:hover > .dd{display:block}
+.sop-doc{background:#fff;color:#1a1a1a;border-radius:8px;padding:24px 28px;min-height:220px;font-size:14px;line-height:1.65;outline:none}
+.sop-doc h1{font-size:22px;font-weight:600;margin:14px 0 8px}
+.sop-doc h2{font-size:18px;font-weight:600;margin:14px 0 6px}
+.sop-doc h3{font-size:13px;font-weight:600;color:#555;margin:12px 0 4px;text-transform:uppercase;letter-spacing:0.04em}
+.sop-doc p{margin:6px 0}
+.sop-doc ul,.sop-doc ol{margin:6px 0 6px 22px}
+.sop-doc li{margin:3px 0}
+.sop-doc .sop-box{background:#f4f5f7;border-left:3px solid #185FA5;border-radius:0 6px 6px 0;padding:10px 14px;margin:10px 0}
+.sop-tb-btn{padding:5px 9px;font-size:12px;background:#1a1a1a;color:#ccc;border:1px solid #333;border-radius:5px;cursor:pointer;user-select:none}
+.sop-tb-btn:hover{background:#2a2a2a;color:#fff}
 
 /* MODALS */
 .overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:1000;align-items:center;justify-content:center}
@@ -2784,31 +2794,74 @@ const SYSTEMS_SOPS = [
 ];
 
 // ===================== SOP FUNCTIONS =====================
-function openSOP(type, role) {
+// ---- Editable, database-backed Job Role SOPs (Google-Doc style) ----
+let _sopCache = {};
+let _currentSop = null;
+function _defaultSopHtml(role){
+  const sop = ROLE_SOPS[role];
+  if(!sop) return `<h2>${_calEsc(role)} SOP</h2><p>Add the standard operating procedure for this role here.</p>`;
+  let h = `<h2>${_calEsc(role)} SOP</h2>`;
+  sop.sections.forEach(sec=>{ h += `<h3>${_calEsc(sec.title)}</h3><ol>`; sec.items.forEach(it=>{ h += `<li>${_calEsc(it)}</li>`; }); h += `</ol>`; });
+  return h;
+}
+async function _loadSopContent(key){
+  const { data, error } = await supabase.from("pm_sops").select("content").eq("sop_key",key).maybeSingle();
+  return (error||!data) ? null : data.content;
+}
+async function openSOP(type, role) {
   document.querySelectorAll(".dd").forEach(x => x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x => x.classList.remove("on"));
-
-  if (type === "systems") {
-    renderSystemsGrid();
-    openModal("systems-modal");
-    return;
-  }
-
-  const sop = ROLE_SOPS[role];
-  if (!sop) return;
-
-  document.getElementById("sop-modal-title").textContent = sop.icon + " " + role + " SOP";
-  let html = "";
-  sop.sections.forEach(sec => {
-    html += `<div class="sop-section"><h3>${sec.title}</h3>`;
-    sec.items.forEach((item, i) => {
-      html += `<div class="sop-item"><span class="sop-num">${String(i+1).padStart(2,"0")}.</span><span class="sop-text">${item}</span></div>`;
-    });
-    html += `</div>`;
-  });
-  html += `<div class="sop-note">📌 This SOP is a living document. Content will be expanded by your administrator as processes are finalized. Check back regularly for updates.</div>`;
-  document.getElementById("sop-modal-body").innerHTML = html;
+  if (type === "systems") { renderSystemsGrid(); openModal("systems-modal"); return; }
+  const key = "role:" + role;
+  _currentSop = { key, role };
+  document.getElementById("sop-modal-title").textContent = "📋 " + role + " SOP";
+  document.getElementById("sop-modal-body").innerHTML = `<div style="color:#888;font-size:13px;padding:30px 0;text-align:center">Loading…</div>`;
   openModal("sop-modal");
+  let content = await _loadSopContent(key);
+  if (content == null || !content.trim()) content = _defaultSopHtml(role);
+  _sopCache[key] = content;
+  _renderSopView();
+}
+function _renderSopView(){
+  if(!_currentSop) return;
+  const content = _sopCache[_currentSop.key] || "";
+  const editBtn = isReadOnly() ? "" : `<button onclick="editSop()" style="padding:6px 14px;font-size:12px;background:#fff;color:#111;border:none;border-radius:6px;cursor:pointer">✎ Edit</button>`;
+  document.getElementById("sop-modal-body").innerHTML =
+    `<div style="display:flex;justify-content:flex-end;margin-bottom:12px">${editBtn}</div>
+     <div class="sop-doc">${content}</div>`;
+}
+function _sopInsertBox(){ document.execCommand('insertHTML', false, '<div class="sop-box">Note…</div>'); }
+function editSop(){
+  if(_blockIfReadOnly()) return;
+  const content = _sopCache[_currentSop.key] || "";
+  const tb=(cmd,arg,label,title)=>`<div class="sop-tb-btn" title="${title}" onmousedown="event.preventDefault();document.execCommand('${cmd}'${arg?(",false,'"+arg+"'"):""})">${label}</div>`;
+  document.getElementById("sop-modal-body").innerHTML =
+    `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+       ${tb('formatBlock','h1','H1','Header')}
+       ${tb('formatBlock','h2','H2','Subheader')}
+       ${tb('formatBlock','h3','H3','Category')}
+       ${tb('formatBlock','p','¶','Normal text')}
+       ${tb('bold','','B','Bold')}
+       ${tb('italic','','I','Italic')}
+       ${tb('insertUnorderedList','','• List','Bullet list')}
+       ${tb('insertOrderedList','','1. List','Numbered list')}
+       <div class="sop-tb-btn" title="Insert note box" onmousedown="event.preventDefault();_sopInsertBox()">▭ Box</div>
+     </div>
+     <div class="sop-doc" id="sop-editor" contenteditable="true">${content}</div>
+     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+       <button onclick="_renderSopView()" style="padding:8px 16px;font-size:13px;background:transparent;color:#ccc;border:1px solid #444;border-radius:6px;cursor:pointer">Cancel</button>
+       <button onclick="saveSop()" style="padding:8px 16px;font-size:13px;background:#fff;color:#111;border:none;border-radius:6px;cursor:pointer">Save SOP</button>
+     </div>`;
+}
+async function saveSop(){
+  if(_blockIfReadOnly()) return;
+  const { key, role } = _currentSop;
+  const html = document.getElementById("sop-editor").innerHTML;
+  const { error } = await supabase.from("pm_sops").upsert({ sop_key:key, content:html, updated_at:new Date().toISOString() });
+  if(error){ alert("Failed to save SOP: "+(error.message||"unknown error")); return; }
+  _sopCache[key] = html;
+  _logAudit("updated","sop", role+" SOP", "Edited the "+role+" SOP");
+  _renderSopView();
 }
 
 function renderSystemsGrid() {
@@ -4082,7 +4135,7 @@ async function openEditHistory(){
   await loadAuditLog();
   renderEditHistory();
 }
-function _auditIcon(area){ return ({property:"🏗",report:"📄",contractor:"📇",calendar:"📅"}[area])||"•"; }
+function _auditIcon(area){ return ({property:"🏗",report:"📄",contractor:"📇",calendar:"📅",task:"✅",sop:"📋",manager:"👤"}[area])||"•"; }
 function _auditWhen(ts){ try{ return new Date(ts).toLocaleString(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}); }catch(e){ return ts; } }
 function renderEditHistory(){
   const areas=[["all","All"],["property","Properties"],["calendar","Construction Calendar"],["report","Monthly Reports"],["contractor","Contractors"]];
