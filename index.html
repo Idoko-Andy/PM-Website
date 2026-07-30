@@ -269,6 +269,7 @@ body{background:#1a1a1a;color:#fff;min-height:100vh}
       <div class="ddi" onclick="openSOP('systems','')">⚙️ Systems &amp; Processes SOPs →</div>
     </div>
   </div>
+  <div class="ni" id="hist-t" onclick="openEditHistory()">📜 History</div>
   <div class="ni has-dd" id="tools-t">🔧 Tools ▾
     <div class="dd" id="tools-d" style="min-width:220px">
       <div class="ddl">Directory</div>
@@ -933,6 +934,7 @@ const PERM_ITEMS = [
   { key:"data_teamspent",   label:"Project Team Spent",      group:"Data Dash" },
   { key:"data_pmoverview",  label:"PM Team Overview",        group:"Data Dash" },
   { key:"rep_all",          label:"Reporting (all reports)", group:"Reporting" },
+  { key:"edit_history",     label:"Edit History (audit log)", group:"Admin" },
   { key:"sops_view",        label:"SOPs (default on for everyone)", group:"Defaults" },
 ];
 const PERM_ALL = PERM_ITEMS.map(p => p.key);
@@ -944,8 +946,8 @@ const PERM_ALL = PERM_ITEMS.map(p => p.key);
 const ROLE_DEFAULTS = {
   "CEO":                                       PERM_ALL.slice(),
   "Project Director":                          PERM_ALL.slice(),
-  "Administrative Manager":                    ["dash_project","dash_design","dash_tv","dash_pmassistant","dash_admin","data_pmoverview","rep_all","sops_view"],
-  "Project Manager":                           ["dash_project","dash_design","dash_tv","dash_pmassistant","data_pmoverview","rep_all","sops_view"],
+  "Administrative Manager":                    ["dash_project","dash_design","dash_tv","dash_pmassistant","dash_admin","data_pmoverview","rep_all","edit_history","sops_view"],
+  "Project Manager":                           ["dash_project","dash_design","dash_tv","dash_pmassistant","data_pmoverview","rep_all","edit_history","sops_view"],
   "PM Assistant":                              ["dash_project","dash_pmassistant","sops_view"],
   "Senior Virtual Administrative Assistant":   ["dash_project","dash_pmassistant","dash_seniorva","dash_vaadmin","data_pmoverview","data_teamspent","rep_all","sops_view"],
   "Virtual Administrative Assistant":          ["dash_project","dash_pmassistant","dash_vaadmin","data_pmoverview","sops_view"],
@@ -1000,6 +1002,7 @@ function applyPermissionsUI() {
   const setMenu = (id, show) => { const e = document.getElementById(id); if (e) e.style.display = show ? "" : "none"; };
   setMenu("rep-t",  hasPerm(u,"rep_all"));   // Reporting = single toggle
   setMenu("sop-t",  hasPerm(u,"sops_view")); // SOPs = single toggle (default on)
+  setMenu("hist-t", hasPerm(u,"edit_history")); // Edit History
   // Tools tab (tools-t) is always available — never hidden.
   // Hide any role/data menu whose gateable items are all hidden.
   document.querySelectorAll(".nav .ni.has-dd").forEach(ni => {
@@ -1384,7 +1387,7 @@ function openProjectDashboard(activeTab) {
     { id: 'isaiah', label: 'Isaiah',            icon: '👤' },
     { id: 'sow',    label: 'SOW / Budgets',     icon: '💰' },
     { id: 'trello', label: 'Property Dashboard',icon: '🏗' },
-    { id: 'construction', label: 'Construction Calendar (CAL)', icon: '📅' },
+    { id: 'construction', label: 'Construction Calendar', icon: '📅' },
     { id: 'taskcal',      label: 'Task Calendar',               icon: '🗓' },
   ];
 
@@ -1534,14 +1537,17 @@ async function savePropertyToSupabase(id, data) {
     const { error } = await supabase.from("pm_properties").insert(_propCardToRow(data));
     if (error) { alert("Failed to create property: " + (error.message || "unknown error")); return false; }
   }
+  _logAudit(id?"updated":"created","property", data.addr||"", id?"Edited property details":"Added a new property");
   await loadPropertiesFromSupabase();
   return true;
 }
 
 async function updatePropertyPhaseInSupabase(id, newPhase) {
   if (_blockIfReadOnly()) return false;
+  const _pc = (typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===id);
   const { error } = await supabase.from("pm_properties").update({ phase: newPhase }).eq("id", id);
   if (error) { alert("Failed to update phase: " + (error.message || "unknown error")); return false; }
+  _logAudit("moved","property", _pc?_pc.addr:"", "Moved to “"+newPhase+"”");
   await loadPropertiesFromSupabase();
   return true;
 }
@@ -1561,6 +1567,7 @@ async function addPropertySubPhaseInSupabase(id, name, due) {
   const newSubPhases = [...(card.subPhases || []), { name, due }];
   const { error } = await supabase.from("pm_properties").update({ sub_phases: newSubPhases }).eq("id", id);
   if (error) { alert("Failed to add sub phase: " + (error.message || "unknown error")); return false; }
+  _logAudit("updated","property", card.addr||"", "Added sub-phase: "+name);
   await loadPropertiesFromSupabase();
   return true;
 }
@@ -1959,15 +1966,15 @@ function openPropModal(mode, id) {
         ${PROP_TYPES.map(t=>`<option ${c&&c.type===t?'selected':''}>${t}</option>`).join('')}
       </select>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+    <div style="display:grid;grid-template-columns:${c?'1fr 1fr':'1fr'};gap:10px;margin-bottom:12px">
       <div>
-        <label style="display:block;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Budget</label>
+        <label style="display:block;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Acquisitions Budget Total</label>
         <input id="pm-budget" type="text" value="${c?c.budget:''}" placeholder="$00,000" style="width:100%;padding:7px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:13px;color:#111;background:#fff;outline:none" />
       </div>
-      <div>
+      ${c?`<div>
         <label style="display:block;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Spent to Date</label>
-        <input id="pm-spent" type="text" value="${c?c.spent:''}" placeholder="$00,000" style="width:100%;padding:7px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:13px;color:#111;background:#fff;outline:none" />
-      </div>
+        <input id="pm-spent" type="text" value="${c.spent}" placeholder="$00,000" style="width:100%;padding:7px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:13px;color:#111;background:#fff;outline:none" />
+      </div>`:''}
     </div>
     <div style="margin-bottom:12px">
       <label style="display:block;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Total Money Position <span style="font-size:9px;background:#E6F1FB;color:#185FA5;padding:1px 5px;border-radius:4px;margin-left:4px">Google Sheet</span></label>
@@ -1995,7 +2002,7 @@ function openPropModal(mode, id) {
       pm:       document.getElementById("pm-pm").value,
       type:     document.getElementById("pm-type").value,
       budget:   document.getElementById("pm-budget").value,
-      spent:    document.getElementById("pm-spent").value,
+      spent:    (document.getElementById("pm-spent") ? document.getElementById("pm-spent").value : (c ? c.spent : "")),
       position: document.getElementById("pm-position").value,
       start:    document.getElementById("pm-start").value,
       end:      document.getElementById("pm-end").value,
@@ -3224,6 +3231,7 @@ async function upsertMonthlyReport(year, monthIdx, payload, submitted) {
     alert("Failed to save report: " + (error.message || "unknown error"));
     return false;
   }
+  _logAudit(submitted?"submitted":"updated","report", MONTHS[parseInt(monthIdx,10)]+" "+year, submitted?"Submitted monthly report":"Saved report draft");
   await loadMonthlyReportsFromSupabase();
   return true;
 }
@@ -3679,6 +3687,7 @@ async function saveContractor(){
   if(!name){ alert("Enter a contractor name."); return; }
   const { error } = await supabase.from("pm_contractors").insert({name, phone, trade});
   if(error){ alert("Failed to add contractor: "+(error.message||"unknown error")); return; }
+  _logAudit("created","contractor", name, "Added to contractor directory");
   await loadContractorsFromSupabase();
   renderContractorDirectory();
 }
@@ -3695,7 +3704,7 @@ async function deleteContractor(id){
 const _calState = { y:null, m:null, prop:"all", filter:"all", loaded:false };
 const _CAL_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 function _calRerender(){ const el=document.getElementById("pd-content"); if(el) el.innerHTML=renderConstructionCalendar(); }
-function calSelectProp(id){ _calState.prop=id; _calRerender(); }
+function calSelectProp(id){ if(id==='__pick') return; _calState.prop=id; _calRerender(); }
 function calSetFilter(f){ _calState.filter=f; _calRerender(); }
 function calPrevMonth(){ _calState.m--; if(_calState.m<0){_calState.m=11;_calState.y--;} _calRerender(); }
 function calNextMonth(){ _calState.m++; if(_calState.m>11){_calState.m=0;_calState.y++;} _calRerender(); }
@@ -3706,10 +3715,13 @@ function renderConstructionCalendar(){
   if(!st.loaded){ st.loaded=true; Promise.all([loadContractorsFromSupabase(), loadCalendarEventsFromSupabase()]).then(_calRerender); }
   const props=(typeof propCards!=='undefined'?propCards:[]);
   const ro=isReadOnly();
-  // property selector
-  const propPill=(id,label,active)=>`<div onclick="calSelectProp('${id}')" style="padding:6px 12px;font-size:11.5px;white-space:nowrap;cursor:pointer;border-radius:999px;${active?'background:#111;color:#fff':'background:#fff;color:#555;border:0.5px solid #ddd'}">${_calEsc(label)}</div>`;
-  let propPills=propPill("all","All Properties", st.prop==="all");
-  props.forEach(p=>{ propPills+=propPill(p.id, p.addr, st.prop===p.id); });
+  // property selector: All Properties button + a "Select a property" dropdown (scales to 50+)
+  const allActive = st.prop==="all";
+  const allBtn = `<div onclick="calSelectProp('all')" style="padding:7px 14px;font-size:12px;cursor:pointer;border-radius:8px;${allActive?'background:#111;color:#fff':'background:#fff;color:#555;border:0.5px solid #ddd'}">All Properties</div>`;
+  const propSelect = `<select onchange="calSelectProp(this.value)" style="padding:7px 12px;font-size:12px;border:0.5px solid #ddd;border-radius:8px;background:#fff;color:#333;max-width:300px">
+    <option value="__pick" ${allActive?"selected":""}>Select a property…</option>
+    ${props.map(p=>`<option value="${p.id}" ${st.prop===p.id?"selected":""}>${_calEsc(p.addr)}</option>`).join("")}
+  </select>`;
   // filter chips
   const chip=(f,label)=>`<div onclick="calSetFilter('${f}')" style="padding:5px 12px;font-size:11px;cursor:pointer;border-radius:999px;${st.filter===f?'background:#1a2744;color:#fff':'background:#fff;color:#666;border:0.5px solid #ddd'}">${label}</div>`;
   // month grid
@@ -3742,7 +3754,7 @@ function renderConstructionCalendar(){
   const weekdays=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d=>`<div style="text-align:center;font-size:10px;color:#999;text-transform:uppercase;letter-spacing:.05em;padding:6px 0">${d}</div>`).join("");
   const addTop=ro?"":`<button onclick="openAddCalEvent('')" style="padding:7px 14px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;white-space:nowrap">+ Add</button>`;
   return `<div style="padding:20px">
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;overflow-x:auto">${propPills}</div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">${allBtn}${propSelect}</div>
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px">
       <div style="display:flex;align-items:center;gap:12px">
         <div style="display:flex;align-items:center;gap:8px">
@@ -3839,9 +3851,65 @@ async function saveCalEvent(){
   }
   const { error } = await supabase.from("pm_calendar_events").insert({ property_id:prop, event_date:date, kind, title, contractor_id:contractorId, notes });
   if(error){ showE("Failed to save: "+(error.message||"unknown error")); return; }
+  _logAudit("created","calendar", _propAddr(prop), kind==="material"?("Material delivery: "+title):("Contractor start: "+_contractorName(contractorId)));
   await loadCalendarEventsFromSupabase();
   closeModal("calevent-modal");
   _calRerender();
+}
+
+// ===================== EDIT HISTORY (AUDIT LOG) =====================
+// Records who changed what. _logAudit is fire-and-forget: logging must never
+// break or block the action that triggered it.
+async function _logAudit(action, area, label, detail){
+  try{
+    const u=_myProfile;
+    await supabase.from("pm_audit_log").insert({
+      actor_name: u ? (`${u.firstName} ${u.lastName}`).trim() : null,
+      actor_email: u ? u.email : null,
+      action: action, area: area, label: label||null, detail: detail||null
+    });
+  }catch(e){ /* never throw */ }
+}
+let _auditCache=[];
+let _auditFilter="all";
+async function loadAuditLog(){
+  const { data, error } = await supabase.from("pm_audit_log")
+    .select("actor_name,actor_email,action,area,label,detail,created_at")
+    .order("created_at",{ascending:false}).limit(300);
+  _auditCache = error ? [] : (data||[]);
+}
+function setAuditFilter(f){ _auditFilter=f; renderEditHistory(); }
+async function openEditHistory(){
+  document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
+  document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
+  await loadAuditLog();
+  renderEditHistory();
+}
+function _auditIcon(area){ return ({property:"🏗",report:"📄",contractor:"📇",calendar:"📅"}[area])||"•"; }
+function _auditWhen(ts){ try{ return new Date(ts).toLocaleString(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}); }catch(e){ return ts; } }
+function renderEditHistory(){
+  const areas=[["all","All"],["property","Properties"],["calendar","Construction Calendar"],["report","Monthly Reports"],["contractor","Contractors"]];
+  const chips=areas.map(([f,l])=>`<div onclick="setAuditFilter('${f}')" style="padding:5px 12px;font-size:11px;cursor:pointer;border-radius:999px;${_auditFilter===f?'background:#111;color:#fff':'background:#fff;color:#666;border:0.5px solid #ddd'}">${l}</div>`).join("");
+  const rows=_auditCache.filter(a=>_auditFilter==="all"||a.area===_auditFilter).map(a=>
+    `<div style="display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border-bottom:0.5px solid #eee">
+      <div style="font-size:16px">${_auditIcon(a.area)}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;color:#111"><span style="font-weight:500">${_calEsc(a.actor_name||a.actor_email||"Someone")}</span> ${_calEsc(a.action)}${a.label?` <span style="color:#555">— ${_calEsc(a.label)}</span>`:""}</div>
+        ${a.detail?`<div style="font-size:12px;color:#888;margin-top:2px">${_calEsc(a.detail)}</div>`:""}
+      </div>
+      <div style="font-size:11px;color:#aaa;white-space:nowrap">${_auditWhen(a.created_at)}</div>
+    </div>`).join("");
+  document.getElementById("dash-body").innerHTML=
+    `<div style="background:#f4f5f7;min-height:500px;padding:24px">
+      <div style="max-width:860px;margin:0 auto">
+        <div style="font-size:18px;font-weight:500;color:#111;margin-bottom:4px">📜 Edit History</div>
+        <div style="font-size:12px;color:#888;margin-bottom:16px">Who changed what, across the dashboard. Most recent first.</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">${chips}</div>
+        <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden">
+          ${rows||`<div style="padding:28px;text-align:center;color:#bbb;font-size:13px">No activity recorded yet. Changes people make will show up here.</div>`}
+        </div>
+      </div>
+    </div>`;
 }
 
 // ===================== BOOT =====================
