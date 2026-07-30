@@ -3250,10 +3250,139 @@ function renderPMHome(user) {
 }
 
 
-function openPMAssistantDashboard() {
+// ===================== PM ASSISTANT DASHBOARD =====================
+// The person tabs (Alex, Gabe, …) are driven by JOB ROLE: anyone whose role is a
+// PM-assistant role auto-appears once they link their email — exactly like the PM
+// tabs. Seeded with Alex/Gabe so they show before their accounts exist.
+let PM_ASSISTANTS = ["Alex","Gabe"];
+const _ASSISTANT_ROLES = ["PM Assistant","Start of Project Assistant","End of Project Assistant"];
+async function loadPMAssistants(){
+  let roleNames = [];
+  try{
+    const { data } = await supabase.from("profiles")
+      .select("first_name,role,status").in("role",_ASSISTANT_ROLES).eq("status","approved");
+    roleNames = (data||[]).map(r=>(r.first_name||"").trim()).filter(Boolean);
+  }catch(e){}
+  const merged=[];
+  ["Alex","Gabe"].concat(roleNames).forEach(n=>{ if(merged.indexOf(n)<0) merged.push(n); });
+  PM_ASSISTANTS = merged.length ? merged : ["Alex","Gabe"];
+}
+function _assistantRole(name){
+  const u = getUsers().find(x=>((x.firstName||"")+"").trim()===name && x.status==="approved");
+  return u ? u.role : (name==="Alex"?"Start of Project Assistant":name==="Gabe"?"End of Project Assistant":"PM Assistant");
+}
+function openPMAssistantDashboard(activeTab){
+  activeTab = activeTab || (PM_ASSISTANTS[0] ? 'asst:'+PM_ASSISTANTS[0] : 'property');
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
-  document.getElementById("dash-body").innerHTML = `<div class="empty-state"><div class="icon">🗂</div><p style="color:#888;font-size:15px;font-weight:500">PM Assistant Dashboard</p><p style="color:#555;font-size:13px;margin-top:6px">Being built out. Check back soon.</p></div>`;
+  if(!PM_ASSISTANTS.length) PM_ASSISTANTS=["Alex","Gabe"];
+  const personTabs = PM_ASSISTANTS.map(nm=>({id:'asst:'+nm, label:nm, icon:'🧑‍🔧'}));
+  const tabs=[
+    ...personTabs,
+    {id:'property',     label:'Property Dashboard',      icon:'🏗'},
+    {id:'market',       label:'On the Market',           icon:'🏷'},
+    {id:'rtr',          label:'Request to Remedy',       icon:'🛠'},
+    {id:'realtor',      label:'Realtor Dashboard',       icon:'🤝'},
+    {id:'construction', label:'Construction Calendar',   icon:'📅'},
+    {id:'taskcal',      label:'Task Calendar',           icon:'🗓'},
+  ];
+  const tabBar = tabs.map(t=>`
+    <div onclick="openPMAssistantDashboard('${t.id}')" style="padding:11px 16px;font-size:12px;color:${t.id===activeTab?'#111':'#888'};cursor:pointer;border-bottom:2px solid ${t.id===activeTab?'#111':'transparent'};white-space:nowrap;display:inline-flex;align-items:center;gap:5px;margin-bottom:-1px;font-weight:${t.id===activeTab?'500':'400'}">
+      <span>${t.icon}</span>${t.label}
+    </div>`).join('');
+  document.getElementById("dash-body").innerHTML=`
+    <div style="background:#f4f5f7;min-height:500px" id="pd-root">
+      <div style="background:#fff;border-bottom:1.5px solid #e0e4ec;padding:0 20px;display:flex;align-items:stretch;overflow-x:auto;gap:0">${tabBar}</div>
+      <div id="pd-content">${getPMAContent(activeTab)}</div>
+    </div>`;
+}
+function getPMAContent(tab){
+  if(tab && tab.indexOf('asst:')===0) return pmAssistantTabContent(tab.slice(5));
+  switch(tab){
+    case 'property':     return renderPropertyBoard();
+    case 'market':       return renderMarketDashboard();
+    case 'rtr':          return renderRTRDashboard();
+    case 'realtor':      return renderRealtorDashboard();
+    case 'construction': return renderConstructionCalendar();
+    case 'taskcal':      return renderTaskCalendar();
+    default:             return renderPropertyBoard();
+  }
+}
+function _assistantOpenTasks(name){
+  const today=(()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;})();
+  return (_tasksCache||[]).filter(t=>t.status!=="done" && taskAssignees(t).includes(name))
+    .map(t=>({...t, overdue: t.due_date && t.due_date<today}))
+    .sort((a,b)=> (a.due_date||'9999')<(b.due_date||'9999')?-1:1);
+}
+function pmAssistantTabContent(name){
+  const ro=isReadOnly();
+  const role=_assistantRole(name);
+  const tasks=_assistantOpenTasks(name);
+  const deliveries=tasks.filter(t=>t.category===_MATERIAL_TASK_CATEGORY);
+  const others=tasks.filter(t=>t.category!==_MATERIAL_TASK_CATEGORY);
+  const taskRow=(t)=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:0.5px solid #f4f5f7">
+      <div onclick="toggleTaskDone('${t.id}')" title="Mark done" style="cursor:pointer;flex:1;min-width:0">
+        <div style="font-size:13px;color:#111;font-weight:500">${t.category?`<span style="font-size:10px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:6px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div>
+        <div style="font-size:11px;color:#888;margin-top:2px">${t.property_id?_calEsc(_propAddr(t.property_id))+' · ':''}${t.refer_to?('Questions → '+_calEsc(t.refer_to)):''}</div>
+      </div>
+      <div style="text-align:right;white-space:nowrap"><div style="font-size:11px;font-weight:600;color:${t.overdue?'#c0392b':'#E24B4A'}">${t.overdue?'⚠ Overdue':'Due'}</div><div style="font-size:11px;color:#aaa">${t.due_date||'—'}</div></div>
+    </div>`;
+  const listCard=(title,icon,items,empty)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">
+      <div style="padding:10px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between">
+        <div style="font-size:13px;font-weight:500;color:#111">${icon} ${title}</div>
+        <span style="font-size:10px;background:#f4f5f7;color:#888;padding:2px 8px;border-radius:99px">${items.length}</span>
+      </div>
+      <div style="padding:6px 14px 12px">${items.length?items.map(taskRow).join(''):`<div style="text-align:center;color:#ccc;font-size:12px;padding:18px 0">${empty}</div>`}</div>
+    </div>`;
+  const addBtn=ro?'':`<button onclick="openAddTask('')" style="padding:7px 14px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer">+ Add Task</button>`;
+  return `<div style="padding:20px">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">
+      <div><div style="font-size:17px;font-weight:500;color:#111">${_calEsc(name)}</div><div style="font-size:12px;color:#888">${_calEsc(role)} · ${tasks.length} open task${tasks.length===1?'':'s'}</div></div>
+      ${addBtn}
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      ${listCard('Material Delivery Runs','📦',deliveries,'No delivery runs assigned')}
+      ${listCard('My Open Tasks','✅',others,'No open tasks — nice and clear')}
+    </div>
+    <div style="font-size:11px;color:#aaa;margin-top:10px">Click a task to mark it done. New tasks assigned to ${_calEsc(name)} show up here automatically.</div>
+  </div>`;
+}
+function _propCardMini(c){
+  const p=phInfo(c.phase); const pmColor=PROP_PM_COLORS[c.pm]||'#ccc';
+  return `<div onclick="openPropDetail('${c.id}')" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:13px 15px;cursor:pointer;border-top:3px solid ${p.dot}">
+      <div style="font-size:13px;font-weight:500;color:#111;margin-bottom:6px">${_calEsc(c.addr)}</div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="font-size:10px;padding:2px 8px;border-radius:99px;background:${p.bg};color:${p.text};font-weight:500">${_calEsc(c.phase)}</span>
+        ${c.pm?`<span style="font-size:11px;color:#888;display:flex;align-items:center;gap:4px"><span style="width:14px;height:14px;border-radius:50%;background:${pmColor};color:#fff;font-size:8px;display:flex;align-items:center;justify-content:center">${_calEsc((c.pm[0]||'').toUpperCase())}</span>${_calEsc(c.pm)}</span>`:''}
+      </div>
+      ${c.end?`<div style="font-size:11px;color:#666;margin-top:7px">Target close: <span style="color:#111;font-weight:500">${_calEsc(c.end)}</span></div>`:''}
+    </div>`;
+}
+function _assistantBoard(title,sub,cards){
+  const grid=cards.length
+    ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px">${cards.map(_propCardMini).join('')}</div>`
+    : `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:34px;text-align:center;color:#bbb;font-size:13px">Nothing here right now.</div>`;
+  return `<div style="padding:20px">
+    <div style="font-size:17px;font-weight:500;color:#111;margin-bottom:2px">${title}</div>
+    <div style="font-size:12px;color:#888;margin-bottom:14px">${sub}</div>
+    ${grid}
+  </div>`;
+}
+function renderMarketDashboard(){
+  const cards=(propCards||[]).filter(c=>c.phase==="Listed on the Market");
+  return _assistantBoard('🏷 On the Market','Properties currently listed for sale.',cards);
+}
+function renderRTRDashboard(){
+  const phases=["In Contract","RTR In Process","RTR Completed (Pending Closing)"];
+  const cards=(propCards||[]).filter(c=>phases.includes(c.phase));
+  return _assistantBoard('🛠 Request to Remedy','Properties in contract or working through remedy requests and closing.',cards);
+}
+function renderRealtorDashboard(){
+  return `<div style="padding:20px">
+    <div style="font-size:17px;font-weight:500;color:#111;margin-bottom:2px">🤝 Realtor Dashboard</div>
+    <div style="font-size:12px;color:#888;margin-bottom:14px">Realtor contacts, listings, and showing coordination.</div>
+    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:34px;text-align:center;color:#bbb;font-size:13px">Being built out — tell me what you want the realtor view to track.</div>
+  </div>`;
 }
 function openAdminDashboard() {
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
@@ -4320,6 +4449,8 @@ init();
 loadRolesFromSupabase().then(renderRoleSelects).catch(renderRoleSelects);
 // Load the managed project-manager list (drives the dashboard PM tabs + property PM dropdown).
 loadPMManagers();
+// Load the PM-assistant list (drives the PM Assistant Dashboard person tabs).
+loadPMAssistants();
 // Pre-warm the Google sign-in button so it's ready when the user opens the modal.
 // _renderGoogleButton retries until GSI script is loaded.
 _renderGoogleButton();
