@@ -1381,10 +1381,10 @@ function openProjectDashboard(activeTab) {
   document.querySelectorAll(".dd").forEach(x => x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x => x.classList.remove("on"));
 
+  const pmTabs = PM_MANAGERS.map(nm => ({ id: 'pm:'+nm, label: nm, icon: '👤' }));
   const tabs = [
     { id: 'main',   label: 'Main Dashboard',   icon: '📊' },
-    { id: 'andrew', label: 'Andrew',            icon: '👤' },
-    { id: 'isaiah', label: 'Isaiah',            icon: '👤' },
+    ...pmTabs,
     { id: 'sow',    label: 'SOW / Budgets',     icon: '💰' },
     { id: 'trello', label: 'Property Dashboard',icon: '🏗' },
     { id: 'construction', label: 'Construction Calendar', icon: '📅' },
@@ -1461,7 +1461,25 @@ const SUB_PHASE_BOARD = {
   "Design Budget Approval":     "Design Budgets & Design Status",
 };
 
-const PROP_PM_OPTIONS = ["Tommy","Bruce","Alex","Gabe"];
+let PM_MANAGERS = ["Andrew","Isaiah","Alex","Gabe"];
+async function loadPMManagers(){
+  const { data, error } = await supabase.from("pm_managers").select("name").order("sort",{ascending:true});
+  if(error) return; // table not created yet → keep defaults
+  const names=(data||[]).map(r=>r.name).filter(Boolean);
+  if(names.length) PM_MANAGERS = names;
+}
+async function addPMManager(){
+  if(_blockIfReadOnly()) return;
+  const raw = prompt("Add a project manager — enter their name:");
+  if(!raw || !raw.trim()) return;
+  const nm = raw.trim();
+  const { error } = await supabase.from("pm_managers").insert({ name: nm });
+  if(error && !((error.message||"").toLowerCase().includes("duplicate"))){ alert("Couldn't add manager: "+(error.message||"")); return; }
+  _logAudit("created","manager", nm, "Added project manager");
+  await loadPMManagers();
+  if(document.getElementById("pd-root")) openProjectDashboard('main');
+}
+function _pmSelectChange(sel){ if(sel.value==="__addpm"){ sel.value=""; addPMManager(); } }
 const PROP_PM_COLORS  = {Tommy:"#e74c3c",Bruce:"#5dade2",Alex:"#f39c12",Gabe:"#a29bfe"};
 const PROP_TYPE_STYLE = {
   "Rental Turn / Flip":    "background:#EAF3DE;color:#3B6D11",
@@ -1953,9 +1971,10 @@ function openPropModal(mode, id) {
       </div>
       <div>
         <label style="display:block;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Project Manager</label>
-        <select id="pm-pm" style="width:100%;padding:7px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:13px;color:#111;background:#fff;outline:none">
+        <select id="pm-pm" onchange="_pmSelectChange(this)" style="width:100%;padding:7px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:13px;color:#111;background:#fff;outline:none">
           <option value="">— Assign PM —</option>
-          ${PROP_PM_OPTIONS.map(pm=>`<option ${c&&c.pm===pm?'selected':''}>${pm}</option>`).join('')}
+          ${PM_MANAGERS.map(pm=>`<option ${c&&c.pm===pm?'selected':''}>${pm}</option>`).join('')}
+          <option value="__addpm">＋ Add new project manager…</option>
         </select>
       </div>
     </div>
@@ -2036,10 +2055,9 @@ function getPDContent(tab) {
       <div style="font-size:28px;margin-bottom:8px;opacity:0.35">${icon}</div>${msg}
     </div>`;
 
+  if(tab && tab.indexOf('pm:')===0) return pmTabContent(tab.slice(3));
   switch(tab) {
     case 'main':   return renderMainDashboard();
-    case 'andrew': return pmTabContent('Andrew');
-    case 'isaiah': return pmTabContent('Isaiah');
     case 'sow':    return placeholder('💰','SOW / Budgets — This section will link to the platform your boss is building.');
     case 'trello': return renderPropertyBoard();
     case 'construction': return renderConstructionCalendar();
@@ -3917,6 +3935,8 @@ init();
 // Load the job-role list (falls back to BASE_ROLES if pm_roles isn't created yet)
 // and fill the sign-up role dropdown.
 loadRolesFromSupabase().then(renderRoleSelects).catch(renderRoleSelects);
+// Load the managed project-manager list (drives the dashboard PM tabs + property PM dropdown).
+loadPMManagers();
 // Pre-warm the Google sign-in button so it's ready when the user opens the modal.
 // _renderGoogleButton retries until GSI script is loaded.
 _renderGoogleButton();
