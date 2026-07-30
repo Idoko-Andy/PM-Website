@@ -711,7 +711,9 @@ async function init() {
     // Populate the Supabase-backed caches before rendering the home
     await Promise.all([
       loadPropertiesFromSupabase(),
-      loadMonthlyReportsFromSupabase()
+      loadMonthlyReportsFromSupabase(),
+      loadTasks(),
+      loadCalendarEventsFromSupabase()
     ]);
     document.getElementById("dash-body").innerHTML = renderGenericHome(user);
     applyPermissionsUI();
@@ -2835,8 +2837,40 @@ function showErr(el, msg) { el.textContent = msg; el.style.display = "block"; }
 
 // ===================== HOME SCREENS =====================
 
-// Shared widgets used on every role's home screen
+// The three-calendar home for Directors / PMs: Google · Task · Construction.
+function threeCalendarWidgets(u){
+  const todayStr=(()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;})();
+  const upTasks=(_tasksCache||[]).filter(t=>t.status==="open" && t.due_date && t.due_date>=todayStr).sort((a,b)=>a.due_date<b.due_date?-1:1).slice(0,4);
+  const taskRows=upTasks.length? upTasks.map(t=>`<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:0.5px solid #1e1e1e"><div style="min-width:0"><div style="font-size:12px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(t.title)}</div><div style="font-size:10px;color:#666">${t.assignee?_calEsc(t.assignee):"Unassigned"}</div></div><div style="font-size:10px;color:#5dade2;white-space:nowrap">${_calEsc(t.due_date)}</div></div>`).join("") : `<div style="text-align:center;color:#555;font-size:12px;padding:16px 0">No upcoming tasks</div>`;
+  const upEvents=(_calEventsCache||[]).filter(e=>e.event_date && e.event_date>=todayStr).sort((a,b)=>a.event_date<b.event_date?-1:1).slice(0,4);
+  const evRows=upEvents.length? upEvents.map(e=>{const lbl=e.kind==="contractor"?("★ "+_contractorName(e.contractor_id)):("📦 "+(e.title||"Material"));return `<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:0.5px solid #1e1e1e"><div style="min-width:0"><div style="font-size:12px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(lbl)}</div><div style="font-size:10px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(_propAddr(e.property_id))}</div></div><div style="font-size:10px;color:#f0c674;white-space:nowrap">${_calEsc(e.event_date)}</div></div>`;}).join("") : `<div style="text-align:center;color:#555;font-size:12px;padding:16px 0">No upcoming construction items</div>`;
+  const card=(title,linkLabel,linkFn,body)=>`<div style="background:#111;border:1px solid #2a2a2a;border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
+      <div style="padding:10px 14px;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;justify-content:space-between">
+        <div style="font-size:12px;font-weight:500;color:#fff">${title}</div>
+        ${linkFn?`<div onclick="${linkFn}" style="font-size:10px;color:#5dade2;cursor:pointer">${linkLabel} →</div>`:""}
+      </div>
+      <div style="padding:10px 14px;flex:1">${body}</div>
+    </div>`;
+  const googleBody=`<div style="text-align:center;padding:8px 0">
+      <div style="font-size:22px;margin-bottom:6px">📆</div>
+      <div style="font-size:11px;color:#888;line-height:1.5;margin-bottom:10px">Property deadlines sync to Google Calendar. Manage your subscription in Account → Calendar.</div>
+      <div onclick="window.open('https://calendar.google.com','_blank')" style="display:inline-block;font-size:11px;color:#111;background:#fff;border-radius:6px;padding:6px 12px;cursor:pointer;font-weight:500">Open Google Calendar</div>
+    </div>`;
+  return `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px">
+    ${card("📆 Google Calendar","","",googleBody)}
+    ${card("🗒 Task Calendar","View","openProjectDashboard('taskcal')",taskRows)}
+    ${card("🏗 Construction Calendar","View","openProjectDashboard('construction')",evRows)}
+  </div>`;
+}
+
+// Shared widgets used on every role's home screen.
+// Project Directors and Project Managers see the three live calendars
+// (Google · Task · Construction). Other roles keep the simpler cards for now.
 function sharedWidgets() {
+  const u = currentUser();
+  if (u && (u.isSuperAdmin || u.accessLevel === "full" || u.role === "Project Director" || u.role === "Project Manager")) {
+    return threeCalendarWidgets(u);
+  }
   return `
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px">
       <div style="background:#111;border:1px solid #2a2a2a;border-radius:10px;overflow:hidden">
