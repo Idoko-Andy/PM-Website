@@ -296,6 +296,8 @@ body{background:#1a1a1a;color:#fff;min-height:100vh}
       <div class="ddl">External Tools</div>
       <div class="ddi" onclick="window.open('https://signin.eagleview.com/','_blank')">🦅 Eagleview ↗</div>
       <div class="ddi" onclick="window.open('https://www.lowes.com','_blank')">🔨 Lowes ↗</div>
+      <div class="ddi" onclick="window.open('https://zombie-tv-dashboard.vercel.app/','_blank')">📺 Legacy TV ↗</div>
+      <div class="ddi" onclick="window.open('https://renovation-pricing.vercel.app/','_blank')">💲 Renovation Pricing ↗</div>
     </div>
   </div>
 </div>
@@ -3280,17 +3282,15 @@ function _assistantRole(name){
   return u ? u.role : (name==="Alex"?"Start of Project Assistant":name==="Gabe"?"End of Project Assistant":"PM Assistant");
 }
 function openPMAssistantDashboard(activeTab){
-  activeTab = activeTab || (PM_ASSISTANTS[0] ? 'asst:'+PM_ASSISTANTS[0] : 'property');
+  activeTab = activeTab || 'sop';
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
-  if(!PM_ASSISTANTS.length) PM_ASSISTANTS=["Alex","Gabe"];
-  const personTabs = PM_ASSISTANTS.map(nm=>({id:'asst:'+nm, label:nm, icon:'🧑‍🔧'}));
+  // Tabs are the assistant JOB ROLES (not person names). Each role tab shows the
+  // property-phase boards for that stage of the project, matching the Property Dashboard.
   const tabs=[
-    ...personTabs,
+    {id:'sop',          label:'Start of Project Assistant', icon:'🧱'},
+    {id:'eop',          label:'End of Project Assistant',   icon:'🏁'},
     {id:'property',     label:'Property Dashboard',      icon:'🏗'},
-    {id:'market',       label:'On the Market',           icon:'🏷'},
-    {id:'rtr',          label:'Request to Remedy',       icon:'🛠'},
-    {id:'realtor',      label:'Realtor Dashboard',       icon:'🤝'},
     {id:'construction', label:'Construction Calendar',   icon:'📅'},
     {id:'taskcal',      label:'Task Calendar',           icon:'🗓'},
   ];
@@ -3304,17 +3304,55 @@ function openPMAssistantDashboard(activeTab){
       <div id="pd-content">${getPMAContent(activeTab)}</div>
     </div>`;
 }
+// Which property-phase boards each assistant role owns. A board can map to one or
+// more phases and shows the properties currently in those phases.
+const _ASSISTANT_ROLE_BOARDS = {
+  sop: { role:'Start of Project Assistant', seed:'Alex', boards:[
+    { title:'Vacant / On Standby',        phases:['Vacant / On Standby'] },
+    { title:'Pre Construction',           phases:['Pre Construction'] },
+    { title:'Framing, MEPS, Insulation',  phases:['Framing, MEPS, Insulation'] },
+  ]},
+  eop: { role:'End of Project Assistant', seed:'Gabe', boards:[
+    { title:'On the Market',       phases:['Listed on the Market'] },
+    { title:'In Contract',         phases:['In Contract'] },
+    { title:'Request to Remedy',   phases:['RTR In Process','RTR Completed (Pending Closing)'] },
+  ]},
+};
 function getPMAContent(tab){
-  if(tab && tab.indexOf('asst:')===0) return pmAssistantTabContent(tab.slice(5));
+  if(tab==='sop'||tab==='eop') return pmAssistantRoleContent(tab);
   switch(tab){
     case 'property':     return renderPropertyBoard();
-    case 'market':       return renderMarketDashboard();
-    case 'rtr':          return renderRTRDashboard();
-    case 'realtor':      return renderRealtorDashboard();
     case 'construction': return renderConstructionCalendar();
     case 'taskcal':      return renderTaskCalendar();
-    default:             return renderPropertyBoard();
+    default:             return pmAssistantRoleContent('sop');
   }
+}
+function pmAssistantRoleContent(key){
+  const cfg=_ASSISTANT_ROLE_BOARDS[key]; if(!cfg) return '';
+  const holders=getUsers().filter(u=>u.status==='approved' && u.role===cfg.role).map(u=>(u.firstName||'').trim()).filter(Boolean);
+  const whoLabel = holders.length? holders.join(', ') : cfg.seed;
+  const boardCard=(b)=>{
+    const cards=(propCards||[]).filter(c=>b.phases.includes(c.phase));
+    const p=phInfo(b.phases[0]);
+    return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden;border-top:3px solid ${p.dot}">
+      <div style="padding:9px 13px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between">
+        <div style="font-size:12px;font-weight:500;color:#111">${_calEsc(b.title)}</div>
+        <span style="font-size:10px;background:${p.bg};color:${p.text};padding:2px 8px;border-radius:99px;font-weight:500">${cards.length}</span>
+      </div>
+      <div style="padding:10px 12px;min-height:110px;display:flex;flex-direction:column;gap:8px">
+        ${cards.length? cards.map(_propCardMini).join('') : `<div style="text-align:center;color:#ccc;font-size:11px;padding:20px 0">No properties in this phase</div>`}
+      </div>
+    </div>`;
+  };
+  return `<div style="padding:20px">
+    <div style="margin-bottom:14px">
+      <div style="font-size:17px;font-weight:500;color:#111">${_calEsc(cfg.role)}</div>
+      <div style="font-size:12px;color:#888">${_calEsc(whoLabel)} · properties in this role's phases, matched to the Property Dashboard.</div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;align-items:start">
+      ${cfg.boards.map(boardCard).join('')}
+    </div>
+  </div>`;
 }
 function _assistantOpenTasks(name){
   const today=(()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;})();
