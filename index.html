@@ -1649,7 +1649,7 @@ async function saveSubPhaseSchedule(id){
     let taskId=prev.taskId||null;
     const scheduled = start && due;
     if(scheduled){
-      const payload={ title:name, category:name, assignee:card.pm||null, start_date:start, due_date:due, property_id:id, notes:"Auto-created from "+(card.addr||"property")+" subphase schedule" };
+      const payload={ title:name, category:name, assignee:card.pm||null, assignees:card.pm?[card.pm]:[], start_date:start, due_date:due, property_id:id, notes:"Auto-created from "+(card.addr||"property")+" subphase schedule" };
       if(taskId){
         const { error } = await supabase.from("pm_tasks").update(payload).eq("id",taskId);
         if(error){ // task may have been deleted; insert a fresh one
@@ -4095,8 +4095,14 @@ async function saveCalEvent(){
 // ===================== TASK SYSTEM + TASK CALENDAR =====================
 let _tasksCache = [];
 async function loadTasks(){
-  const { data, error } = await supabase.from("pm_tasks").select("id,title,assignee,due_date,start_date,category,refer_to,status,property_id,notes").order("due_date",{ascending:true});
+  const { data, error } = await supabase.from("pm_tasks").select("id,title,assignee,assignees,due_date,start_date,category,refer_to,status,property_id,notes").order("due_date",{ascending:true});
   _tasksCache = error ? [] : (data||[]);
+}
+// A task may be assigned to several people. Normalize to an array of names,
+// falling back to the legacy single-assignee field for older rows.
+function taskAssignees(t){
+  if(Array.isArray(t.assignees) && t.assignees.length) return t.assignees.filter(Boolean);
+  return t.assignee ? [t.assignee] : [];
 }
 const _taskCal = { y:null, m:null, assignee:"all", loaded:false };
 function _taskRerender(){ const el=document.getElementById("pd-content"); if(el) el.innerHTML=renderTaskCalendar(); }
@@ -4114,7 +4120,7 @@ function renderTaskCalendar(){
   const filterBar=assignees.map(chip).join("");
   const first=new Date(st.y,st.m,1),startDow=first.getDay(),daysInMonth=new Date(st.y,st.m+1,0).getDate();
   const todayStr=(()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;})();
-  const _asgMatch=(t)=> st.assignee==="all" || (st.assignee==="Unassigned"? !t.assignee : t.assignee===st.assignee);
+  const _asgMatch=(t)=>{ const a=taskAssignees(t); return st.assignee==="all" || (st.assignee==="Unassigned"? a.length===0 : a.includes(st.assignee)); };
   // A task can appear twice: a "start" marker on its start date and a "due"
   // marker on its due date. It does NOT fill in the days between.
   const tasksForDay=(day)=>{
@@ -4130,7 +4136,7 @@ function renderTaskCalendar(){
   const taskChip=(entry)=>{
     const t=entry.t, done=t.status==="done";
     const bg=done?"#EAF3DE":"#FAEEDA", col=done?"#3B6D11":"#633806", deco=done?"text-decoration:line-through;opacity:0.8;":"";
-    const who=t.assignee?(" · "+t.assignee):"";
+    const _who=taskAssignees(t); const who=_who.length?(" · "+_who.join(", ")):"";
     const label=t.category?t.category:t.title;
     const mk=entry.marker==="start"?"▶ ":(entry.marker==="due"?"■ ":"");
     const tip=`${t.category?t.category+" — ":""}${t.title}${entry.marker==="start"?" (start)":entry.marker==="due"?" (due)":""}`;
@@ -4175,7 +4181,7 @@ async function toggleTaskDone(id){
   const newStatus=t.status==="done"?"open":"done";
   const { error } = await supabase.from("pm_tasks").update({status:newStatus}).eq("id",id);
   if(error){ alert("Failed to update task: "+(error.message||"")); return; }
-  _logAudit(newStatus==="done"?"completed":"reopened","task", t.title, t.assignee?("Assignee: "+t.assignee):"");
+  _logAudit(newStatus==="done"?"completed":"reopened","task", t.title, taskAssignees(t).length?("Assignee: "+taskAssignees(t).join(", ")):"");
   await loadTasks(); _taskRerender();
 }
 
@@ -4188,7 +4194,9 @@ function openAddTask(dateStr){
   const props=(typeof propCards!=='undefined'?propCards:[]);
   const propOpts=props.map(p=>`<option value="${p.id}">${_calEsc(p.addr)}</option>`).join("");
   const team=teamMembers();
-  const asgOpts=team.map(n=>`<option>${_calEsc(n)}</option>`).join("");
+  const asgChecks=team.length
+    ? team.map((n,i)=>`<label style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;cursor:pointer;font-size:13px;color:#111"><input type="checkbox" class="task-asg-cb" value="${_calEsc(n)}" style="width:15px;height:15px;cursor:pointer"/> ${_calEsc(n)}</label>`).join("")
+    : `<div style="font-size:12px;color:#999;padding:4px 8px">No team members yet — approve users with a job role first.</div>`;
   const catOpts=_taskCategories().map(c=>`<option>${_calEsc(c)}</option>`).join("");
   const referList=team.map(n=>`<option value="${_calEsc(n)}"></option>`).join("");
   document.getElementById("task-inner").innerHTML=`
@@ -4204,7 +4212,9 @@ function openAddTask(dateStr){
       </select>
     </div>
     <div class="form-row" id="task-cat-new-row" style="display:none"><label>New header</label><input type="text" id="task-cat-new" placeholder="e.g. Build Scope of Work" /><div style="font-size:11px;color:#999;margin-top:4px">Saved so you can reuse it. This is what shows on the calendar.</div></div>
-    <div class="form-row"><label>Assign to</label><select id="task-asg"><option value="">— Unassigned —</option>${asgOpts}</select></div>
+    <div class="form-row"><label>Assign to (pick any number — leave all unchecked for Unassigned)</label>
+      <div style="border:0.5px solid #ddd;border-radius:8px;padding:4px;max-height:150px;overflow-y:auto;background:#fff">${asgChecks}</div>
+    </div>
     <div class="form-two">
       <div class="form-row"><label>Start date (optional)</label><input type="date" id="task-start" /></div>
       <div class="form-row"><label>Due date</label><input type="date" id="task-due" value="${_calEsc(dateStr||"")}" /></div>
@@ -4224,7 +4234,8 @@ async function saveTask(){
   const catSel=document.getElementById("task-cat").value;
   let category = catSel==="__new" ? (document.getElementById("task-cat-new").value||"").trim() : (catSel||"");
   category = category || null;
-  const asg=document.getElementById("task-asg").value||null;
+  const asgArr=[...document.querySelectorAll(".task-asg-cb:checked")].map(cb=>cb.value);
+  const asg=asgArr[0]||null; // legacy single-assignee mirror
   const start=document.getElementById("task-start").value||null;
   const due=document.getElementById("task-due").value||null;
   const prop=document.getElementById("task-prop").value||null;
@@ -4233,9 +4244,9 @@ async function saveTask(){
   if(!title){ showE("Enter a task."); return; }
   if(!due){ showE("Pick a due date."); return; }
   if(start && start>due){ showE("Start date can't be after the due date."); return; }
-  const { error } = await supabase.from("pm_tasks").insert({ title, category, assignee:asg, start_date:start, due_date:due, property_id:prop, refer_to:refer, notes });
+  const { error } = await supabase.from("pm_tasks").insert({ title, category, assignee:asg, assignees:asgArr, start_date:start, due_date:due, property_id:prop, refer_to:refer, notes });
   if(error){ showE("Failed to save: "+(error.message||"")); return; }
-  _logAudit("created","task", category?(category+": "+title):title, asg?("Assigned to "+asg):"Unassigned");
+  _logAudit("created","task", category?(category+": "+title):title, asgArr.length?("Assigned to "+asgArr.join(", ")):"Unassigned");
   // Material deliveries entered on the task list also drop onto the Construction
   // Calendar so it only has to be entered once.
   if(category===_MATERIAL_TASK_CATEGORY && prop && due){
