@@ -4138,7 +4138,7 @@ async function openEditHistory(){
 function _auditIcon(area){ return ({property:"🏗",report:"📄",contractor:"📇",calendar:"📅",task:"✅",sop:"📋",manager:"👤"}[area])||"•"; }
 function _auditWhen(ts){ try{ return new Date(ts).toLocaleString(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}); }catch(e){ return ts; } }
 function renderEditHistory(){
-  const areas=[["all","All"],["property","Properties"],["calendar","Construction Calendar"],["report","Monthly Reports"],["contractor","Contractors"]];
+  const areas=[["all","All"],["sop","SOPs"],["property","Properties"],["calendar","Construction Calendar"],["task","Tasks"],["report","Monthly Reports"],["contractor","Contractors"]];
   const chips=areas.map(([f,l])=>`<div onclick="setAuditFilter('${f}')" style="padding:5px 12px;font-size:11px;cursor:pointer;border-radius:999px;${_auditFilter===f?'background:#111;color:#fff':'background:#fff;color:#666;border:0.5px solid #ddd'}">${l}</div>`).join("");
   const rows=_auditCache.filter(a=>_auditFilter==="all"||a.area===_auditFilter).map(a=>
     `<div style="display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border-bottom:0.5px solid #eee">
