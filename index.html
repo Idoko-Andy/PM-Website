@@ -176,6 +176,7 @@ body{background:#1a1a1a;color:#fff;min-height:100vh}
     <input type="text" id="site-search" placeholder="Search..." onkeydown="if(event.key==='Enter')doSearch()" />
     <button class="brand-search-btn" onclick="doSearch()">🔍</button>
   </div>
+  <div id="hist-box" onclick="openEditHistory()" title="Edit History" style="display:none;margin-left:10px;width:38px;height:34px;align-items:center;justify-content:center;border:1px solid #2a2a2a;border-radius:6px;cursor:pointer;background:#1a1a1a;flex-shrink:0;font-size:15px" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='#1a1a1a'">📜</div>
 </div>
 
 <!-- NAV -->
@@ -269,7 +270,6 @@ body{background:#1a1a1a;color:#fff;min-height:100vh}
       <div class="ddi" onclick="openSOP('systems','')">⚙️ Systems &amp; Processes SOPs →</div>
     </div>
   </div>
-  <div class="ni" id="hist-t" onclick="openEditHistory()">📜 History</div>
   <div class="ni has-dd" id="tools-t">🔧 Tools ▾
     <div class="dd" id="tools-d" style="min-width:220px">
       <div class="ddl">Directory</div>
@@ -1010,7 +1010,7 @@ function applyPermissionsUI() {
   const setMenu = (id, show) => { const e = document.getElementById(id); if (e) e.style.display = show ? "" : "none"; };
   setMenu("rep-t",  hasPerm(u,"rep_all"));   // Reporting = single toggle
   setMenu("sop-t",  hasPerm(u,"sops_view")); // SOPs = single toggle (default on)
-  setMenu("hist-t", hasPerm(u,"edit_history")); // Edit History
+  const _hb=document.getElementById("hist-box"); if(_hb) _hb.style.display = hasPerm(u,"edit_history") ? "flex" : "none"; // Edit History box beside search
   // Tools tab (tools-t) is always available — never hidden.
   // Hide any role/data menu whose gateable items are all hidden.
   document.querySelectorAll(".nav .ni.has-dd").forEach(ni => {
