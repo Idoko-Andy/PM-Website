@@ -1678,6 +1678,9 @@ async function saveSubPhaseSchedule(id){
       taskId=null;
     }
     const rec={name}; if(start) rec.start=start; if(due) rec.due=due; if(taskId) rec.taskId=taskId;
+    // Preserve completion/approval state when re-saving dates.
+    if(prev.completed) rec.completed=true;
+    if(prev.approved){ rec.approved=true; if(prev.approvedBy) rec.approvedBy=prev.approvedBy; }
     newSubPhases.push(rec);
   }
   const { error } = await supabase.from("pm_properties").update({ sub_phases: newSubPhases }).eq("id", id);
@@ -1686,6 +1689,38 @@ async function saveSubPhaseSchedule(id){
   await Promise.all([loadPropertiesFromSupabase(), loadTasks()]);
   openPropDetail(id);
   return true;
+}
+// Only these people can approve a completed subphase (which unlocks phase progression).
+function canApprove(u){ return !!(u && (u.isSuperAdmin || ["CEO","Project Director"].indexOf(u.role)>=0 || ["Marlo","Marlow"].indexOf((u.firstName||"").trim())>=0)); }
+// A PM marks a subphase completed; un-checking clears any prior approval.
+async function toggleSubPhaseComplete(propId, name){
+  if(_blockIfReadOnly()) return;
+  const card=propCards.find(p=>p.id===propId); if(!card) return;
+  const subs=(card.subPhases||[]).map(sp=>({...sp}));
+  let s=subs.find(x=>x.name===name);
+  if(!s){ s={name}; subs.push(s); }
+  s.completed=!s.completed;
+  if(!s.completed){ s.approved=false; delete s.approvedBy; }
+  const { error } = await supabase.from("pm_properties").update({ sub_phases:subs }).eq("id",propId);
+  if(error){ alert("Couldn't update subphase: "+(error.message||"")); return; }
+  _logAudit(s.completed?"completed":"reopened","property", card.addr||"", "Subphase: "+name);
+  await loadPropertiesFromSupabase();
+  openPropDetail(propId);
+}
+// Bruce / Marlo / Tommy (or an admin) approve a completed subphase.
+async function approveSubPhase(propId, name){
+  const me=_myProfile;
+  if(!canApprove(me)){ alert("Only Bruce, Marlo or Tommy (or an admin) can approve subphases."); return; }
+  const card=propCards.find(p=>p.id===propId); if(!card) return;
+  const subs=(card.subPhases||[]).map(sp=>({...sp}));
+  const s=subs.find(x=>x.name===name);
+  if(!s||!s.completed){ alert("Mark it completed before approving."); return; }
+  s.approved=true; s.approvedBy=((me&&me.firstName)||"Approver");
+  const { error } = await supabase.from("pm_properties").update({ sub_phases:subs }).eq("id",propId);
+  if(error){ alert("Couldn't approve: "+(error.message||"")); return; }
+  _logAudit("approved","property", card.addr||"", "Subphase approved: "+name+" by "+s.approvedBy);
+  await loadPropertiesFromSupabase();
+  openPropDetail(propId);
 }
 
 function phInfo(name){ return PROP_PHASES.find(p=>p.name===name)||{bg:"#f4f5f7",text:"#555",cnt:"#aaa",dot:"#aaa"}; }
@@ -1918,13 +1953,27 @@ function openPropDetail(id) {
   // Every property shows the full standard subphase list, prefilled. Each row has a
   // start and finish date; filling both auto-creates a task for this property's PM.
   const _ro_sp = isReadOnly();
+  const _canAppr = canApprove(_myProfile);
   const _savedSub = (name)=> (c.subPhases||[]).find(sp=>sp.name===name) || {};
   const subPhaseRows = SUB_PHASES.map((name,i) => {
     const sp=_savedSub(name);
     const board = SUB_PHASE_BOARD[name] || '—';
+    const nEsc = name.replace(/'/g,"\\'");
     const dateInput=(kind,val)=> _ro_sp
       ? `<span style="font-size:11px;color:${val?'#111':'#ccc'}">${val||'—'}</span>`
       : `<input type="date" id="sp-${kind}-${i}" value="${val||''}" style="font-size:11px;padding:3px 5px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none" />`;
+    // Completion + approval control. Completing then approval (by Bruce/Marlo/Tommy)
+    // is what unlocks moving the property to a later phase on the Property Dashboard.
+    const chk = _ro_sp
+      ? `<span style="font-size:10px;color:${sp.completed?'#3B6D11':'#bbb'}">${sp.completed?'✓ Completed':'Not completed'}</span>`
+      : `<label style="font-size:11px;color:#555;display:inline-flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" ${sp.completed?'checked':''} onchange="toggleSubPhaseComplete('${c.id}','${nEsc}')" style="cursor:pointer" /> Completed</label>`;
+    const appr = sp.completed
+      ? (sp.approved
+          ? `<span style="font-size:10px;color:#3B6D11">✓ Approved${sp.approvedBy?(' by '+_calEsc(sp.approvedBy)):''}</span>`
+          : (_canAppr
+              ? `<button onclick="approveSubPhase('${c.id}','${nEsc}')" style="font-size:10px;padding:3px 9px;border-radius:5px;background:#1a2744;color:#fff;border:none;cursor:pointer">Approve</button>`
+              : `<span style="font-size:10px;color:#B7791F">Awaiting approval</span>`))
+      : '';
     return `<div style="padding:8px 0;border-bottom:0.5px solid #f4f5f7">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
         <div style="min-width:150px">
@@ -1936,6 +1985,7 @@ function openPropDetail(id) {
           <div style="text-align:center"><div style="font-size:9px;color:#aaa;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px">Finish</div>${dateInput('due',sp.due)}</div>
         </div>
       </div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px">${chk}${appr}</div>
     </div>`;
   }).join('');
 
@@ -1960,9 +2010,13 @@ function openPropDetail(id) {
         <div style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;font-size:12px;font-weight:500;color:#111">✅ Add Task</div>
         <div style="padding:12px 14px;display:flex;flex-direction:column;gap:8px">
           <input type="text" id="pt-title" placeholder="What needs to get done" style="${_qaInput}" />
-          <select id="pt-cat" style="${_qaInput}"><option value="">— Header / category —</option>${_qaTaskCats}</select>
+          <select id="pt-cat" onchange="_ptCatToggle()" style="${_qaInput}"><option value="">— Header / category —</option>${_qaTaskCats}<option value="__new">＋ Add new header…</option></select>
+          <input type="text" id="pt-cat-new" placeholder="New header (saved for reuse)" style="${_qaInput};display:none" />
           <select id="pt-asg" style="${_qaInput}"><option value="">— Unassigned —</option>${_qaTeam}</select>
-          <input type="date" id="pt-due" style="${_qaInput}" />
+          <div style="display:flex;gap:8px">
+            <div style="flex:1"><div style="font-size:10px;color:#999;margin-bottom:2px">Start (optional)</div><input type="date" id="pt-start" style="${_qaInput}" /></div>
+            <div style="flex:1"><div style="font-size:10px;color:#999;margin-bottom:2px">Due</div><input type="date" id="pt-due" style="${_qaInput}" /></div>
+          </div>
           <button onclick="savePropTask('${c.id}')" style="${_qaBtn}">Add to Task Calendar</button>
         </div>
       </div>
@@ -2062,16 +2116,21 @@ async function savePropConstruction(propId){
   await loadCalendarEventsFromSupabase();
   openPropDetail(propId);
 }
+function _ptCatToggle(){ const s=document.getElementById("pt-cat"); const n=document.getElementById("pt-cat-new"); if(s&&n) n.style.display = s.value==="__new"?"":"none"; }
 // Quick-submit a task straight from the property card.
 async function savePropTask(propId){
   if(_blockIfReadOnly()) return;
   const title=(document.getElementById("pt-title").value||"").trim();
-  const cat=document.getElementById("pt-cat").value||null;
+  const catSel=document.getElementById("pt-cat").value;
+  let cat = catSel==="__new" ? (document.getElementById("pt-cat-new").value||"").trim() : (catSel||"");
+  cat = cat || null;
   const asg=document.getElementById("pt-asg").value||null;
+  const start=document.getElementById("pt-start").value||null;
   const due=document.getElementById("pt-due").value||null;
   if(!title){ alert("Enter a task."); return; }
   if(!due){ alert("Pick a due date."); return; }
-  const { error } = await supabase.from("pm_tasks").insert({ title, category:cat, assignee:asg, assignees:asg?[asg]:[], due_date:due, property_id:propId });
+  if(start && start>due){ alert("Start date can't be after the due date."); return; }
+  const { error } = await supabase.from("pm_tasks").insert({ title, category:cat, assignee:asg, assignees:asg?[asg]:[], start_date:start, due_date:due, property_id:propId });
   if(error){ alert("Failed to add task: "+(error.message||"")); return; }
   _logAudit("created","task", cat?(cat+": "+title):title, asg?("Assigned to "+asg):"Unassigned");
   await loadTasks();
@@ -3350,8 +3409,29 @@ function _assistantRole(name){
   const u = getUsers().find(x=>((x.firstName||"")+"").trim()===name && x.status==="approved");
   return u ? u.role : (name==="Alex"?"Start of Project Assistant":name==="Gabe"?"End of Project Assistant":"PM Assistant");
 }
+let _pmaActiveTab=null;
+function _pmaRerender(){ const el=document.getElementById("pd-content"); if(el && _pmaActiveTab) el.innerHTML=getPMAContent(_pmaActiveTab); }
+async function pmaToggleTask(id){
+  if(_blockIfReadOnly()) return;
+  const t=(_tasksCache||[]).find(x=>x.id===id); if(!t) return;
+  const ns=t.status==="done"?"open":"done";
+  const { error } = await supabase.from("pm_tasks").update({status:ns}).eq("id",id);
+  if(error){ alert("Couldn't update task: "+(error.message||"")); return; }
+  _logAudit(ns==="done"?"completed":"reopened","task", t.title, taskAssignees(t).join(", "));
+  await loadTasks(); _pmaRerender();
+}
+async function pmaToggleEvent(id){
+  if(_blockIfReadOnly()) return;
+  const e=(_calEventsCache||[]).find(x=>x.id===id); if(!e) return;
+  const now=!e.completed;
+  const { error } = await supabase.from("pm_calendar_events").update({completed:now}).eq("id",id);
+  if(error){ alert("Couldn't update event: "+(error.message||"")); return; }
+  _logAudit(now?"completed":"reopened","calendar", _propAddr(e.property_id), (e.title||e.kind||"event"));
+  await loadCalendarEventsFromSupabase(); _pmaRerender();
+}
 function openPMAssistantDashboard(activeTab){
   activeTab = activeTab || 'main';
+  _pmaActiveTab = activeTab;
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
   // Tabs are the assistant JOB ROLES (not person names). Each role tab shows the
@@ -3433,8 +3513,8 @@ function _pmaWeekEvents(phases){
   return (_calEventsCache||[]).filter(e=>e.event_date>=todayStr && e.event_date<=weStr && phases.includes(_propPhase(e.property_id)))
     .sort((a,b)=>a.event_date<b.event_date?-1:1);
 }
-function _pmaTaskRow(t){ return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:0.5px solid #f4f5f7"><div style="min-width:0;flex:1"><div style="font-size:13px;color:#111;font-weight:500">${t.category?`<span style="font-size:10px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:6px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div><div style="font-size:11px;color:#888;margin-top:2px">${t.property_id?_calEsc(_propAddr(t.property_id))+' · ':''}${_calEsc(taskAssignees(t).join(', '))}</div></div><div style="font-size:11px;font-weight:600;color:${t._today?'#c0392b':'#B7791F'};white-space:nowrap">${t.due_date||''}</div></div>`; }
-function _pmaEvRow(e){ const lbl=e.kind==='contractor'?('★ '+_contractorName(e.contractor_id)):(e.kind==='custom'?('• '+(e.title||'Event')):('📦 '+(e.title||'Material'))); return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:0.5px solid #f4f5f7"><div style="min-width:0;flex:1"><div style="font-size:13px;color:#111;font-weight:500">${_calEsc(lbl)}</div><div style="font-size:11px;color:#888;margin-top:2px">${_calEsc(_propAddr(e.property_id))}</div></div><div style="font-size:11px;color:#185FA5;white-space:nowrap">${_calEsc(e.event_date)}</div></div>`; }
+function _pmaTaskRow(t){ return `<div onclick="pmaToggleTask('${t.id}')" title="Click to mark completed" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:0.5px solid #f4f5f7"><div style="min-width:0;flex:1"><div style="font-size:13px;color:#111;font-weight:500">${t.category?`<span style="font-size:10px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:6px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div><div style="font-size:11px;color:#888;margin-top:2px">${t.property_id?_calEsc(_propAddr(t.property_id))+' · ':''}${_calEsc(taskAssignees(t).join(', '))}</div></div><div style="font-size:11px;font-weight:600;color:${t._today?'#c0392b':'#B7791F'};white-space:nowrap">${t.due_date||''} ☐</div></div>`; }
+function _pmaEvRow(e){ const lbl=e.kind==='contractor'?('★ '+_contractorName(e.contractor_id)):(e.kind==='custom'?('• '+(e.title||'Event')):('📦 '+(e.title||'Material'))); const done=!!e.completed; return `<div onclick="pmaToggleEvent('${e.id}')" title="Click to mark completed" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:0.5px solid #f4f5f7;${done?'opacity:0.55;':''}"><div style="min-width:0;flex:1"><div style="font-size:13px;color:#111;font-weight:500;${done?'text-decoration:line-through;':''}">${done?'✓ ':''}${_calEsc(lbl)}</div><div style="font-size:11px;color:#888;margin-top:2px">${_calEsc(_propAddr(e.property_id))}</div></div><div style="font-size:11px;color:#185FA5;white-space:nowrap">${_calEsc(e.event_date)}</div></div>`; }
 function _pmaCard(title,rowsHtml,count,empty){ return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden"><div style="padding:10px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between"><div style="font-size:13px;font-weight:500;color:#111">${title}</div><span style="font-size:10px;background:#f4f5f7;color:#888;padding:2px 8px;border-radius:99px">${count}</span></div><div style="padding:4px 14px 12px">${count?rowsHtml:`<div style="text-align:center;color:#ccc;font-size:12px;padding:18px 0">${empty}</div>`}</div></div>`; }
 // Role landing: compact header + colored count boards (click to drill) + what's on their plate now.
 function pmAssistantRoleView(roleKey){
@@ -3490,7 +3570,7 @@ function onMarketToolsPanel(cards){
   const checklistBox=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden;margin-bottom:12px"><div style="padding:10px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between"><div style="font-size:13px;font-weight:500;color:#111">📋 On-the-Market Checklist</div><span style="font-size:10px;background:#FCEBEB;color:#791F1F;padding:2px 8px;border-radius:99px">${overdue.length} overdue</span></div><div style="padding:4px 14px 12px">${checklistBody}<div style="font-size:10px;color:#bbb;margin-top:8px">Due every 2 weeks. Will auto-fill from CompanyCam once that sync is built — use “Mark done” until then.</div></div></div>`;
   const ids=cards.map(c=>c.id);
   const tasks=(_tasksCache||[]).filter(t=>t.status!=='done' && t.property_id && ids.includes(t.property_id)).sort((a,b)=>(a.due_date||'9999')<(b.due_date||'9999')?-1:1);
-  const tRow=(t)=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:0.5px solid #f4f5f7"><div style="min-width:0;flex:1"><div style="font-size:12px;color:#111;font-weight:500">${t.category?`<span style="font-size:9px;background:#EEEDFE;color:#3C3489;padding:1px 5px;border-radius:99px;margin-right:5px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div><div style="font-size:10px;color:#999">${_calEsc(_propAddr(t.property_id))}${taskAssignees(t).length?(' · '+_calEsc(taskAssignees(t).join(', '))):''}</div></div><div style="font-size:10px;color:#B7791F;white-space:nowrap">${t.due_date||'—'}</div></div>`;
+  const tRow=(t)=>`<div onclick="pmaToggleTask('${t.id}')" title="Click to mark completed" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:0.5px solid #f4f5f7"><div style="min-width:0;flex:1"><div style="font-size:12px;color:#111;font-weight:500">${t.category?`<span style="font-size:9px;background:#EEEDFE;color:#3C3489;padding:1px 5px;border-radius:99px;margin-right:5px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div><div style="font-size:10px;color:#999">${_calEsc(_propAddr(t.property_id))}${taskAssignees(t).length?(' · '+_calEsc(taskAssignees(t).join(', '))):''}</div></div><div style="font-size:10px;color:#B7791F;white-space:nowrap">${t.due_date||'—'} ☐</div></div>`;
   const tasksBox=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden"><div style="padding:10px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between"><div style="font-size:13px;font-weight:500;color:#111">✅ Tasks Needing Completion</div><span style="font-size:10px;background:#FAEEDA;color:#633806;padding:2px 8px;border-radius:99px">${tasks.length}</span></div><div style="padding:4px 14px 12px">${tasks.length?tasks.map(tRow).join(''):`<div style="text-align:center;color:#ccc;font-size:12px;padding:16px 0">No open tasks for on-market properties.</div>`}</div></div>`;
   return checklistBox+tasksBox;
 }
@@ -4212,6 +4292,21 @@ function propDrop(event, targetPhase) {
   propDragId = null;
   if (oldPhase === targetPhase) return;
 
+  // Gate: a property can't advance to a LATER phase until its scheduled subphases
+  // (ones with a due date) are both completed AND approved by Bruce, Marlo or Tommy.
+  const _oi = PROP_PHASES.findIndex(p => p.name === oldPhase);
+  const _ti = PROP_PHASES.findIndex(p => p.name === targetPhase);
+  if (_ti > _oi) {
+    const card = propCards[idx];
+    const blocking = (card.subPhases||[]).filter(sp => sp.due && !(sp.completed && sp.approved));
+    if (blocking.length) {
+      alert("Can't advance \""+(card.addr||"this property")+"\" to "+targetPhase+" yet.\n\nThese scheduled subphases must be completed and approved (Bruce, Marlo or Tommy) first:\n\n• "+
+        blocking.map(sp => sp.name + (sp.completed ? "  — awaiting approval" : "  — not completed")).join("\n• "));
+      openProjectDashboard('trello');
+      return;
+    }
+  }
+
   // Optimistic local update so the UI reflects the drop immediately
   propCards[idx].phase = targetPhase;
   openProjectDashboard('trello');
@@ -4236,7 +4331,7 @@ async function loadContractorsFromSupabase(){
   _contractorsCache = error ? [] : (data||[]);
 }
 async function loadCalendarEventsFromSupabase(){
-  const { data, error } = await supabase.from("pm_calendar_events").select("id,property_id,event_date,kind,title,contractor_id,notes").order("event_date",{ascending:true});
+  const { data, error } = await supabase.from("pm_calendar_events").select("id,property_id,event_date,kind,title,contractor_id,notes,completed").order("event_date",{ascending:true});
   _calEventsCache = error ? [] : (data||[]);
 }
 function _contractorName(id){ const c=_contractorsCache.find(x=>x.id===id); return c?c.name:"Contractor"; }
@@ -4382,9 +4477,13 @@ function renderConstructionCalendar(){
       && _matchFilter(e));
   };
   const evChip=(e)=>{
-    if(e.kind==="contractor"){ return `<div style="font-size:10px;background:#1a2744;color:#fff;border-radius:4px;padding:2px 5px;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_calEsc(_contractorName(e.contractor_id))}">★ ${_calEsc(_contractorName(e.contractor_id))}</div>`; }
-    if(e.kind==="custom"){ return `<div style="font-size:10px;background:#EEEDFE;color:#3C3489;border-radius:4px;padding:2px 5px;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_calEsc(e.title||'Event')}">• ${_calEsc(e.title||'Event')}</div>`; }
-    return `<div style="font-size:10px;background:#E6F1FB;color:#0C447C;border-radius:4px;padding:2px 5px;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${_calEsc(e.title||'Material delivery')}">📦 ${_calEsc(e.title||'Material')}</div>`;
+    const done=!!e.completed; const deco=done?"text-decoration:line-through;opacity:0.55;":"";
+    const lbl = e.kind==="contractor" ? ("★ "+_contractorName(e.contractor_id))
+              : e.kind==="custom" ? ("• "+(e.title||'Event'))
+              : ("📦 "+(e.title||'Material'));
+    const bg = e.kind==="contractor"?"#1a2744":e.kind==="custom"?"#EEEDFE":"#E6F1FB";
+    const col= e.kind==="contractor"?"#fff":e.kind==="custom"?"#3C3489":"#0C447C";
+    return `<div onclick="event.stopPropagation();toggleCalEventDone('${e.id}')" title="${done?'Completed — click to reopen':'Click to mark completed'}: ${_calEsc(e.title||lbl)}" style="cursor:pointer;font-size:10px;background:${bg};color:${col};border-radius:4px;padding:2px 5px;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${deco}">${done?'✓ ':''}${_calEsc(lbl)}</div>`;
   };
   const cells=[];
   for(let i=0;i<startDow;i++){ cells.push(`<div style="background:#fafbfc;min-height:92px;border:0.5px solid #edf0f4"></div>`); }
@@ -4515,6 +4614,18 @@ async function saveCalEvent(){
   await loadCalendarEventsFromSupabase();
   closeModal("calevent-modal");
   _calRerender();
+}
+// Mark a construction event complete / reopen. Re-renders whatever view is showing.
+async function toggleCalEventDone(id){
+  if(_blockIfReadOnly()) return;
+  const e=(_calEventsCache||[]).find(x=>x.id===id); if(!e) return;
+  const now=!e.completed;
+  const { error } = await supabase.from("pm_calendar_events").update({ completed:now }).eq("id",id);
+  if(error){ alert("Couldn't update event: "+(error.message||"")); return; }
+  _logAudit(now?"completed":"reopened","calendar", _propAddr(e.property_id), (e.title||e.kind||"event"));
+  await loadCalendarEventsFromSupabase();
+  const pd=document.getElementById("pd-content");
+  if(pd){ if(typeof _calState!=='undefined' && _calState.loaded) _calRerender(); }
 }
 
 // ===================== TASK SYSTEM + TASK CALENDAR =====================
