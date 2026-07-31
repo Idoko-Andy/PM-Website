@@ -195,9 +195,10 @@ body{background:#1a1a1a;color:#fff;min-height:100vh}
 
 <!-- NAV -->
 <div class="nav" id="nav" style="display:none">
-  <div class="ni has-dd" id="pd-t">⬡ Proj. Director ▾
+  <div class="ni has-dd" id="pd-t">⬡ Proj. Director / CEO ▾
     <div class="dd" id="pd-d">
-      <div class="ddl">Project Director</div>
+      <div class="ddl">Project Director / CEO</div>
+      <div class="ddi" onclick="openDirectorCEODashboard()">🏛 Director / CEO Dashboard</div>
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
       <div class="ddi" onclick="openTVDashboard()">📺 TV Dashboard</div>
@@ -1938,6 +1939,35 @@ function openPropDetail(id) {
     </div>`;
   }).join('');
 
+  // Quick-submit forms (below Notes): drop a construction event or a task straight
+  // onto the calendars, pre-linked to this property — no need to switch tabs.
+  const _qaInput = "width:100%;padding:7px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:13px;color:#111;background:#fff;outline:none;box-sizing:border-box";
+  const _qaBtn = "padding:8px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer";
+  const _qaTaskCats = (typeof _taskCategories==='function'?_taskCategories():[]).map(x=>`<option>${_calEsc(x)}</option>`).join('');
+  const _qaTeam = (typeof teamMembers==='function'?teamMembers():[]).map(x=>`<option>${_calEsc(x)}</option>`).join('');
+  const quickAddForms = _ro_sp ? '' : `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+      <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden">
+        <div style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;font-size:12px;font-weight:500;color:#111">📅 Add Construction Event</div>
+        <div style="padding:12px 14px;display:flex;flex-direction:column;gap:8px">
+          <input type="date" id="pc-date" style="${_qaInput}" />
+          <select id="pc-kind" style="${_qaInput}"><option value="material">📦 Material delivery</option><option value="contractor">★ Contractor start</option><option value="custom">• Custom</option></select>
+          <input type="text" id="pc-detail" placeholder="What's delivered / contractor name / description" style="${_qaInput}" />
+          <button onclick="savePropConstruction('${c.id}')" style="${_qaBtn}">Add to Construction Calendar</button>
+        </div>
+      </div>
+      <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden">
+        <div style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;font-size:12px;font-weight:500;color:#111">✅ Add Task</div>
+        <div style="padding:12px 14px;display:flex;flex-direction:column;gap:8px">
+          <input type="text" id="pt-title" placeholder="What needs to get done" style="${_qaInput}" />
+          <select id="pt-cat" style="${_qaInput}"><option value="">— Header / category —</option>${_qaTaskCats}</select>
+          <select id="pt-asg" style="${_qaInput}"><option value="">— Unassigned —</option>${_qaTeam}</select>
+          <input type="date" id="pt-due" style="${_qaInput}" />
+          <button onclick="savePropTask('${c.id}')" style="${_qaBtn}">Add to Task Calendar</button>
+        </div>
+      </div>
+    </div>`;
+
   document.getElementById("pd-content").innerHTML = `
     <div style="background:#fff;min-height:520px;border-radius:8px;overflow:hidden;margin-top:0">
       <div style="padding:10px 18px;border-bottom:0.5px solid #e0e4ec;display:flex;align-items:center;gap:8px;background:#fafafa">
@@ -1986,7 +2016,7 @@ function openPropDetail(id) {
               <div style="display:flex;justify-content:space-between;padding:7px 0;font-size:13px"><span style="color:#888">Target Completion</span><span style="color:#111;font-weight:500">${c.end||'—'}</span></div>
               <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;font-size:13px">
                 <span style="color:#888;display:flex;align-items:center;gap:5px">📷 CompanyCam <span style="font-size:9px;background:#E6F1FB;color:#185FA5;padding:1px 5px;border-radius:4px">Auto-links when folder created</span></span>
-                ${c.companyCam ? `<a href="${c.companyCam}" target="_blank" style="font-size:12px;color:#185FA5;text-decoration:none">Open Folder ↗</a>` : `<button onclick="openPropModal('companycam',${c.id})" style="font-size:11px;padding:2px 8px;border-radius:4px;background:transparent;color:#aaa;border:0.5px solid #ccc;cursor:pointer">+ Add Link</button>`}
+                ${c.companyCam ? `<a href="${c.companyCam}" target="_blank" style="font-size:12px;color:#185FA5;text-decoration:none">Open Folder ↗</a>` : `<button onclick="openPropModal('companycam','${c.id}')" style="font-size:11px;padding:2px 8px;border-radius:4px;background:transparent;color:#aaa;border:0.5px solid #ccc;cursor:pointer">+ Add Link</button>`}
               </div>
             </div>
           </div>
@@ -2003,11 +2033,49 @@ function openPropDetail(id) {
           <div style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;font-size:12px;font-weight:500;color:#111">Notes</div>
           <div style="padding:10px 14px;font-size:13px;color:#888;line-height:1.6">${c.notes||'No notes added yet.'}</div>
         </div>
+        ${quickAddForms}
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px">
-          <button onclick="openPropModal('edit',${c.id})" style="display:flex;align-items:center;gap:5px;padding:7px 14px;font-size:12px;border-radius:6px;cursor:pointer;background:#111;color:#fff;border:none">✎ Edit Property</button>
+          <button onclick="openPropModal('edit','${c.id}')" style="display:flex;align-items:center;gap:5px;padding:7px 14px;font-size:12px;border-radius:6px;cursor:pointer;background:#111;color:#fff;border:none">✎ Edit Property</button>
         </div>
       </div>
     </div>`;
+}
+
+// Quick-submit a construction event straight from the property card.
+async function savePropConstruction(propId){
+  if(_blockIfReadOnly()) return;
+  const date=document.getElementById("pc-date").value;
+  const kind=document.getElementById("pc-kind").value;
+  const detail=(document.getElementById("pc-detail").value||"").trim();
+  if(!date){ alert("Pick a date for the construction event."); return; }
+  let title=null, contractor_id=null;
+  if(kind==="material"||kind==="custom"){ if(!detail){ alert("Enter a description."); return; } title=detail; }
+  else if(kind==="contractor"){
+    if(!detail){ alert("Enter the contractor's name."); return; }
+    let ct=(_contractorsCache||[]).find(x=>(x.name||"").toLowerCase()===detail.toLowerCase());
+    if(!ct){ const ins=await supabase.from("pm_contractors").insert({name:detail}).select("id").single(); if(ins.error){ alert("Couldn't add contractor: "+(ins.error.message||"")); return; } contractor_id=ins.data.id; await loadContractorsFromSupabase(); }
+    else contractor_id=ct.id;
+  }
+  const { error } = await supabase.from("pm_calendar_events").insert({ property_id:propId, event_date:date, kind, title, contractor_id, notes:null });
+  if(error){ alert("Failed to add event: "+(error.message||"")); return; }
+  _logAudit("created","calendar", _propAddr(propId), (kind==="contractor"?("Contractor start: "+detail):(kind==="custom"?("Custom: "+detail):("Material delivery: "+detail)))+" (from property card)");
+  await loadCalendarEventsFromSupabase();
+  openPropDetail(propId);
+}
+// Quick-submit a task straight from the property card.
+async function savePropTask(propId){
+  if(_blockIfReadOnly()) return;
+  const title=(document.getElementById("pt-title").value||"").trim();
+  const cat=document.getElementById("pt-cat").value||null;
+  const asg=document.getElementById("pt-asg").value||null;
+  const due=document.getElementById("pt-due").value||null;
+  if(!title){ alert("Enter a task."); return; }
+  if(!due){ alert("Pick a due date."); return; }
+  const { error } = await supabase.from("pm_tasks").insert({ title, category:cat, assignee:asg, assignees:asg?[asg]:[], due_date:due, property_id:propId });
+  if(error){ alert("Failed to add task: "+(error.message||"")); return; }
+  _logAudit("created","task", cat?(cat+": "+title):title, asg?("Assigned to "+asg):"Unassigned");
+  await loadTasks();
+  openPropDetail(propId);
 }
 
 // ===================== PROPERTY MODAL =====================
@@ -3601,6 +3669,11 @@ function openAdminDashboard() {
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
   document.getElementById("dash-body").innerHTML = `<div class="empty-state"><div class="icon">🏛</div><p style="color:#888;font-size:15px;font-weight:500">Admin Dashboard</p><p style="color:#555;font-size:13px;margin-top:6px">Being built out. Check back soon.</p></div>`;
+}
+function openDirectorCEODashboard() {
+  document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
+  document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
+  document.getElementById("dash-body").innerHTML = `<div class="empty-state"><div class="icon">🏛</div><p style="color:#888;font-size:15px;font-weight:500">Director / CEO Dashboard</p><p style="color:#555;font-size:13px;margin-top:6px">Being built out — tell me what you want the Director/CEO view to show and I'll build it here.</p></div>`;
 }
 function openSeniorVADashboard() {
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
