@@ -3295,8 +3295,10 @@ function openPMAssistantDashboard(activeTab){
     {id:'construction', label:'Construction Calendar',   icon:'📅'},
     {id:'taskcal',      label:'Task Calendar',           icon:'🗓'},
   ];
+  // When drilled into a phase sub-dashboard, keep its parent role tab highlighted.
+  const hi = activeTab.indexOf('phase:')===0 ? ((_phaseBoard(activeTab.slice(6))||{}).roleKey||'') : activeTab;
   const tabBar = tabs.map(t=>`
-    <div onclick="openPMAssistantDashboard('${t.id}')" style="padding:11px 16px;font-size:12px;color:${t.id===activeTab?'#111':'#888'};cursor:pointer;border-bottom:2px solid ${t.id===activeTab?'#111':'transparent'};white-space:nowrap;display:inline-flex;align-items:center;gap:5px;margin-bottom:-1px;font-weight:${t.id===activeTab?'500':'400'}">
+    <div onclick="openPMAssistantDashboard('${t.id}')" style="padding:11px 16px;font-size:12px;color:${t.id===hi?'#111':'#888'};cursor:pointer;border-bottom:2px solid ${t.id===hi?'#111':'transparent'};white-space:nowrap;display:inline-flex;align-items:center;gap:5px;margin-bottom:-1px;font-weight:${t.id===hi?'500':'400'}">
       <span>${t.icon}</span>${t.label}
     </div>`).join('');
   document.getElementById("dash-body").innerHTML=`
@@ -3309,18 +3311,27 @@ function openPMAssistantDashboard(activeTab){
 // more phases and shows the properties currently in those phases.
 const _ASSISTANT_ROLE_BOARDS = {
   sop: { role:'Start of Project Assistant', seed:'Alex', boards:[
-    { title:'Vacant / On Standby',        phases:['Vacant / On Standby'] },
-    { title:'Pre Construction',           phases:['Pre Construction'] },
-    { title:'Framing, MEPS, Insulation',  phases:['Framing, MEPS, Insulation'] },
+    { id:'sop-vacant',  title:'Vacant / On Standby',        phases:['Vacant / On Standby'] },
+    { id:'sop-precon',  title:'Pre Construction',           phases:['Pre Construction'] },
+    { id:'sop-framing', title:'Framing, MEPS, Insulation',  phases:['Framing, MEPS, Insulation'] },
   ]},
   eop: { role:'End of Project Assistant', seed:'Gabe', boards:[
-    { title:'On the Market',       phases:['Listed on the Market'] },
-    { title:'In Contract',         phases:['In Contract'] },
-    { title:'Request to Remedy',   phases:['RTR In Process','RTR Completed (Pending Closing)'] },
+    { id:'eop-market',   title:'On the Market',       phases:['Listed on the Market'] },
+    { id:'eop-contract', title:'In Contract',         phases:['In Contract'] },
+    { id:'eop-rtr',      title:'Request to Remedy',   phases:['RTR In Process','RTR Completed (Pending Closing)'] },
   ]},
 };
+// Look up a phase board by id and which role tab it belongs to.
+function _phaseBoard(id){
+  for(const rk of ['sop','eop']){
+    const b=(_ASSISTANT_ROLE_BOARDS[rk].boards||[]).find(x=>x.id===id);
+    if(b) return { board:b, roleKey:rk, role:_ASSISTANT_ROLE_BOARDS[rk].role };
+  }
+  return null;
+}
 function getPMAContent(tab){
   if(tab==='main') return pmAssistantMainDashboard();
+  if(tab && tab.indexOf('phase:')===0) return phaseDashboard(tab.slice(6));
   if(tab==='sop'||tab==='eop') return pmAssistantRoleContent(tab);
   switch(tab){
     case 'property':     return renderPropertyBoard();
@@ -3328,6 +3339,32 @@ function getPMAContent(tab){
     case 'taskcal':      return renderTaskCalendar();
     default:             return pmAssistantMainDashboard();
   }
+}
+// A dedicated sub-dashboard for one phase board. Each stage gets its own workspace
+// here — properties currently in the phase, plus room to build out its own system.
+function phaseDashboard(id){
+  const info=_phaseBoard(id); if(!info) return pmAssistantMainDashboard();
+  const b=info.board, p=phInfo(b.phases[0]);
+  const cards=(propCards||[]).filter(c=>b.phases.includes(c.phase));
+  const grid = cards.length
+    ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px">${cards.map(_propCardMini).join('')}</div>`
+    : `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:30px;text-align:center;color:#bbb;font-size:13px">No properties in this phase right now.</div>`;
+  return `<div style="padding:20px">
+    <div onclick="openPMAssistantDashboard('${info.roleKey}')" style="display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#888;cursor:pointer;margin-bottom:12px">← Back to ${_calEsc(info.role)}</div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
+      <span style="width:10px;height:10px;border-radius:50%;background:${p.dot}"></span>
+      <div style="font-size:18px;font-weight:500;color:#111">${_calEsc(b.title)}</div>
+      <span style="font-size:11px;background:${p.bg};color:${p.text};padding:2px 9px;border-radius:99px;font-weight:500">${cards.length} propert${cards.length===1?'y':'ies'}</span>
+    </div>
+    <div style="font-size:12px;color:#888;margin-bottom:16px">Dedicated workspace for the ${_calEsc(b.title)} stage.</div>
+    <div style="font-size:12px;font-weight:500;color:#111;margin-bottom:8px">Properties in this stage</div>
+    ${grid}
+    <div style="background:#fbfbfd;border:1px dashed #d5d9e2;border-radius:10px;padding:22px;text-align:center;margin-top:16px">
+      <div style="font-size:22px;margin-bottom:6px;opacity:0.5">🧩</div>
+      <div style="font-size:13px;color:#555;font-weight:500">${_calEsc(b.title)} workflow — coming soon</div>
+      <div style="font-size:12px;color:#999;margin-top:4px">This is the space we'll build the full ${_calEsc(b.title)} system into. Tell me what this stage needs and I'll add it here.</div>
+    </div>
+  </div>`;
 }
 // Assign (or reassign) a task from the PM Assistant main dashboard.
 async function assignTask(id, name){
@@ -3348,8 +3385,8 @@ function pmAssistantMainDashboard(){
     const who=holders.length?holders.join(', '):cfg.seed;
     const tiles=cfg.boards.map(b=>{
       const n=countPhases(b.phases); const p=phInfo(b.phases[0]);
-      return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;border-top:3px solid ${p.dot};padding:12px 14px">
-        <div style="font-size:11px;color:#888;margin-bottom:6px">${_calEsc(b.title)}</div>
+      return `<div onclick="openPMAssistantDashboard('phase:${b.id}')" title="Open the ${_calEsc(b.title)} dashboard" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;border-top:3px solid ${p.dot};padding:12px 14px;cursor:pointer" onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.06)'" onmouseout="this.style.boxShadow='none'">
+        <div style="font-size:11px;color:#888;margin-bottom:6px;display:flex;align-items:center;justify-content:space-between">${_calEsc(b.title)} <span style="color:#ccc">›</span></div>
         <div style="font-size:26px;font-weight:600;color:#111">${n}</div>
       </div>`;
     }).join('');
@@ -3396,8 +3433,8 @@ function pmAssistantRoleContent(key){
     const cards=(propCards||[]).filter(c=>b.phases.includes(c.phase));
     const p=phInfo(b.phases[0]);
     return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden;border-top:3px solid ${p.dot}">
-      <div style="padding:9px 13px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between">
-        <div style="font-size:12px;font-weight:500;color:#111">${_calEsc(b.title)}</div>
+      <div onclick="openPMAssistantDashboard('phase:${b.id}')" title="Open the ${_calEsc(b.title)} dashboard" style="padding:9px 13px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between;cursor:pointer" onmouseover="this.style.background='#f7f8fa'" onmouseout="this.style.background='transparent'">
+        <div style="font-size:12px;font-weight:500;color:#111">${_calEsc(b.title)} <span style="color:#bbb;font-weight:400">›</span></div>
         <span style="font-size:10px;background:${p.bg};color:${p.text};padding:2px 8px;border-radius:99px;font-weight:500">${cards.length}</span>
       </div>
       <div style="padding:10px 12px;min-height:110px;display:flex;flex-direction:column;gap:8px">
