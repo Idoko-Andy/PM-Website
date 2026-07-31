@@ -1561,7 +1561,8 @@ function _propRowToCard(r) {
     end:        r.end_date || "",
     companyCam: r.company_cam || "",
     notes:      r.notes || "",
-    subPhases:  Array.isArray(r.sub_phases) ? r.sub_phases : []
+    subPhases:  Array.isArray(r.sub_phases) ? r.sub_phases : [],
+    checklistMarketLast: r.checklist_market_last || null
   };
 }
 
@@ -1585,7 +1586,7 @@ function _propCardToRow(p) {
 async function loadPropertiesFromSupabase() {
   const { data, error } = await supabase
     .from("pm_properties")
-    .select("id,addr,phase,type,pm,position,budget,spent,start_date,end_date,company_cam,notes,sub_phases")
+    .select("id,addr,phase,type,pm,position,budget,spent,start_date,end_date,company_cam,notes,sub_phases,checklist_market_last")
     .order("created_at", { ascending: true });
   if (error) {
     console.error("loadPropertiesFromSupabase failed:", error);
@@ -3342,10 +3343,8 @@ function _roleHolders(cfg){
 function _ymd(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
 function getPMAContent(tab){
   if(tab==='main') return pmAssistantMainDashboard();
-  if(tab && tab.indexOf('phase:')===0){ const info=_phaseBoard(tab.slice(6)); return info?pmAssistantRoleView(info.roleKey, tab.slice(6)):pmAssistantMainDashboard(); }
-  if(tab==='sop'||tab==='eop') return pmAssistantRoleView(tab,'overview');
-  if(tab==='sop-cal'||tab==='eop-cal') return pmAssistantRoleView(tab.slice(0,3),'cal');
-  if(tab==='sop-task'||tab==='eop-task') return pmAssistantRoleView(tab.slice(0,3),'task');
+  if(tab && tab.indexOf('phase:')===0) return phasePage(tab.slice(6));
+  if(tab==='sop'||tab==='eop') return pmAssistantRoleView(tab);
   switch(tab){
     case 'property':     return renderPropertyBoard();
     case 'construction': return renderConstructionCalendar();
@@ -3353,62 +3352,88 @@ function getPMAContent(tab){
     default:             return pmAssistantMainDashboard();
   }
 }
-// A role tab is its own mini-dashboard: a person header + inner tabs. The default
-// (Overview) shows what's on their plate now — it does NOT show property boards.
-// Each phase is its own inner tab; plus a This Week construction view and a
-// Due Today/Tomorrow task view.
-function pmAssistantRoleView(roleKey, inner){
+// ---- shared bits for the assistant role views ----
+function _pmaDueTasks(holders){
+  const today=new Date(); today.setHours(0,0,0,0);
+  const todayStr=_ymd(today); const tom=new Date(today); tom.setDate(today.getDate()+1); const tomStr=_ymd(tom);
+  return (_tasksCache||[]).filter(t=>t.status!=="done" && (t.due_date===todayStr||t.due_date===tomStr) && holders.some(n=>taskAssignees(t).includes(n)))
+    .sort((a,b)=>(a.due_date||'')<(b.due_date||'')?-1:1).map(t=>({...t,_today:t.due_date===todayStr}));
+}
+function _pmaWeekEvents(phases){
+  const today=new Date(); today.setHours(0,0,0,0); const todayStr=_ymd(today);
+  const we=new Date(today); we.setDate(today.getDate()+6); const weStr=_ymd(we);
+  return (_calEventsCache||[]).filter(e=>e.event_date>=todayStr && e.event_date<=weStr && phases.includes(_propPhase(e.property_id)))
+    .sort((a,b)=>a.event_date<b.event_date?-1:1);
+}
+function _pmaTaskRow(t){ return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:0.5px solid #f4f5f7"><div style="min-width:0;flex:1"><div style="font-size:13px;color:#111;font-weight:500">${t.category?`<span style="font-size:10px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:6px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div><div style="font-size:11px;color:#888;margin-top:2px">${t.property_id?_calEsc(_propAddr(t.property_id))+' · ':''}${_calEsc(taskAssignees(t).join(', '))}</div></div><div style="font-size:11px;font-weight:600;color:${t._today?'#c0392b':'#B7791F'};white-space:nowrap">${t.due_date||''}</div></div>`; }
+function _pmaEvRow(e){ const lbl=e.kind==='contractor'?('★ '+_contractorName(e.contractor_id)):(e.kind==='custom'?('• '+(e.title||'Event')):('📦 '+(e.title||'Material'))); return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:0.5px solid #f4f5f7"><div style="min-width:0;flex:1"><div style="font-size:13px;color:#111;font-weight:500">${_calEsc(lbl)}</div><div style="font-size:11px;color:#888;margin-top:2px">${_calEsc(_propAddr(e.property_id))}</div></div><div style="font-size:11px;color:#185FA5;white-space:nowrap">${_calEsc(e.event_date)}</div></div>`; }
+function _pmaCard(title,rowsHtml,count,empty){ return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden"><div style="padding:10px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between"><div style="font-size:13px;font-weight:500;color:#111">${title}</div><span style="font-size:10px;background:#f4f5f7;color:#888;padding:2px 8px;border-radius:99px">${count}</span></div><div style="padding:4px 14px 12px">${count?rowsHtml:`<div style="text-align:center;color:#ccc;font-size:12px;padding:18px 0">${empty}</div>`}</div></div>`; }
+// Role landing: compact header + colored count boards (click to drill) + what's on their plate now.
+function pmAssistantRoleView(roleKey){
   const cfg=_ASSISTANT_ROLE_BOARDS[roleKey]; if(!cfg) return pmAssistantMainDashboard();
-  inner = inner || 'overview';
   const holders=_roleHolders(cfg); const who=holders.join(', ');
   const rolePhases=[].concat(...cfg.boards.map(b=>b.phases));
-  // inner tab definitions: [id, label, targetActiveTab]
-  const innerTabs=[['overview','Overview',roleKey]]
-    .concat(cfg.boards.map(b=>[b.id,b.title,'phase:'+b.id]))
-    .concat([['cal','📅 This Week',roleKey+'-cal'],['task','✅ Due Today & Tomorrow',roleKey+'-task']]);
-  const innerBar=innerTabs.map(([id,label,target])=>`
-    <div onclick="openPMAssistantDashboard('${target}')" style="padding:7px 12px;font-size:11.5px;border-radius:999px;cursor:pointer;white-space:nowrap;${id===inner?'background:#111;color:#fff':'background:#fff;color:#666;border:0.5px solid #ddd'}">${_calEsc(label)}</div>`).join('');
-  // ---- inner content ----
-  let body='';
-  const today=new Date(); today.setHours(0,0,0,0);
-  const todayStr=_ymd(today);
-  const tomorrow=new Date(today); tomorrow.setDate(today.getDate()+1); const tomStr=_ymd(tomorrow);
-  const weekEnd=new Date(today); weekEnd.setDate(today.getDate()+6); const weekEndStr=_ymd(weekEnd);
-  const dueTasks=(_tasksCache||[]).filter(t=>t.status!=="done" && (t.due_date===todayStr||t.due_date===tomStr) && holders.some(n=>taskAssignees(t).includes(n)))
-    .sort((a,b)=>(a.due_date||'')<(b.due_date||'')?-1:1);
-  const weekEvents=(_calEventsCache||[]).filter(e=>e.event_date>=todayStr && e.event_date<=weekEndStr && rolePhases.includes(_propPhase(e.property_id)))
-    .sort((a,b)=>a.event_date<b.event_date?-1:1);
-  const taskRow=(t)=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:0.5px solid #f4f5f7">
-      <div style="min-width:0;flex:1"><div style="font-size:13px;color:#111;font-weight:500">${t.category?`<span style="font-size:10px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:6px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div><div style="font-size:11px;color:#888;margin-top:2px">${t.property_id?_calEsc(_propAddr(t.property_id))+' · ':''}${taskAssignees(t).join(', ')}</div></div>
-      <div style="font-size:11px;font-weight:600;color:${t.due_date===todayStr?'#c0392b':'#B7791F'};white-space:nowrap">${t.due_date===todayStr?'Today':'Tomorrow'}</div>
-    </div>`;
-  const evRow=(e)=>{ const lbl=e.kind==='contractor'?('★ '+_contractorName(e.contractor_id)):(e.kind==='custom'?('• '+(e.title||'Event')):('📦 '+(e.title||'Material'))); return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:0.5px solid #f4f5f7"><div style="min-width:0;flex:1"><div style="font-size:13px;color:#111;font-weight:500">${_calEsc(lbl)}</div><div style="font-size:11px;color:#888;margin-top:2px">${_calEsc(_propAddr(e.property_id))}</div></div><div style="font-size:11px;color:#185FA5;white-space:nowrap">${_calEsc(e.event_date)}</div></div>`; };
-  const listCard=(title,rowsHtml,count,empty)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">
-      <div style="padding:10px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between"><div style="font-size:13px;font-weight:500;color:#111">${title}</div><span style="font-size:10px;background:#f4f5f7;color:#888;padding:2px 8px;border-radius:99px">${count}</span></div>
-      <div style="padding:4px 14px 12px">${count?rowsHtml:`<div style="text-align:center;color:#ccc;font-size:12px;padding:18px 0">${empty}</div>`}</div></div>`;
-  if(inner==='overview'){
-    body=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-      ${listCard('✅ Due Today & Tomorrow', dueTasks.map(taskRow).join(''), dueTasks.length, 'Nothing due today or tomorrow')}
-      ${listCard('📅 Coming Up This Week', weekEvents.map(evRow).join(''), weekEvents.length, 'No construction items this week')}
-    </div>`;
-  } else if(inner==='cal'){
-    body=listCard('📅 Construction — This Week', weekEvents.map(evRow).join(''), weekEvents.length, 'No construction items this week for these stages.');
-  } else if(inner==='task'){
-    body=listCard('✅ Tasks Due Today & Tomorrow', dueTasks.map(taskRow).join(''), dueTasks.length, 'Nothing due today or tomorrow.');
-  } else {
-    // a phase board: properties in this stage + a build-out workspace
-    const b=cfg.boards.find(x=>x.id===inner); const p=phInfo(b.phases[0]);
-    const cards=(propCards||[]).filter(c=>b.phases.includes(c.phase));
-    const grid=cards.length?`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px">${cards.map(_propCardMini).join('')}</div>`:`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:30px;text-align:center;color:#bbb;font-size:13px">No properties in this stage right now.</div>`;
-    body=`<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px"><span style="width:10px;height:10px;border-radius:50%;background:${p.dot}"></span><div style="font-size:15px;font-weight:500;color:#111">${_calEsc(b.title)}</div><span style="font-size:11px;background:${p.bg};color:${p.text};padding:2px 9px;border-radius:99px;font-weight:500">${cards.length} propert${cards.length===1?'y':'ies'}</span></div>
-      ${grid}
-      <div style="background:#fbfbfd;border:1px dashed #d5d9e2;border-radius:10px;padding:22px;text-align:center;margin-top:16px"><div style="font-size:22px;margin-bottom:6px;opacity:0.5">🧩</div><div style="font-size:13px;color:#555;font-weight:500">${_calEsc(b.title)} workflow — coming soon</div><div style="font-size:12px;color:#999;margin-top:4px">This is the space we'll build the full ${_calEsc(b.title)} system into. Tell me what this stage needs and I'll add it here.</div></div>`;
-  }
-  return `<div style="padding:20px">
-    <div style="margin-bottom:12px"><div style="font-size:17px;font-weight:500;color:#111">${_calEsc(cfg.role)}</div><div style="font-size:12px;color:#888">${_calEsc(who)}</div></div>
-    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px">${innerBar}</div>
-    ${body}
+  const countPhases=(phases)=>(propCards||[]).filter(c=>phases.includes(c.phase)).length;
+  const tiles=cfg.boards.map(b=>{ const n=countPhases(b.phases); const p=phInfo(b.phases[0]);
+    return `<div onclick="openPMAssistantDashboard('phase:${b.id}')" title="Open ${_calEsc(b.title)}" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;border-top:3px solid ${p.dot};padding:11px 13px;cursor:pointer" onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.06)'" onmouseout="this.style.boxShadow='none'"><div style="font-size:11px;color:#666;margin-bottom:5px;display:flex;align-items:center;justify-content:space-between">${_calEsc(b.title)} <span style="color:#ccc">›</span></div><div style="font-size:24px;font-weight:600;color:${p.text}">${n}</div></div>`; }).join('');
+  const dueTasks=_pmaDueTasks(holders); const weekEvents=_pmaWeekEvents(rolePhases);
+  return `<div style="padding:14px 20px">
+    <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:12px"><div style="font-size:14px;font-weight:600;color:#111">${_calEsc(cfg.role)}</div><div style="font-size:12px;color:#999">· ${_calEsc(who)}</div></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:16px">${tiles}</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      ${_pmaCard('✅ Due Today & Tomorrow', dueTasks.map(_pmaTaskRow).join(''), dueTasks.length, 'Nothing due today or tomorrow')}
+      ${_pmaCard('📅 Coming Up This Week', weekEvents.map(_pmaEvRow).join(''), weekEvents.length, 'No construction items this week')}
+    </div>
   </div>`;
+}
+// A phase drills into its own page: back button, LEFT = properties in the stage,
+// RIGHT = that stage's tools & checklists (built out per stage).
+function phasePage(id){
+  const info=_phaseBoard(id); if(!info) return pmAssistantMainDashboard();
+  const b=info.board, p=phInfo(b.phases[0]);
+  const cards=(propCards||[]).filter(c=>b.phases.includes(c.phase));
+  const left = cards.length? cards.map(_propCardMini).join('') : `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:26px;text-align:center;color:#bbb;font-size:12px">No properties in this stage right now.</div>`;
+  return `<div style="padding:14px 20px">
+    <div onclick="openPMAssistantDashboard('${info.roleKey}')" style="display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#888;cursor:pointer;margin-bottom:12px">← Back to ${_calEsc(info.role)}</div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px"><span style="width:10px;height:10px;border-radius:50%;background:${p.dot}"></span><div style="font-size:18px;font-weight:500;color:#111">${_calEsc(b.title)}</div><span style="font-size:11px;background:${p.bg};color:${p.text};padding:2px 9px;border-radius:99px;font-weight:500">${cards.length} propert${cards.length===1?'y':'ies'}</span></div>
+    <div style="display:grid;grid-template-columns:minmax(240px,1fr) minmax(300px,1.25fr);gap:16px;align-items:start">
+      <div><div style="font-size:12px;font-weight:500;color:#111;margin-bottom:8px">Properties in this stage</div><div style="display:flex;flex-direction:column;gap:10px">${left}</div></div>
+      <div><div style="font-size:12px;font-weight:500;color:#111;margin-bottom:8px">Tools &amp; checklists</div>${phaseToolsPanel(id,b,cards)}</div>
+    </div>
+  </div>`;
+}
+function phaseToolsPanel(id,b,cards){
+  if(id==='eop-market') return onMarketToolsPanel(cards);
+  return `<div style="background:#fbfbfd;border:1px dashed #d5d9e2;border-radius:10px;padding:22px;text-align:center"><div style="font-size:22px;margin-bottom:6px;opacity:0.5">🧩</div><div style="font-size:13px;color:#555;font-weight:500">${_calEsc(b.title)} tools &amp; checklists — coming soon</div><div style="font-size:12px;color:#999;margin-top:4px">Tell me what this stage needs — checklists, trackers, buttons — and I'll build it here.</div></div>`;
+}
+// On-the-Market stage: a checklist tracker (overdue at 2 weeks) + open tasks for those props.
+function onMarketToolsPanel(cards){
+  const today=new Date(); today.setHours(0,0,0,0);
+  const daysSince=(ds)=>{ if(!ds) return null; const d=new Date(ds); d.setHours(0,0,0,0); return Math.floor((today-d)/86400000); };
+  const withStatus=cards.map(c=>{ const last=c.checklistMarketLast||null; const ds=daysSince(last); return {c,last,ds,overdue:(last===null)||(ds!==null&&ds>=14)}; });
+  const overdue=withStatus.filter(x=>x.overdue);
+  const upcoming=withStatus.filter(x=>!x.overdue).sort((a,b)=>(b.ds||0)-(a.ds||0));
+  const showUpcoming = overdue.length<5 ? upcoming.slice(0,2) : [];
+  const ro=isReadOnly();
+  const cRow=(x)=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:0.5px solid #f4f5f7"><div style="min-width:0;flex:1"><div style="font-size:12px;color:#111;font-weight:500">${_calEsc(x.c.addr)}</div><div style="font-size:10px;color:#999">${x.last?('Last checklist: '+x.last+(x.ds!=null?(' · '+x.ds+'d ago'):'')):'No checklist recorded yet'}</div></div>${ro?'':`<button onclick="markMarketChecklist('${x.c.id}')" style="font-size:10px;padding:4px 8px;border-radius:5px;background:#111;color:#fff;border:none;cursor:pointer;white-space:nowrap">Mark done</button>`}</div>`;
+  const checklistBody=(overdue.length||showUpcoming.length)
+    ? (overdue.map(cRow).join('')+(showUpcoming.length?`<div style="font-size:10px;color:#aaa;text-transform:uppercase;letter-spacing:.04em;margin:8px 0 2px">Upcoming</div>`+showUpcoming.map(cRow).join(''):''))
+    : `<div style="text-align:center;color:#ccc;font-size:12px;padding:16px 0">All on-market checklists are current.</div>`;
+  const checklistBox=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden;margin-bottom:12px"><div style="padding:10px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between"><div style="font-size:13px;font-weight:500;color:#111">📋 On-the-Market Checklist</div><span style="font-size:10px;background:#FCEBEB;color:#791F1F;padding:2px 8px;border-radius:99px">${overdue.length} overdue</span></div><div style="padding:4px 14px 12px">${checklistBody}<div style="font-size:10px;color:#bbb;margin-top:8px">Due every 2 weeks. Will auto-fill from CompanyCam once that sync is built — use “Mark done” until then.</div></div></div>`;
+  const ids=cards.map(c=>c.id);
+  const tasks=(_tasksCache||[]).filter(t=>t.status!=='done' && t.property_id && ids.includes(t.property_id)).sort((a,b)=>(a.due_date||'9999')<(b.due_date||'9999')?-1:1);
+  const tRow=(t)=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:0.5px solid #f4f5f7"><div style="min-width:0;flex:1"><div style="font-size:12px;color:#111;font-weight:500">${t.category?`<span style="font-size:9px;background:#EEEDFE;color:#3C3489;padding:1px 5px;border-radius:99px;margin-right:5px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div><div style="font-size:10px;color:#999">${_calEsc(_propAddr(t.property_id))}${taskAssignees(t).length?(' · '+_calEsc(taskAssignees(t).join(', '))):''}</div></div><div style="font-size:10px;color:#B7791F;white-space:nowrap">${t.due_date||'—'}</div></div>`;
+  const tasksBox=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden"><div style="padding:10px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between"><div style="font-size:13px;font-weight:500;color:#111">✅ Tasks Needing Completion</div><span style="font-size:10px;background:#FAEEDA;color:#633806;padding:2px 8px;border-radius:99px">${tasks.length}</span></div><div style="padding:4px 14px 12px">${tasks.length?tasks.map(tRow).join(''):`<div style="text-align:center;color:#ccc;font-size:12px;padding:16px 0">No open tasks for on-market properties.</div>`}</div></div>`;
+  return checklistBox+tasksBox;
+}
+async function markMarketChecklist(id){
+  if(_blockIfReadOnly()) return;
+  const card=propCards.find(p=>p.id===id); if(!card) return;
+  const { error } = await supabase.from("pm_properties").update({ checklist_market_last:_ymd(new Date()) }).eq("id",id);
+  if(error){ alert("Couldn't record checklist: "+(error.message||"")); return; }
+  _logAudit("updated","property", card.addr||"", "On-market checklist completed");
+  await loadPropertiesFromSupabase();
+  const el=document.getElementById("pd-content"); if(el) el.innerHTML=phasePage('eop-market');
 }
 // Assign (or reassign) a task from the PM Assistant main dashboard.
 async function assignTask(id, name){
