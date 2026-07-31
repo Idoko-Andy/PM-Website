@@ -1563,7 +1563,8 @@ function _propRowToCard(r) {
     companyCam: r.company_cam || "",
     notes:      r.notes || "",
     subPhases:  Array.isArray(r.sub_phases) ? r.sub_phases : [],
-    checklistMarketLast: r.checklist_market_last || null
+    checklistMarketLast: r.checklist_market_last || null,
+    checklists: (r.checklists && typeof r.checklists==="object") ? r.checklists : {}
   };
 }
 
@@ -1587,7 +1588,7 @@ function _propCardToRow(p) {
 async function loadPropertiesFromSupabase() {
   const { data, error } = await supabase
     .from("pm_properties")
-    .select("id,addr,phase,type,pm,position,budget,spent,start_date,end_date,company_cam,notes,sub_phases,checklist_market_last")
+    .select("id,addr,phase,type,pm,position,budget,spent,start_date,end_date,company_cam,notes,sub_phases,checklist_market_last,checklists")
     .order("created_at", { ascending: true });
   if (error) {
     console.error("loadPropertiesFromSupabase failed:", error);
@@ -3550,9 +3551,90 @@ function phasePage(id){
     </div>
   </div>`;
 }
+// Per-stage checklists. Keyed by the property PHASE name. Each item can require
+// approval (Bruce/Marlo/Tommy) or not. A property must clear its stage's checklist
+// (completed, and approved where required) before it can advance to a later phase.
+const STAGE_CHECKLISTS = {
+  "Vacant / On Standby": [
+    { key:"vos_lockbox",  label:"Lockbox",                  approve:false },
+    { key:"vos_utilities",label:"Utilities",                approve:false },
+    { key:"vos_starter",  label:"Starter Project Checklist",approve:false },
+  ],
+};
+function _checklistFor(phase){ return STAGE_CHECKLISTS[phase] || []; }
+// Is this property's current-stage checklist fully cleared (done + approved where needed)?
+function _checklistBlocking(card){
+  const items=_checklistFor(card.phase); const cl=card.checklists||{};
+  return items.filter(it => !(cl[it.key] && cl[it.key].done && (!it.approve || cl[it.key].approved)));
+}
+async function toggleChecklistItem(propId, key){
+  if(_blockIfReadOnly()) return;
+  const card=propCards.find(p=>p.id===propId); if(!card) return;
+  const cl=Object.assign({}, card.checklists||{});
+  const cur=Object.assign({done:false}, cl[key]||{});
+  cur.done=!cur.done;
+  if(!cur.done){ cur.approved=false; delete cur.approvedBy; }
+  cl[key]=cur;
+  const { error } = await supabase.from("pm_properties").update({ checklists:cl }).eq("id",propId);
+  if(error){ alert("Couldn't update checklist: "+(error.message||"")); return; }
+  _logAudit(cur.done?"completed":"reopened","property", card.addr||"", "Checklist: "+key);
+  await loadPropertiesFromSupabase(); _pmaRerender();
+}
+async function approveChecklistItem(propId, key){
+  const me=_myProfile;
+  if(!canApprove(me)){ alert("Only Bruce, Marlo or Tommy (or an admin) can approve."); return; }
+  const card=propCards.find(p=>p.id===propId); if(!card) return;
+  const cl=Object.assign({}, card.checklists||{});
+  const cur=Object.assign({done:false}, cl[key]||{});
+  if(!cur.done){ alert("Mark it completed before approving."); return; }
+  cur.approved=true; cur.approvedBy=((me&&me.firstName)||"Approver");
+  cl[key]=cur;
+  const { error } = await supabase.from("pm_properties").update({ checklists:cl }).eq("id",propId);
+  if(error){ alert("Couldn't approve: "+(error.message||"")); return; }
+  _logAudit("approved","property", card.addr||"", "Checklist approved: "+key+" by "+cur.approvedBy);
+  await loadPropertiesFromSupabase(); _pmaRerender();
+}
 function phaseToolsPanel(id,b,cards){
   if(id==='eop-market') return onMarketToolsPanel(cards);
+  // If any phase in this board has a defined checklist, show the stage-checklist tracker.
+  const phasesWithLists = b.phases.filter(ph => _checklistFor(ph).length);
+  if(phasesWithLists.length) return stageChecklistPanel(cards, b);
   return `<div style="background:#fbfbfd;border:1px dashed #d5d9e2;border-radius:10px;padding:22px;text-align:center"><div style="font-size:22px;margin-bottom:6px;opacity:0.5">🧩</div><div style="font-size:13px;color:#555;font-weight:500">${_calEsc(b.title)} tools &amp; checklists — coming soon</div><div style="font-size:12px;color:#999;margin-top:4px">Tell me what this stage needs — checklists, trackers, buttons — and I'll build it here.</div></div>`;
+}
+// Each property in the stage gets its checklist; completing (and approving where
+// required) all items is what unlocks moving the property to the next phase.
+function stageChecklistPanel(cards, b){
+  const ro=isReadOnly(); const canAppr=canApprove(_myProfile);
+  if(!cards.length) return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:26px;text-align:center;color:#bbb;font-size:12px">No properties in this stage — checklists appear here once a property lands in the stage.</div>`;
+  const propBlock=(c)=>{
+    const items=_checklistFor(c.phase); if(!items.length) return '';
+    const cl=c.checklists||{};
+    const done=items.filter(it=>cl[it.key]&&cl[it.key].done && (!it.approve||cl[it.key].approved)).length;
+    const rows=items.map(it=>{
+      const st=cl[it.key]||{};
+      const chk = ro
+        ? `<span style="font-size:11px;color:${st.done?'#3B6D11':'#bbb'}">${st.done?'✓':'☐'} ${_calEsc(it.label)}</span>`
+        : `<label style="font-size:12px;color:#111;display:inline-flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" ${st.done?'checked':''} onchange="toggleChecklistItem('${c.id}','${it.key}')" style="cursor:pointer" /> ${_calEsc(it.label)}</label>`;
+      const appr = it.approve
+        ? (st.done ? (st.approved
+            ? `<span style="font-size:10px;color:#3B6D11">✓ Approved${st.approvedBy?(' by '+_calEsc(st.approvedBy)):''}</span>`
+            : (canAppr && !ro ? `<button onclick="approveChecklistItem('${c.id}','${it.key}')" style="font-size:10px;padding:2px 8px;border-radius:5px;background:#1a2744;color:#fff;border:none;cursor:pointer">Approve</button>` : `<span style="font-size:10px;color:#B7791F">awaiting approval</span>`)) : '')
+        : (st.done ? `<span style="font-size:10px;color:#3B6D11">done</span>` : '');
+      return `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:5px 0">${chk}<span>${appr}</span></div>`;
+    }).join('');
+    const allDone = done===items.length;
+    return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden;margin-bottom:10px">
+      <div style="padding:9px 13px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between">
+        <div style="font-size:12px;font-weight:500;color:#111">${_calEsc(c.addr)}</div>
+        <span style="font-size:10px;padding:2px 8px;border-radius:99px;background:${allDone?'#EAF3DE':'#FAEEDA'};color:${allDone?'#3B6D11':'#633806'}">${done}/${items.length}${allDone?' ✓':''}</span>
+      </div>
+      <div style="padding:6px 13px 10px">${rows}</div>
+    </div>`;
+  };
+  return `<div>
+    <div style="font-size:11px;color:#999;margin-bottom:8px">Complete each property's checklist to unlock moving it to the next phase. Auto-appears when a property enters this stage.</div>
+    ${cards.map(propBlock).join('')}
+  </div>`;
 }
 // On-the-Market stage: a checklist tracker (overdue at 2 weeks) + open tasks for those props.
 function onMarketToolsPanel(cards){
@@ -4299,9 +4381,12 @@ function propDrop(event, targetPhase) {
   if (_ti > _oi) {
     const card = propCards[idx];
     const blocking = (card.subPhases||[]).filter(sp => sp.due && !(sp.completed && sp.approved));
-    if (blocking.length) {
-      alert("Can't advance \""+(card.addr||"this property")+"\" to "+targetPhase+" yet.\n\nThese scheduled subphases must be completed and approved (Bruce, Marlo or Tommy) first:\n\n• "+
-        blocking.map(sp => sp.name + (sp.completed ? "  — awaiting approval" : "  — not completed")).join("\n• "));
+    const clBlocking = _checklistBlocking(card); // this stage's required checklist items
+    if (blocking.length || clBlocking.length) {
+      const lines = []
+        .concat(clBlocking.map(it => it.label + (it.approve ? "  — checklist (needs approval)" : "  — checklist")))
+        .concat(blocking.map(sp => sp.name + (sp.completed ? "  — awaiting approval" : "  — not completed")));
+      alert("Can't advance \""+(card.addr||"this property")+"\" to "+targetPhase+" yet.\n\nComplete (and approve where noted, by Bruce/Marlo/Tommy) first:\n\n• "+lines.join("\n• "));
       openProjectDashboard('trello');
       return;
     }
