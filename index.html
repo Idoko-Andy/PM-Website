@@ -3295,8 +3295,11 @@ function openPMAssistantDashboard(activeTab){
     {id:'construction', label:'Construction Calendar',   icon:'📅'},
     {id:'taskcal',      label:'Task Calendar',           icon:'🗓'},
   ];
-  // When drilled into a phase sub-dashboard, keep its parent role tab highlighted.
-  const hi = activeTab.indexOf('phase:')===0 ? ((_phaseBoard(activeTab.slice(6))||{}).roleKey||'') : activeTab;
+  // When inside a role's inner tabs (phase / this-week / due-now), keep its top role tab highlighted.
+  let hi = activeTab;
+  if(activeTab.indexOf('phase:')===0) hi=((_phaseBoard(activeTab.slice(6))||{}).roleKey||'');
+  else if(activeTab==='sop-cal'||activeTab==='sop-task') hi='sop';
+  else if(activeTab==='eop-cal'||activeTab==='eop-task') hi='eop';
   const tabBar = tabs.map(t=>`
     <div onclick="openPMAssistantDashboard('${t.id}')" style="padding:11px 16px;font-size:12px;color:${t.id===hi?'#111':'#888'};cursor:pointer;border-bottom:2px solid ${t.id===hi?'#111':'transparent'};white-space:nowrap;display:inline-flex;align-items:center;gap:5px;margin-bottom:-1px;font-weight:${t.id===hi?'500':'400'}">
       <span>${t.icon}</span>${t.label}
@@ -3307,15 +3310,17 @@ function openPMAssistantDashboard(activeTab){
       <div id="pd-content">${getPMAContent(activeTab)}</div>
     </div>`;
 }
-// Which property-phase boards each assistant role owns. A board can map to one or
-// more phases and shows the properties currently in those phases.
+// Which property-phase boards each assistant role owns. Each becomes an inner tab.
 const _ASSISTANT_ROLE_BOARDS = {
   sop: { role:'Start of Project Assistant', seed:'Alex', boards:[
-    { id:'sop-vacant',  title:'Vacant / On Standby',        phases:['Vacant / On Standby'] },
-    { id:'sop-precon',  title:'Pre Construction',           phases:['Pre Construction'] },
-    { id:'sop-framing', title:'Framing, MEPS, Insulation',  phases:['Framing, MEPS, Insulation'] },
+    { id:'sop-takedowns', title:'Upcoming Takedowns',        phases:['Upcoming Takedowns'] },
+    { id:'sop-occupied',  title:'Occupied / Closed',         phases:['Occupied / Closed'] },
+    { id:'sop-vacant',    title:'Vacant / On Standby',       phases:['Vacant / On Standby'] },
+    { id:'sop-precon',    title:'Pre Construction',          phases:['Pre Construction'] },
+    { id:'sop-framing',   title:'Framing, MEPS, Insulation', phases:['Framing, MEPS, Insulation'] },
   ]},
   eop: { role:'End of Project Assistant', seed:'Gabe', boards:[
+    { id:'eop-prelist',  title:'Pre List / Punchout', phases:['Pre List / Punchout Process'] },
     { id:'eop-market',   title:'On the Market',       phases:['Listed on the Market'] },
     { id:'eop-contract', title:'In Contract',         phases:['In Contract'] },
     { id:'eop-rtr',      title:'Request to Remedy',   phases:['RTR In Process','RTR Completed (Pending Closing)'] },
@@ -3329,10 +3334,18 @@ function _phaseBoard(id){
   }
   return null;
 }
+// The person(s) who hold a role (by first name), or the seeded placeholder.
+function _roleHolders(cfg){
+  const h=getUsers().filter(u=>u.status==='approved' && u.role===cfg.role).map(u=>(u.firstName||'').trim()).filter(Boolean);
+  return h.length?h:[cfg.seed];
+}
+function _ymd(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
 function getPMAContent(tab){
   if(tab==='main') return pmAssistantMainDashboard();
-  if(tab && tab.indexOf('phase:')===0) return phaseDashboard(tab.slice(6));
-  if(tab==='sop'||tab==='eop') return pmAssistantRoleContent(tab);
+  if(tab && tab.indexOf('phase:')===0){ const info=_phaseBoard(tab.slice(6)); return info?pmAssistantRoleView(info.roleKey, tab.slice(6)):pmAssistantMainDashboard(); }
+  if(tab==='sop'||tab==='eop') return pmAssistantRoleView(tab,'overview');
+  if(tab==='sop-cal'||tab==='eop-cal') return pmAssistantRoleView(tab.slice(0,3),'cal');
+  if(tab==='sop-task'||tab==='eop-task') return pmAssistantRoleView(tab.slice(0,3),'task');
   switch(tab){
     case 'property':     return renderPropertyBoard();
     case 'construction': return renderConstructionCalendar();
@@ -3340,30 +3353,61 @@ function getPMAContent(tab){
     default:             return pmAssistantMainDashboard();
   }
 }
-// A dedicated sub-dashboard for one phase board. Each stage gets its own workspace
-// here — properties currently in the phase, plus room to build out its own system.
-function phaseDashboard(id){
-  const info=_phaseBoard(id); if(!info) return pmAssistantMainDashboard();
-  const b=info.board, p=phInfo(b.phases[0]);
-  const cards=(propCards||[]).filter(c=>b.phases.includes(c.phase));
-  const grid = cards.length
-    ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px">${cards.map(_propCardMini).join('')}</div>`
-    : `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:30px;text-align:center;color:#bbb;font-size:13px">No properties in this phase right now.</div>`;
+// A role tab is its own mini-dashboard: a person header + inner tabs. The default
+// (Overview) shows what's on their plate now — it does NOT show property boards.
+// Each phase is its own inner tab; plus a This Week construction view and a
+// Due Today/Tomorrow task view.
+function pmAssistantRoleView(roleKey, inner){
+  const cfg=_ASSISTANT_ROLE_BOARDS[roleKey]; if(!cfg) return pmAssistantMainDashboard();
+  inner = inner || 'overview';
+  const holders=_roleHolders(cfg); const who=holders.join(', ');
+  const rolePhases=[].concat(...cfg.boards.map(b=>b.phases));
+  // inner tab definitions: [id, label, targetActiveTab]
+  const innerTabs=[['overview','Overview',roleKey]]
+    .concat(cfg.boards.map(b=>[b.id,b.title,'phase:'+b.id]))
+    .concat([['cal','📅 This Week',roleKey+'-cal'],['task','✅ Due Today & Tomorrow',roleKey+'-task']]);
+  const innerBar=innerTabs.map(([id,label,target])=>`
+    <div onclick="openPMAssistantDashboard('${target}')" style="padding:7px 12px;font-size:11.5px;border-radius:999px;cursor:pointer;white-space:nowrap;${id===inner?'background:#111;color:#fff':'background:#fff;color:#666;border:0.5px solid #ddd'}">${_calEsc(label)}</div>`).join('');
+  // ---- inner content ----
+  let body='';
+  const today=new Date(); today.setHours(0,0,0,0);
+  const todayStr=_ymd(today);
+  const tomorrow=new Date(today); tomorrow.setDate(today.getDate()+1); const tomStr=_ymd(tomorrow);
+  const weekEnd=new Date(today); weekEnd.setDate(today.getDate()+6); const weekEndStr=_ymd(weekEnd);
+  const dueTasks=(_tasksCache||[]).filter(t=>t.status!=="done" && (t.due_date===todayStr||t.due_date===tomStr) && holders.some(n=>taskAssignees(t).includes(n)))
+    .sort((a,b)=>(a.due_date||'')<(b.due_date||'')?-1:1);
+  const weekEvents=(_calEventsCache||[]).filter(e=>e.event_date>=todayStr && e.event_date<=weekEndStr && rolePhases.includes(_propPhase(e.property_id)))
+    .sort((a,b)=>a.event_date<b.event_date?-1:1);
+  const taskRow=(t)=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:0.5px solid #f4f5f7">
+      <div style="min-width:0;flex:1"><div style="font-size:13px;color:#111;font-weight:500">${t.category?`<span style="font-size:10px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:6px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div><div style="font-size:11px;color:#888;margin-top:2px">${t.property_id?_calEsc(_propAddr(t.property_id))+' · ':''}${taskAssignees(t).join(', ')}</div></div>
+      <div style="font-size:11px;font-weight:600;color:${t.due_date===todayStr?'#c0392b':'#B7791F'};white-space:nowrap">${t.due_date===todayStr?'Today':'Tomorrow'}</div>
+    </div>`;
+  const evRow=(e)=>{ const lbl=e.kind==='contractor'?('★ '+_contractorName(e.contractor_id)):(e.kind==='custom'?('• '+(e.title||'Event')):('📦 '+(e.title||'Material'))); return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:0.5px solid #f4f5f7"><div style="min-width:0;flex:1"><div style="font-size:13px;color:#111;font-weight:500">${_calEsc(lbl)}</div><div style="font-size:11px;color:#888;margin-top:2px">${_calEsc(_propAddr(e.property_id))}</div></div><div style="font-size:11px;color:#185FA5;white-space:nowrap">${_calEsc(e.event_date)}</div></div>`; };
+  const listCard=(title,rowsHtml,count,empty)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">
+      <div style="padding:10px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between"><div style="font-size:13px;font-weight:500;color:#111">${title}</div><span style="font-size:10px;background:#f4f5f7;color:#888;padding:2px 8px;border-radius:99px">${count}</span></div>
+      <div style="padding:4px 14px 12px">${count?rowsHtml:`<div style="text-align:center;color:#ccc;font-size:12px;padding:18px 0">${empty}</div>`}</div></div>`;
+  if(inner==='overview'){
+    body=`<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      ${listCard('✅ Due Today & Tomorrow', dueTasks.map(taskRow).join(''), dueTasks.length, 'Nothing due today or tomorrow')}
+      ${listCard('📅 Coming Up This Week', weekEvents.map(evRow).join(''), weekEvents.length, 'No construction items this week')}
+    </div>`;
+  } else if(inner==='cal'){
+    body=listCard('📅 Construction — This Week', weekEvents.map(evRow).join(''), weekEvents.length, 'No construction items this week for these stages.');
+  } else if(inner==='task'){
+    body=listCard('✅ Tasks Due Today & Tomorrow', dueTasks.map(taskRow).join(''), dueTasks.length, 'Nothing due today or tomorrow.');
+  } else {
+    // a phase board: properties in this stage + a build-out workspace
+    const b=cfg.boards.find(x=>x.id===inner); const p=phInfo(b.phases[0]);
+    const cards=(propCards||[]).filter(c=>b.phases.includes(c.phase));
+    const grid=cards.length?`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px">${cards.map(_propCardMini).join('')}</div>`:`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:30px;text-align:center;color:#bbb;font-size:13px">No properties in this stage right now.</div>`;
+    body=`<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px"><span style="width:10px;height:10px;border-radius:50%;background:${p.dot}"></span><div style="font-size:15px;font-weight:500;color:#111">${_calEsc(b.title)}</div><span style="font-size:11px;background:${p.bg};color:${p.text};padding:2px 9px;border-radius:99px;font-weight:500">${cards.length} propert${cards.length===1?'y':'ies'}</span></div>
+      ${grid}
+      <div style="background:#fbfbfd;border:1px dashed #d5d9e2;border-radius:10px;padding:22px;text-align:center;margin-top:16px"><div style="font-size:22px;margin-bottom:6px;opacity:0.5">🧩</div><div style="font-size:13px;color:#555;font-weight:500">${_calEsc(b.title)} workflow — coming soon</div><div style="font-size:12px;color:#999;margin-top:4px">This is the space we'll build the full ${_calEsc(b.title)} system into. Tell me what this stage needs and I'll add it here.</div></div>`;
+  }
   return `<div style="padding:20px">
-    <div onclick="openPMAssistantDashboard('${info.roleKey}')" style="display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#888;cursor:pointer;margin-bottom:12px">← Back to ${_calEsc(info.role)}</div>
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px">
-      <span style="width:10px;height:10px;border-radius:50%;background:${p.dot}"></span>
-      <div style="font-size:18px;font-weight:500;color:#111">${_calEsc(b.title)}</div>
-      <span style="font-size:11px;background:${p.bg};color:${p.text};padding:2px 9px;border-radius:99px;font-weight:500">${cards.length} propert${cards.length===1?'y':'ies'}</span>
-    </div>
-    <div style="font-size:12px;color:#888;margin-bottom:16px">Dedicated workspace for the ${_calEsc(b.title)} stage.</div>
-    <div style="font-size:12px;font-weight:500;color:#111;margin-bottom:8px">Properties in this stage</div>
-    ${grid}
-    <div style="background:#fbfbfd;border:1px dashed #d5d9e2;border-radius:10px;padding:22px;text-align:center;margin-top:16px">
-      <div style="font-size:22px;margin-bottom:6px;opacity:0.5">🧩</div>
-      <div style="font-size:13px;color:#555;font-weight:500">${_calEsc(b.title)} workflow — coming soon</div>
-      <div style="font-size:12px;color:#999;margin-top:4px">This is the space we'll build the full ${_calEsc(b.title)} system into. Tell me what this stage needs and I'll add it here.</div>
-    </div>
+    <div style="margin-bottom:12px"><div style="font-size:17px;font-weight:500;color:#111">${_calEsc(cfg.role)}</div><div style="font-size:12px;color:#888">${_calEsc(who)}</div></div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px">${innerBar}</div>
+    ${body}
   </div>`;
 }
 // Assign (or reassign) a task from the PM Assistant main dashboard.
@@ -3393,7 +3437,7 @@ function pmAssistantMainDashboard(){
     return `<div style="margin-bottom:20px">
       <div style="font-size:14px;font-weight:500;color:#111;margin-bottom:2px">${_calEsc(cfg.role)}</div>
       <div style="font-size:11px;color:#999;margin-bottom:10px">${_calEsc(who)}</div>
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">${tiles}</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px">${tiles}</div>
     </div>`;
   };
   // Unassigned open tasks — surfaced here so they can be handed out in the Monday meeting.
@@ -4196,6 +4240,7 @@ const _calState = { y:null, m:null, prop:"all", pm:"all", filter:"all", loaded:f
 const _CAL_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 function _calRerender(){ const el=document.getElementById("pd-content"); if(el) el.innerHTML=renderConstructionCalendar(); }
 function _propPM(id){ const p=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===id); return p?p.pm:""; }
+function _propPhase(id){ const p=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===id); return p?p.phase:""; }
 function calSelectProp(id){ if(id==='__pick') return; _calState.prop=id; if(id!=="all") _calState.pm="all"; _calRerender(); }
 function calSelectPM(name){ _calState.pm=name; if(name!=="all") _calState.prop="all"; _calRerender(); }
 function calSetFilter(f){ _calState.filter=f; _calRerender(); }
