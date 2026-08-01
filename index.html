@@ -267,8 +267,9 @@ body{background:#1a1a1a;color:#fff;min-height:100vh}
       <div class="ddi">🏁 End of Project Reports</div>
     </div>
   </div>
-  <div class="ni has-dd" id="sop-t">📖 SOPs ▾
-    <div class="dd" id="sop-d" style="min-width:235px">
+  <div class="ni has-dd" id="tools-t">🔧 Tools ▾
+    <div class="dd" id="tools-d" style="min-width:230px">
+      <div class="ddl">SOPs</div>
       <div class="ddi sop-flyout" style="justify-content:space-between">
         <span>📋 Job Role SOPs</span><span style="opacity:0.45;font-size:13px">‹</span>
         <div class="sop-sub">
@@ -286,13 +287,8 @@ body{background:#1a1a1a;color:#fff;min-height:100vh}
           <div class="ddi" onclick="openSOP('role','Architect')">📐 Architect SOP</div>
         </div>
       </div>
-      <div class="ddl" style="margin-top:4px">Systems &amp; Processes</div>
-      <div class="ddi" onclick="openSOP('systems','')">⚙️ Systems &amp; Processes SOPs →</div>
-    </div>
-  </div>
-  <div class="ni has-dd" id="tools-t">🔧 Tools ▾
-    <div class="dd" id="tools-d" style="min-width:220px">
-      <div class="ddl">Directory</div>
+      <div class="ddi" onclick="openSOP('systems','')">⚙️ Systems &amp; Processes SOPs</div>
+      <div class="ddl" style="margin-top:4px">Directory</div>
       <div class="ddi" onclick="openContractorDirectory()">📇 Contractor Directory</div>
       <div class="ddl">External Tools</div>
       <div class="ddi" onclick="window.open('https://signin.eagleview.com/','_blank')">🦅 Eagleview ↗</div>
@@ -1412,8 +1408,9 @@ function switchAdminTab(id) {
 }
 
 // ===================== NAV DROPDOWNS =====================
-[["pd-t","pd-d"],["pm-t","pm-d"],["am-t","am-d"],["adm-t","adm-d"],["va-t","va-d"],["arch-t","arch-d"],["sop-t","sop-d"],["tools-t","tools-d"],["rep-t","rep-d"],["data-t","data-d"]].forEach(([tid,did]) => {
+[["pd-t","pd-d"],["pm-t","pm-d"],["am-t","am-d"],["adm-t","adm-d"],["va-t","va-d"],["arch-t","arch-d"],["tools-t","tools-d"],["rep-t","rep-d"],["data-t","data-d"]].forEach(([tid,did]) => {
   const t = document.getElementById(tid), d = document.getElementById(did);
+  if (!t || !d) return;
   t.addEventListener("click", e => {
     e.stopPropagation();
     const was = d.classList.contains("open");
@@ -4111,15 +4108,86 @@ function renderRealtorDashboard(){
     <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:34px;text-align:center;color:#bbb;font-size:13px">Being built out — tell me what you want the realtor view to track.</div>
   </div>`;
 }
-function openAdminDashboard() {
-  document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
-  document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
-  document.getElementById("dash-body").innerHTML = `<div class="empty-state"><div class="icon">🏛</div><p style="color:#888;font-size:15px;font-weight:500">Admin Dashboard</p><p style="color:#555;font-size:13px;margin-top:6px">Being built out. Check back soon.</p></div>`;
+// ---- Shared bits for the Director/CEO + Admin dashboards ----
+function _execTabBar(fnName, tabs, activeTab){
+  return tabs.map(t=>`<div onclick="${fnName}('${t.id}')" style="padding:11px 16px;font-size:12px;color:${t.id===activeTab?'#111':'#888'};cursor:pointer;border-bottom:2px solid ${t.id===activeTab?'#111':'transparent'};white-space:nowrap;display:inline-flex;align-items:center;gap:5px;margin-bottom:-1px;font-weight:${t.id===activeTab?'500':'400'}"><span>${t.icon}</span>${t.label}</div>`).join('');
 }
-function openDirectorCEODashboard() {
+function _execStat(label,val,color){
+  return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:14px 16px"><div style="font-size:24px;font-weight:600;color:${color}">${val}</div><div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em;margin-top:2px">${label}</div></div>`;
+}
+// A personal dashboard tab for one exec/admin: header + their task stats + open tasks.
+function _personDashView(name, title){
+  const today=new Date(); today.setHours(0,0,0,0); const todayStr=_ymd(today);
+  const mine=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status!=="done" && taskAssignees(t).includes(name));
+  const overdue=mine.filter(t=>t.due_date && t.due_date<todayStr);
+  const dueToday=mine.filter(t=>t.due_date===todayStr);
+  const rows=mine.slice().sort((a,b)=>(a.due_date||'zzz')<(b.due_date||'zzz')?-1:1).map(_pmaTaskRow).join('');
+  const initial=(name||'?').trim()[0]||'?';
+  return `<div style="padding:20px;max-width:900px;margin:0 auto">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
+      <div style="width:44px;height:44px;border-radius:50%;background:#1a2744;color:#fff;font-size:18px;font-weight:600;display:flex;align-items:center;justify-content:center">${initial}</div>
+      <div><div style="font-size:18px;font-weight:600;color:#111">${_calEsc(name)}</div><div style="font-size:12px;color:#888">${_calEsc(title)}</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:16px">
+      ${_execStat('Open Tasks', mine.length, '#185FA5')}
+      ${_execStat('Overdue', overdue.length, overdue.length?'#B42318':'#888')}
+      ${_execStat('Due Today', dueToday.length, dueToday.length?'#B7791F':'#888')}
+    </div>
+    ${_pmaCard('Tasks assigned to '+_calEsc(name), rows, mine.length, 'No open tasks assigned right now.')}
+  </div>`;
+}
+function _execShell(fnName, tabs, activeTab, content){
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
-  document.getElementById("dash-body").innerHTML = `<div class="empty-state"><div class="icon">🏛</div><p style="color:#888;font-size:15px;font-weight:500">Director / CEO Dashboard</p><p style="color:#555;font-size:13px;margin-top:6px">Being built out — tell me what you want the Director/CEO view to show and I'll build it here.</p></div>`;
+  document.getElementById("dash-body").innerHTML=`
+    <div style="background:#f4f5f7;min-height:500px" id="pd-root">
+      <div style="background:#fff;border-bottom:1.5px solid #e0e4ec;padding:0 20px;display:flex;align-items:stretch;overflow-x:auto;gap:0">${_execTabBar(fnName,tabs,activeTab)}</div>
+      <div id="pd-content">${content}</div>
+    </div>`;
+}
+
+function openAdminDashboard(activeTab) {
+  activeTab = activeTab || 'main';
+  const tabs=[
+    {id:'main',label:'Main Dashboard',icon:'📊'},
+    {id:'marlo',label:'Marlo',icon:'👤'},
+    {id:'property',label:'Property Dashboard',icon:'🏗'},
+    {id:'construction',label:'Construction Calendar',icon:'📅'},
+    {id:'taskcal',label:'Task Calendar',icon:'🗓'},
+  ];
+  let content;
+  switch(activeTab){
+    case 'marlo':        content=_personDashView('Marlo','Senior Administrative Assistant'); break;
+    case 'property':     content=renderPropertyBoard(); break;
+    case 'construction': content=renderConstructionCalendar(); break;
+    case 'taskcal':      content=renderTaskCalendar(); break;
+    default:             content=renderMainDashboard();
+  }
+  _execShell('openAdminDashboard', tabs, activeTab, content);
+}
+
+function openDirectorCEODashboard(activeTab) {
+  activeTab = activeTab || 'main';
+  const tabs=[
+    {id:'main',label:'Main Dashboard',icon:'📊'},
+    {id:'tommy',label:'Tommy',icon:'👤'},
+    {id:'bruce',label:'Bruce',icon:'👤'},
+    {id:'andyk',label:'Andy Karabinos',icon:'👤'},
+    {id:'property',label:'Property Dashboard',icon:'🏗'},
+    {id:'construction',label:'Construction Calendar',icon:'📅'},
+    {id:'taskcal',label:'Task Calendar',icon:'🗓'},
+  ];
+  let content;
+  switch(activeTab){
+    case 'tommy':        content=_personDashView('Tommy','Chief Executive Officer'); break;
+    case 'bruce':        content=_personDashView('Bruce','Project Director'); break;
+    case 'andyk':        content=_personDashView('Andy','Principal / Owner'); break;
+    case 'property':     content=renderPropertyBoard(); break;
+    case 'construction': content=renderConstructionCalendar(); break;
+    case 'taskcal':      content=renderTaskCalendar(); break;
+    default:             content=renderMainDashboard();
+  }
+  _execShell('openDirectorCEODashboard', tabs, activeTab, content);
 }
 function openSeniorVADashboard() {
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
@@ -4177,7 +4245,7 @@ const SEARCH_INDEX = [
   { title: "Yearly Reports",                   desc: "View yearly reporting dashboard", action: () => document.getElementById("rep-t").click() },
   { title: "Biweekly Reports",                 desc: "View biweekly reporting dashboard", action: () => document.getElementById("rep-t").click() },
   { title: "End of Project Reports",           desc: "View end-of-project reporting dashboard", action: () => document.getElementById("rep-t").click() },
-  { title: "SOPs",                             desc: "All standard operating procedures — job roles and systems", action: () => document.getElementById("sop-t").click() },
+  { title: "SOPs",                             desc: "All standard operating procedures — job roles and systems (under Tools)", action: () => document.getElementById("tools-t").click() },
   { title: "Tools",                            desc: "External tool links including Eagleview", action: () => document.getElementById("tools-t").click() },
   { title: "Eagleview",                        desc: "Open Eagleview in a new tab", action: () => window.open("https://signin.eagleview.com/","_blank") },
   // SOPs
