@@ -1091,6 +1091,7 @@ async function savePermissions(id) {
     console.warn("admin_set_permissions not deployed yet:", error.message);
     if (ok) { ok.textContent = "Saved for this session. To make it stick permanently, the database update still needs to be applied."; ok.style.display = "block"; }
   } else {
+    _logAudit("updated","manager", (typeof _userName==='function'?_userName(id):""), "Updated dashboard/section permissions");
     await loadProfilesFromSupabase();
     if (ok) { ok.textContent = "Access saved."; ok.style.display = "block"; }
   }
@@ -1159,6 +1160,7 @@ function renderRoleSelects() {
 async function changeUserRole(id, role) {
   const { error } = await supabase.rpc("admin_set_role", { target: id, new_role: role });
   if (error) { alert("Failed to change role: " + (error.message || "unknown error")); return; }
+  _logAudit("updated","manager", (typeof _userName==='function'?_userName(id):""), "Job role changed to " + role);
   await loadProfilesFromSupabase();
   await loadPMManagers(); // setting someone to "Project Manager" auto-adds their dashboard tab
   renderAdminUsers();
@@ -1283,25 +1285,34 @@ function renderAdminUsers() {
   renderRoleManager();
 }
 
+// Display name for an audit entry about a user account.
+function _userName(id){ const u=(typeof getUsers==='function'?getUsers():[]).find(x=>x.id===id); return u?((((u.firstName||"")+" "+(u.lastName||"")).trim())||u.email||id):id; }
+
 async function approveUser(id) {
+  const nm=_userName(id);
   const { error } = await supabase.rpc("admin_set_status", { target: id, new_status: "approved" });
   if (error) { alert("Failed to approve: " + (error.message || "unknown error")); return; }
+  _logAudit("approved","manager", nm, "Approved account — login access granted");
   await loadProfilesFromSupabase();
   renderAdminPending();
   renderAdminUsers();
 }
 
 async function denyUser(id) {
+  const nm=_userName(id);
   const { error } = await supabase.rpc("admin_set_status", { target: id, new_status: "denied" });
   if (error) { alert("Failed to deny: " + (error.message || "unknown error")); return; }
+  _logAudit("updated","manager", nm, "Denied account request");
   await loadProfilesFromSupabase();
   renderAdminPending();
   renderAdminUsers();
 }
 
 async function updateAccess(id, level) {
+  const nm=_userName(id);
   const { error } = await supabase.rpc("admin_set_access_level", { target: id, new_level: level });
   if (error) { alert("Failed to update access: " + (error.message || "unknown error")); return; }
+  _logAudit("updated","manager", nm, "Access set to " + (level==="readonly"?"Read Only":"Edits Allowed"));
   await loadProfilesFromSupabase();
   renderAdminUsers();
   // If the admin updated themselves we don't need to re-init the nav, but it's cheap and safe.
@@ -1310,8 +1321,10 @@ async function updateAccess(id, level) {
 
 async function revokeUser(id) {
   if (!confirm("Revoke this user's access? They will no longer be able to sign in.")) return;
+  const nm=_userName(id);
   const { error } = await supabase.rpc("admin_set_status", { target: id, new_status: "revoked" });
   if (error) { alert("Failed to revoke: " + (error.message || "unknown error")); return; }
+  _logAudit("deleted","manager", nm, "Revoked account access");
   await loadProfilesFromSupabase();
   renderAdminUsers();
 }
@@ -3536,7 +3549,7 @@ async function pmaToggleTask(id){
   const ns=t.status==="done"?"open":"done";
   const { error } = await supabase.from("pm_tasks").update({status:ns}).eq("id",id);
   if(error){ alert("Couldn't update task: "+(error.message||"")); return; }
-  _logAudit(ns==="done"?"completed":"reopened","task", t.title, taskAssignees(t).join(", "));
+  _logAudit(ns==="done"?"completed":"reopened","task", t.title, taskAssignees(t).length?("Assignees: "+taskAssignees(t).join(", ")):"");
   await loadTasks(); _pmaRerender();
 }
 async function pmaToggleEvent(id){
@@ -5028,18 +5041,41 @@ async function openEditHistory(){
 }
 function _auditIcon(area){ return ({property:"🏗",report:"📄",contractor:"📇",calendar:"📅",task:"✅",sop:"📋",manager:"👤"}[area])||"•"; }
 function _auditWhen(ts){ try{ return new Date(ts).toLocaleString(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}); }catch(e){ return ts; } }
+// Friendly, plain-English label + color for each action so anyone can read the log.
+function _auditActionMeta(a){
+  return ({
+    created:  {t:"Added",         c:"#0F7B54",bg:"#E1F5EE"},
+    updated:  {t:"Updated",       c:"#185FA5",bg:"#E6F1FB"},
+    moved:    {t:"Moved",         c:"#5B52C9",bg:"#EEEDFE"},
+    deleted:  {t:"Deleted",       c:"#B42318",bg:"#FCEBEB"},
+    advanced: {t:"Auto-advanced", c:"#4C7A17",bg:"#EAF3DE"},
+    completed:{t:"Completed",     c:"#0F7B54",bg:"#E1F5EE"},
+    reopened: {t:"Reopened",      c:"#B7791F",bg:"#FBEFDD"},
+    approved: {t:"Approved",      c:"#173404",bg:"#EAF3DE"},
+    assigned: {t:"Assigned",      c:"#185FA5",bg:"#E6F1FB"},
+    submitted:{t:"Submitted",     c:"#3C3489",bg:"#EEEDFE"}
+  }[a])||{t:(a?a[0].toUpperCase()+a.slice(1):"Changed"),c:"#555",bg:"#f4f5f7"};
+}
+// Plain-English name for which part of the app was changed.
+function _auditAreaLabel(area){ return ({property:"Property",report:"Monthly Report",contractor:"Contractor",calendar:"Construction Calendar",task:"Task",sop:"SOP",manager:"Team"}[area])||(area||""); }
 function renderEditHistory(){
-  const areas=[["all","All"],["sop","SOPs"],["property","Properties"],["calendar","Construction Calendar"],["task","Tasks"],["report","Monthly Reports"],["contractor","Contractors"]];
+  const areas=[["all","All"],["property","Properties"],["task","Tasks"],["calendar","Construction Calendar"],["sop","SOPs"],["report","Monthly Reports"],["contractor","Contractors"],["manager","Team"]];
   const chips=areas.map(([f,l])=>`<div onclick="setAuditFilter('${f}')" style="padding:5px 12px;font-size:11px;cursor:pointer;border-radius:999px;${_auditFilter===f?'background:#111;color:#fff':'background:#fff;color:#666;border:0.5px solid #ddd'}">${l}</div>`).join("");
-  const rows=_auditCache.filter(a=>_auditFilter==="all"||a.area===_auditFilter).map(a=>
-    `<div style="display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border-bottom:0.5px solid #eee">
-      <div style="font-size:16px">${_auditIcon(a.area)}</div>
+  const rows=_auditCache.filter(a=>_auditFilter==="all"||a.area===_auditFilter).map(a=>{
+    const m=_auditActionMeta(a.action);
+    return `<div style="display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border-bottom:0.5px solid #eee">
+      <div style="font-size:16px;line-height:1.4">${_auditIcon(a.area)}</div>
       <div style="flex:1;min-width:0">
-        <div style="font-size:13px;color:#111"><span style="font-weight:500">${_calEsc(a.actor_name||a.actor_email||"Someone")}</span> ${_calEsc(a.action)}${a.label?` <span style="color:#555">— ${_calEsc(a.label)}</span>`:""}</div>
-        ${a.detail?`<div style="font-size:12px;color:#888;margin-top:2px">${_calEsc(a.detail)}</div>`:""}
+        <div style="font-size:13px;color:#111;display:flex;flex-wrap:wrap;align-items:center;gap:6px">
+          <span style="font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:999px;background:${m.bg};color:${m.c};white-space:nowrap">${m.t}</span>
+          <span style="font-weight:600">${_calEsc(a.actor_name||a.actor_email||"Someone")}</span>
+          <span style="color:#999;font-size:12px">· ${_calEsc(_auditAreaLabel(a.area))}</span>
+          ${a.label?`<span style="color:#333">— ${_calEsc(a.label)}</span>`:""}
+        </div>
+        ${a.detail?`<div style="font-size:12px;color:#888;margin-top:3px">${_calEsc(a.detail)}</div>`:""}
       </div>
       <div style="font-size:11px;color:#aaa;white-space:nowrap">${_auditWhen(a.created_at)}</div>
-    </div>`).join("");
+    </div>`;}).join("");
   document.getElementById("dash-body").innerHTML=
     `<div style="background:#f4f5f7;min-height:500px;padding:24px">
       <div style="max-width:860px;margin:0 auto">
