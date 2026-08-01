@@ -1477,6 +1477,7 @@ const PROP_PHASES = [
   {name:"Drywall / Exterior Work",        bg:"#EEEDFE",text:"#3C3489",cnt:"#AFA9EC",dot:"#7F77DD"},
   {name:"Finishes",                       bg:"#E1F5EE",text:"#085041",cnt:"#5DCAA5",dot:"#1D9E75"},
   {name:"Pre List / Punchout Process",    bg:"#FAECE7",text:"#712B13",cnt:"#F0997B",dot:"#D85A30"},
+  {name:"Rental Handoff Process",         bg:"#E1F5EE",text:"#0B5A46",cnt:"#5DCAA5",dot:"#12987A"},
   {name:"Listed on the Market",           bg:"#EAF3DE",text:"#3B6D11",cnt:"#639922",dot:"#3B6D11"},
   {name:"In Contract",                    bg:"#E6F1FB",text:"#185FA5",cnt:"#378ADD",dot:"#185FA5"},
   {name:"RTR In Process",                 bg:"#FAEEDA",text:"#854F0B",cnt:"#BA7517",dot:"#BA7517"},
@@ -1611,7 +1612,12 @@ function _propRowToCard(r) {
     notes:      r.notes || "",
     subPhases:  Array.isArray(r.sub_phases) ? r.sub_phases : [],
     checklistMarketLast: r.checklist_market_last || null,
-    checklists: (r.checklists && typeof r.checklists==="object") ? r.checklists : {}
+    checklists: (r.checklists && typeof r.checklists==="object") ? r.checklists : {},
+    isRental:   !!r.is_rental,
+    closingDate: r.closing_date || "",
+    closedDate:  r.closed_date || "",
+    archived:   !!r.archived,
+    closeApproved: !!r.close_approved
   };
 }
 
@@ -1628,6 +1634,8 @@ function _propCardToRow(p) {
     end_date:    p.end || "",
     company_cam: p.companyCam || "",
     drive_url:   p.driveUrl || "",
+    is_rental:   !!p.isRental,
+    closing_date: p.closingDate || null,
     notes:       p.notes || "",
     sub_phases:  p.subPhases || []
   };
@@ -1636,7 +1644,7 @@ function _propCardToRow(p) {
 async function loadPropertiesFromSupabase() {
   const { data, error } = await supabase
     .from("pm_properties")
-    .select("id,addr,phase,type,pm,position,budget,spent,start_date,end_date,company_cam,drive_url,notes,sub_phases,checklist_market_last,checklists")
+    .select("id,addr,phase,type,pm,position,budget,spent,start_date,end_date,company_cam,drive_url,notes,sub_phases,checklist_market_last,checklists,is_rental,closing_date,closed_date,archived,close_approved")
     .order("created_at", { ascending: true });
   if (error) {
     console.error("loadPropertiesFromSupabase failed:", error);
@@ -1644,6 +1652,20 @@ async function loadPropertiesFromSupabase() {
     return;
   }
   propCards = (data || []).map(_propRowToCard);
+  await _maybeArchiveClosed();
+}
+
+// A property that has sat in "Closed" for 4+ weeks auto-files into the Completed
+// archive (hidden from the board). Runs on load; only writes when something is due.
+async function _maybeArchiveClosed(){
+  try{
+    const cutoff=_ymd(new Date(Date.now()-28*86400000));
+    const due=propCards.filter(c=>c.phase==="Closed" && !c.archived && c.closedDate && c.closedDate<=cutoff);
+    for(const c of due){
+      const { error } = await supabase.from("pm_properties").update({ archived:true }).eq("id",c.id);
+      if(!error){ c.archived=true; _logAudit("updated","property", c.addr||"", "Auto-filed to Completed archive (4 weeks after closing)"); }
+    }
+  }catch(e){ /* never block load */ }
 }
 
 async function savePropertyToSupabase(id, data) {
@@ -1663,7 +1685,10 @@ async function savePropertyToSupabase(id, data) {
 async function updatePropertyPhaseInSupabase(id, newPhase) {
   if (_blockIfReadOnly()) return false;
   const _pc = (typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===id);
-  const { error } = await supabase.from("pm_properties").update({ phase: newPhase }).eq("id", id);
+  const patch = { phase: newPhase };
+  // The date a property enters "Closed" is its close date (drives the Completed archive).
+  if (newPhase === "Closed" && !(_pc && _pc.closedDate)) patch.closed_date = _ymd(new Date());
+  const { error } = await supabase.from("pm_properties").update(patch).eq("id", id);
   if (error) { alert("Failed to update phase: " + (error.message || "unknown error")); return false; }
   _logAudit("moved","property", _pc?_pc.addr:"", "Moved to “"+newPhase+"”");
   await loadPropertiesFromSupabase();
@@ -1699,6 +1724,99 @@ async function deleteProperty(id) {
   _logAudit("deleted","property", c?c.addr:"", "Deleted property");
   await loadPropertiesFromSupabase();
   openProjectDashboard('trello');
+}
+
+// ===================== RENTALS · CLOSING · COMPLETED ARCHIVE =====================
+// Push a rental property into the Rental Handoff Process column (rentals only).
+async function pushToRentalHandoff(id){
+  if(_blockIfReadOnly()) return;
+  const c=propCards.find(x=>x.id===id); if(!c) return;
+  const ok=await updatePropertyPhaseInSupabase(id,"Rental Handoff Process");
+  if(ok) openPropDetail(id);
+}
+// Rental handoff finished -> property closes and moves straight to Closed.
+async function completeRentalHandoff(id){
+  if(_blockIfReadOnly()) return;
+  const c=propCards.find(x=>x.id===id); if(!c) return;
+  if(!confirm('Mark the rental handoff for "'+(c.addr||"this property")+'" complete? It will move straight to Closed.')) return;
+  const { error }=await supabase.from("pm_properties").update({ phase:"Closed", closed_date:(c.closedDate||_ymd(new Date())) }).eq("id",id);
+  if(error){ alert("Failed: "+(error.message||"")); return; }
+  _logAudit("completed","property", c.addr||"", "Rental handoff complete → moved to Closed");
+  await loadPropertiesFromSupabase();
+  openProjectDashboard('trello');
+}
+// Save / update a property's closing date (set once it's under contract).
+async function saveClosingDate(id){
+  if(_blockIfReadOnly()) return;
+  const el=document.getElementById("pd-closing-date");
+  const v=(el&&el.value)||null;
+  const { error }=await supabase.from("pm_properties").update({ closing_date:v }).eq("id",id);
+  if(error){ alert("Failed to save closing date: "+(error.message||"")); return; }
+  const c=propCards.find(x=>x.id===id);
+  _logAudit("updated","property", c?c.addr:"", v?("Closing date set to "+v):"Closing date cleared");
+  await loadPropertiesFromSupabase();
+  openPropDetail(id);
+}
+// When the closing date arrives, an approver confirms the sale actually closed.
+// Records the close, moves to Closed, and flags end-of-project (Marlo starts her
+// process; Patience pulls utilities). Emails go out once the backend is wired.
+async function approveClose(id){
+  if(!canApprove(_myProfile)){ alert("Only Bruce, Marlo or Tommy can confirm a closing."); return; }
+  const c=propCards.find(x=>x.id===id); if(!c) return;
+  if(!confirm('Confirm that "'+(c.addr||"this property")+'" has closed?\n\nThis moves it to Closed and flags end-of-project — Marlo to start her process and Patience to remove utilities.')) return;
+  const closed=c.closingDate||_ymd(new Date());
+  const { error }=await supabase.from("pm_properties").update({ close_approved:true, closed_date:closed, phase:"Closed" }).eq("id",id);
+  if(error){ alert("Failed: "+(error.message||"")); return; }
+  _logAudit("approved","property", c.addr||"", "Closing confirmed — moved to Closed · Marlo + Patience to be notified (utilities removal)");
+  await loadPropertiesFromSupabase();
+  openProjectDashboard('trello');
+}
+
+// ---- Completed archive (properties closed 4+ weeks ago; hidden from the board) ----
+let _archiveYear=null;
+function _archivedCards(){ return propCards.filter(c=>c.archived); }
+function openArchivedProp(id){ openProjectDashboard('trello'); openPropDetail(id); }
+function openCompletedArchive(){
+  const cards=_archivedCards();
+  const years=[...new Set(cards.map(c=>(c.closedDate||"").slice(0,4)).filter(Boolean))].sort().reverse();
+  _archiveYear = (_archiveYear && years.indexOf(_archiveYear)>=0) ? _archiveYear : (years[0]||String(new Date().getFullYear()));
+  document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
+  renderCompletedArchive();
+}
+function setArchiveYear(y){ _archiveYear=y; renderCompletedArchive(); }
+function renderCompletedArchive(){
+  const cards=_archivedCards();
+  const years=[...new Set(cards.map(c=>(c.closedDate||"").slice(0,4)).filter(Boolean))].sort().reverse();
+  const MN=["January","February","March","April","May","June","July","August","September","October","November","December"];
+  const yearCards=cards.filter(c=>(c.closedDate||"").slice(0,4)===_archiveYear);
+  const byMonth={};
+  yearCards.forEach(c=>{ const m=parseInt((c.closedDate||"0000-00").slice(5,7),10)-1; (byMonth[m]=byMonth[m]||[]).push(c); });
+  const yearTabs=years.map(y=>`<div onclick="setArchiveYear('${y}')" style="padding:6px 16px;font-size:13px;cursor:pointer;border-radius:8px 8px 0 0;${y===_archiveYear?'background:#fff;color:#111;font-weight:600;border:0.5px solid #e0e4ec;border-bottom:none':'background:transparent;color:#888'}">${y} <span style="font-size:11px;color:#aaa">(${cards.filter(c=>(c.closedDate||'').slice(0,4)===y).length})</span></div>`).join("");
+  const monthBlocks=MN.map((mn,i)=>{
+    const list=byMonth[i]||[]; if(!list.length) return "";
+    return `<div style="margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <div style="font-size:13px;font-weight:600;color:#111">${mn} ${_archiveYear}</div>
+        <div style="font-size:11px;color:#fff;background:#12987A;border-radius:99px;padding:1px 8px">${list.length} closed</div>
+      </div>
+      <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden">
+        ${list.sort((a,b)=>(b.closedDate||'').localeCompare(a.closedDate||'')).map(c=>`<div onclick="openArchivedProp('${c.id}')" style="display:flex;justify-content:space-between;align-items:center;padding:9px 14px;border-bottom:0.5px solid #f4f5f7;cursor:pointer">
+          <div style="font-size:13px;color:#111">${_calEsc(c.addr)}${c.isRental?' <span style="font-size:10px;color:#0B5A46;background:#E1F5EE;padding:1px 6px;border-radius:99px;margin-left:4px">Rental</span>':''}</div>
+          <div style="font-size:12px;color:#888">Closed ${c.closedDate||'—'}${c.pm?' · '+_calEsc(c.pm):''}</div>
+        </div>`).join("")}
+      </div>
+    </div>`;
+  }).join("");
+  document.getElementById("dash-body").innerHTML=`
+    <div style="padding:20px;max-width:900px;margin:0 auto">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <div style="font-size:18px;font-weight:600;color:#111">📁 Completed Properties</div>
+        <button onclick="openProjectDashboard('trello')" style="font-size:12px;color:#888;background:none;border:none;cursor:pointer">← Back to Property Dashboard</button>
+      </div>
+      <div style="font-size:12px;color:#888;margin-bottom:14px">Every property that closed or finished rental handoff — auto-filed here 4 weeks after closing. ${cards.length} total.</div>
+      ${years.length?`<div style="display:flex;gap:4px;border-bottom:0.5px solid #e0e4ec;margin-bottom:16px">${yearTabs}</div>`:''}
+      ${monthBlocks||`<div style="padding:28px;text-align:center;color:#bbb;font-size:13px">No completed properties recorded for ${_archiveYear} yet. They'll appear here 4 weeks after a property is marked Closed.</div>`}
+    </div>`;
 }
 
 async function addPropertySubPhaseInSupabase(id, name, due) {
@@ -1939,7 +2057,7 @@ function renderMainDashboard() {
 
 // ===================== PROPERTY DASHBOARD BOARD =====================
 function renderPropertyBoard() {
-  const sidebar = [...propCards].sort((a,b)=>a.addr.localeCompare(b.addr)).map((c,i) => {
+  const sidebar = [...propCards.filter(c=>!c.archived)].sort((a,b)=>a.addr.localeCompare(b.addr)).map((c,i) => {
     const p = phInfo(c.phase);
     return `<div onclick="openPropDetail('${c.id}')" style="padding:8px 10px;cursor:pointer;border-bottom:0.5px solid #f4f5f7;display:flex;align-items:center;gap:7px">
       <span style="font-size:10px;color:#aaa;min-width:16px;font-weight:500">${String(i+1).padStart(2,'0')}</span>
@@ -1952,7 +2070,7 @@ function renderPropertyBoard() {
   }).join('');
 
   const board = PROP_PHASES.map(ph => {
-    const pc = propCards.filter(c => c.phase === ph.name);
+    const pc = propCards.filter(c => c.phase === ph.name && !c.archived);
     return `<div style="width:155px;flex-shrink:0">
       <div style="padding:7px 10px;border-radius:6px 6px 0 0;margin-bottom:6px;background:${ph.bg};display:flex;align-items:center;justify-content:space-between">
         <span style="font-size:10.5px;font-weight:500;color:${ph.text};line-height:1.3">${ph.name}</span>
@@ -2023,8 +2141,9 @@ function renderPropertyBoard() {
         <div style="display:flex;gap:10px;align-items:flex-start;min-width:max-content">${board}</div>
       </div>
     </div>
-    <div style="display:flex;justify-content:flex-end;margin-top:10px">
-      ${isReadOnly() ? "" : '<button onclick="openPropModal()" style="display:flex;align-items:center;gap:5px;padding:6px 14px;font-size:12px;border-radius:6px;cursor:pointer;border:0.5px solid #ccc;background:#111;color:#fff">+ Add Property</button>'}
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:10px">
+      <button onclick="openCompletedArchive()" style="display:flex;align-items:center;gap:5px;padding:6px 14px;font-size:12px;border-radius:6px;cursor:pointer;border:0.5px solid #cdd7e6;background:#fff;color:#0B5A46">📁 Completed (${propCards.filter(c=>c.archived).length})</button>
+      ${isReadOnly() ? "<span></span>" : '<button onclick="openPropModal()" style="display:flex;align-items:center;gap:5px;padding:6px 14px;font-size:12px;border-radius:6px;cursor:pointer;border:0.5px solid #ccc;background:#111;color:#fff">+ Add Property</button>'}
     </div>`;
 }
 
@@ -2053,6 +2172,19 @@ function openPropDetail(id) {
   // start and finish date; filling both auto-creates a task for this property's PM.
   const _ro_sp = isReadOnly();
   const _canAppr = canApprove(_myProfile);
+  // Rental + closing workflow flags for this property.
+  const _today = _ymd(new Date());
+  const _isClosed = c.phase === "Closed";
+  const _showPushRental = c.isRental && !_isClosed && c.phase !== "Rental Handoff Process";
+  const _showRentalComplete = c.phase === "Rental Handoff Process";
+  const _closingDue = c.closingDate && c.closingDate <= _today && !c.closeApproved && !_isClosed;
+  if(!document.getElementById("pd-flash-style")){ const st=document.createElement("style"); st.id="pd-flash-style"; st.textContent="@keyframes pdflash{0%,100%{box-shadow:0 0 0 0 rgba(212,35,24,.55)}50%{box-shadow:0 0 0 7px rgba(212,35,24,0)}}"; document.head.appendChild(st); }
+  const rentalCloseBar = _ro_sp ? '' : `
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:${(_showPushRental||_showRentalComplete||_closingDue)?'12px':'0'};align-items:center">
+      ${_showPushRental ? `<button onclick="pushToRentalHandoff('${c.id}')" style="display:flex;align-items:center;gap:6px;padding:8px 14px;font-size:12px;border-radius:6px;cursor:pointer;background:#fff;color:#0B5A46;border:0.5px solid #9ad9c6;font-weight:600">🏠 Push to Rental Handoff</button>`:''}
+      ${_showRentalComplete ? `<button onclick="completeRentalHandoff('${c.id}')" style="display:flex;align-items:center;gap:6px;padding:8px 14px;font-size:12px;border-radius:6px;cursor:pointer;background:#12987A;color:#fff;border:none;font-weight:600">✓ Mark Rental Handoff Complete → Closed</button>`:''}
+      ${_closingDue ? `<button onclick="approveClose('${c.id}')" style="display:flex;align-items:center;gap:6px;padding:9px 16px;font-size:12.5px;border-radius:6px;cursor:pointer;background:#B42318;color:#fff;border:none;font-weight:700;animation:pdflash 1.2s infinite">⚑ Approve Close — confirm ${c.closingDate} closing</button>`:''}
+    </div>`;
   const _savedSub = (name)=> (c.subPhases||[]).find(sp=>sp.name===name) || {};
   const subPhaseRows = SUB_PHASES.map((name,i) => {
     const sp=_savedSub(name);
@@ -2134,8 +2266,10 @@ function openPropDetail(id) {
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
           <span style="font-size:11px;padding:3px 10px;border-radius:99px;background:${p.bg};color:${p.text};font-weight:500">${c.phase}</span>
           ${c.type ? `<span style="font-size:11px;padding:3px 10px;border-radius:99px;font-weight:500;${typeStyle}">${c.type}</span>` : ''}
+          ${c.isRental ? `<span style="font-size:11px;padding:3px 10px;border-radius:99px;font-weight:600;background:#E1F5EE;color:#0B5A46">🏠 Rental</span>` : ''}
           ${c.pm ? `<span style="font-size:12px;color:#888;display:flex;align-items:center;gap:4px"><div style="width:16px;height:16px;border-radius:50%;background:${pmColor};color:#fff;font-size:9px;font-weight:500;display:flex;align-items:center;justify-content:center">${c.pm[0]}</div>${c.pm}</span>` : ''}
         </div>
+        ${rentalCloseBar}
       </div>
       <div style="padding:16px 20px">
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
@@ -2177,6 +2311,10 @@ function openPropDetail(id) {
               <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:0.5px solid #f4f5f7;font-size:13px">
                 <span style="color:#888;display:flex;align-items:center;gap:5px">📁 Project Drive Folder</span>
                 ${c.driveUrl ? `<a href="${c.driveUrl}" target="_blank" style="font-size:12px;color:#185FA5;text-decoration:none">Open Folder ↗</a>` : (_ro_sp?`<span style="font-size:11px;color:#ccc">—</span>`:`<button onclick="openPropModal('drive','${c.id}')" style="font-size:11px;padding:2px 8px;border-radius:4px;background:transparent;color:#aaa;border:0.5px solid #ccc;cursor:pointer">+ Add Link</button>`)}
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:0.5px solid #f4f5f7;font-size:13px">
+                <span style="color:#888;display:flex;align-items:center;gap:5px">🗓 Closing Date${c.closeApproved?` <span style="font-size:9px;background:#EAF3DE;color:#173404;padding:1px 5px;border-radius:4px">Closed ✓</span>`:''}</span>
+                ${_ro_sp ? `<span style="color:#111;font-weight:500">${c.closingDate||'—'}</span>` : `<span style="display:flex;gap:6px;align-items:center"><input type="date" id="pd-closing-date" value="${c.closingDate||''}" style="font-size:12px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"/><button onclick="saveClosingDate('${c.id}')" style="font-size:11px;padding:3px 9px;border-radius:5px;background:#111;color:#fff;border:none;cursor:pointer">Save</button></span>`}
               </div>
             </div>
           </div>
@@ -2372,6 +2510,19 @@ function openPropModal(mode, id) {
         <input id="pm-end" type="date" value="${c?c.end:''}" style="width:100%;padding:7px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:13px;color:#111;background:#fff;outline:none" />
       </div>
     </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+      <div>
+        <label style="display:block;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Rental?</label>
+        <select id="pm-rental" style="width:100%;padding:7px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:13px;color:#111;background:#fff;outline:none">
+          <option value="no" ${c&&c.isRental?'':'selected'}>No — Flip / Sale</option>
+          <option value="yes" ${c&&c.isRental?'selected':''}>Yes — Rental</option>
+        </select>
+      </div>
+      <div>
+        <label style="display:block;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Closing Date <span style="font-size:9px;background:#E6F1FB;color:#185FA5;padding:1px 5px;border-radius:4px;text-transform:none">at In Contract</span></label>
+        <input id="pm-closing" type="date" value="${c?c.closingDate||'':''}" style="width:100%;padding:7px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:13px;color:#111;background:#fff;outline:none" />
+      </div>
+    </div>
     <div style="margin-bottom:12px">
       <label style="display:block;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">📁 Project Drive Folder URL</label>
       <input id="pm-drive" type="url" value="${c?c.driveUrl||'':''}" placeholder="https://drive.google.com/drive/folders/..." style="width:100%;padding:7px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:13px;color:#111;background:#fff;outline:none" />
@@ -2394,6 +2545,8 @@ function openPropModal(mode, id) {
       end:      document.getElementById("pm-end").value,
       notes:    document.getElementById("pm-notes").value,
       driveUrl: (document.getElementById("pm-drive") ? document.getElementById("pm-drive").value.trim() : (c ? c.driveUrl || '' : '')),
+      isRental: (document.getElementById("pm-rental") ? document.getElementById("pm-rental").value === "yes" : (c ? c.isRental : false)),
+      closingDate: (document.getElementById("pm-closing") ? (document.getElementById("pm-closing").value || "") : (c ? c.closingDate || "" : "")),
       companyCam: c ? c.companyCam || '' : '',
       subPhases: c ? (c.subPhases || []) : []
     };
