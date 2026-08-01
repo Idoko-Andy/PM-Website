@@ -1692,6 +1692,23 @@ async function updatePropertyPhaseInSupabase(id, newPhase) {
   return true;
 }
 
+// Move a property to a chosen phase via dropdown (no dragging). Same gate as drag:
+// non-privileged roles can't skip forward past unfinished/unapproved subphases.
+async function movePropertyToPhase(id, newPhase){
+  if(_blockIfReadOnly()) return;
+  const card=propCards.find(c=>c.id===id); if(!card) return;
+  const oldPhase=card.phase;
+  if(oldPhase===newPhase){ openPropDetail(id); return; }
+  const _oi=PROP_PHASES.findIndex(p=>p.name===oldPhase);
+  const _ti=PROP_PHASES.findIndex(p=>p.name===newPhase);
+  if(_ti>_oi && !canMoveFreely()){
+    const blocking=_phaseAdvanceBlocking(card).map(nm=>{ const sp=(card.subPhases||[]).find(s=>s.name===nm); const note=!sp||!sp.completed?" — not completed":(subphaseNeedsApproval(nm)&&!sp.approved?" — awaiting approval":""); return nm+note; });
+    if(blocking.length){ alert("Can't advance \""+(card.addr||"this property")+"\" to "+newPhase+" yet.\n\nFinish these first (approvals by Bruce/Marlo/Tommy where required):\n\n• "+blocking.join("\n• ")); openPropDetail(id); return; }
+  }
+  const ok=await updatePropertyPhaseInSupabase(id,newPhase);
+  if(ok) openPropDetail(id);
+}
+
 async function setPropertyCompanyCamInSupabase(id, url) {
   if (_blockIfReadOnly()) return false;
   const { error } = await supabase.from("pm_properties").update({ company_cam: url }).eq("id", id);
@@ -1772,7 +1789,7 @@ async function approveClose(id){
 // ---- Completed archive (properties closed 4+ weeks ago; hidden from the board) ----
 let _archiveYear=null;
 function _archivedCards(){ return propCards.filter(c=>c.archived); }
-function openArchivedProp(id){ openProjectDashboard('trello'); openPropDetail(id); }
+function openArchivedProp(id){ openProjectDashboard('trello'); _propBack='archive'; openPropDetail(id); }
 function openCompletedArchive(){
   const cards=_archivedCards();
   const years=[...new Set(cards.map(c=>(c.closedDate||"").slice(0,4)).filter(Boolean))].sort().reverse();
@@ -1782,6 +1799,7 @@ function openCompletedArchive(){
 }
 function setArchiveYear(y){ _archiveYear=y; renderCompletedArchive(); }
 function renderCompletedArchive(){
+  _propBack='archive';
   const cards=_archivedCards();
   const years=[...new Set(cards.map(c=>(c.closedDate||"").slice(0,4)).filter(Boolean))].sort().reverse();
   const MN=["January","February","March","April","May","June","July","August","September","October","November","December"];
@@ -2054,6 +2072,7 @@ function renderMainDashboard() {
 
 // ===================== PROPERTY DASHBOARD BOARD =====================
 function renderPropertyBoard() {
+  _propBack = 'trello';
   const sidebar = [...propCards.filter(c=>!c.archived)].sort((a,b)=>a.addr.localeCompare(b.addr)).map((c,i) => {
     const p = phInfo(c.phase);
     return `<div onclick="openPropDetail('${c.id}')" style="padding:8px 10px;cursor:pointer;border-bottom:0.5px solid #f4f5f7;display:flex;align-items:center;gap:7px">
@@ -2154,6 +2173,16 @@ function closePropSidebar(){
 }
 
 // ===================== PROPERTY DETAIL PAGE =====================
+// Remembers which view a property was opened FROM, so the detail Back button
+// returns there (phase page, archive, or the main board) instead of always the board.
+let _propBack = 'trello';
+function _goPropBack(){
+  const k = _propBack || 'trello';
+  if (k === 'archive') return openCompletedArchive();
+  if (k.indexOf('phase:') === 0) return openPMAssistantDashboard(k);      // e.g. "phase:sop-takedowns"
+  if (k.indexOf('role:') === 0)  return openPMAssistantDashboard(k.slice(5)); // e.g. "role:sop"
+  return openProjectDashboard('trello');
+}
 function openPropDetail(id) {
   const c = propCards.find(x => x.id === id);
   if (!c) return;
@@ -2181,6 +2210,13 @@ function openPropDetail(id) {
       ${_showPushRental ? `<button onclick="pushToRentalHandoff('${c.id}')" style="display:flex;align-items:center;gap:6px;padding:8px 14px;font-size:12px;border-radius:6px;cursor:pointer;background:#fff;color:#0B5A46;border:0.5px solid #9ad9c6;font-weight:600">🏠 Push to Rental Handoff</button>`:''}
       ${_showRentalComplete ? `<button onclick="completeRentalHandoff('${c.id}')" style="display:flex;align-items:center;gap:6px;padding:8px 14px;font-size:12px;border-radius:6px;cursor:pointer;background:#12987A;color:#fff;border:none;font-weight:600">✓ Mark Rental Handoff Complete → Closed</button>`:''}
       ${_closingDue ? `<button onclick="approveClose('${c.id}')" style="display:flex;align-items:center;gap:6px;padding:9px 16px;font-size:12.5px;border-radius:6px;cursor:pointer;background:#B42318;color:#fff;border:none;font-weight:700;animation:pdflash 1.2s infinite">⚑ Approve Close — confirm ${c.closingDate} closing</button>`:''}
+    </div>`;
+  // Quick phase move (no dragging) — pick a phase from the dropdown.
+  const moveBar = _ro_sp ? '' : `<div style="display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap">
+      <span style="font-size:11px;color:#888">Move to phase:</span>
+      <select onchange="if(this.value)movePropertyToPhase('${c.id}',this.value)" style="font-size:12px;padding:6px 10px;border:0.5px solid #cdd7e6;border-radius:6px;background:#fff;color:#111;cursor:pointer;max-width:240px">
+        ${PROP_PHASES.map(pp=>`<option value="${pp.name.replace(/"/g,'&quot;')}" ${pp.name===c.phase?'selected':''}>${pp.name}</option>`).join('')}
+      </select>
     </div>`;
   const _savedSub = (name)=> (c.subPhases||[]).find(sp=>sp.name===name) || {};
   const subPhaseRows = SUB_PHASES.map((name,i) => {
@@ -2256,7 +2292,7 @@ function openPropDetail(id) {
   document.getElementById("pd-content").innerHTML = `
     <div style="background:#fff;min-height:520px;border-radius:8px;overflow:hidden;margin-top:0">
       <div style="padding:10px 18px;border-bottom:0.5px solid #e0e4ec;display:flex;align-items:center;gap:8px;background:#fafafa">
-        <button onclick="openProjectDashboard('trello')" style="display:flex;align-items:center;gap:5px;font-size:12px;color:#888;cursor:pointer;padding:4px 8px;border-radius:5px;background:none;border:none">← Back to Property Dashboard</button>
+        <button onclick="_goPropBack()" style="display:flex;align-items:center;gap:5px;font-size:12px;color:#888;cursor:pointer;padding:4px 8px;border-radius:5px;background:none;border:none">← Back</button>
       </div>
       <div style="padding:16px 20px;border-bottom:0.5px solid #e0e4ec">
         <div style="font-size:17px;font-weight:500;color:#111;margin-bottom:8px">${c.addr}</div>
@@ -2266,6 +2302,7 @@ function openPropDetail(id) {
           ${c.isRental ? `<span style="font-size:11px;padding:3px 10px;border-radius:99px;font-weight:600;background:#E1F5EE;color:#0B5A46">🏠 Rental</span>` : ''}
           ${c.pm ? `<span style="font-size:12px;color:#888;display:flex;align-items:center;gap:4px"><div style="width:16px;height:16px;border-radius:50%;background:${pmColor};color:#fff;font-size:9px;font-weight:500;display:flex;align-items:center;justify-content:center">${c.pm[0]}</div>${c.pm}</span>` : ''}
         </div>
+        ${moveBar}
         ${rentalCloseBar}
       </div>
       <div style="padding:16px 20px">
@@ -3819,6 +3856,7 @@ function pmAssistantRoleView(roleKey){
 // A phase drills into its own page: back button, LEFT = properties in the stage,
 // RIGHT = that stage's tools & checklists (built out per stage).
 function phasePage(id){
+  _propBack = 'phase:'+id;
   const info=_phaseBoard(id); if(!info) return pmAssistantMainDashboard();
   const b=info.board, p=phInfo(b.phases[0]);
   const cards=(propCards||[]).filter(c=>b.phases.includes(c.phase));
