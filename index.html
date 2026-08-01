@@ -1478,6 +1478,7 @@ const PROP_TYPES = [
 ];
 
 const SUB_PHASES = [
+  "Start of Project Checklist",
   "SOW Creation",
   "SOW Approval",
   "Budget Creation",
@@ -1490,6 +1491,7 @@ const SUB_PHASES = [
 
 // Sub phase → which main dashboard board it feeds
 const SUB_PHASE_BOARD = {
+  "Start of Project Checklist": "SOW & Budgets",
   "SOW Creation":               "SOW & Budgets",
   "SOW Approval":               "SOW & Budgets",
   "Budget Creation":            "SOW & Budgets",
@@ -1499,6 +1501,33 @@ const SUB_PHASE_BOARD = {
   "Design Budget Creation":     "Design Budgets & Design Status",
   "Design Budget Approval":     "Design Budgets & Design Status",
 };
+
+// ---- Automated phase workflow ----
+// Which subphases require sign-off (Bruce/Marlo/Tommy). Others just need "completed".
+const SUBPHASE_APPROVAL = { "SOW Approval":true, "Budget Approval":true, "Design Budget Approval":true };
+function subphaseNeedsApproval(name){ return !!SUBPHASE_APPROVAL[name]; }
+// When a subphase is finished, the NEXT subphase's clock starts: start = today,
+// due = today + dueDays. Trigger is "complete" for most, "approve" for approval steps.
+const SUBPHASE_CHAIN = {
+  "Start of Project Checklist": { next:"SOW Creation",    dueDays:7, on:"complete" },
+  "SOW Creation":               { next:"SOW Approval",    dueDays:2, on:"complete" },
+  "SOW Approval":               { next:"Budget Creation", dueDays:2, on:"approve"  },
+  "Budget Creation":            { next:"Budget Approval", dueDays:2, on:"complete" },
+};
+// A property auto-advances to `next` once every required subphase is finished
+// (completed, and approved where the subphase needs approval).
+const PHASE_ADVANCE = {
+  "Vacant / On Standby": { requires:["Start of Project Checklist"], next:"Pre Construction", notifyPM:true },
+  "Pre Construction":    { requires:["SOW Creation","SOW Approval","Budget Creation","Budget Approval"], next:"Waiting Permits", notifyPM:true },
+  "Waiting Permits":     { requires:["Drawing / Structural Phase","Pending Permit Approval"], next:"Framing, MEPS, Insulation", notifyPM:true },
+};
+function _subDone(sp,name){ return !!(sp && sp.completed && (!subphaseNeedsApproval(name) || sp.approved)); }
+// Which required subphases are still outstanding for the property's current phase.
+function _phaseAdvanceBlocking(card){
+  const cfg=PHASE_ADVANCE[card.phase]; if(!cfg) return [];
+  const subs=card.subPhases||[];
+  return cfg.requires.filter(name => !_subDone(subs.find(s=>s.name===name), name));
+}
 
 let PM_MANAGERS = ["Andrew","Isaiah"];
 async function loadPMManagers(){
@@ -1693,6 +1722,26 @@ async function saveSubPhaseSchedule(id){
 }
 // Only these people can approve a completed subphase (which unlocks phase progression).
 function canApprove(u){ return !!(u && (u.isSuperAdmin || ["CEO","Project Director"].indexOf(u.role)>=0 || ["Marlo","Marlow"].indexOf((u.firstName||"").trim())>=0)); }
+function _ymdPlus(days){ return _ymd(new Date(Date.now()+days*86400000)); }
+// When a subphase finishes (trigger event), start the next subphase's clock.
+function _applyChain(subs, name, event){
+  const ch=SUBPHASE_CHAIN[name]; if(!ch || ch.on!==event) return;
+  let n=subs.find(x=>x.name===ch.next); if(!n){ n={name:ch.next}; subs.push(n); }
+  if(!n.start) n.start=_ymd(new Date());       // don't override a manually set date
+  if(!n.due)   n.due=_ymdPlus(ch.dueDays);
+}
+// After a subphase change, auto-advance the property if its phase requirements are met.
+async function _maybeAutoAdvance(propId){
+  const card=propCards.find(p=>p.id===propId); if(!card) return false;
+  const cfg=PHASE_ADVANCE[card.phase]; if(!cfg) return false;
+  if(_phaseAdvanceBlocking(card).length) return false;
+  const { error } = await supabase.from("pm_properties").update({ phase:cfg.next }).eq("id",propId);
+  if(error) return false;
+  const pmName=card.pm||"";
+  _logAudit("advanced","property", card.addr||"", "Auto-advanced "+card.phase+" → "+cfg.next+(cfg.notifyPM&&pmName?(" · PM notified: "+pmName):""));
+  await loadPropertiesFromSupabase();
+  return true;
+}
 // A PM marks a subphase completed; un-checking clears any prior approval.
 async function toggleSubPhaseComplete(propId, name){
   if(_blockIfReadOnly()) return;
@@ -1702,11 +1751,13 @@ async function toggleSubPhaseComplete(propId, name){
   if(!s){ s={name}; subs.push(s); }
   s.completed=!s.completed;
   if(!s.completed){ s.approved=false; delete s.approvedBy; }
+  if(s.completed) _applyChain(subs, name, "complete");
   const { error } = await supabase.from("pm_properties").update({ sub_phases:subs }).eq("id",propId);
   if(error){ alert("Couldn't update subphase: "+(error.message||"")); return; }
   _logAudit(s.completed?"completed":"reopened","property", card.addr||"", "Subphase: "+name);
   await loadPropertiesFromSupabase();
-  openPropDetail(propId);
+  const advanced = s.completed ? await _maybeAutoAdvance(propId) : false;
+  if(advanced && document.getElementById("pd-root")) openProjectDashboard('trello'); else openPropDetail(propId);
 }
 // Bruce / Marlo / Tommy (or an admin) approve a completed subphase.
 async function approveSubPhase(propId, name){
@@ -1717,11 +1768,13 @@ async function approveSubPhase(propId, name){
   const s=subs.find(x=>x.name===name);
   if(!s||!s.completed){ alert("Mark it completed before approving."); return; }
   s.approved=true; s.approvedBy=((me&&me.firstName)||"Approver");
+  _applyChain(subs, name, "approve");
   const { error } = await supabase.from("pm_properties").update({ sub_phases:subs }).eq("id",propId);
   if(error){ alert("Couldn't approve: "+(error.message||"")); return; }
   _logAudit("approved","property", card.addr||"", "Subphase approved: "+name+" by "+s.approvedBy);
   await loadPropertiesFromSupabase();
-  openPropDetail(propId);
+  const advanced = await _maybeAutoAdvance(propId);
+  if(advanced && document.getElementById("pd-root")) openProjectDashboard('trello'); else openPropDetail(propId);
 }
 
 function phInfo(name){ return PROP_PHASES.find(p=>p.name===name)||{bg:"#f4f5f7",text:"#555",cnt:"#aaa",dot:"#aaa"}; }
@@ -1968,13 +2021,16 @@ function openPropDetail(id) {
     const chk = _ro_sp
       ? `<span style="font-size:10px;color:${sp.completed?'#3B6D11':'#bbb'}">${sp.completed?'✓ Completed':'Not completed'}</span>`
       : `<label style="font-size:11px;color:#555;display:inline-flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" ${sp.completed?'checked':''} onchange="toggleSubPhaseComplete('${c.id}','${nEsc}')" style="cursor:pointer" /> Completed</label>`;
-    const appr = sp.completed
-      ? (sp.approved
-          ? `<span style="font-size:10px;color:#3B6D11">✓ Approved${sp.approvedBy?(' by '+_calEsc(sp.approvedBy)):''}</span>`
-          : (_canAppr
-              ? `<button onclick="approveSubPhase('${c.id}','${nEsc}')" style="font-size:10px;padding:3px 9px;border-radius:5px;background:#1a2744;color:#fff;border:none;cursor:pointer">Approve</button>`
-              : `<span style="font-size:10px;color:#B7791F">Awaiting approval</span>`))
-      : '';
+    // Only approval-type subphases (SOW/Budget/Design Approval) show an Approve step.
+    const needsAppr = subphaseNeedsApproval(name);
+    const appr = !sp.completed ? ''
+      : (!needsAppr
+          ? `<span style="font-size:10px;color:#3B6D11">✓ done</span>`
+          : (sp.approved
+              ? `<span style="font-size:10px;color:#3B6D11">✓ Approved${sp.approvedBy?(' by '+_calEsc(sp.approvedBy)):''}</span>`
+              : (_canAppr
+                  ? `<button onclick="approveSubPhase('${c.id}','${nEsc}')" style="font-size:10px;padding:3px 9px;border-radius:5px;background:#1a2744;color:#fff;border:none;cursor:pointer">Approve</button>`
+                  : `<span style="font-size:10px;color:#B7791F">Awaiting approval</span>`)));
     return `<div style="padding:8px 0;border-bottom:0.5px solid #f4f5f7">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
         <div style="min-width:150px">
@@ -4380,13 +4436,14 @@ function propDrop(event, targetPhase) {
   const _ti = PROP_PHASES.findIndex(p => p.name === targetPhase);
   if (_ti > _oi) {
     const card = propCards[idx];
-    const blocking = (card.subPhases||[]).filter(sp => sp.due && !(sp.completed && sp.approved));
-    const clBlocking = _checklistBlocking(card); // this stage's required checklist items
-    if (blocking.length || clBlocking.length) {
-      const lines = []
-        .concat(clBlocking.map(it => it.label + (it.approve ? "  — checklist (needs approval)" : "  — checklist")))
-        .concat(blocking.map(sp => sp.name + (sp.completed ? "  — awaiting approval" : "  — not completed")));
-      alert("Can't advance \""+(card.addr||"this property")+"\" to "+targetPhase+" yet.\n\nComplete (and approve where noted, by Bruce/Marlo/Tommy) first:\n\n• "+lines.join("\n• "));
+    // The stage's required subphases (per the automated workflow) must be finished first.
+    const blocking = _phaseAdvanceBlocking(card).map(nm => {
+      const sp=(card.subPhases||[]).find(s=>s.name===nm);
+      const note = !sp||!sp.completed ? " — not completed" : (subphaseNeedsApproval(nm) && !sp.approved ? " — awaiting approval" : "");
+      return nm + note;
+    });
+    if (blocking.length) {
+      alert("Can't advance \""+(card.addr||"this property")+"\" to "+targetPhase+" yet.\n\nFinish these first (approvals by Bruce/Marlo/Tommy where required):\n\n• "+blocking.join("\n• "));
       openProjectDashboard('trello');
       return;
     }
