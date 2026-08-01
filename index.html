@@ -4905,8 +4905,11 @@ async function deleteContractor(id){
 }
 
 // ---- Construction Calendar (Project Dashboard tab) ----
-const _calState = { y:null, m:null, prop:"all", pm:"all", filter:"all", loaded:false };
+const _calState = { y:null, m:null, day:null, view:"month", prop:"all", pm:"all", filter:"all", loaded:false };
 const _CAL_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+// Shared day helpers for the calendar Day views.
+function _shiftDay(ds,delta){ const [y,m,d]=ds.split("-").map(Number); const dt=new Date(y,m-1,d); dt.setDate(dt.getDate()+delta); return _ymd(dt); }
+function _prettyDay(ds){ const [y,m,d]=ds.split("-").map(Number); const dt=new Date(y,m-1,d); return dt.toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric",year:"numeric"}); }
 function _calRerender(){ const el=document.getElementById("pd-content"); if(el) el.innerHTML=renderConstructionCalendar(); }
 function _propPM(id){ const p=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===id); return p?p.pm:""; }
 function _propPhase(id){ const p=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===id); return p?p.phase:""; }
@@ -4915,6 +4918,10 @@ function calSelectPM(name){ _calState.pm=name; if(name!=="all") _calState.prop="
 function calSetFilter(f){ _calState.filter=f; _calRerender(); }
 function calPrevMonth(){ _calState.m--; if(_calState.m<0){_calState.m=11;_calState.y--;} _calRerender(); }
 function calNextMonth(){ _calState.m++; if(_calState.m>11){_calState.m=0;_calState.y++;} _calRerender(); }
+function calSetView(v){ _calState.view=v; if(v==="day" && !_calState.day) _calState.day=_ymd(new Date()); _calRerender(); }
+function calPrevDay(){ _calState.day=_shiftDay(_calState.day||_ymd(new Date()),-1); _calRerender(); }
+function calNextDay(){ _calState.day=_shiftDay(_calState.day||_ymd(new Date()),1); _calRerender(); }
+function calToday(){ _calState.day=_ymd(new Date()); _calRerender(); }
 
 function renderConstructionCalendar(){
   const st=_calState;
@@ -4977,10 +4984,35 @@ function renderConstructionCalendar(){
   }
   const weekdays=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d=>`<div style="text-align:center;font-size:10px;color:#999;text-transform:uppercase;letter-spacing:.05em;padding:6px 0">${d}</div>`).join("");
   const addTop=ro?"":`<button onclick="openAddCalEvent('')" style="padding:7px 14px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;white-space:nowrap">+ Add</button>`;
+  const viewToggle=`<div style="display:inline-flex;border:0.5px solid #ddd;border-radius:8px;overflow:hidden">
+      <div onclick="calSetView('month')" style="padding:6px 13px;font-size:12px;cursor:pointer;${st.view!=='day'?'background:#111;color:#fff':'background:#fff;color:#666'}">Month</div>
+      <div onclick="calSetView('day')" style="padding:6px 13px;font-size:12px;cursor:pointer;${st.view==='day'?'background:#111;color:#fff':'background:#fff;color:#666'}">Day</div>
+    </div>`;
+  if(st.view==='day'){
+    const dayStr=st.day||todayStr;
+    const evs=_calEventsCache.filter(e=> e.event_date===dayStr && (st.prop==="all"||e.property_id===st.prop) && (st.pm==="all"||_propPM(e.property_id)===st.pm) && _matchFilter(e)).sort((a,b)=>(a.completed?1:0)-(b.completed?1:0));
+    const isToday=dayStr===todayStr;
+    const rowFor=(e)=>{ const done=!!e.completed;
+      const lbl = e.kind==="contractor" ? ("★ Contractor start — "+_contractorName(e.contractor_id)) : e.kind==="custom" ? ("• "+(e.title||'Event')) : ("📦 Material delivery — "+(e.title||'Material'));
+      return `<div onclick="toggleCalEventDone('${e.id}')" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:0.5px solid #f1f3f7;${done?'opacity:0.6;':''}"><div style="min-width:0"><div style="font-size:14px;font-weight:500;color:#111;${done?'text-decoration:line-through;':''}">${done?'✓ ':''}${_calEsc(lbl)}</div><div style="font-size:12px;color:#888;margin-top:2px">${_calEsc(_propAddr(e.property_id)||'—')}</div></div><div style="font-size:11px;color:${done?'#3B6D11':'#B7791F'};white-space:nowrap">${done?'Done':'Tap ✓'}</div></div>`; };
+    const dayBody=evs.length?`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">${evs.map(rowFor).join("")}</div>`:`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:34px;text-align:center;color:#bbb;font-size:13px">Nothing scheduled for this day.</div>`;
+    return `<div style="padding:20px;max-width:760px;margin:0 auto">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">${allBtn}${propSelect}${pmSelect}</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">${viewToggle}<div style="display:flex;gap:6px;flex-wrap:wrap">${chip("all","All")}${chip("material","📦 Material")}${chip("contractor","★ Contractor")}${_customCalTypes().map(t=>chip("custom::"+t,"• "+t)).join("")}</div>${addTop}</div>
+      <div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:14px">
+        <div onclick="calPrevDay()" style="cursor:pointer;font-size:18px;color:#888;padding:5px 13px;border:0.5px solid #ddd;border-radius:8px;background:#fff">‹</div>
+        <div style="text-align:center;min-width:230px"><div style="font-size:16px;font-weight:600;color:${isToday?'#185FA5':'#111'}">${_prettyDay(dayStr)}</div>${isToday?'<div style="font-size:11px;color:#185FA5">Today</div>':`<div onclick="calToday()" style="font-size:11px;color:#888;cursor:pointer;text-decoration:underline">Jump to today</div>`}</div>
+        <div onclick="calNextDay()" style="cursor:pointer;font-size:18px;color:#888;padding:5px 13px;border:0.5px solid #ddd;border-radius:8px;background:#fff">›</div>
+      </div>
+      ${dayBody}
+      <div style="font-size:11px;color:#aaa;margin-top:10px">Showing ${st.pm!=="all"?("all of "+_calEsc(st.pm)+"'s properties"):(st.prop==="all"?"all properties":(_calEsc(_propAddr(st.prop))||"selected property"))} for this day.</div>
+    </div>`;
+  }
   return `<div style="padding:20px">
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">${allBtn}${propSelect}${pmSelect}</div>
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px">
       <div style="display:flex;align-items:center;gap:12px">
+        ${viewToggle}
         <div style="display:flex;align-items:center;gap:8px">
           <div onclick="calPrevMonth()" style="cursor:pointer;font-size:16px;color:#888;padding:2px 8px;border:0.5px solid #ddd;border-radius:6px;background:#fff">‹</div>
           <div style="font-size:15px;font-weight:500;color:#111;min-width:130px;text-align:center">${_CAL_MONTHS[st.m]} ${st.y}</div>
@@ -5116,11 +5148,15 @@ function taskAssignees(t){
   if(Array.isArray(t.assignees) && t.assignees.length) return t.assignees.filter(Boolean);
   return t.assignee ? [t.assignee] : [];
 }
-const _taskCal = { y:null, m:null, assignee:"all", loaded:false };
+const _taskCal = { y:null, m:null, day:null, view:"month", assignee:"all", loaded:false };
 function _taskRerender(){ const el=document.getElementById("pd-content"); if(el) el.innerHTML=renderTaskCalendar(); }
 function taskCalPrev(){ _taskCal.m--; if(_taskCal.m<0){_taskCal.m=11;_taskCal.y--;} _taskRerender(); }
 function taskCalNext(){ _taskCal.m++; if(_taskCal.m>11){_taskCal.m=0;_taskCal.y++;} _taskRerender(); }
 function taskSetAssignee(a){ _taskCal.assignee=a; _taskRerender(); }
+function taskSetView(v){ _taskCal.view=v; if(v==="day" && !_taskCal.day) _taskCal.day=_ymd(new Date()); _taskRerender(); }
+function taskPrevDay(){ _taskCal.day=_shiftDay(_taskCal.day||_ymd(new Date()),-1); _taskRerender(); }
+function taskNextDay(){ _taskCal.day=_shiftDay(_taskCal.day||_ymd(new Date()),1); _taskRerender(); }
+function taskToday(){ _taskCal.day=_ymd(new Date()); _taskRerender(); }
 
 function renderTaskCalendar(){
   const st=_taskCal;
@@ -5167,9 +5203,35 @@ function renderTaskCalendar(){
   }
   const weekdays=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d=>`<div style="text-align:center;font-size:10px;color:#999;text-transform:uppercase;letter-spacing:.05em;padding:6px 0">${d}</div>`).join("");
   const addTop=ro?"":`<button onclick="openAddTask('')" style="padding:7px 14px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;white-space:nowrap">+ Add Task</button>`;
+  const viewToggle=`<div style="display:inline-flex;border:0.5px solid #ddd;border-radius:8px;overflow:hidden">
+      <div onclick="taskSetView('month')" style="padding:6px 13px;font-size:12px;cursor:pointer;${st.view!=='day'?'background:#111;color:#fff':'background:#fff;color:#666'}">Month</div>
+      <div onclick="taskSetView('day')" style="padding:6px 13px;font-size:12px;cursor:pointer;${st.view==='day'?'background:#111;color:#fff':'background:#fff;color:#666'}">Day</div>
+    </div>`;
+  if(st.view==='day'){
+    const dayStr=st.day||todayStr; const isToday=dayStr===todayStr;
+    const entries=[];
+    _tasksCache.forEach(t=>{ if(!_asgMatch(t)) return;
+      if(t.start_date===dayStr && t.start_date!==t.due_date) entries.push({t,marker:"start"});
+      if(t.due_date===dayStr) entries.push({t,marker: t.start_date&&t.start_date!==t.due_date?"due":"single"});
+    });
+    entries.sort((a,b)=>(a.t.status==="done"?1:0)-(b.t.status==="done"?1:0));
+    const rowFor=(en)=>{ const t=en.t, done=t.status==="done"; const mk=en.marker==="start"?"▶ Start — ":(en.marker==="due"?"■ Due — ":""); const who=taskAssignees(t); const whoS=who.length?who.join(", "):"Unassigned";
+      return `<div onclick="toggleTaskDone('${t.id}')" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:0.5px solid #f1f3f7;${done?'opacity:0.6;':''}"><div style="min-width:0"><div style="font-size:14px;font-weight:500;color:#111;${done?'text-decoration:line-through;':''}">${done?'✓ ':mk}${t.category?`<span style="font-size:10px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:5px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div><div style="font-size:12px;color:#888;margin-top:2px">${t.property_id?_calEsc(_propAddr(t.property_id))+' · ':''}${_calEsc(whoS)}</div></div><div style="font-size:11px;color:${done?'#3B6D11':'#B7791F'};white-space:nowrap">${done?'Done':'Tap ✓'}</div></div>`; };
+    const dayBody=entries.length?`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">${entries.map(rowFor).join("")}</div>`:`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:34px;text-align:center;color:#bbb;font-size:13px">No tasks starting or due this day.</div>`;
+    return `<div style="padding:20px;max-width:760px;margin:0 auto">
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">${viewToggle}<div style="display:flex;gap:6px;flex-wrap:wrap">${filterBar}</div>${addTop}</div>
+      <div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:14px">
+        <div onclick="taskPrevDay()" style="cursor:pointer;font-size:18px;color:#888;padding:5px 13px;border:0.5px solid #ddd;border-radius:8px;background:#fff">‹</div>
+        <div style="text-align:center;min-width:230px"><div style="font-size:16px;font-weight:600;color:${isToday?'#185FA5':'#111'}">${_prettyDay(dayStr)}</div>${isToday?'<div style="font-size:11px;color:#185FA5">Today</div>':`<div onclick="taskToday()" style="font-size:11px;color:#888;cursor:pointer;text-decoration:underline">Jump to today</div>`}</div>
+        <div onclick="taskNextDay()" style="cursor:pointer;font-size:18px;color:#888;padding:5px 13px;border:0.5px solid #ddd;border-radius:8px;background:#fff">›</div>
+      </div>
+      ${dayBody}
+    </div>`;
+  }
   return `<div style="padding:20px">
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px">
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        ${viewToggle}
         <div style="display:flex;align-items:center;gap:8px">
           <div onclick="taskCalPrev()" style="cursor:pointer;font-size:16px;color:#888;padding:2px 8px;border:0.5px solid #ddd;border-radius:6px;background:#fff">‹</div>
           <div style="font-size:15px;font-weight:500;color:#111;min-width:130px;text-align:center">${_CAL_MONTHS[st.m]} ${st.y}</div>
