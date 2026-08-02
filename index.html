@@ -226,6 +226,7 @@ body{background:#1a1a1a;color:#fff;min-height:100vh}
     <div class="dd" id="adm-d">
       <div class="ddl">Administrative Manager</div>
       <div class="ddi" onclick="openAdminDashboard()">🏛 Admin Dashboard</div>
+      <div class="ddi" onclick="openPMAssistantDashboard()">🗂 PM Assistant Dashboard</div>
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
       <div class="ddi" onclick="openTVDashboard()">📺 TV Dashboard</div>
@@ -245,6 +246,7 @@ body{background:#1a1a1a;color:#fff;min-height:100vh}
     <div class="dd" id="arch-d">
       <div class="ddl">Architect</div>
       <div class="ddi" onclick="openArchitectDashboard()">📐 Architect Dashboard</div>
+      <div class="ddi" onclick="openPMAssistantDashboard()">🗂 PM Assistant Dashboard</div>
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
       <div class="ddi" onclick="openTVDashboard()">📺 TV Dashboard</div>
@@ -1030,6 +1032,16 @@ function applyPermissionsUI() {
     if (gateable.length === 0) { ni.style.display = ""; return; }
     ni.style.display = gateable.some(i => i.style.display !== "none") ? "" : "none";
   });
+  // Role-scoped top nav: everyone sees only their own job-role dropdown (plus the
+  // shared Tools/SOPs, and Data/Reporting where permitted). The 3 power roles see all.
+  const _roleTabs = ["pd-t","pm-t","am-t","adm-t","va-t","arch-t"];
+  const _superSees = u.isSuperAdmin || isBruce(u) || NAV_SUPER_ROLES.indexOf(u.role) >= 0;
+  if (_superSees) {
+    _roleTabs.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = ""; });
+  } else {
+    const _mine = ROLE_NAVTAB[u.role] || null;
+    _roleTabs.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = (id === _mine) ? "" : "none"; });
+  }
 }
 
 // ---- Admin Panel: per-user permission editor ----
@@ -1130,6 +1142,17 @@ function canSeeAdmin(u){ return !!(u && (ELEVATED_ROLES.indexOf(u.role) >= 0 || 
 // gate. Everyone else is held to the automated workflow (_phaseAdvanceBlocking).
 const FREE_MOVE_ROLES = ["CEO","Project Director","Senior Administrative Assistant","Senior Virtual Administrative Assistant","Virtual Administrative Assistant"];
 function canMoveFreely(u){ u = u || (typeof currentUser==='function'?currentUser():null); return !!(u && (u.isSuperAdmin || FREE_MOVE_ROLES.indexOf(u.role) >= 0)); }
+// Which top-nav dropdown each job role owns. A non-power user sees ONLY their own
+// dropdown (plus shared Tools/SOPs). The 3 power roles below see every tab.
+const ROLE_NAVTAB = {
+  "CEO":"pd-t","Project Director":"pd-t",
+  "Project Manager":"pm-t",
+  "PM Assistant":"am-t","Start of Project Assistant":"am-t","End of Project Assistant":"am-t","Assistant / Intern":"am-t",
+  "Administrative Manager":"adm-t","Senior Administrative Assistant":"adm-t","Administrative Assistant":"adm-t",
+  "Senior Virtual Administrative Assistant":"va-t","Virtual Administrative Assistant":"va-t",
+  "Architect":"arch-t"
+};
+const NAV_SUPER_ROLES = ["CEO","Project Director","Senior Virtual Administrative Assistant"];
 
 function roleOptions(selected, excludeElevated) {
   return ROLE_LIST
@@ -1709,6 +1732,17 @@ async function setPropertyCompanyCamInSupabase(id, url) {
   return true;
 }
 
+// Permitted yes/no — stored on the property (changeable anytime). Feeds Marlo's dashboard.
+async function setPropertyPermitted(id, val) {
+  if (_blockIfReadOnly()) return;
+  const card = propCards.find(x => x.id === id); if (!card) return;
+  const cl = Object.assign({}, card.checklists || {}); cl.permitted = val;
+  const { error } = await supabase.from("pm_properties").update({ checklists: cl }).eq("id", id);
+  if (error) { alert("Couldn't update permitted status: " + (error.message || "")); return; }
+  _logAudit("updated","property", card.addr || "", "Permitted set to " + (val === "yes" ? "Yes" : "No"));
+  await loadPropertiesFromSupabase();
+  openPropDetail(id);
+}
 async function setPropertyDriveInSupabase(id, url) {
   if (_blockIfReadOnly()) return false;
   const { error } = await supabase.from("pm_properties").update({ drive_url: url }).eq("id", id);
@@ -2333,6 +2367,13 @@ function openPropDetail(id) {
               <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px"><span style="color:#888">Project Manager</span><span style="color:#111;font-weight:500">${c.pm||'—'}</span></div>
               <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px"><span style="color:#888">Property Type</span><span style="color:#111;font-weight:500">${c.type||'—'}</span></div>
               <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px"><span style="color:#888">Main Phase</span><span style="color:#111;font-weight:500">${c.phase||'—'}</span></div>
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px">
+                <span style="color:#888">🏗 Permitted?</span>
+                ${_ro_sp ? `<span style="color:#111;font-weight:500">${(c.checklists&&c.checklists.permitted)==='yes'?'Yes':((c.checklists&&c.checklists.permitted)==='no'?'No':'—')}</span>` : `<span style="display:inline-flex;gap:4px">
+                  <button onclick="setPropertyPermitted('${c.id}','yes')" style="font-size:11px;padding:3px 11px;border-radius:5px;cursor:pointer;border:0.5px solid ${(c.checklists&&c.checklists.permitted)==='yes'?'#1D9E75':'#ddd'};background:${(c.checklists&&c.checklists.permitted)==='yes'?'#E1F5EE':'#fff'};color:${(c.checklists&&c.checklists.permitted)==='yes'?'#0F7B54':'#666'}">Yes</button>
+                  <button onclick="setPropertyPermitted('${c.id}','no')" style="font-size:11px;padding:3px 11px;border-radius:5px;cursor:pointer;border:0.5px solid ${(c.checklists&&c.checklists.permitted)==='no'?'#B42318':'#ddd'};background:${(c.checklists&&c.checklists.permitted)==='no'?'#FCEBEB':'#fff'};color:${(c.checklists&&c.checklists.permitted)==='no'?'#B42318':'#666'}">No</button>
+                </span>`}
+              </div>
               <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px"><span style="color:#888">Start Date</span><span style="color:#111;font-weight:500">${c.start||'—'}</span></div>
               <div style="display:flex;justify-content:space-between;padding:7px 0;font-size:13px"><span style="color:#888">Target Completion</span><span style="color:#111;font-weight:500">${c.end||'—'}</span></div>
               <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;font-size:13px">
@@ -4181,6 +4222,53 @@ function _execShell(fnName, tabs, activeTab, content){
     </div>`;
 }
 
+// Marlo's admin MAIN dashboard: a compact board of her priority phases with permit status.
+function _adminMainDashboard(){
+  const phases=["Upcoming Takedowns","Occupied / Closed","Vacant / On Standby","Listed on the Market","In Contract","Rental Handoff Process","RTR In Process","RTR Completed (Pending Closing)","Closed"];
+  const cols=phases.map(ph=>{
+    const p=phInfo(ph); const pc=(typeof propCards!=='undefined'?propCards:[]).filter(c=>c.phase===ph && !c.archived);
+    return `<div style="width:185px;flex-shrink:0">
+      <div style="padding:7px 10px;border-radius:6px 6px 0 0;margin-bottom:6px;background:${p.bg};display:flex;align-items:center;justify-content:space-between">
+        <span style="font-size:10.5px;font-weight:500;color:${p.text};line-height:1.3">${ph}</span>
+        <span style="font-size:10px;padding:1px 5px;border-radius:99px;background:${p.cnt};color:${p.text}">${pc.length}</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:5px">
+        ${pc.length?pc.map(c=>{const perm=(c.checklists&&c.checklists.permitted); const pb=perm==='yes'?'<span style="font-size:9px;background:#E1F5EE;color:#0F7B54;padding:1px 5px;border-radius:99px">Permitted</span>':(perm==='no'?'<span style="font-size:9px;background:#FCEBEB;color:#B42318;padding:1px 5px;border-radius:99px">No permit</span>':'');
+          return `<div onclick="openPropDetail('${c.id}')" style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid ${p.dot};border-radius:6px;padding:8px 10px;cursor:pointer">
+            <div style="font-size:11.5px;font-weight:500;color:#111;margin-bottom:3px">${_calEsc(c.addr)}</div>
+            <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap"><span style="font-size:10px;color:#aaa">${c.pm?_calEsc(c.pm):'—'}</span>${pb}</div>
+          </div>`;}).join(''):`<div style="font-size:10px;color:#ccc;padding:10px;text-align:center">None</div>`}
+      </div>
+    </div>`;
+  }).join('');
+  return `<div style="padding:16px 20px">
+    <div style="font-size:15px;font-weight:600;color:#111;margin-bottom:4px">Administrative Overview</div>
+    <div style="font-size:12px;color:#888;margin-bottom:14px">Priority phases across all properties, with permit status per card.</div>
+    <div style="overflow-x:auto;padding-bottom:8px"><div style="display:flex;gap:10px;align-items:flex-start;min-width:max-content">${cols}</div></div>
+  </div>`;
+}
+// Marlo's personal tab: this week's tasks + deliveries, RTR properties, upcoming takedowns.
+function _marloTab(){
+  const today=new Date();today.setHours(0,0,0,0);const todayStr=_ymd(today);
+  const wkEnd=new Date(today);wkEnd.setDate(today.getDate()+7);const wkEndStr=_ymd(wkEnd);
+  const tasks=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status!=='done'&&t.due_date&&t.due_date>=todayStr&&t.due_date<=wkEndStr).sort((a,b)=>(a.due_date||'')<(b.due_date||'')?-1:1);
+  const mats=(typeof _calEventsCache!=='undefined'?_calEventsCache:[]).filter(e=>e.kind==='material'&&e.event_date>=todayStr&&e.event_date<=wkEndStr).sort((a,b)=>a.event_date<b.event_date?-1:1);
+  const rtr=(typeof propCards!=='undefined'?propCards:[]).filter(c=>c.phase==='RTR In Process'||c.phase==='RTR Completed (Pending Closing)');
+  const takedowns=(typeof propCards!=='undefined'?propCards:[]).filter(c=>c.phase==='Upcoming Takedowns');
+  const taskRows=tasks.map(t=>`<div style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px"><div style="min-width:0">${t.category?`<span style="font-size:10px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:5px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}<div style="font-size:11px;color:#888">${t.property_id?_calEsc(_propAddr(t.property_id))+' · ':''}${_calEsc(taskAssignees(t).join(', '))}</div></div><span style="font-size:11px;color:#B7791F;white-space:nowrap">${t.due_date}</span></div>`).join('');
+  const matRows=mats.map(e=>`<div style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px"><div style="min-width:0">📦 ${_calEsc(e.title||'Material')}<div style="font-size:11px;color:#888">${_calEsc(_propAddr(e.property_id))}</div></div><span style="font-size:11px;color:#185FA5;white-space:nowrap">${e.event_date}</span></div>`).join('');
+  const propRows=list=>list.map(c=>`<div onclick="openPropDetail('${c.id}')" style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px;cursor:pointer"><span>${_calEsc(c.addr)}</span><span style="font-size:11px;color:#888">${c.pm?_calEsc(c.pm):''}</span></div>`).join('');
+  const card=(title,rows,count,empty)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden"><div style="padding:10px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between"><div style="font-size:13px;font-weight:600;color:#111">${title}</div><span style="font-size:10px;background:#f4f5f7;color:#888;padding:2px 8px;border-radius:99px">${count}</span></div><div style="padding:4px 14px 12px">${count?rows:`<div style="text-align:center;color:#ccc;font-size:12px;padding:16px 0">${empty}</div>`}</div></div>`;
+  return `<div style="padding:20px;max-width:1000px;margin:0 auto">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px"><div style="width:44px;height:44px;border-radius:50%;background:#1a2744;color:#fff;font-size:18px;font-weight:600;display:flex;align-items:center;justify-content:center">M</div><div><div style="font-size:18px;font-weight:600;color:#111">Marlo</div><div style="font-size:12px;color:#888">Senior Administrative Assistant</div></div></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      ${card('🗓 New tasks this week', taskRows, tasks.length, 'No tasks due this week.')}
+      ${card('📦 Material deliveries this week', matRows, mats.length, 'No deliveries scheduled this week.')}
+      ${card('🔧 Request to Remedy', propRows(rtr), rtr.length, 'No properties in RTR.')}
+      ${card('📥 Upcoming Takedowns', propRows(takedowns), takedowns.length, 'No upcoming takedowns.')}
+    </div>
+  </div>`;
+}
 function openAdminDashboard(activeTab) {
   activeTab = activeTab || 'main';
   const tabs=[
@@ -4192,11 +4280,11 @@ function openAdminDashboard(activeTab) {
   ];
   let content;
   switch(activeTab){
-    case 'marlo':        content=_personDashView('Marlo','Senior Administrative Assistant'); break;
+    case 'marlo':        content=_marloTab(); break;
     case 'property':     content=renderPropertyBoard(); break;
     case 'construction': content=renderConstructionCalendar(); break;
     case 'taskcal':      content=renderTaskCalendar(); break;
-    default:             content=renderMainDashboard();
+    default:             content=_adminMainDashboard();
   }
   _execShell('openAdminDashboard', tabs, activeTab, content);
 }
@@ -4234,10 +4322,24 @@ function openVAAdminDashboard() {
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
   document.getElementById("dash-body").innerHTML = `<div class="empty-state"><div class="icon">🖥</div><p style="color:#888;font-size:15px;font-weight:500">VA Admin Dashboard</p><p style="color:#555;font-size:13px;margin-top:6px">Being built out. Check back soon.</p></div>`;
 }
-function openArchitectDashboard() {
-  document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
-  document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
-  document.getElementById("dash-body").innerHTML = `<div class="empty-state"><div class="icon">📐</div><p style="color:#888;font-size:15px;font-weight:500">Architect Dashboard</p><p style="color:#555;font-size:13px;margin-top:6px">Being built out. Check back soon.</p></div>`;
+function openArchitectDashboard(activeTab) {
+  activeTab = activeTab || 'main';
+  const tabs=[
+    {id:'main',label:'Main Dashboard',icon:'📊'},
+    {id:'jenn',label:'Jenn',icon:'👤'},
+    {id:'property',label:'Property Dashboard',icon:'🏗'},
+    {id:'construction',label:'Construction Calendar',icon:'📅'},
+    {id:'taskcal',label:'Task Calendar',icon:'🗓'},
+  ];
+  let content;
+  switch(activeTab){
+    case 'jenn':         content=_personDashView('Jenn','Architect'); break;
+    case 'property':     content=renderPropertyBoard(); break;
+    case 'construction': content=renderConstructionCalendar(); break;
+    case 'taskcal':      content=renderTaskCalendar(); break;
+    default:             content=renderMainDashboard();
+  }
+  _execShell('openArchitectDashboard', tabs, activeTab, content);
 }
 
 function openTVDashboard() {
@@ -4820,11 +4922,14 @@ function _customCalTypes(){
 // Names of everyone on the team who can own a task: every approved user whose
 // job role is not "Other". Used for the task assignee filter + dropdowns.
 function teamMembers(){
-  return getUsers()
+  const base = getUsers()
     .filter(u => u.status==="approved" && (u.role||"").trim().toLowerCase()!=="other")
     .map(u => (`${u.firstName||""} ${u.lastName||""}`).trim())
-    .filter(n => n)
-    .sort((a,b)=>a.localeCompare(b));
+    .filter(n => n);
+  // Team members who don't have a login account yet but still get assigned tasks.
+  const extra = ["Jenn"];
+  extra.forEach(n => { if(!base.some(x => x.split(" ")[0].toLowerCase() === n.toLowerCase())) base.push(n); });
+  return base.sort((a,b)=>a.localeCompare(b));
 }
 // Distinct task categories/headers in use (e.g. "Build Scope of Work"), plus a
 // couple of sensible seeds so the list is never empty on a fresh install.
