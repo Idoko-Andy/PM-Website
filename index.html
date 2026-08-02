@@ -743,11 +743,13 @@ async function init() {
   }
 }
 
-// React to OAuth callback + token refresh + sign-out from other tabs
-supabase.auth.onAuthStateChange((event) => {
-  if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "TOKEN_REFRESHED" || event === "USER_UPDATED") {
-    init();
-  }
+// Re-initialize only when the signed-in USER actually changes (sign-in / sign-out /
+// account switch) — NOT on routine token refreshes (which fire when you switch back
+// to this browser tab). Re-initing on refresh was bouncing users back to the home page.
+let _lastAuthUid = undefined;
+supabase.auth.onAuthStateChange((event, session) => {
+  const uid = (session && session.user) ? session.user.id : null;
+  if (uid !== _lastAuthUid) { _lastAuthUid = uid; init(); }
 });
 
 function renderLoggedOut(noticeMsg) {
@@ -5472,7 +5474,8 @@ const _AUTOMATIONS = [
   {cat:"✉️ Notifications", items:[
     {name:"PM & closing emails", desc:"Emails the assigned PM when a property auto-advances, and Marlo + Patience when a property closes (utilities removal).", trigger:"Automatic — on advance / close", status:"pending"},
   ]},
-  {cat:"🔗 Integrations (planned)", items:[
+  {cat:"🔗 Integrations", items:[
+    {name:"CompanyCam link backfill", desc:"Each Sunday, finds properties still missing a CompanyCam link and links them by matching the job-site address in CompanyCam (skips ones without a project yet, e.g. early takedowns).", trigger:"Automatic — Sundays", status:"active"},
     {name:"Drive folder auto-link on create", desc:"New property cards automatically find and link their Google Drive folder by job-site address.", trigger:"Automatic — on property creation", status:"planned"},
     {name:"CompanyCam auto-link on create", desc:"Auto-links the CompanyCam folder by address, retrying within 48 hours if not found yet.", trigger:"Automatic — on creation + 48h retry", status:"planned"},
     {name:"Slack material orders → system", desc:"Pulls material orders the field team enters in Slack from the job site into the system for Marlo.", trigger:"Automatic — from Slack", status:"planned"},
