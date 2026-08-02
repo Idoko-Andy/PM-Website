@@ -2296,11 +2296,16 @@ function openPropDetail(id) {
         ${rentalCloseBar}
       </div>
       <div style="padding:16px 20px">
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:12px">
+          <div style="background:#f4f5f7;border-radius:8px;padding:12px 14px">
+            <div style="font-size:10px;color:#aaa;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Acquisitions Budget</div>
+            <div style="font-size:17px;font-weight:500;color:#111">${(c.checklists&&c.checklists.acqBudget)||'—'}</div>
+            <div style="font-size:11px;color:#aaa;margin-top:2px">From project tracker</div>
+          </div>
           <div style="background:#f4f5f7;border-radius:8px;padding:12px 14px">
             <div style="font-size:10px;color:#aaa;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Final Budget</div>
             <div style="font-size:17px;font-weight:500;color:#111">${c.budget||'—'}</div>
-            <div style="font-size:11px;color:#aaa;margin-top:2px">Acquisitions: <span style="color:#555;font-weight:500">${(c.checklists&&c.checklists.acqBudget)||'—'}</span> · from tracker</div>
+            <div style="font-size:11px;color:#aaa;margin-top:2px">From project tracker</div>
           </div>
           <div style="background:#f4f5f7;border-radius:8px;padding:12px 14px">
             <div style="font-size:10px;color:#aaa;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Spent to Date</div>
