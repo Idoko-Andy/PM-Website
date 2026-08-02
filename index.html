@@ -772,19 +772,9 @@ function renderLoggedOut(noticeMsg) {
       <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:${noticeMsg ? '24px' : '0'}">
         <button onclick="doGoogleSignIn()" style="padding:12px 32px;background:#fff;color:#111;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;letter-spacing:0.02em;display:inline-flex;align-items:center;gap:10px"><svg width="16" height="16" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg"><path fill="#4285F4" d="M16.51 8H8.98v3h4.3c-.18 1-.74 1.85-1.58 2.41v2h2.55c1.49-1.37 2.35-3.4 2.35-5.81 0-.56-.05-1.1-.14-1.6z"/><path fill="#34A853" d="M8.98 17c2.15 0 3.95-.71 5.27-1.93l-2.55-2c-.71.48-1.62.76-2.72.76-2.09 0-3.86-1.41-4.5-3.3H1.85v2.07C3.16 14.99 5.85 17 8.98 17z"/><path fill="#FBBC05" d="M4.48 10.53a5.4 5.4 0 0 1 0-3.46V5H1.85a8 8 0 0 0 0 7.07l2.63-2.07z"/><path fill="#EA4335" d="M8.98 3.85c1.18 0 2.24.4 3.07 1.21l2.3-2.3C12.93 1.4 11.12.7 8.98.7 5.85.7 3.16 2.71 1.85 5.93l2.63 2.07c.64-1.89 2.41-4.15 4.5-4.15z"/></svg>Sign in with Google</button>
       </div>
-      <div style="margin-top:48px;display:grid;grid-template-columns:repeat(3,1fr);gap:16px;max-width:640px;width:100%">
-        <div style="background:#111;border:1px dashed #2a2a2a;border-radius:10px;overflow:hidden;aspect-ratio:4/3;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;cursor:default">
-          <div style="font-size:22px;opacity:0.3">📷</div>
-          <div style="font-size:10px;color:#333;text-transform:uppercase;letter-spacing:0.08em">Team Photo</div>
-        </div>
-        <div style="background:#111;border:1px dashed #2a2a2a;border-radius:10px;overflow:hidden;aspect-ratio:4/3;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;cursor:default">
-          <div style="font-size:22px;opacity:0.3">📷</div>
-          <div style="font-size:10px;color:#333;text-transform:uppercase;letter-spacing:0.08em">Team Photo</div>
-        </div>
-        <div style="background:#111;border:1px dashed #2a2a2a;border-radius:10px;overflow:hidden;aspect-ratio:4/3;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;cursor:default">
-          <div style="font-size:22px;opacity:0.3">📷</div>
-          <div style="font-size:10px;color:#333;text-transform:uppercase;letter-spacing:0.08em">Team Photo</div>
-        </div>
+      <div style="margin-top:48px;display:grid;grid-template-columns:repeat(2,1fr);gap:16px;max-width:720px;width:100%;align-items:start">
+        <img src="team_dinner.jpg" alt="Legacy Homes team" loading="lazy" style="width:100%;height:auto;border-radius:12px;display:block;box-shadow:0 4px 18px rgba(0,0,0,0.5)"/>
+        <img src="friday_favorites.jpg" alt="Legacy Homes Projects Team" loading="lazy" style="width:100%;height:auto;border-radius:12px;display:block;box-shadow:0 4px 18px rgba(0,0,0,0.5)"/>
       </div>
       <div style="margin-top:40px;font-size:11px;color:#333">Access is restricted to @legacyohiohomes.com team members only.</div>
     </div>
@@ -2308,9 +2298,9 @@ function openPropDetail(id) {
       <div style="padding:16px 20px">
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px">
           <div style="background:#f4f5f7;border-radius:8px;padding:12px 14px">
-            <div style="font-size:10px;color:#aaa;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Budget</div>
+            <div style="font-size:10px;color:#aaa;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Final Budget</div>
             <div style="font-size:17px;font-weight:500;color:#111">${c.budget||'—'}</div>
-            <div style="font-size:11px;color:#aaa;margin-top:2px">Total projected spend</div>
+            <div style="font-size:11px;color:#aaa;margin-top:2px">Acquisitions: <span style="color:#555;font-weight:500">${(c.checklists&&c.checklists.acqBudget)||'—'}</span> · from tracker</div>
           </div>
           <div style="background:#f4f5f7;border-radius:8px;padding:12px 14px">
             <div style="font-size:10px;color:#aaa;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Spent to Date</div>
