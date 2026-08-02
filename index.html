@@ -191,6 +191,7 @@ body{background:#1a1a1a;color:#fff;min-height:100vh}
     <button class="brand-search-btn" onclick="doSearch()">🔍</button>
   </div>
   <div id="hist-box" onclick="openEditHistory()" title="Edit History" style="display:none;margin-left:10px;width:38px;height:34px;align-items:center;justify-content:center;border:1px solid #2a2a2a;border-radius:6px;cursor:pointer;background:#1a1a1a;flex-shrink:0;font-size:15px" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='#1a1a1a'">📜</div>
+  <div id="auto-box" onclick="openAutomations()" title="Automations" style="display:none;margin-left:8px;width:38px;height:34px;align-items:center;justify-content:center;border:1px solid #2a2a2a;border-radius:6px;cursor:pointer;background:#1a1a1a;flex-shrink:0;font-size:15px" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='#1a1a1a'">⚙️</div>
 </div>
 
 <!-- NAV -->
@@ -1019,6 +1020,7 @@ function applyPermissionsUI() {
   setMenu("rep-t",  hasPerm(u,"rep_all"));   // Reporting = single toggle
   setMenu("sop-t",  hasPerm(u,"sops_view")); // SOPs = single toggle (default on)
   const _hb=document.getElementById("hist-box"); if(_hb) _hb.style.display = hasPerm(u,"edit_history") ? "flex" : "none"; // Edit History box beside search
+  const _ab=document.getElementById("auto-box"); if(_ab) _ab.style.display = u ? "flex" : "none"; // Automations box (visible to any approved user)
   // Tools tab (tools-t) is always available — never hidden.
   // Hide any role/data menu whose gateable items are all hidden.
   document.querySelectorAll(".nav .ni.has-dd").forEach(ni => {
@@ -5349,6 +5351,54 @@ async function loadAuditLog(){
   _auditCache = error ? [] : (data||[]);
 }
 function setAuditFilter(f){ _auditFilter=f; renderEditHistory(); }
+// ===================== AUTOMATIONS (what runs automatically / by a click) =====================
+const _AUTOMATIONS = [
+  {cat:"💰 Financial", items:[
+    {name:"Project financials sync", desc:"Pulls Spent, Final Budget, Acquisitions and Total Money Position from each property's Google Drive project tracker onto the cards.", trigger:"Automatic — every Wednesday & Saturday, 6am", status:"active"},
+  ]},
+  {cat:"🔁 Workflow", items:[
+    {name:"Automated phase advancement", desc:"When a stage's required subphases are completed (and approved where needed), the property auto-moves to the next phase and the assigned PM is flagged.", trigger:"Automatic — on subphase completion", status:"active"},
+    {name:"Auto-scheduled subphase dates", desc:"Completing a subphase automatically starts the next one's clock (SOW Creation due +7 days, then 48 hours each).", trigger:"Automatic — on subphase completion", status:"active"},
+  ]},
+  {cat:"🏁 Closings & Archive", items:[
+    {name:"Closing-date approval flag", desc:"When a property's closing date arrives, a flashing Approve-Close button appears; approving records the close and moves it to Closed.", trigger:"Automatic — on closing date", status:"active"},
+    {name:"Closed → Completed archive", desc:"A property that sits in Closed for 4+ weeks auto-files into the Completed archive (year/month history).", trigger:"Automatic — on load", status:"active"},
+  ]},
+  {cat:"✉️ Notifications", items:[
+    {name:"PM & closing emails", desc:"Emails the assigned PM when a property auto-advances, and Marlo + Patience when a property closes (utilities removal).", trigger:"Automatic — on advance / close", status:"pending"},
+  ]},
+  {cat:"🔗 Integrations (planned)", items:[
+    {name:"Drive folder auto-link on create", desc:"New property cards automatically find and link their Google Drive folder by job-site address.", trigger:"Automatic — on property creation", status:"planned"},
+    {name:"CompanyCam auto-link on create", desc:"Auto-links the CompanyCam folder by address, retrying within 48 hours if not found yet.", trigger:"Automatic — on creation + 48h retry", status:"planned"},
+    {name:"Slack material orders → system", desc:"Pulls material orders the field team enters in Slack from the job site into the system for Marlo.", trigger:"Automatic — from Slack", status:"planned"},
+  ]},
+];
+function _autoStatus(s){ return ({active:{t:"Active",c:"#0F7B54",bg:"#E1F5EE"},pending:{t:"Pending setup",c:"#B7791F",bg:"#FBEFDD"},planned:{t:"Planned",c:"#555",bg:"#EEF0F4"}})[s]||{t:s,c:"#555",bg:"#f4f5f7"}; }
+function openAutomations(){
+  document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
+  document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
+  const sections=_AUTOMATIONS.map(sec=>`
+    <div style="margin-bottom:18px">
+      <div style="font-size:13px;font-weight:600;color:#111;margin-bottom:8px">${sec.cat}</div>
+      <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">
+        ${sec.items.map(it=>{const s=_autoStatus(it.status);return `<div style="padding:12px 14px;border-bottom:0.5px solid #f1f3f7;display:flex;justify-content:space-between;gap:12px;align-items:flex-start">
+          <div style="min-width:0"><div style="font-size:13px;font-weight:600;color:#111">${_calEsc(it.name)}</div>
+          <div style="font-size:12px;color:#777;margin-top:3px;line-height:1.5">${_calEsc(it.desc)}</div>
+          <div style="font-size:11px;color:#999;margin-top:4px">⏱ ${_calEsc(it.trigger)}</div></div>
+          <span style="flex-shrink:0;font-size:10.5px;font-weight:600;padding:3px 9px;border-radius:999px;background:${s.bg};color:${s.c};white-space:nowrap">${s.t}</span>
+        </div>`;}).join("")}
+      </div>
+    </div>`).join("");
+  document.getElementById("dash-body").innerHTML=`
+    <div style="background:#f4f5f7;min-height:500px;padding:24px">
+      <div style="max-width:860px;margin:0 auto">
+        <div style="font-size:18px;font-weight:600;color:#111;margin-bottom:4px">⚙️ Automations</div>
+        <div style="font-size:12px;color:#888;margin-bottom:16px">Everything the system does automatically or at the click of a button, by category. This list grows as we build more.</div>
+        ${sections}
+      </div>
+    </div>`;
+}
+
 async function openEditHistory(){
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
