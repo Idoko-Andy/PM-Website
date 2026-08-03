@@ -2084,8 +2084,8 @@ function renderMainDashboard() {
   return `
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px">
       ${statCard('Active Projects', countActive(), 'Framing → Pre-listing', '#111')}
-      ${statCard('On the Market', countOnMarket(), 'Listed properties', '#5dade2')}
       ${statCard('Waiting Permits', countWaitingPermit(), 'Pending approval', '#f39c12')}
+      ${statCard('On the Market', countOnMarket(), 'Listed properties', '#5dade2')}
       ${statCard('Closed This Year', countClosedThisYear(), 'This calendar year', '#2ecc71')}
     </div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:0">
@@ -2099,9 +2099,12 @@ function renderMainDashboard() {
 }
 
 // ===================== PROPERTY DASHBOARD BOARD =====================
+let _propBoardPM = 'all';
+function setPropBoardPM(v){ _propBoardPM = v; openProjectDashboard('trello'); }
 function renderPropertyBoard() {
   _propBack = 'trello';
-  const sidebar = [...propCards.filter(c=>!c.archived)].sort((a,b)=>a.addr.localeCompare(b.addr)).map((c,i) => {
+  const _pmMatch = c => (_propBoardPM === 'all' || c.pm === _propBoardPM);
+  const sidebar = [...propCards.filter(c=>!c.archived && _pmMatch(c))].sort((a,b)=>a.addr.localeCompare(b.addr)).map((c,i) => {
     const p = phInfo(c.phase);
     return `<div onclick="openPropDetail('${c.id}')" style="padding:8px 10px;cursor:pointer;border-bottom:0.5px solid #f4f5f7;display:flex;align-items:center;gap:7px">
       <span style="font-size:10px;color:#aaa;min-width:16px;font-weight:500">${String(i+1).padStart(2,'0')}</span>
@@ -2114,7 +2117,7 @@ function renderPropertyBoard() {
   }).join('');
 
   const board = PROP_PHASES.map(ph => {
-    const pc = propCards.filter(c => c.phase === ph.name && !c.archived);
+    const pc = propCards.filter(c => c.phase === ph.name && !c.archived && _pmMatch(c));
     return `<div style="width:155px;flex-shrink:0">
       <div style="padding:7px 10px;border-radius:6px 6px 0 0;margin-bottom:6px;background:${ph.bg};display:flex;align-items:center;justify-content:space-between">
         <span style="font-size:10.5px;font-weight:500;color:${ph.text};line-height:1.3">${ph.name}</span>
@@ -2166,6 +2169,15 @@ function renderPropertyBoard() {
   }).join('');
 
   return `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+      <span style="font-size:12px;color:#888">View:</span>
+      <div onclick="setPropBoardPM('all')" style="padding:6px 14px;font-size:12px;cursor:pointer;border-radius:8px;${_propBoardPM==='all'?'background:#111;color:#fff':'background:#fff;color:#555;border:0.5px solid #ddd'}">All Project Managers</div>
+      <select onchange="setPropBoardPM(this.value)" style="padding:6px 12px;font-size:12px;border:0.5px solid #ddd;border-radius:8px;background:#fff;color:#333;max-width:220px">
+        <option value="all" ${_propBoardPM==='all'?'selected':''}>Select a PM…</option>
+        ${(typeof PM_MANAGERS!=='undefined'?PM_MANAGERS:[]).map(nm=>`<option value="${_calEsc(nm)}" ${_propBoardPM===nm?'selected':''}>👤 ${_calEsc(nm)}</option>`).join('')}
+      </select>
+      ${_propBoardPM!=='all'?`<span style="font-size:11px;color:#185FA5">Showing ${_calEsc(_propBoardPM)}'s properties</span>`:''}
+    </div>
     <div style="display:flex;height:580px;overflow:hidden;background:#f4f5f7;border-radius:8px">
       <!-- Sidebar collapsed tab -->
       <div id="prop-sb-collapsed" onclick="openPropSidebar()" style="width:30px;background:#fff;border-right:0.5px solid #e0e4ec;display:flex;flex-direction:column;align-items:center;padding-top:10px;cursor:pointer;flex-shrink:0" title="Show all properties">
@@ -4257,12 +4269,16 @@ function _marloTab(){
   const mats=(typeof _calEventsCache!=='undefined'?_calEventsCache:[]).filter(e=>e.kind==='material'&&e.event_date>=todayStr&&e.event_date<=wkEndStr).sort((a,b)=>a.event_date<b.event_date?-1:1);
   const rtr=(typeof propCards!=='undefined'?propCards:[]).filter(c=>c.phase==='RTR In Process'||c.phase==='RTR Completed (Pending Closing)');
   const takedowns=(typeof propCards!=='undefined'?propCards:[]).filter(c=>c.phase==='Upcoming Takedowns');
+  // Material orders pulled from the #material-lists Slack channel (stored as tasks with category "Material Order").
+  const orders=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status!=='done' && (t.category||'')==='Material Order');
+  const orderRows=orders.map(t=>`<div onclick="toggleTaskDone('${t.id}')" title="Click when ordered" style="cursor:pointer;padding:9px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px"><div style="font-weight:500;color:#111">📦 ${_calEsc(t.title)}</div>${t.notes?`<div style="font-size:12px;color:#666;margin-top:2px;white-space:pre-wrap">${_calEsc(t.notes)}</div>`:''}<div style="font-size:10px;color:#B7791F;margin-top:2px">Tap when ordered ✓</div></div>`).join('');
   const taskRows=tasks.map(t=>`<div style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px"><div style="min-width:0">${t.category?`<span style="font-size:10px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:5px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}<div style="font-size:11px;color:#888">${t.property_id?_calEsc(_propAddr(t.property_id))+' · ':''}${_calEsc(taskAssignees(t).join(', '))}</div></div><span style="font-size:11px;color:#B7791F;white-space:nowrap">${t.due_date}</span></div>`).join('');
   const matRows=mats.map(e=>`<div style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px"><div style="min-width:0">📦 ${_calEsc(e.title||'Material')}<div style="font-size:11px;color:#888">${_calEsc(_propAddr(e.property_id))}</div></div><span style="font-size:11px;color:#185FA5;white-space:nowrap">${e.event_date}</span></div>`).join('');
   const propRows=list=>list.map(c=>`<div onclick="openPropDetail('${c.id}')" style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px;cursor:pointer"><span>${_calEsc(c.addr)}</span><span style="font-size:11px;color:#888">${c.pm?_calEsc(c.pm):''}</span></div>`).join('');
   const card=(title,rows,count,empty)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden"><div style="padding:10px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between"><div style="font-size:13px;font-weight:600;color:#111">${title}</div><span style="font-size:10px;background:#f4f5f7;color:#888;padding:2px 8px;border-radius:99px">${count}</span></div><div style="padding:4px 14px 12px">${count?rows:`<div style="text-align:center;color:#ccc;font-size:12px;padding:16px 0">${empty}</div>`}</div></div>`;
   return `<div style="padding:20px;max-width:1000px;margin:0 auto">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px"><div style="width:44px;height:44px;border-radius:50%;background:#1a2744;color:#fff;font-size:18px;font-weight:600;display:flex;align-items:center;justify-content:center">M</div><div><div style="font-size:18px;font-weight:600;color:#111">Marlo</div><div style="font-size:12px;color:#888">Senior Administrative Assistant</div></div></div>
+    <div style="margin-bottom:14px">${card('📦 Material orders to place (from Slack #material-lists)', orderRows, orders.length, 'No material orders waiting. New orders posted in the Slack #material-lists channel show up here automatically.')}</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
       ${card('🗓 New tasks this week', taskRows, tasks.length, 'No tasks due this week.')}
       ${card('📦 Material deliveries this week', matRows, mats.length, 'No deliveries scheduled this week.')}
@@ -5478,7 +5494,7 @@ const _AUTOMATIONS = [
     {name:"CompanyCam link backfill", desc:"Each Sunday, finds properties still missing a CompanyCam link and links them by matching the job-site address in CompanyCam (skips ones without a project yet, e.g. early takedowns).", trigger:"Automatic — Sundays", status:"active"},
     {name:"Drive folder auto-link on create", desc:"New property cards automatically find and link their Google Drive folder by job-site address.", trigger:"Automatic — on property creation", status:"planned"},
     {name:"CompanyCam auto-link on create", desc:"Auto-links the CompanyCam folder by address, retrying within 48 hours if not found yet.", trigger:"Automatic — on creation + 48h retry", status:"planned"},
-    {name:"Slack material orders → system", desc:"Pulls material orders the field team enters in Slack from the job site into the system for Marlo.", trigger:"Automatic — from Slack", status:"planned"},
+    {name:"Slack material orders → Marlo", desc:"Pulls material orders posted in the Slack #material-lists channel onto Marlo's Admin dashboard automatically.", trigger:"Automatic — daily (Slack #material-lists)", status:"active"},
   ]},
 ];
 function _autoStatus(s){ return ({active:{t:"Active",c:"#0F7B54",bg:"#E1F5EE"},pending:{t:"Pending setup",c:"#B7791F",bg:"#FBEFDD"},planned:{t:"Planned",c:"#555",bg:"#EEF0F4"}})[s]||{t:s,c:"#555",bg:"#f4f5f7"}; }
