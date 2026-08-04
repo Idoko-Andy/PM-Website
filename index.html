@@ -192,6 +192,7 @@ body{background:#1a1a1a;color:#fff;min-height:100vh}
   </div>
   <div id="hist-box" onclick="openEditHistory()" title="Edit History" style="display:none;margin-left:10px;width:38px;height:34px;align-items:center;justify-content:center;border:1px solid #2a2a2a;border-radius:6px;cursor:pointer;background:#1a1a1a;flex-shrink:0;font-size:15px" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='#1a1a1a'">📜</div>
   <div id="auto-box" onclick="openAutomations()" title="Automations" style="display:none;margin-left:8px;width:38px;height:34px;align-items:center;justify-content:center;border:1px solid #2a2a2a;border-radius:6px;cursor:pointer;background:#1a1a1a;flex-shrink:0;font-size:15px" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='#1a1a1a'">⚙️</div>
+  <div id="settings-box" onclick="openSettings()" title="Settings — workflow &amp; subphases" style="display:none;margin-left:8px;width:38px;height:34px;align-items:center;justify-content:center;border:1px solid #2a2a2a;border-radius:6px;cursor:pointer;background:#1a1a1a;flex-shrink:0;font-size:15px" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='#1a1a1a'">🎛️</div>
 </div>
 
 <!-- NAV -->
@@ -731,6 +732,7 @@ async function init() {
     document.getElementById("nav").style.display = "flex";
     // Populate the Supabase-backed caches before rendering the home
     await Promise.all([
+      loadWorkflowSettings(),
       loadPropertiesFromSupabase(),
       loadMonthlyReportsFromSupabase(),
       loadTasks(),
@@ -1025,6 +1027,7 @@ function applyPermissionsUI() {
   setMenu("sop-t",  hasPerm(u,"sops_view")); // SOPs = single toggle (default on)
   const _hb=document.getElementById("hist-box"); if(_hb) _hb.style.display = hasPerm(u,"edit_history") ? "flex" : "none"; // Edit History box beside search
   const _ab=document.getElementById("auto-box"); if(_ab) _ab.style.display = u ? "flex" : "none"; // Automations box (visible to any approved user)
+  const _sb=document.getElementById("settings-box"); if(_sb) _sb.style.display = _canEditSettings(u) ? "flex" : "none"; // Settings box (super/full only)
   // Tools tab (tools-t) is always available — never hidden.
   // Hide any role/data menu whose gateable items are all hidden.
   document.querySelectorAll(".nav .ni.has-dd").forEach(ni => {
@@ -1509,7 +1512,7 @@ const PROP_TYPES = [
   "Full Rehab Permit",
 ];
 
-const SUB_PHASES = [
+let SUB_PHASES = [
   "Start of Project Checklist",
   "SOW Creation",
   "SOW Approval",
@@ -1522,7 +1525,7 @@ const SUB_PHASES = [
 ];
 
 // Sub phase → which main dashboard board it feeds
-const SUB_PHASE_BOARD = {
+let SUB_PHASE_BOARD = {
   "Start of Project Checklist": "SOW & Budgets",
   "SOW Creation":               "SOW & Budgets",
   "SOW Approval":               "SOW & Budgets",
@@ -1536,11 +1539,11 @@ const SUB_PHASE_BOARD = {
 
 // ---- Automated phase workflow ----
 // Which subphases require sign-off (Bruce/Marlo/Tommy). Others just need "completed".
-const SUBPHASE_APPROVAL = { "SOW Approval":true, "Budget Approval":true, "Design Budget Approval":true };
+let SUBPHASE_APPROVAL = { "SOW Approval":true, "Budget Approval":true, "Design Budget Approval":true };
 function subphaseNeedsApproval(name){ return !!SUBPHASE_APPROVAL[name]; }
 // When a subphase is finished, the NEXT subphase's clock starts: start = today,
 // due = today + dueDays. Trigger is "complete" for most, "approve" for approval steps.
-const SUBPHASE_CHAIN = {
+let SUBPHASE_CHAIN = {
   "Start of Project Checklist": { next:"SOW Creation",    dueDays:7, on:"complete" },
   "SOW Creation":               { next:"SOW Approval",    dueDays:2, on:"complete" },
   "SOW Approval":               { next:"Budget Creation", dueDays:2, on:"approve"  },
@@ -1548,7 +1551,7 @@ const SUBPHASE_CHAIN = {
 };
 // A property auto-advances to `next` once every required subphase is finished
 // (completed, and approved where the subphase needs approval).
-const PHASE_ADVANCE = {
+let PHASE_ADVANCE = {
   "Vacant / On Standby": { requires:["Start of Project Checklist"], next:"Pre Construction", notifyPM:true },
   "Pre Construction":    { requires:["SOW Creation","SOW Approval","Budget Creation","Budget Approval"], next:"Waiting Permits", notifyPM:true },
   "Waiting Permits":     { requires:["Drawing / Structural Phase","Pending Permit Approval"], next:"Framing, MEPS, Insulation", notifyPM:true },
@@ -1559,6 +1562,51 @@ function _phaseAdvanceBlocking(card){
   const cfg=PHASE_ADVANCE[card.phase]; if(!cfg) return [];
   const subs=card.subPhases||[];
   return cfg.requires.filter(name => !_subDone(subs.find(s=>s.name===name), name));
+}
+
+// ---- Editable workflow config (Settings tab) ----------------------------
+// The five structures above (SUB_PHASES / SUB_PHASE_BOARD / SUBPHASE_APPROVAL /
+// SUBPHASE_CHAIN / PHASE_ADVANCE) are the hard-coded DEFAULT workflow. A saved
+// override in the pm_settings table (key="workflow") replaces them at load time.
+const WORKFLOW_BOARDS = ["SOW & Budgets","Permits & Drawings","Design Budgets & Design Status"];
+const _WORKFLOW_DEFAULTS = JSON.parse(JSON.stringify({
+  subPhases: SUB_PHASES,
+  board:     SUB_PHASE_BOARD,
+  approval:  SUBPHASE_APPROVAL,
+  chain:     SUBPHASE_CHAIN,
+  advance:   PHASE_ADVANCE
+}));
+// Build the config object that mirrors the CURRENT live workflow (for editing/export).
+function _workflowConfigNow(){
+  return JSON.parse(JSON.stringify({
+    subPhases: SUB_PHASES,
+    board:     SUB_PHASE_BOARD,
+    approval:  SUBPHASE_APPROVAL,
+    chain:     SUBPHASE_CHAIN,
+    advance:   PHASE_ADVANCE
+  }));
+}
+// Replace the live workflow structures from a saved/edited config. Missing keys
+// fall back to defaults so a partial save can never blank out the engine.
+function applyWorkflowConfig(cfg){
+  if(!cfg || typeof cfg!=="object") return;
+  const d=_WORKFLOW_DEFAULTS;
+  SUB_PHASES        = Array.isArray(cfg.subPhases) && cfg.subPhases.length ? cfg.subPhases.slice() : d.subPhases.slice();
+  SUB_PHASE_BOARD   = (cfg.board   && typeof cfg.board==="object")   ? Object.assign({}, cfg.board)   : Object.assign({}, d.board);
+  SUBPHASE_APPROVAL = (cfg.approval&& typeof cfg.approval==="object")? Object.assign({}, cfg.approval): Object.assign({}, d.approval);
+  SUBPHASE_CHAIN    = (cfg.chain   && typeof cfg.chain==="object")   ? JSON.parse(JSON.stringify(cfg.chain))   : JSON.parse(JSON.stringify(d.chain));
+  PHASE_ADVANCE     = (cfg.advance && typeof cfg.advance==="object") ? JSON.parse(JSON.stringify(cfg.advance)) : JSON.parse(JSON.stringify(d.advance));
+}
+async function loadWorkflowSettings(){
+  try{
+    const { data, error } = await supabase.from("pm_settings").select("data").eq("key","workflow").maybeSingle();
+    if(!error && data && data.data && typeof data.data==="object") applyWorkflowConfig(data.data);
+  }catch(e){ /* table missing or offline → keep defaults */ }
+}
+async function saveWorkflowSettings(cfg){
+  const { error } = await supabase.from("pm_settings")
+    .upsert({ key:"workflow", data:cfg, updated_at:new Date().toISOString() }, { onConflict:"key" });
+  return error || null;
 }
 
 let PM_MANAGERS = ["Andrew","Isaiah"];
@@ -5523,6 +5571,206 @@ const _AUTOMATIONS = [
   ]},
 ];
 function _autoStatus(s){ return ({active:{t:"Active",c:"#0F7B54",bg:"#E1F5EE"},pending:{t:"Pending setup",c:"#B7791F",bg:"#FBEFDD"},planned:{t:"Planned",c:"#555",bg:"#EEF0F4"}})[s]||{t:s,c:"#555",bg:"#f4f5f7"}; }
+// ===================== SETTINGS TAB (workflow / subphase editor) =====================
+function _canEditSettings(u){ u = u || _myProfile; return !!(u && (u.isSuperAdmin || u.accessLevel==="full" || (typeof isBruce==="function" && isBruce(u)))); }
+let _wfDraft = null;   // in-memory edit copy of the workflow config
+
+function openSettings(){
+  document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
+  document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
+  if(!_canEditSettings()){ alert("Only owners/admins with full access can change workflow settings."); return; }
+  _wfDraft = _workflowConfigNow();
+  _renderSettings();
+}
+
+function _wfEsc(s){ return _calEsc(s==null?"":String(s)); }
+
+function _renderSettings(){
+  const d=_wfDraft; if(!d) return;
+  const subs=d.subPhases||[];
+  // ---- Section 1: subphases ----
+  const subRows = subs.map((name,i)=>{
+    const boardSel = WORKFLOW_BOARDS.map(b=>`<option value="${_wfEsc(b)}"${(d.board[name]===b)?" selected":""}>${_wfEsc(b)}</option>`).join("");
+    const appr = !!d.approval[name];
+    return `<div style="display:flex;gap:8px;align-items:center;padding:10px 12px;border-bottom:0.5px solid #f1f3f7;background:#fff">
+      <div style="display:flex;flex-direction:column;gap:2px">
+        <span onclick="_wfMoveSub(${i},-1)" title="Move up" style="cursor:pointer;color:${i===0?'#ccc':'#666'};font-size:11px;line-height:1">▲</span>
+        <span onclick="_wfMoveSub(${i},1)" title="Move down" style="cursor:pointer;color:${i===subs.length-1?'#ccc':'#666'};font-size:11px;line-height:1">▼</span>
+      </div>
+      <span style="width:20px;text-align:center;color:#bbb;font-size:12px">${i+1}</span>
+      <input value="${_wfEsc(name)}" onchange="_wfRenameSub(${i}, this.value)" style="flex:2;min-width:150px;padding:7px 9px;border:1px solid #ddd;border-radius:6px;font-size:13px"/>
+      <select onchange="_wfSetBoard('${_wfEsc(name).replace(/'/g,"\\'")}', this.value)" style="flex:1;min-width:150px;padding:7px 9px;border:1px solid #ddd;border-radius:6px;font-size:12px">${boardSel}</select>
+      <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:#555;white-space:nowrap;cursor:pointer">
+        <input type="checkbox" ${appr?"checked":""} onchange="_wfToggleApproval('${_wfEsc(name).replace(/'/g,"\\'")}', this.checked)"/> Sign-off
+      </label>
+      <span onclick="_wfRemoveSub(${i})" title="Remove subphase" style="cursor:pointer;color:#c0392b;font-size:14px;padding:0 4px">✕</span>
+    </div>`;
+  }).join("");
+
+  // ---- Section 2: auto-scheduling windows (chain) ----
+  const chainKeys=Object.keys(d.chain||{});
+  const chainRows = chainKeys.map(k=>{
+    const e=d.chain[k]||{};
+    return `<div style="display:flex;gap:8px;align-items:center;padding:9px 12px;border-bottom:0.5px solid #f1f3f7;background:#fff;font-size:12.5px;color:#333">
+      <span style="flex:1">When <b>${_wfEsc(k)}</b> ${e.on==="approve"?"is approved":"is completed"} →</span>
+      <span>start <b>${_wfEsc(e.next)}</b>, due in</span>
+      <input type="number" min="0" value="${e.dueDays==null?"":e.dueDays}" onchange="_wfSetChainDays('${_wfEsc(k).replace(/'/g,"\\'")}', this.value)" style="width:64px;padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px;text-align:center"/>
+      <span>days</span>
+      <span onclick="_wfRemoveChain('${_wfEsc(k).replace(/'/g,"\\'")}')" title="Remove rule" style="cursor:pointer;color:#c0392b;font-size:14px;padding:0 4px">✕</span>
+    </div>`;
+  }).join("") || `<div style="padding:12px;color:#aaa;font-size:12px">No auto-scheduling rules.</div>`;
+  const subOptions=subs.map(s=>`<option value="${_wfEsc(s)}">${_wfEsc(s)}</option>`).join("");
+  const chainAdd = `<div style="display:flex;gap:8px;align-items:center;padding:10px 12px;background:#fafbfc;font-size:12px">
+      <span>Add: after</span>
+      <select id="wf-ch-from" style="padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px">${subOptions}</select>
+      <span>→ start</span>
+      <select id="wf-ch-to" style="padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px">${subOptions}</select>
+      <span>due in</span><input id="wf-ch-days" type="number" min="0" value="2" style="width:60px;padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px;text-align:center"/><span>days</span>
+      <button onclick="_wfAddChain()" style="padding:6px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer">+ Add rule</button>
+    </div>`;
+
+  // ---- Section 3: phase auto-advance ----
+  const phaseOptions=(sel)=>PROP_PHASES.map(p=>`<option value="${_wfEsc(p.name)}"${p.name===sel?" selected":""}>${_wfEsc(p.name)}</option>`).join("");
+  const advKeys=Object.keys(d.advance||{});
+  const advRows = advKeys.map(ph=>{
+    const a=d.advance[ph]||{};
+    const reqs=Array.isArray(a.requires)?a.requires:[];
+    const checks=subs.map(s=>`<label style="display:inline-flex;align-items:center;gap:4px;font-size:11.5px;color:#555;margin:2px 10px 2px 0;cursor:pointer;white-space:nowrap"><input type="checkbox" ${reqs.indexOf(s)>=0?"checked":""} onchange="_wfToggleReq('${_wfEsc(ph).replace(/'/g,"\\'")}','${_wfEsc(s).replace(/'/g,"\\'")}',this.checked)"/> ${_wfEsc(s)}</label>`).join("");
+    return `<div style="padding:12px;border-bottom:0.5px solid #eef0f4;background:#fff">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+        <select onchange="_wfSetAdvancePhase('${_wfEsc(ph).replace(/'/g,"\\'")}',this.value)" style="padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px;font-weight:600">${phaseOptions(ph)}</select>
+        <span style="font-size:12px;color:#777">auto-advances to</span>
+        <select onchange="_wfSetAdvanceNext('${_wfEsc(ph).replace(/'/g,"\\'")}',this.value)" style="padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px">${phaseOptions(a.next)}</select>
+        <label style="display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#555;cursor:pointer"><input type="checkbox" ${a.notifyPM?"checked":""} onchange="_wfToggleNotify('${_wfEsc(ph).replace(/'/g,"\\'")}',this.checked)"/> Notify PM</label>
+        <span onclick="_wfRemoveAdvance('${_wfEsc(ph).replace(/'/g,"\\'")}')" title="Remove rule" style="cursor:pointer;color:#c0392b;font-size:14px;margin-left:auto;padding:0 4px">✕</span>
+      </div>
+      <div style="font-size:11px;color:#999;margin-bottom:3px">Required before advancing:</div>
+      <div>${checks || '<span style="color:#bbb;font-size:12px">No subphases</span>'}</div>
+    </div>`;
+  }).join("") || `<div style="padding:12px;color:#aaa;font-size:12px">No auto-advance rules.</div>`;
+
+  document.getElementById("dash-body").innerHTML=`
+    <div style="background:#f4f5f7;min-height:500px;padding:24px">
+      <div style="max-width:900px;margin:0 auto">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:4px">
+          <div>
+            <div style="font-size:18px;font-weight:600;color:#111">🎛️ Settings — Workflow &amp; Subphases</div>
+            <div style="font-size:12px;color:#888;margin-top:4px;max-width:640px">Edit the property subphases, which dashboard board each feeds, whether it needs sign-off, the auto-scheduling windows, and the rules that auto-advance a property to the next phase. Changes apply to every property once you save.</div>
+          </div>
+          <div style="display:flex;gap:8px;flex-shrink:0">
+            <button onclick="_wfReset()" style="padding:9px 14px;background:#fff;color:#c0392b;border:1px solid #e3b7b1;border-radius:7px;font-size:12.5px;cursor:pointer;white-space:nowrap">Reset to defaults</button>
+            <button onclick="_wfSave()" style="padding:9px 18px;background:#111;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">Save changes</button>
+          </div>
+        </div>
+
+        <div style="background:#FFF7E6;border:1px solid #F3D999;color:#7A5B12;border-radius:8px;padding:10px 12px;font-size:11.5px;margin:14px 0">⚠️ Renaming or removing a subphase affects how existing properties match their saved steps. Reordering, board changes, sign-off toggles, and day windows are always safe.</div>
+
+        <div style="font-size:13px;font-weight:600;color:#111;margin:18px 0 8px">Subphases <span style="color:#999;font-weight:400">(${subs.length})</span></div>
+        <div style="border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">
+          ${subRows || '<div style="padding:12px;color:#aaa;font-size:12px">No subphases.</div>'}
+          <div style="padding:10px 12px;background:#fafbfc"><button onclick="_wfAddSub()" style="padding:7px 14px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">+ Add subphase</button></div>
+        </div>
+
+        <div style="font-size:13px;font-weight:600;color:#111;margin:22px 0 8px">Auto-scheduling windows</div>
+        <div style="font-size:11.5px;color:#888;margin-bottom:8px">When a step finishes, the next step's clock starts today and is due in the number of days below.</div>
+        <div style="border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">
+          ${chainRows}
+          ${chainAdd}
+        </div>
+
+        <div style="font-size:13px;font-weight:600;color:#111;margin:22px 0 8px">Phase auto-advance rules</div>
+        <div style="font-size:11.5px;color:#888;margin-bottom:8px">A property moves to the next phase automatically once every required subphase below is finished (and approved where sign-off is on).</div>
+        <div style="border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">
+          ${advRows}
+          <div style="padding:10px 12px;background:#fafbfc"><button onclick="_wfAddAdvance()" style="padding:7px 14px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">+ Add advance rule</button></div>
+        </div>
+
+        <div style="height:24px"></div>
+      </div>
+    </div>`;
+}
+
+// ---- draft mutators ----
+function _wfUniqueName(base){ let n=base, i=2; const subs=_wfDraft.subPhases; while(subs.indexOf(n)>=0){ n=base+" "+i; i++; } return n; }
+function _wfMoveSub(i,dir){ const s=_wfDraft.subPhases; const j=i+dir; if(j<0||j>=s.length) return; const t=s[i]; s[i]=s[j]; s[j]=t; _renderSettings(); }
+function _wfRenameSub(i,val){
+  val=(val||"").trim(); if(!val){ _renderSettings(); return; }
+  const old=_wfDraft.subPhases[i]; if(val===old) return;
+  if(_wfDraft.subPhases.indexOf(val)>=0){ alert("A subphase called \""+val+"\" already exists."); _renderSettings(); return; }
+  _wfDraft.subPhases[i]=val;
+  const b=_wfDraft.board, ap=_wfDraft.approval, ch=_wfDraft.chain, ad=_wfDraft.advance;
+  if(b[old]!==undefined){ b[val]=b[old]; delete b[old]; }
+  if(ap[old]!==undefined){ ap[val]=ap[old]; delete ap[old]; }
+  if(ch[old]){ ch[val]=ch[old]; delete ch[old]; }
+  Object.keys(ch).forEach(k=>{ if(ch[k]&&ch[k].next===old) ch[k].next=val; });
+  Object.keys(ad).forEach(k=>{ if(Array.isArray(ad[k].requires)) ad[k].requires=ad[k].requires.map(x=>x===old?val:x); });
+  _renderSettings();
+}
+function _wfSetBoard(name,val){ _wfDraft.board[name]=val; }
+function _wfToggleApproval(name,checked){ if(checked) _wfDraft.approval[name]=true; else delete _wfDraft.approval[name]; }
+function _wfRemoveSub(i){
+  const name=_wfDraft.subPhases[i];
+  if(!confirm('Remove the subphase "'+name+'"?\nProperties that already have it will keep their saved copy until updated.')) return;
+  _wfDraft.subPhases.splice(i,1);
+  delete _wfDraft.board[name]; delete _wfDraft.approval[name];
+  const ch=_wfDraft.chain; delete ch[name];
+  Object.keys(ch).forEach(k=>{ if(ch[k]&&ch[k].next===name) delete ch[k]; });
+  Object.keys(_wfDraft.advance).forEach(k=>{ const a=_wfDraft.advance[k]; if(Array.isArray(a.requires)) a.requires=a.requires.filter(x=>x!==name); });
+  _renderSettings();
+}
+function _wfAddSub(){ const n=_wfUniqueName("New Subphase"); _wfDraft.subPhases.push(n); _wfDraft.board[n]=WORKFLOW_BOARDS[0]; _renderSettings(); }
+function _wfSetChainDays(k,val){ if(_wfDraft.chain[k]){ const n=parseInt(val,10); _wfDraft.chain[k].dueDays=isNaN(n)?0:n; } }
+function _wfRemoveChain(k){ delete _wfDraft.chain[k]; _renderSettings(); }
+function _wfAddChain(){
+  const from=document.getElementById("wf-ch-from").value, to=document.getElementById("wf-ch-to").value;
+  const days=parseInt(document.getElementById("wf-ch-days").value,10);
+  if(!from||!to||from===to){ alert("Pick two different subphases."); return; }
+  _wfDraft.chain[from]={ next:to, dueDays:isNaN(days)?2:days, on:(_wfDraft.approval[from]?"approve":"complete") };
+  _renderSettings();
+}
+function _wfSetAdvanceNext(ph,val){ if(_wfDraft.advance[ph]) _wfDraft.advance[ph].next=val; }
+function _wfSetAdvancePhase(oldPh,newPh){
+  if(oldPh===newPh) return;
+  if(_wfDraft.advance[newPh]){ alert("There is already a rule for "+newPh+"."); _renderSettings(); return; }
+  _wfDraft.advance[newPh]=_wfDraft.advance[oldPh]; delete _wfDraft.advance[oldPh]; _renderSettings();
+}
+function _wfToggleReq(ph,sub,checked){
+  const a=_wfDraft.advance[ph]; if(!a) return; if(!Array.isArray(a.requires)) a.requires=[];
+  const idx=a.requires.indexOf(sub);
+  if(checked && idx<0) a.requires.push(sub);
+  if(!checked && idx>=0) a.requires.splice(idx,1);
+}
+function _wfToggleNotify(ph,checked){ if(_wfDraft.advance[ph]) _wfDraft.advance[ph].notifyPM=!!checked; }
+function _wfRemoveAdvance(ph){ if(!confirm('Remove the auto-advance rule for "'+ph+'"?')) return; delete _wfDraft.advance[ph]; _renderSettings(); }
+function _wfAddAdvance(){
+  const used=Object.keys(_wfDraft.advance);
+  const avail=PROP_PHASES.map(p=>p.name).filter(n=>used.indexOf(n)<0);
+  if(!avail.length){ alert("Every phase already has a rule."); return; }
+  const ph=avail[0];
+  const idx=PROP_PHASES.findIndex(p=>p.name===ph);
+  const next=(idx>=0 && idx<PROP_PHASES.length-1)?PROP_PHASES[idx+1].name:ph;
+  _wfDraft.advance[ph]={ requires:[], next:next, notifyPM:true };
+  _renderSettings();
+}
+function _wfReset(){
+  if(!confirm("Reset the entire workflow back to the built-in defaults? This clears any saved custom settings.")) return;
+  _wfDraft=JSON.parse(JSON.stringify({ subPhases:_WORKFLOW_DEFAULTS.subPhases, board:_WORKFLOW_DEFAULTS.board, approval:_WORKFLOW_DEFAULTS.approval, chain:_WORKFLOW_DEFAULTS.chain, advance:_WORKFLOW_DEFAULTS.advance }));
+  _renderSettings();
+}
+async function _wfSave(){
+  if(!_canEditSettings()){ alert("You don't have permission to save settings."); return; }
+  const cfg=JSON.parse(JSON.stringify(_wfDraft));
+  // Normalise: keep the chain trigger in sync with each step's sign-off toggle.
+  Object.keys(cfg.chain||{}).forEach(k=>{ if(cfg.chain[k]) cfg.chain[k].on = cfg.approval[k] ? "approve" : "complete"; });
+  const err=await saveWorkflowSettings(cfg);
+  if(err){ alert("Couldn't save settings: "+(err.message||"unknown error")); return; }
+  applyWorkflowConfig(cfg);
+  if(typeof _logAudit==="function") _logAudit("updated","settings","Workflow & subphases","Saved workflow settings ("+ (cfg.subPhases||[]).length +" subphases)");
+  alert("Workflow settings saved. They now apply across the app.");
+  _renderSettings();
+}
+// ===================== end Settings tab =====================
+
 function openAutomations(){
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
@@ -5554,7 +5802,7 @@ async function openEditHistory(){
   await loadAuditLog();
   renderEditHistory();
 }
-function _auditIcon(area){ return ({property:"🏗",report:"📄",contractor:"📇",calendar:"📅",task:"✅",sop:"📋",manager:"👤"}[area])||"•"; }
+function _auditIcon(area){ return ({property:"🏗",report:"📄",contractor:"📇",calendar:"📅",task:"✅",sop:"📋",manager:"👤",settings:"🎛️"}[area])||"•"; }
 function _auditWhen(ts){ try{ return new Date(ts).toLocaleString(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}); }catch(e){ return ts; } }
 // Friendly, plain-English label + color for each action so anyone can read the log.
 function _auditActionMeta(a){
@@ -5572,7 +5820,7 @@ function _auditActionMeta(a){
   }[a])||{t:(a?a[0].toUpperCase()+a.slice(1):"Changed"),c:"#555",bg:"#f4f5f7"};
 }
 // Plain-English name for which part of the app was changed.
-function _auditAreaLabel(area){ return ({property:"Property",report:"Monthly Report",contractor:"Contractor",calendar:"Construction Calendar",task:"Task",sop:"SOP",manager:"Team"}[area])||(area||""); }
+function _auditAreaLabel(area){ return ({property:"Property",report:"Monthly Report",contractor:"Contractor",calendar:"Construction Calendar",task:"Task",sop:"SOP",manager:"Team",settings:"Settings"}[area])||(area||""); }
 function renderEditHistory(){
   const areas=[["all","All"],["property","Properties"],["task","Tasks"],["calendar","Construction Calendar"],["sop","SOPs"],["report","Monthly Reports"],["contractor","Contractors"],["manager","Team"]];
   const chips=areas.map(([f,l])=>`<div onclick="setAuditFilter('${f}')" style="padding:5px 12px;font-size:11px;cursor:pointer;border-radius:999px;${_auditFilter===f?'background:#111;color:#fff':'background:#fff;color:#666;border:0.5px solid #ddd'}">${l}</div>`).join("");
