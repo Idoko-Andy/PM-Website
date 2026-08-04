@@ -1793,6 +1793,16 @@ async function setPropertyPermitted(id, val) {
   await loadPropertiesFromSupabase();
   openPropDetail(id);
 }
+async function setPropertyRental(id, val) {
+  if (_blockIfReadOnly()) return;
+  const card = propCards.find(x => x.id === id); if (!card) return;
+  const isRental = (val === "yes" || val === true);
+  const { error } = await supabase.from("pm_properties").update({ is_rental: isRental }).eq("id", id);
+  if (error) { alert("Couldn't update rental status: " + (error.message || "")); return; }
+  _logAudit("updated","property", card.addr || "", "Rental set to " + (isRental ? "Yes" : "No"));
+  await loadPropertiesFromSupabase();
+  openPropDetail(id);
+}
 async function setPropertyDriveInSupabase(id, url) {
   if (_blockIfReadOnly()) return false;
   const { error } = await supabase.from("pm_properties").update({ drive_url: url }).eq("id", id);
@@ -2436,6 +2446,13 @@ function openPropDetail(id) {
                   <button onclick="setPropertyPermitted('${c.id}','no')" style="font-size:11px;padding:3px 11px;border-radius:5px;cursor:pointer;border:0.5px solid ${(c.checklists&&c.checklists.permitted)==='no'?'#B42318':'#ddd'};background:${(c.checklists&&c.checklists.permitted)==='no'?'#FCEBEB':'#fff'};color:${(c.checklists&&c.checklists.permitted)==='no'?'#B42318':'#666'}">No</button>
                 </span>`}
               </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px">
+                <span style="color:#888">🏠 Rental?</span>
+                ${_ro_sp ? `<span style="color:#111;font-weight:500">${c.isRental?'Yes':'No'}</span>` : `<span style="display:inline-flex;gap:4px">
+                  <button onclick="setPropertyRental('${c.id}','yes')" style="font-size:11px;padding:3px 11px;border-radius:5px;cursor:pointer;border:0.5px solid ${c.isRental?'#12987A':'#ddd'};background:${c.isRental?'#E1F5EE':'#fff'};color:${c.isRental?'#0B5A46':'#666'}">Yes</button>
+                  <button onclick="setPropertyRental('${c.id}','no')" style="font-size:11px;padding:3px 11px;border-radius:5px;cursor:pointer;border:0.5px solid ${!c.isRental?'#B42318':'#ddd'};background:${!c.isRental?'#FCEBEB':'#fff'};color:${!c.isRental?'#B42318':'#666'}">No</button>
+                </span>`}
+              </div>
               <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px"><span style="color:#888">Start Date</span><span style="color:#111;font-weight:500">${c.start||'—'}</span></div>
               <div style="display:flex;justify-content:space-between;padding:7px 0;font-size:13px"><span style="color:#888">Target Completion</span><span style="color:#111;font-weight:500">${c.end||'—'}</span></div>
               <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;font-size:13px">
@@ -2644,18 +2661,10 @@ function openPropModal(mode, id) {
         <input id="pm-end" type="date" value="${c?c.end:''}" style="width:100%;padding:7px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:13px;color:#111;background:#fff;outline:none" />
       </div>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
-      <div>
-        <label style="display:block;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Rental?</label>
-        <select id="pm-rental" style="width:100%;padding:7px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:13px;color:#111;background:#fff;outline:none">
-          <option value="no" ${c&&c.isRental?'':'selected'}>No — Flip / Sale</option>
-          <option value="yes" ${c&&c.isRental?'selected':''}>Yes — Rental</option>
-        </select>
-      </div>
-      <div>
-        <label style="display:block;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Closing Date <span style="font-size:9px;background:#E6F1FB;color:#185FA5;padding:1px 5px;border-radius:4px;text-transform:none">at In Contract</span></label>
-        <input id="pm-closing" type="date" value="${c?c.closingDate||'':''}" style="width:100%;padding:7px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:13px;color:#111;background:#fff;outline:none" />
-      </div>
+    <div style="margin-bottom:12px">
+      <label style="display:block;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Closing Date <span style="font-size:9px;background:#E6F1FB;color:#185FA5;padding:1px 5px;border-radius:4px;text-transform:none">at In Contract</span></label>
+      <input id="pm-closing" type="date" value="${c?c.closingDate||'':''}" style="width:100%;padding:7px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:13px;color:#111;background:#fff;outline:none" />
+      <div style="font-size:11px;color:#aaa;margin-top:5px">🏠 Rental status is now set with the Yes/No toggle on the property screen.</div>
     </div>
     <div style="margin-bottom:12px">
       <label style="display:block;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">📁 Project Drive Folder URL</label>
