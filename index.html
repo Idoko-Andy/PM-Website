@@ -166,9 +166,44 @@ body{background:#1a1a1a;color:#fff;min-height:100vh}
 .sys-card-icon{font-size:24px;margin-bottom:8px}
 .sys-card-title{font-size:13px;font-weight:500;color:#fff;margin-bottom:4px}
 .sys-card-desc{font-size:11px;color:#666;line-height:1.4}
+
+/* ===== Mobile app (phones only) ===== */
+#mobile-app{display:none;}
+body.mobile-on{overflow:hidden;}
+body.mobile-on .util-bar,
+body.mobile-on .brand-bar,
+body.mobile-on #nav,
+body.mobile-on .dash-body{display:none !important;}
+body.mobile-on #mobile-app{display:flex;flex-direction:column;position:fixed;inset:0;background:#f4f5f7;z-index:5000;-webkit-font-smoothing:antialiased;}
+body.mobile-on .overlay{z-index:6000 !important;}
+#mobile-app *{box-sizing:border-box;}
+.m-top{flex-shrink:0;background:#111;color:#fff;padding:12px 16px;display:flex;align-items:center;justify-content:space-between;}
+.m-top .m-title{font-size:15px;font-weight:600;}
+.m-top .m-sub{font-size:11px;color:#9aa0a6;margin-top:1px;}
+.m-signout{font-size:11px;color:#cfd3d7;border:1px solid #333;border-radius:6px;padding:5px 10px;background:#1c1c1c;}
+.m-body{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 14px 20px;}
+.m-nav{flex-shrink:0;display:flex;background:#fff;border-top:1px solid #e4e6ea;padding-bottom:env(safe-area-inset-bottom,0);}
+.m-nav button{flex:1;background:none;border:none;padding:9px 4px 10px;font-size:10.5px;color:#8a9099;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;}
+.m-nav button .m-ic{font-size:20px;line-height:1;}
+.m-nav button.on{color:#111;font-weight:600;}
+.m-card{background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:14px;margin-bottom:12px;}
+.m-daybar{display:flex;align-items:center;justify-content:space-between;background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:8px 10px;margin-bottom:12px;}
+.m-daybar button{border:none;background:#f1f3f7;border-radius:8px;width:38px;height:38px;font-size:18px;color:#333;cursor:pointer;}
+.m-daybar .m-daylbl{text-align:center;flex:1;font-size:13px;font-weight:600;color:#111;}
+.m-pill{display:inline-block;font-size:10px;padding:2px 8px;border-radius:99px;font-weight:600;}
+.m-input,.m-select,.m-mobile textarea{width:100%;padding:11px 12px;border:1px solid #d7dbe0;border-radius:9px;font-size:15px;background:#fff;color:#111;margin-top:6px;}
+.m-label{font-size:11px;color:#888;text-transform:uppercase;letter-spacing:.04em;font-weight:600;}
+.m-btn{width:100%;padding:13px;background:#111;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;margin-top:14px;cursor:pointer;}
+.m-btn-lite{background:#fff;color:#111;border:1px solid #d7dbe0;}
+.m-seg{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin-bottom:12px;-webkit-overflow-scrolling:touch;}
+.m-seg button{flex-shrink:0;padding:8px 14px;border-radius:99px;border:1px solid #d7dbe0;background:#fff;font-size:13px;color:#555;cursor:pointer;}
+.m-seg button.on{background:#111;color:#fff;border-color:#111;}
+.m-row{padding:12px 0;border-bottom:0.5px solid #f1f3f7;}
+.m-row:last-child{border-bottom:none;}
 </style>
 </head>
 <body>
+<div id="mobile-app"></div>
 
 <!-- UTIL BAR -->
 <div class="util-bar">
@@ -719,6 +754,7 @@ async function init() {
       if (status === "revoked")  msg = "Your access has been revoked. Please contact Bruce@legacyohiohomes.com.";
       renderLoggedOut(msg);
       document.getElementById("nav").style.display = "none";
+      _applyMobileMode();
       return;
     }
     utilRight.innerHTML = `
@@ -740,8 +776,10 @@ async function init() {
     ]);
     document.getElementById("dash-body").innerHTML = renderGenericHome(user);
     applyPermissionsUI();
+    _applyMobileMode();
   } else {
     renderLoggedOut();
+    _applyMobileMode();
   }
 }
 
@@ -5779,6 +5817,275 @@ async function _wfSave(){
   _renderSettings();
 }
 // ===================== end Settings tab =====================
+
+// ============================================================================
+// MOBILE FIELD APP  (phones only — auto-detected, same login & Supabase data)
+// Four tabs: My Day (tasks), Build (construction by property), Properties, Add.
+// ============================================================================
+let _mTab="day", _mDay=_ymd(new Date()), _mWho=null, _mProp=null, _mSearch="";
+
+function _isMobileView(){ return window.matchMedia("(max-width: 640px)").matches; }
+function _applyMobileMode(){
+  if(_isMobileView()){ document.body.classList.add("mobile-on"); renderMobileApp(); }
+  else { document.body.classList.remove("mobile-on"); }
+}
+window.addEventListener("resize", function(){ clearTimeout(window._mRz); window._mRz=setTimeout(_applyMobileMode,150); });
+
+function _mShiftDay(ds,n){ const p=ds.split("-").map(Number); const dt=new Date(p[0],p[1]-1,p[2]); dt.setDate(dt.getDate()+n); return _ymd(dt); }
+function _mMyName(){ const u=currentUser(); return u?(`${u.firstName||""} ${u.lastName||""}`).trim():""; }
+function _mBruceName(){ const b=(getUsers()||[]).find(u=>isBruce(u)); return b?(`${b.firstName||""} ${b.lastName||""}`).trim():"Bruce"; }
+function _mViewableNames(){ const bn=_mBruceName().toLowerCase(); return teamMembers().filter(n=>n.toLowerCase()!==bn); }
+function _mMoney(v){ return (v===0||v)?String(v):"—"; }
+
+function renderMobileApp(){
+  const host=document.getElementById("mobile-app"); if(!host) return;
+  const u=currentUser();
+  if(!u){ host.innerHTML=_mLoginHTML(); return; }
+  host.innerHTML=`
+    <div class="m-top">
+      <div><div class="m-title">Legacy Homes</div><div class="m-sub">${_calEsc(u.firstName||"")} · ${isReadOnly(u)?"Read Only":"Field"}</div></div>
+      <button class="m-signout" onclick="doSignOut()">Sign out</button>
+    </div>
+    <div class="m-body" id="m-body"></div>
+    <div class="m-nav" id="m-nav"></div>`;
+  _mRender();
+}
+function _mLoginHTML(){
+  return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:32px">
+    <div style="font-size:26px;font-weight:800;color:#111">Legacy Homes</div>
+    <div style="font-size:13px;color:#888;margin-top:6px">Project Management · Field App</div>
+    <button class="m-btn" style="max-width:280px;margin-top:28px" onclick="doGoogleSignIn()">Sign in with Google</button>
+    <div style="font-size:11px;color:#aaa;margin-top:16px;max-width:260px">Use your @legacyohiohomes.com Google account.</div>
+  </div>`;
+}
+function _mRender(){
+  const body=document.getElementById("m-body"), nav=document.getElementById("m-nav");
+  if(!body||!nav) return;
+  const tabs=[["day","📋","My Day"],["build","🏗","Build"],["props","🏠","Properties"],["add","➕","Add"]];
+  nav.innerHTML=tabs.map(t=>`<button class="${_mTab===t[0]?"on":""}" onclick="_mGo('${t[0]}')"><span class="m-ic">${t[1]}</span>${t[2]}</button>`).join("");
+  if(_mTab==="day") body.innerHTML=_mDayTab();
+  else if(_mTab==="build") body.innerHTML=_mBuildTab();
+  else if(_mTab==="props") body.innerHTML=_mPropsTab();
+  else body.innerHTML=_mAddTab();
+  body.scrollTop=0;
+}
+function _mGo(t){ _mTab=t; _mRender(); }
+function _mSetDay(n){ _mDay=_mShiftDay(_mDay,n); _mRender(); }
+function _mSetToday(){ _mDay=_ymd(new Date()); _mRender(); }
+function _mSetWho(n){ _mWho=n||null; _mRender(); }
+function _mSetProp(id){ _mProp=id; _mRender(); }
+
+function _mDayBar(){
+  const today=_mDay===_ymd(new Date());
+  return `<div class="m-daybar">
+      <button onclick="_mSetDay(-1)">‹</button>
+      <div class="m-daylbl">${_calEsc(_prettyDay(_mDay))}${today?" · Today":""}</div>
+      <button onclick="_mSetDay(1)">›</button>
+    </div>
+    ${today?"":`<div style="text-align:center;margin:-4px 0 12px"><button class="m-btn m-btn-lite" style="width:auto;padding:5px 14px;font-size:12px;border-radius:99px;margin:0" onclick="_mSetToday()">Jump to today</button></div>`}`;
+}
+
+// ---- My Day tab ----
+function _mDayTab(){
+  const myName=_mMyName();
+  const who=_mWho||myName;
+  const mates=_mViewableNames().filter(n=>n!==myName);
+  const seg=`<div class="m-seg">
+    <button class="${(!_mWho||_mWho===myName)?"on":""}" onclick="_mSetWho('')">Me</button>
+    ${mates.map(n=>`<button class="${_mWho===n?"on":""}" onclick="_mSetWho('${_calEsc(n).replace(/'/g,"\\'")}')">${_calEsc((n.split(" ")[0])||n)}</button>`).join("")}
+  </div>`;
+  const ro=isReadOnly();
+  const tasks=(typeof _tasksCache!=="undefined"?_tasksCache:[]).filter(t=>taskAssignees(t).indexOf(who)>=0 && (t.due_date===_mDay||t.start_date===_mDay));
+  tasks.sort((a,b)=>(a.status==="done"?1:0)-(b.status==="done"?1:0));
+  const rows=tasks.length?tasks.map(t=>{
+    const done=t.status==="done";
+    const mark=t.start_date===_mDay&&t.due_date!==_mDay?'<span class="m-pill" style="background:#EAF3DE;color:#3B6D11">Starts</span>':(t.due_date===_mDay?'<span class="m-pill" style="background:#FBEAF0;color:#72243E">Due</span>':'');
+    const prop=t.property_id?_propAddr(t.property_id):"";
+    return `<div class="m-card" style="display:flex;gap:11px;align-items:flex-start;margin-bottom:10px">
+      <div ${ro?"":`onclick="_mToggleTask('${t.id}')"`} style="font-size:22px;cursor:${ro?"default":"pointer"};line-height:1">${done?"✅":"⬜"}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:14px;font-weight:600;color:${done?"#9aa0a6":"#111"};${done?"text-decoration:line-through":""}">${_calEsc(t.title)}</div>
+        <div style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">${mark}${t.category?`<span class="m-pill" style="background:#EEEDFE;color:#3C3489">${_calEsc(t.category)}</span>`:""}</div>
+        ${prop?`<div style="font-size:12px;color:#888;margin-top:5px">🏠 ${_calEsc(prop)}</div>`:""}
+        ${t.notes?`<div style="font-size:12px;color:#666;margin-top:4px;white-space:pre-wrap">${_calEsc(t.notes)}</div>`:""}
+      </div>
+    </div>`;
+  }).join(""):`<div class="m-card" style="text-align:center;color:#aaa;padding:30px">Nothing scheduled for ${who===myName?"you":_calEsc((who||"").split(" ")[0])} this day.</div>`;
+  return seg+_mDayBar()+rows;
+}
+async function _mToggleTask(id){
+  if(_blockIfReadOnly()) return;
+  const t=_tasksCache.find(x=>x.id===id); if(!t) return;
+  const ns=t.status==="done"?"open":"done";
+  const { error }=await supabase.from("pm_tasks").update({status:ns}).eq("id",id);
+  if(error){ alert("Couldn't update task: "+(error.message||"")); return; }
+  if(typeof _logAudit==="function") _logAudit(ns==="done"?"completed":"reopened","task",t.title,"");
+  await loadTasks(); _mRender();
+}
+
+// ---- Build tab (construction by property) ----
+function _mBuildTab(){
+  const props=(typeof propCards!=="undefined"?propCards:[]).slice().sort((a,b)=>(a.addr||"").localeCompare(b.addr||""));
+  if((!_mProp||!props.some(p=>p.id===_mProp)) && props.length) _mProp=props[0].id;
+  const opts=props.map(p=>`<option value="${p.id}" ${p.id===_mProp?"selected":""}>${_calEsc(p.addr)}</option>`).join("");
+  const sel=`<div class="m-card" style="padding:12px 14px;margin-bottom:12px"><div class="m-label">Property</div><select class="m-select" onchange="_mSetProp(this.value)">${opts||'<option>No properties</option>'}</select></div>`;
+  const evs=(typeof _calEventsCache!=="undefined"?_calEventsCache:[]).filter(e=>e.property_id===_mProp && e.event_date===_mDay);
+  const rows=evs.length?evs.map(_mEventRow).join(""):`<div class="m-card" style="text-align:center;color:#aaa;padding:30px">No construction items this day.</div>`;
+  return sel+_mDayBar()+rows;
+}
+function _mKindLabel(k){ return ({material:"📦 Material delivery",contractor:"★ Contractor start",custom:"• Custom"})[k]||("• "+(k||"Item")); }
+function _mEventRow(e){
+  const done=!!e.completed, ro=isReadOnly();
+  const label=e.title||_mKindLabel(e.kind);
+  const sub=_mKindLabel(e.kind).replace(/^\S+\s/,"")+(e.contractor_id?" · "+_calEsc(_contractorName(e.contractor_id)):"");
+  return `<div class="m-card" style="display:flex;gap:11px;align-items:flex-start;margin-bottom:10px">
+    <div ${ro?"":`onclick="_mToggleEvent('${e.id}')"`} style="font-size:22px;cursor:${ro?"default":"pointer"};line-height:1">${done?"✅":"⬜"}</div>
+    <div style="flex:1;min-width:0">
+      <div style="font-size:14px;font-weight:600;color:${done?"#9aa0a6":"#111"};${done?"text-decoration:line-through":""}">${_calEsc(label)}</div>
+      <div style="font-size:11px;color:#888;margin-top:3px">${sub}</div>
+      ${e.notes?`<div style="font-size:12px;color:#666;margin-top:4px;white-space:pre-wrap">${_calEsc(e.notes)}</div>`:""}
+    </div>
+  </div>`;
+}
+async function _mToggleEvent(id){
+  if(_blockIfReadOnly()) return;
+  const e=_calEventsCache.find(x=>x.id===id); if(!e) return;
+  const now=!e.completed;
+  const { error }=await supabase.from("pm_calendar_events").update({completed:now}).eq("id",id);
+  if(error){ alert("Couldn't update: "+(error.message||"")); return; }
+  await loadCalendarEventsFromSupabase(); _mRender();
+}
+
+// ---- Properties tab ----
+function _mPropsTab(){
+  return `<input class="m-input" id="m-psearch" style="margin-top:0;margin-bottom:12px" placeholder="Search address, PM, phase…" value="${_calEsc(_mSearch||"")}" oninput="_mSearchSet(this.value)"/>
+    <div id="m-plist">${_mPropListHTML()}</div>`;
+}
+function _mSearchSet(v){ _mSearch=v; const el=document.getElementById("m-plist"); if(el) el.innerHTML=_mPropListHTML(); }
+function _mPropListHTML(){
+  const q=(_mSearch||"").toLowerCase();
+  let props=(typeof propCards!=="undefined"?propCards:[]).slice();
+  if(q) props=props.filter(p=>((p.addr||"")+" "+(p.pm||"")+" "+(p.phase||"")).toLowerCase().indexOf(q)>=0);
+  props.sort((a,b)=>(a.addr||"").localeCompare(b.addr||""));
+  const rows=props.map(p=>{
+    const perm=(p.checklists&&p.checklists.permitted);
+    const badges=`${p.isRental?'<span class="m-pill" style="background:#E1F5EE;color:#0B5A46">Rental</span> ':''}${perm==="yes"?'<span class="m-pill" style="background:#E6F1FB;color:#185FA5">Permitted</span>':(perm==="no"?'<span class="m-pill" style="background:#FCEBEB;color:#B42318">No permit</span>':"")}`;
+    return `<div class="m-card" style="margin-bottom:10px" onclick="_mOpenProp('${p.id}')">
+      <div style="font-size:15px;font-weight:600;color:#111">${_calEsc(p.addr||"—")}</div>
+      <div style="font-size:12px;color:#666;margin-top:3px">${_calEsc(p.phase||"—")}${p.pm?" · "+_calEsc(p.pm):""}</div>
+      ${badges?`<div style="margin-top:7px">${badges}</div>`:""}
+    </div>`;
+  }).join("");
+  return `<div style="font-size:11px;color:#999;margin-bottom:8px">${props.length} propert${props.length===1?"y":"ies"}</div>`+(rows||`<div class="m-card" style="text-align:center;color:#aaa;padding:26px">No properties match.</div>`);
+}
+function _mOpenProp(id){ const body=document.getElementById("m-body"); if(body){ body.innerHTML=_mPropDetail(id); body.scrollTop=0; } }
+function _mInfoRow(label,val){ return `<div style="display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:0.5px solid #f1f3f7;font-size:13px"><span style="color:#888">${label}</span><span style="color:#111;font-weight:500;text-align:right">${val}</span></div>`; }
+function _mPropDetail(id){
+  const p=(typeof propCards!=="undefined"?propCards:[]).find(x=>x.id===id);
+  if(!p) return `<button class="m-btn m-btn-lite" onclick="_mGo('props')">‹ Back</button>`;
+  const perm=(p.checklists&&p.checklists.permitted);
+  const acq=(p.checklists&&p.checklists.acqBudget);
+  const tracker=(p.checklists&&p.checklists.trackerUrl);
+  const links=[];
+  if(p.driveUrl) links.push(`<a href="${p.driveUrl}" target="_blank" class="m-btn m-btn-lite" style="text-decoration:none;text-align:center;display:block;margin-top:8px">📁 Drive folder</a>`);
+  if(p.companyCam) links.push(`<a href="${p.companyCam}" target="_blank" class="m-btn m-btn-lite" style="text-decoration:none;text-align:center;display:block;margin-top:8px">📷 CompanyCam</a>`);
+  if(tracker) links.push(`<a href="${tracker}" target="_blank" class="m-btn m-btn-lite" style="text-decoration:none;text-align:center;display:block;margin-top:8px">📊 Project tracker</a>`);
+  return `<button class="m-btn m-btn-lite" style="width:auto;padding:7px 14px;font-size:13px;border-radius:99px;margin-bottom:12px;margin-top:0" onclick="_mGo('props')">‹ All properties</button>
+    <div class="m-card">
+      <div style="font-size:18px;font-weight:700;color:#111">${_calEsc(p.addr||"—")}</div>
+      <div style="margin-top:8px">
+        ${_mInfoRow("Phase",_calEsc(p.phase||"—"))}
+        ${_mInfoRow("Project Manager",_calEsc(p.pm||"—"))}
+        ${_mInfoRow("Type",_calEsc(p.type||"—"))}
+        ${_mInfoRow("Rental",p.isRental?"Yes":"No")}
+        ${_mInfoRow("Permitted",perm==="yes"?"Yes":(perm==="no"?"No":"—"))}
+        ${_mInfoRow("Acq. Budget",_calEsc(_mMoney(acq)))}
+        ${_mInfoRow("Final Budget",_calEsc(_mMoney(p.budget)))}
+        ${_mInfoRow("Spent to Date",_calEsc(_mMoney(p.spent)))}
+        ${_mInfoRow("Money Position",_calEsc(_mMoney(p.position)))}
+      </div>
+    </div>
+    ${links.length?`<div class="m-card">${links.join("")}</div>`:""}`;
+}
+
+// ---- Add tab ----
+function _mAddTab(){
+  if(isReadOnly()) return `<div class="m-card" style="text-align:center;color:#888;padding:30px">Your access is Read Only, so you can't add items. Ask an admin for edit access.</div>`;
+  const item=(ic,t,d,k)=>`<div class="m-card" style="display:flex;align-items:center;gap:12px;margin-bottom:10px" onclick="_mOpenAdd('${k}')"><div style="font-size:24px">${ic}</div><div><div style="font-size:15px;font-weight:600;color:#111">${t}</div><div style="font-size:12px;color:#888">${d}</div></div></div>`;
+  return item("✅","Add a task","Assign work to yourself or the team","task")
+    +item("🏗","Add a construction item","Schedule work on a property","event")
+    +item("📦","Add a material delivery","Log a delivery to a job","material");
+}
+function _mOpenAdd(kind){ const body=document.getElementById("m-body"); if(!body) return; body.innerHTML= kind==="task"?_mAddFormTask():_mAddFormEvent(kind==="material"); body.scrollTop=0; }
+function _mFormWrap(title,inner){
+  return `<button class="m-btn m-btn-lite" style="width:auto;padding:7px 14px;font-size:13px;border-radius:99px;margin-bottom:12px;margin-top:0" onclick="_mGo('add')">‹ Back</button>
+    <div class="m-card"><div style="font-size:16px;font-weight:700;color:#111;margin-bottom:4px">${title}</div>${inner}</div>`;
+}
+function _mPropOptions(withNone){
+  const list=(typeof propCards!=="undefined"?propCards:[]).slice().sort((a,b)=>(a.addr||"").localeCompare(b.addr||""));
+  return (withNone?`<option value="">— No property —</option>`:"")+list.map((p,i)=>`<option value="${p.id}" ${(!withNone&&i===0)?"selected":""}>${_calEsc(p.addr)}</option>`).join("");
+}
+function _mAddFormTask(){
+  const myName=_mMyName();
+  const whoOpts=`<option value="">— Unassigned —</option>`+teamMembers().map(n=>`<option value="${_calEsc(n)}" ${n===myName?"selected":""}>${_calEsc(n)}</option>`).join("");
+  return _mFormWrap("Add a task",`
+    <div class="m-label">Task</div><input id="mt-title" class="m-input" placeholder="What needs to get done"/>
+    <div class="m-label" style="margin-top:12px">Header / category</div><input id="mt-cat" class="m-input" placeholder="Optional"/>
+    <div class="m-label" style="margin-top:12px">Assign to</div><select id="mt-who" class="m-select">${whoOpts}</select>
+    <div class="m-label" style="margin-top:12px">Property</div><select id="mt-prop" class="m-select">${_mPropOptions(true)}</select>
+    <div style="display:flex;gap:10px">
+      <div style="flex:1"><div class="m-label" style="margin-top:12px">Start</div><input id="mt-start" type="date" class="m-input"/></div>
+      <div style="flex:1"><div class="m-label" style="margin-top:12px">Due</div><input id="mt-due" type="date" class="m-input" value="${_mDay}"/></div>
+    </div>
+    <div class="m-label" style="margin-top:12px">Notes</div><textarea id="mt-notes" class="m-input" rows="2"></textarea>
+    <button class="m-btn" onclick="_mSubmitTask()">Save task</button>
+  `);
+}
+async function _mSubmitTask(){
+  if(_blockIfReadOnly()) return;
+  const title=(document.getElementById("mt-title").value||"").trim();
+  if(!title){ alert("Enter a task."); return; }
+  const cat=(document.getElementById("mt-cat").value||"").trim()||null;
+  const who=document.getElementById("mt-who").value||null;
+  const prop=document.getElementById("mt-prop").value||null;
+  const due=document.getElementById("mt-due").value||_mDay;
+  const start=document.getElementById("mt-start").value||null;
+  const notes=(document.getElementById("mt-notes").value||"").trim()||null;
+  const row={ title, category:cat, assignee:who, assignees:who?[who]:[], due_date:due, start_date:start, property_id:prop, notes, status:"open" };
+  const { error }=await supabase.from("pm_tasks").insert(row);
+  if(error){ alert("Couldn't save task: "+(error.message||"")); return; }
+  if(typeof _logAudit==="function") _logAudit("created","task",title, who?("Assignee: "+who):"");
+  await loadTasks(); _mGo("day");
+}
+function _mAddFormEvent(preMaterial){
+  const kindSel=preMaterial
+    ? `<input type="hidden" id="me-kind" value="material"/>`
+    : `<div class="m-label" style="margin-top:12px">Type</div><select id="me-kind" class="m-select"><option value="contractor">★ Contractor start</option><option value="material">📦 Material delivery</option><option value="custom">• Custom</option></select>`;
+  return _mFormWrap(preMaterial?"Add a material delivery":"Add a construction item",`
+    <div class="m-label">Property</div><select id="me-prop" class="m-select">${_mPropOptions(false)}</select>
+    <div class="m-label" style="margin-top:12px">Date</div><input id="me-date" type="date" class="m-input" value="${_mDay}"/>
+    ${kindSel}
+    <div class="m-label" style="margin-top:12px">${preMaterial?"What's being delivered":"Description"}</div><input id="me-title" class="m-input" placeholder="${preMaterial?"e.g. Cabinets, flooring":"e.g. Framing crew starts"}"/>
+    <div class="m-label" style="margin-top:12px">Notes</div><textarea id="me-notes" class="m-input" rows="2"></textarea>
+    <button class="m-btn" onclick="_mSubmitEvent()">Save</button>
+  `);
+}
+async function _mSubmitEvent(){
+  if(_blockIfReadOnly()) return;
+  const prop=document.getElementById("me-prop").value;
+  const date=document.getElementById("me-date").value;
+  const kind=document.getElementById("me-kind").value;
+  const title=(document.getElementById("me-title").value||"").trim()||null;
+  const notes=(document.getElementById("me-notes").value||"").trim()||null;
+  if(!prop){ alert("Pick a property."); return; }
+  if(!date){ alert("Pick a date."); return; }
+  const row={ property_id:prop, event_date:date, kind, title, notes, completed:false };
+  const { error }=await supabase.from("pm_calendar_events").insert(row);
+  if(error){ alert("Couldn't save: "+(error.message||"")); return; }
+  if(typeof _logAudit==="function") _logAudit("created","calendar", title||_mKindLabel(kind), _propAddr(prop));
+  await loadCalendarEventsFromSupabase(); _mProp=prop; _mDay=date; _mGo("build");
+}
+// ============================ end Mobile app =================================
 
 function openAutomations(){
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
