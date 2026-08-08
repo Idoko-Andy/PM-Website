@@ -3601,7 +3601,21 @@ function threeCalendarWidgets(u){
       <div style="font-size:11px;color:#888;line-height:1.5;margin-bottom:10px">Property deadlines sync to Google Calendar. Manage your subscription in Account → Calendar.</div>
       <div onclick="window.open('https://calendar.google.com','_blank')" style="display:inline-block;font-size:11px;color:#111;background:#fff;border-radius:6px;padding:6px 12px;cursor:pointer;font-weight:500">Open Google Calendar</div>
     </div>`;
-  return `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px">
+  // ---- Overdue tasks strip (this person's, or everyone's for directors/super) ----
+  const myName=(u?(`${u.firstName||""} ${u.lastName||""}`).trim():"");
+  const seeAll=!!(u && (u.isSuperAdmin || u.accessLevel==="full" || u.role==="Project Director"));
+  const overdue=(_tasksCache||[]).filter(t=>t.status==="open" && t.due_date && t.due_date<todayStr && (seeAll || taskAssignees(t).indexOf(myName)>=0)).sort((a,b)=>a.due_date<b.due_date?-1:1);
+  const overdueRows=overdue.length
+    ? overdue.slice(0,8).map(t=>`<div onclick="openTaskDetail('${t.id}')" style="display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:0.5px solid #2e1c1c;cursor:pointer"><div style="min-width:0"><div style="font-size:12px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.category?`<span style="font-size:9px;background:#4a2020;color:#ffb4a8;padding:1px 6px;border-radius:99px;margin-right:5px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div><div style="font-size:10px;color:#b98a82">${taskAssignees(t).length?_calEsc(taskAssignees(t).join(", ")):"Unassigned"}${t.property_id?" · "+_calEsc(_propAddr(t.property_id)):""}</div></div><div style="font-size:10px;color:#ff8a7a;white-space:nowrap">Due ${_calEsc(t.due_date)}</div></div>`).join("")
+    : `<div style="text-align:center;color:#666;font-size:12px;padding:14px 0">🎉 Nothing overdue</div>`;
+  const overdueCard=`<div style="background:#1a1111;border:1px solid ${overdue.length?'#5a2b2b':'#2a2a2a'};border-radius:10px;overflow:hidden;margin-top:14px">
+      <div style="padding:10px 14px;border-bottom:1px solid #2a1a1a;display:flex;align-items:center;justify-content:space-between">
+        <div style="font-size:12px;font-weight:600;color:#fff">⚠️ Overdue Tasks${overdue.length?` <span style="color:#ff8a7a">(${overdue.length})</span>`:''}</div>
+        <div onclick="openProjectDashboard('taskcal')" style="font-size:10px;color:#5dade2;cursor:pointer">Task calendar →</div>
+      </div>
+      <div style="padding:6px 14px 10px">${overdueRows}</div>
+    </div>`;
+  return overdueCard + `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:12px">
     ${card("📆 Google Calendar","","",googleBody)}
     ${card("🗒 Task Calendar","View","openProjectDashboard('taskcal')",taskRows)}
     ${card("🏗 Construction Calendar","View","openProjectDashboard('construction')",evRows)}
@@ -5448,7 +5462,7 @@ function renderTaskCalendar(){
     const label=t.category?t.category:t.title;
     const mk=entry.marker==="start"?"▶ ":(entry.marker==="due"?"■ ":"");
     const tip=`${t.category?t.category+" — ":""}${t.title}${entry.marker==="start"?" (start)":entry.marker==="due"?" (due)":""}`;
-    return `<div onclick="event.stopPropagation();toggleTaskDone('${t.id}')" title="${_calEsc(tip)} · click to mark ${done?'open':'done'}" style="font-size:10px;background:${bg};color:${col};border-radius:4px;padding:2px 5px;margin-bottom:2px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${deco}">${done?'✓ ':mk}${_calEsc(label)}${_calEsc(who)}</div>`;
+    return `<div onclick="event.stopPropagation();openTaskDetail('${t.id}')" title="${_calEsc(tip)} · click to open / edit" style="font-size:10px;background:${bg};color:${col};border-radius:4px;padding:2px 5px;margin-bottom:2px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${deco}">${done?'✓ ':mk}${_calEsc(label)}${_calEsc(who)}</div>`;
   };
   const cells=[];
   for(let i=0;i<startDow;i++) cells.push(`<div style="background:#fafbfc;min-height:92px;border:0.5px solid #edf0f4"></div>`);
@@ -5476,7 +5490,7 @@ function renderTaskCalendar(){
     });
     entries.sort((a,b)=>(a.t.status==="done"?1:0)-(b.t.status==="done"?1:0));
     const rowFor=(en)=>{ const t=en.t, done=t.status==="done"; const mk=en.marker==="start"?"▶ Start — ":(en.marker==="due"?"■ Due — ":""); const who=taskAssignees(t); const whoS=who.length?who.join(", "):"Unassigned";
-      return `<div onclick="toggleTaskDone('${t.id}')" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:0.5px solid #f1f3f7;${done?'opacity:0.6;':''}"><div style="min-width:0"><div style="font-size:14px;font-weight:500;color:#111;${done?'text-decoration:line-through;':''}">${done?'✓ ':mk}${t.category?`<span style="font-size:10px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:5px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div><div style="font-size:12px;color:#888;margin-top:2px">${t.property_id?_calEsc(_propAddr(t.property_id))+' · ':''}${_calEsc(whoS)}</div></div><div style="font-size:11px;color:${done?'#3B6D11':'#B7791F'};white-space:nowrap">${done?'Done':'Tap ✓'}</div></div>`; };
+      return `<div style="display:flex;align-items:center;gap:11px;padding:12px 14px;border-bottom:0.5px solid #f1f3f7;${done?'opacity:0.6;':''}"><div onclick="event.stopPropagation();toggleTaskDone('${t.id}')" title="Mark ${done?'open':'done'}" style="font-size:20px;cursor:pointer;line-height:1">${done?'✅':'⬜'}</div><div onclick="openTaskDetail('${t.id}')" style="cursor:pointer;flex:1;min-width:0"><div style="font-size:14px;font-weight:500;color:#111;${done?'text-decoration:line-through;':''}">${mk}${t.category?`<span style="font-size:10px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:5px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div><div style="font-size:12px;color:#888;margin-top:2px">${t.property_id?_calEsc(_propAddr(t.property_id))+' · ':''}${_calEsc(whoS)}</div>${t.notes?`<div style="font-size:11px;color:#999;margin-top:3px;white-space:pre-wrap">💬 ${_calEsc(t.notes)}</div>`:''}</div><div onclick="openTaskDetail('${t.id}')" style="font-size:11px;color:#888;white-space:nowrap;cursor:pointer">Edit ›</div></div>`; };
     const dayBody=entries.length?`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">${entries.map(rowFor).join("")}</div>`:`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:34px;text-align:center;color:#bbb;font-size:13px">No tasks starting or due this day.</div>`;
     return `<div style="padding:20px;max-width:760px;margin:0 auto">
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">${viewToggle}<div style="display:flex;gap:6px;flex-wrap:wrap">${filterBar}</div>${addTop}</div>
@@ -5505,7 +5519,7 @@ function renderTaskCalendar(){
       <div style="display:grid;grid-template-columns:repeat(7,1fr);background:#fafbfc;border-bottom:0.5px solid #edf0f4">${weekdays}</div>
       <div style="display:grid;grid-template-columns:repeat(7,1fr)">${cells.join("")}</div>
     </div>
-    <div style="font-size:11px;color:#aaa;margin-top:10px">Click a task to toggle it done. Filter by team member up top.</div>
+    <div style="font-size:11px;color:#aaa;margin-top:10px">Click a task to open it — mark done, edit, reassign, or add a comment. Filter by team member up top.</div>
   </div>`;
 }
 
@@ -5555,9 +5569,63 @@ function openAddTask(dateStr){
     </div>
     <div class="form-row"><label>Property (optional)</label><select id="task-prop"><option value="">— None —</option>${propOpts}</select></div>
     <div class="form-row"><label>Refer questions to (optional)</label><input type="text" id="task-refer" list="task-refer-list" placeholder="Type or pick a name" /><datalist id="task-refer-list">${referList}</datalist></div>
-    <div class="form-row"><label>Notes (optional)</label><input type="text" id="task-notes" placeholder="Details" /></div>
+    <div class="form-row"><label>Notes / comments (optional)</label><textarea id="task-notes" rows="2" placeholder="Details" style="width:100%"></textarea></div>
+    <input type="hidden" id="task-edit-id" value="" />
     <button class="btn-full" onclick="saveTask()">Add task</button>`;
   openModal("task-modal");
+}
+// Open an existing task to view / edit / reassign / comment / mark done / delete.
+function openTaskDetail(id){
+  const t=(typeof _tasksCache!=='undefined'?_tasksCache:[]).find(x=>x.id===id); if(!t) return;
+  const ro=isReadOnly();
+  const dis=ro?'disabled':'';
+  const props=(typeof propCards!=='undefined'?propCards:[]);
+  const propOpts=props.map(p=>`<option value="${p.id}" ${p.id===t.property_id?'selected':''}>${_calEsc(p.addr)}</option>`).join("");
+  const team=teamMembers();
+  const mine=taskAssignees(t);
+  const asgChecks=team.length
+    ? team.map(n=>`<label style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;cursor:pointer;font-size:13px;color:#111"><input type="checkbox" class="task-asg-cb" value="${_calEsc(n)}" ${mine.indexOf(n)>=0?'checked':''} ${dis} style="width:15px;height:15px;cursor:pointer"/> ${_calEsc(n)}</label>`).join("")
+    : `<div style="font-size:12px;color:#999;padding:4px 8px">No team members yet.</div>`;
+  const catOpts=_taskCategories().map(c=>`<option ${c===t.category?'selected':''}>${_calEsc(c)}</option>`).join("");
+  const referList=team.map(n=>`<option value="${_calEsc(n)}"></option>`).join("");
+  const done=t.status==="done";
+  document.getElementById("task-inner").innerHTML=`
+    <button class="modal-close" onclick="closeModal('task-modal')">✕</button>
+    <h2>${ro?'Task':'Edit task'}</h2>
+    <input type="hidden" id="task-edit-id" value="${t.id}" />
+    <div class="error-msg" id="task-err"></div>
+    ${ro?'':`<button onclick="toggleTaskDone('${t.id}');closeModal('task-modal')" style="width:100%;padding:11px;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:16px;background:${done?'#fff':'#12987A'};color:${done?'#333':'#fff'};${done?'border:1px solid #ccc;':''}">${done?'↩ Reopen task':'✓ Mark done'}</button>`}
+    <div class="form-row"><label>Task</label><input type="text" id="task-title" value="${_calEsc(t.title||'')}" ${dis} /></div>
+    <div class="form-row"><label>Header / category</label>
+      <select id="task-cat" onchange="_taskCatToggle()" ${dis}>
+        <option value="">— None —</option>
+        ${catOpts}
+        <option value="__new">＋ Add new header…</option>
+      </select>
+    </div>
+    <div class="form-row" id="task-cat-new-row" style="display:none"><label>New header</label><input type="text" id="task-cat-new" placeholder="e.g. Build Scope of Work" /></div>
+    <div class="form-row"><label>Assign to (pick any number — leave all unchecked for Unassigned)</label>
+      <div style="border:0.5px solid #ddd;border-radius:8px;padding:4px;max-height:150px;overflow-y:auto;background:#fff">${asgChecks}</div>
+    </div>
+    <div class="form-two">
+      <div class="form-row"><label>Start date (optional)</label><input type="date" id="task-start" value="${_calEsc(t.start_date||'')}" ${dis} /></div>
+      <div class="form-row"><label>Due date</label><input type="date" id="task-due" value="${_calEsc(t.due_date||'')}" ${dis} /></div>
+    </div>
+    <div class="form-row"><label>Property (optional)</label><select id="task-prop" ${dis}><option value="">— None —</option>${propOpts}</select></div>
+    <div class="form-row"><label>Refer questions to (optional)</label><input type="text" id="task-refer" list="task-refer-list" value="${_calEsc(t.refer_to||'')}" ${dis} /><datalist id="task-refer-list">${referList}</datalist></div>
+    <div class="form-row"><label>Notes / comments <span style="font-weight:400;color:#999;font-size:11px">— e.g. why it was or wasn't completed</span></label><textarea id="task-notes" rows="3" ${dis} style="width:100%">${_calEsc(t.notes||'')}</textarea></div>
+    ${ro?'':`<button class="btn-full" onclick="saveTask()">Save changes</button>
+    <div onclick="deleteTask('${t.id}')" style="text-align:center;margin-top:12px;color:#c0392b;font-size:12px;cursor:pointer">Delete task</div>`}`;
+  openModal("task-modal");
+}
+async function deleteTask(id){
+  if(_blockIfReadOnly()) return;
+  if(!confirm("Delete this task? This can't be undone.")) return;
+  const t=(_tasksCache||[]).find(x=>x.id===id);
+  const { error } = await supabase.from("pm_tasks").delete().eq("id",id);
+  if(error){ alert("Couldn't delete task: "+(error.message||"")); return; }
+  _logAudit("deleted","task", t?t.title:"(task)", "");
+  await loadTasks(); closeModal("task-modal"); _taskRerender();
 }
 async function saveTask(){
   if(_blockIfReadOnly()) return;
@@ -5578,6 +5646,17 @@ async function saveTask(){
   if(!title){ showE("Enter a task."); return; }
   if(!due){ showE("Pick a due date."); return; }
   if(start && start>due){ showE("Start date can't be after the due date."); return; }
+  const _eidEl=document.getElementById("task-edit-id");
+  const editId=(_eidEl && _eidEl.value) ? _eidEl.value : "";
+  if(editId){
+    const { error } = await supabase.from("pm_tasks").update({ title, category, assignee:asg, assignees:asgArr, start_date:start, due_date:due, property_id:prop, refer_to:refer, notes }).eq("id",editId);
+    if(error){ showE("Failed to save: "+(error.message||"")); return; }
+    _logAudit("updated","task", category?(category+": "+title):title, asgArr.length?("Assigned to "+asgArr.join(", ")):"Unassigned");
+    await loadTasks();
+    closeModal("task-modal");
+    _taskRerender();
+    return;
+  }
   const { error } = await supabase.from("pm_tasks").insert({ title, category, assignee:asg, assignees:asgArr, start_date:start, due_date:due, property_id:prop, refer_to:refer, notes });
   if(error){ showE("Failed to save: "+(error.message||"")); return; }
   _logAudit("created","task", category?(category+": "+title):title, asgArr.length?("Assigned to "+asgArr.join(", ")):"Unassigned");
