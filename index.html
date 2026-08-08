@@ -3654,8 +3654,8 @@ function finTable(showProjectStats) {
     <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px">
       ${[
         {icon:"🏗", label:"Active Projects",      val:countActive(),        color:"#fff"},
-        {icon:"🏪", label:"On the Market",         val:countOnMarket(),       color:"#5dade2"},
         {icon:"📋", label:"Waiting on Permits",    val:countWaitingPermit(),  color:"#f39c12"},
+        {icon:"🏪", label:"On the Market",         val:countOnMarket(),       color:"#5dade2"},
         {icon:"✅", label:"Closed This Year",      val:countClosedThisYear(), color:"#2ecc71"}
       ].map(s=>`
         <div style="background:#111;border:1px solid #2a2a2a;border-radius:8px;padding:10px 12px;text-align:center">
