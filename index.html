@@ -1045,8 +1045,19 @@ const ONCLICK_PERM = [
   ["openPMDashboard",           "data_pmoverview"],
 ];
 
-let _previewPerms = null; // {name, perms} — session-only "preview as user"
-function _viewUser() { return _previewPerms ? { id:"__preview", __preview:true, perms:_previewPerms.perms } : currentUser(); }
+let _previewPerms = null; // {name, role, email, isSuperAdmin, perms} — session-only "preview as user"
+function _viewUser() {
+  if (!_previewPerms) return currentUser();
+  return {
+    id: "__preview", __preview: true,
+    firstName: (_previewPerms.name || "").split(" ")[0] || "",
+    role: _previewPerms.role || "",
+    email: _previewPerms.email || "",
+    isSuperAdmin: !!_previewPerms.isSuperAdmin,
+    accessLevel: _previewPerms.accessLevel || "standard",
+    perms: _previewPerms.perms
+  };
+}
 function _permObjFrom(keys) { const o={}; PERM_ALL.forEach(k => o[k] = keys.indexOf(k) >= 0); return o; }
 function _normPerms(p)      { const o={}; PERM_ALL.forEach(k => o[k] = !!p[k]); return o; }
 function rolePermDefault(role) { return ROLE_DEFAULTS[role] || ROLE_FALLBACK; }
@@ -1153,7 +1164,7 @@ async function savePermissions(id) {
 
 function previewAsUser(id) {
   const u = getUsers().find(x => x.id === id); if (!u) return;
-  _previewPerms = { name: `${u.firstName} ${u.lastName}`, perms: _collectPermsFromEditor() };
+  _previewPerms = { name: `${u.firstName} ${u.lastName}`, role: u.role, email: u.email, isSuperAdmin: u.isSuperAdmin, accessLevel: u.accessLevel, perms: _collectPermsFromEditor() };
   closeModal("perm-modal"); closeModal("admin-modal");
   applyPermissionsUI();
   let b = document.getElementById("preview-banner");
