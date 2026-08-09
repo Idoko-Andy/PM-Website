@@ -5588,6 +5588,18 @@ function openAddTask(dateStr){
       <div class="form-row"><label>Start date (optional)</label><input type="date" id="task-start" /></div>
       <div class="form-row"><label>Due date</label><input type="date" id="task-due" value="${_calEsc(dateStr||"")}" /></div>
     </div>
+    <div class="form-two">
+      <div class="form-row"><label>Repeat</label>
+        <select id="task-repeat" onchange="_taskRepeatToggle()">
+          <option value="none">Does not repeat</option>
+          <option value="daily">Every day</option>
+          <option value="weekly">Every week</option>
+          <option value="biweekly">Every 2 weeks</option>
+          <option value="monthly">Every month</option>
+        </select>
+      </div>
+      <div class="form-row" id="task-repeat-until-row" style="display:none"><label>Repeat until</label><input type="date" id="task-repeat-until" /><div style="font-size:11px;color:#999;margin-top:4px">Leave blank to repeat for the next 3 months.</div></div>
+    </div>
     <div class="form-row"><label>Property (optional)</label><select id="task-prop"><option value="">— None —</option>${propOpts}</select></div>
     <div class="form-row"><label>Refer questions to (optional)</label><input type="text" id="task-refer" list="task-refer-list" placeholder="Type or pick a name" /><datalist id="task-refer-list">${referList}</datalist></div>
     <div class="form-row"><label>Notes / comments (optional)</label><textarea id="task-notes" rows="2" placeholder="Details" style="width:100%"></textarea></div>
@@ -5679,6 +5691,34 @@ async function deleteTask(id){
   _logAudit("deleted","task", t?t.title:"(task)", "");
   await loadTasks(); closeModal("task-modal"); _taskRerender();
 }
+// ---- Recurring tasks: a recurring task simply creates one row per occurrence,
+// so it shows up everywhere (calendars, overdue box, mobile) with no other changes.
+function _taskRepeatToggle(){
+  const sel=document.getElementById("task-repeat");
+  const row=document.getElementById("task-repeat-until-row");
+  if(sel && row) row.style.display = (sel.value && sel.value!=="none") ? "" : "none";
+}
+function _dParse(s){ const p=(s||"").split("-"); return new Date(Date.UTC(+p[0],(+p[1])-1,+p[2])); }
+function _dFmt(dt){ return dt.getUTCFullYear()+"-"+String(dt.getUTCMonth()+1).padStart(2,"0")+"-"+String(dt.getUTCDate()).padStart(2,"0"); }
+function _dAddDays(s,n){ const d=_dParse(s); d.setUTCDate(d.getUTCDate()+n); return _dFmt(d); }
+function _dAddMonths(s,n){ const d=_dParse(s); const day=d.getUTCDate(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth()+n); const dim=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()+1,0)).getUTCDate(); d.setUTCDate(Math.min(day,dim)); return _dFmt(d); }
+function _recurDueDates(dueStr, mode, untilStr){
+  const out=[dueStr];
+  if(!dueStr || !mode || mode==="none") return out;
+  const until = untilStr || _dAddMonths(dueStr,3); // default horizon: 3 months
+  let cur=dueStr, guard=0;
+  while(guard++ < 60){ // hard cap so a stray "until" can't create thousands of rows
+    let next;
+    if(mode==="daily") next=_dAddDays(cur,1);
+    else if(mode==="weekly") next=_dAddDays(cur,7);
+    else if(mode==="biweekly") next=_dAddDays(cur,14);
+    else if(mode==="monthly") next=_dAddMonths(cur,1);
+    else break;
+    if(next>until) break;
+    out.push(next); cur=next;
+  }
+  return out;
+}
 async function saveTask(){
   if(_blockIfReadOnly()) return;
   const err=document.getElementById("task-err");
@@ -5709,13 +5749,21 @@ async function saveTask(){
     _taskRerender();
     return;
   }
-  const { error } = await supabase.from("pm_tasks").insert({ title, category, assignee:asg, assignees:asgArr, start_date:start, due_date:due, property_id:prop, refer_to:refer, notes });
+  const repeat=(document.getElementById("task-repeat")?document.getElementById("task-repeat").value:"none")||"none";
+  const runtil=(document.getElementById("task-repeat-until")?document.getElementById("task-repeat-until").value:"")||"";
+  if(runtil && runtil<due){ showE("'Repeat until' can't be before the due date."); return; }
+  const dueList=_recurDueDates(due, repeat, runtil);
+  const offDays=(start!=null)?Math.round((_dParse(due)-_dParse(start))/86400000):null;
+  const rows=dueList.map(d=>({ title, category, assignee:asg, assignees:asgArr, start_date:(offDays!=null?_dAddDays(d,-offDays):null), due_date:d, property_id:prop, refer_to:refer, notes }));
+  const { error } = await supabase.from("pm_tasks").insert(rows);
   if(error){ showE("Failed to save: "+(error.message||"")); return; }
-  _logAudit("created","task", category?(category+": "+title):title, asgArr.length?("Assigned to "+asgArr.join(", ")):"Unassigned");
+  const _rlabel = dueList.length>1 ? (title+" (×"+dueList.length+", repeats "+repeat+")") : title;
+  _logAudit("created","task", category?(category+": "+_rlabel):_rlabel, asgArr.length?("Assigned to "+asgArr.join(", ")):"Unassigned");
   // Material deliveries entered on the task list also drop onto the Construction
-  // Calendar so it only has to be entered once.
-  if(category===_MATERIAL_TASK_CATEGORY && prop && due){
-    const { error:ce } = await supabase.from("pm_calendar_events").insert({ property_id:prop, event_date:due, kind:"material", title, contractor_id:null, notes: notes || (asg?("Pickup/delivery: "+asg):null) });
+  // Calendar so it only has to be entered once (one calendar entry per occurrence).
+  if(category===_MATERIAL_TASK_CATEGORY && prop){
+    const evs=dueList.map(d=>({ property_id:prop, event_date:d, kind:"material", title, contractor_id:null, notes: notes || (asg?("Pickup/delivery: "+asg):null) }));
+    const { error:ce } = await supabase.from("pm_calendar_events").insert(evs);
     if(!ce){ _logAudit("created","calendar", _propAddr(prop), "Material delivery (from task): "+title); await loadCalendarEventsFromSupabase(); }
   }
   await loadTasks();
@@ -6228,6 +6276,10 @@ function _mAddFormTask(){
       <div style="flex:1"><div class="m-label" style="margin-top:12px">Start</div><input id="mt-start" type="date" class="m-input"/></div>
       <div style="flex:1"><div class="m-label" style="margin-top:12px">Due</div><input id="mt-due" type="date" class="m-input" value="${_mDay}"/></div>
     </div>
+    <div style="display:flex;gap:10px">
+      <div style="flex:1"><div class="m-label" style="margin-top:12px">Repeat</div><select id="mt-repeat" class="m-select"><option value="none">Does not repeat</option><option value="daily">Every day</option><option value="weekly">Every week</option><option value="biweekly">Every 2 weeks</option><option value="monthly">Every month</option></select></div>
+      <div style="flex:1"><div class="m-label" style="margin-top:12px">Repeat until</div><input id="mt-repeat-until" type="date" class="m-input"/></div>
+    </div>
     <div class="m-label" style="margin-top:12px">Notes</div><textarea id="mt-notes" class="m-input" rows="2"></textarea>
     <button class="m-btn" onclick="_mSubmitTask()">Save task</button>
   `);
@@ -6242,10 +6294,15 @@ async function _mSubmitTask(){
   const due=document.getElementById("mt-due").value||_mDay;
   const start=document.getElementById("mt-start").value||null;
   const notes=(document.getElementById("mt-notes").value||"").trim()||null;
-  const row={ title, category:cat, assignee:who, assignees:who?[who]:[], due_date:due, start_date:start, property_id:prop, notes, status:"open" };
-  const { error }=await supabase.from("pm_tasks").insert(row);
+  const repeat=(document.getElementById("mt-repeat")?document.getElementById("mt-repeat").value:"none")||"none";
+  const runtil=(document.getElementById("mt-repeat-until")?document.getElementById("mt-repeat-until").value:"")||"";
+  if(runtil && runtil<due){ alert("'Repeat until' can't be before the due date."); return; }
+  const dueList=_recurDueDates(due, repeat, runtil);
+  const offDays=(start!=null)?Math.round((_dParse(due)-_dParse(start))/86400000):null;
+  const rows=dueList.map(d=>({ title, category:cat, assignee:who, assignees:who?[who]:[], due_date:d, start_date:(offDays!=null?_dAddDays(d,-offDays):null), property_id:prop, notes, status:"open" }));
+  const { error }=await supabase.from("pm_tasks").insert(rows);
   if(error){ alert("Couldn't save task: "+(error.message||"")); return; }
-  if(typeof _logAudit==="function") _logAudit("created","task",title, who?("Assignee: "+who):"");
+  if(typeof _logAudit==="function") _logAudit("created","task", dueList.length>1?(title+" (×"+dueList.length+", repeats "+repeat+")"):title, who?("Assignee: "+who):"");
   await loadTasks(); _mGo("day");
 }
 function _mAddFormEvent(preMaterial){
