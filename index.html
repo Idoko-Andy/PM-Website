@@ -703,11 +703,25 @@ async function refreshAuthState() {
     _sessionCache = null;
     _myProfile = null;
     _profilesCache = [];
+    try { localStorage.removeItem("pm_last_profile"); } catch (e) {}
     return;
   }
   await loadProfilesFromSupabase();
-  _myProfile = _profilesCache.find(u => u.id === session.user.id) || null;
-  _sessionCache = _myProfile ? { id: _myProfile.id } : null;
+  let mine = _profilesCache.find(u => u.id === session.user.id) || null;
+  if (mine) {
+    // Remember the last good profile so a slow/offline launch (spotty jobsite
+    // signal) doesn't kick a logged-in user back to the sign-in screen.
+    try { localStorage.setItem("pm_last_profile", JSON.stringify(mine)); } catch (e) {}
+  } else {
+    // Profiles didn't load this launch — keep the user signed in using their
+    // last known profile (only if it belongs to the current auth session).
+    try {
+      const cached = JSON.parse(localStorage.getItem("pm_last_profile") || "null");
+      if (cached && cached.id === session.user.id) mine = cached;
+    } catch (e) {}
+  }
+  _myProfile = mine;
+  _sessionCache = mine ? { id: mine.id } : null;
 }
 
 // ===================== LOGO =====================
@@ -753,9 +767,13 @@ async function init() {
   if (session) {
     const user = _myProfile;
     if (!user || user.status !== "approved") {
-      // Pending / denied / revoked → sign back out and show a notice
+      // Pending / denied / revoked → sign back out and show a notice.
+      // Only sign out for an EXPLICIT bad status — never just because the
+      // profile couldn't be fetched (that would log people out on flaky signal).
       const status = user ? user.status : null;
-      await supabase.auth.signOut();
+      if (status === "pending" || status === "denied" || status === "revoked") {
+        await supabase.auth.signOut();
+      }
       _sessionCache = null; _myProfile = null;
       let msg = null;
       if (status === "pending")  msg = "Your account is pending admin approval. You will be able to sign in once Bruce or another admin approves you.";
@@ -5413,7 +5431,10 @@ async function toggleCalEventDone(id){
 // ===================== TASK SYSTEM + TASK CALENDAR =====================
 let _tasksCache = [];
 async function loadTasks(){
-  const { data, error } = await supabase.from("pm_tasks").select("id,title,assignee,assignees,due_date,start_date,category,refer_to,status,property_id,notes").order("due_date",{ascending:true});
+  let { data, error } = await supabase.from("pm_tasks").select("id,title,assignee,assignees,due_date,start_date,category,refer_to,status,property_id,notes,comments").order("due_date",{ascending:true});
+  if(error){ // comments column may not exist yet on older DBs — fall back gracefully
+    ({ data, error } = await supabase.from("pm_tasks").select("id,title,assignee,assignees,due_date,start_date,category,refer_to,status,property_id,notes").order("due_date",{ascending:true}));
+  }
   _tasksCache = error ? [] : (data||[]);
 }
 // A task may be assigned to several people. Normalize to an array of names,
@@ -5574,6 +5595,32 @@ function openAddTask(dateStr){
     <button class="btn-full" onclick="saveTask()">Add task</button>`;
   openModal("task-modal");
 }
+// ---- Task comments (a running log kept on the task forever) ----
+function _fmtCommentDate(iso){ try{ return new Date(iso).toLocaleString(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}); }catch(e){ return ""; } }
+function _taskCommentsList(t, dark){
+  const list=Array.isArray(t.comments)?t.comments:[];
+  if(!list.length) return `<div style="font-size:12px;color:${dark?'#777':'#aaa'};padding:8px 2px">No comments yet.</div>`;
+  return list.map(c=>`<div style="padding:8px 2px;border-bottom:0.5px solid ${dark?'#2a2a2a':'#eee'}">
+      <div style="font-size:11px;color:${dark?'#8aa7c8':'#888'}"><b style="color:${dark?'#fff':'#111'}">${_calEsc(c.by||'')}</b> · ${_calEsc(_fmtCommentDate(c.at))}</div>
+      <div style="font-size:13px;color:${dark?'#ddd':'#333'};margin-top:2px;white-space:pre-wrap">${_calEsc(c.text||'')}</div>
+    </div>`).join("");
+}
+async function addTaskComment(id, inputId, ctx){
+  if(_blockIfReadOnly()) return;
+  const el=document.getElementById(inputId);
+  const text=(el && el.value ? el.value : "").trim();
+  if(!text) return;
+  const t=(_tasksCache||[]).find(x=>x.id===id); if(!t) return;
+  const list=Array.isArray(t.comments)?t.comments.slice():[];
+  const u=(typeof currentUser==="function")?currentUser():null;
+  const by=u?(`${u.firstName||""} ${u.lastName||""}`).trim():"Someone";
+  list.push({ by, at:new Date().toISOString(), text });
+  const { error }=await supabase.from("pm_tasks").update({ comments:list }).eq("id",id);
+  if(error){ alert("Couldn't add comment: "+(error.message||"")+(String(error.message||"").indexOf("comments")>=0?"\n(The comments column may still be setting up.)":"")); return; }
+  if(typeof _logAudit==="function") _logAudit("commented","task", t.title, text.slice(0,80));
+  await loadTasks();
+  if(ctx==="mobile") _mOpenTask(id); else openTaskDetail(id);
+}
 // Open an existing task to view / edit / reassign / comment / mark done / delete.
 function openTaskDetail(id){
   const t=(typeof _tasksCache!=='undefined'?_tasksCache:[]).find(x=>x.id===id); if(!t) return;
@@ -5613,7 +5660,12 @@ function openTaskDetail(id){
     </div>
     <div class="form-row"><label>Property (optional)</label><select id="task-prop" ${dis}><option value="">— None —</option>${propOpts}</select></div>
     <div class="form-row"><label>Refer questions to (optional)</label><input type="text" id="task-refer" list="task-refer-list" value="${_calEsc(t.refer_to||'')}" ${dis} /><datalist id="task-refer-list">${referList}</datalist></div>
-    <div class="form-row"><label>Notes / comments <span style="font-weight:400;color:#999;font-size:11px">— e.g. why it was or wasn't completed</span></label><textarea id="task-notes" rows="3" ${dis} style="width:100%">${_calEsc(t.notes||'')}</textarea></div>
+    <div class="form-row"><label>Notes <span style="font-weight:400;color:#999;font-size:11px">— task description / details</span></label><textarea id="task-notes" rows="2" ${dis} style="width:100%">${_calEsc(t.notes||'')}</textarea></div>
+    <div class="form-row"><label>💬 Comments <span style="font-weight:400;color:#999;font-size:11px">— a running log, kept forever</span></label>
+      <div style="border:0.5px solid #333;border-radius:8px;padding:6px 10px;max-height:180px;overflow-y:auto;background:#161616">${_taskCommentsList(t,true)}</div>
+      ${ro?'':`<textarea id="task-comment-input" rows="2" placeholder="Add a comment — why it wasn't done, what's next, etc." style="width:100%;margin-top:6px"></textarea>
+      <button onclick="addTaskComment('${t.id}','task-comment-input','desktop')" style="margin-top:4px;padding:8px 14px;background:#185FA5;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer">Add comment</button>`}
+    </div>
     ${ro?'':`<button class="btn-full" onclick="saveTask()">Save changes</button>
     <div onclick="deleteTask('${t.id}')" style="text-align:center;margin-top:12px;color:#c0392b;font-size:12px;cursor:pointer">Delete task</div>`}`;
   openModal("task-modal");
@@ -6000,13 +6052,14 @@ function _mDayTab(){
     const done=t.status==="done";
     const mark=t.start_date===_mDay&&t.due_date!==_mDay?'<span class="m-pill" style="background:#EAF3DE;color:#3B6D11">Starts</span>':(t.due_date===_mDay?'<span class="m-pill" style="background:#FBEAF0;color:#72243E">Due</span>':'');
     const prop=t.property_id?_propAddr(t.property_id):"";
+    const cc=(Array.isArray(t.comments)?t.comments.length:0);
     return `<div class="m-card" style="display:flex;gap:11px;align-items:flex-start;margin-bottom:10px">
-      <div ${ro?"":`onclick="_mToggleTask('${t.id}')"`} style="font-size:22px;cursor:${ro?"default":"pointer"};line-height:1">${done?"✅":"⬜"}</div>
-      <div style="flex:1;min-width:0">
+      <div ${ro?"":`onclick="event.stopPropagation();_mToggleTask('${t.id}')"`} style="font-size:22px;cursor:${ro?"default":"pointer"};line-height:1">${done?"✅":"⬜"}</div>
+      <div onclick="_mOpenTask('${t.id}')" style="flex:1;min-width:0;cursor:pointer">
         <div style="font-size:14px;font-weight:600;color:${done?"#9aa0a6":"#111"};${done?"text-decoration:line-through":""}">${_calEsc(t.title)}</div>
         <div style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">${mark}${t.category?`<span class="m-pill" style="background:#EEEDFE;color:#3C3489">${_calEsc(t.category)}</span>`:""}</div>
         ${prop?`<div style="font-size:12px;color:#888;margin-top:5px">🏠 ${_calEsc(prop)}</div>`:""}
-        ${t.notes?`<div style="font-size:12px;color:#666;margin-top:4px;white-space:pre-wrap">${_calEsc(t.notes)}</div>`:""}
+        <div style="font-size:11px;color:#999;margin-top:5px">${cc?`💬 ${cc} comment${cc>1?"s":""} · `:""}Tap to open ›</div>
       </div>
     </div>`;
   }).join(""):`<div class="m-card" style="text-align:center;color:#aaa;padding:30px">Nothing scheduled for ${who===myName?"you":_calEsc((who||"").split(" ")[0])} this day.</div>`;
@@ -6020,6 +6073,45 @@ async function _mToggleTask(id){
   if(error){ alert("Couldn't update task: "+(error.message||"")); return; }
   if(typeof _logAudit==="function") _logAudit(ns==="done"?"completed":"reopened","task",t.title,"");
   await loadTasks(); _mRender();
+}
+async function _mToggleTaskStay(id){
+  if(_blockIfReadOnly()) return;
+  const t=_tasksCache.find(x=>x.id===id); if(!t) return;
+  const ns=t.status==="done"?"open":"done";
+  const { error }=await supabase.from("pm_tasks").update({status:ns}).eq("id",id);
+  if(error){ alert("Couldn't update task: "+(error.message||"")); return; }
+  if(typeof _logAudit==="function") _logAudit(ns==="done"?"completed":"reopened","task",t.title,"");
+  await loadTasks(); _mOpenTask(id);
+}
+function _mOpenTask(id){ const body=document.getElementById("m-body"); if(body){ body.innerHTML=_mTaskDetail(id); body.scrollTop=0; } }
+function _mTaskDetail(id){
+  const t=(typeof _tasksCache!=="undefined"?_tasksCache:[]).find(x=>x.id===id);
+  if(!t) return `<button class="m-btn m-btn-lite" onclick="_mGo('day')">‹ Back</button>`;
+  const ro=isReadOnly();
+  const done=t.status==="done";
+  const who=taskAssignees(t);
+  const prop=t.property_id?_propAddr(t.property_id):"";
+  return `<button class="m-btn m-btn-lite" style="width:auto;padding:7px 14px;font-size:13px;border-radius:99px;margin:0 0 12px" onclick="_mGo('day')">‹ Back</button>
+    <div class="m-card">
+      <div style="font-size:17px;font-weight:700;color:${done?'#9aa0a6':'#111'};${done?'text-decoration:line-through':''}">${_calEsc(t.title)}</div>
+      <div style="margin-top:8px">
+        ${_mInfoRow("Status", done?'✅ Done':'⬜ Open')}
+        ${t.category?_mInfoRow("Category",_calEsc(t.category)):''}
+        ${_mInfoRow("Assigned to", who.length?_calEsc(who.join(", ")):"Unassigned")}
+        ${t.start_date?_mInfoRow("Start",_calEsc(t.start_date)):''}
+        ${_mInfoRow("Due", _calEsc(t.due_date||'—'))}
+        ${prop?_mInfoRow("Property",_calEsc(prop)):''}
+        ${t.refer_to?_mInfoRow("Refer questions to",_calEsc(t.refer_to)):''}
+      </div>
+      ${t.notes?`<div style="margin-top:10px"><div style="font-size:11px;color:#888;font-weight:600">NOTES</div><div style="font-size:13px;color:#444;white-space:pre-wrap;margin-top:2px">${_calEsc(t.notes)}</div></div>`:''}
+      ${ro?'':`<button onclick="_mToggleTaskStay('${t.id}')" style="width:100%;margin-top:14px;padding:12px;border:none;border-radius:9px;font-size:15px;font-weight:600;cursor:pointer;background:${done?'#fff':'#12987A'};color:${done?'#333':'#fff'};${done?'border:1px solid #ccc':''}">${done?'↩ Reopen task':'✓ Mark done'}</button>`}
+    </div>
+    <div class="m-card">
+      <div style="font-size:14px;font-weight:700;color:#111;margin-bottom:8px">💬 Comments</div>
+      <div>${_taskCommentsList(t,false)}</div>
+      ${ro?'':`<textarea id="m-comment-input" rows="3" class="m-input" placeholder="Add a comment — why it wasn't done, what's next…"></textarea>
+      <button class="m-btn" onclick="addTaskComment('${t.id}','m-comment-input','mobile')">Add comment</button>`}
+    </div>`;
 }
 
 // ---- Build tab (construction by property) ----
