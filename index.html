@@ -479,7 +479,8 @@ body.mobile-on .overlay{z-index:6000 !important;}
     <div class="error-msg" id="signin-error"></div>
     <div class="success-msg" id="signin-success"></div>
     <div id="modal-gsi-btn" style="display:flex;justify-content:center;margin:10px 0 4px"></div>
-    <p style="font-size:11px;color:#666;margin-top:14px;text-align:center;line-height:1.5">Only @legacyohiohomes.com Google accounts are permitted.<br/>First-time sign-ins create an account in <i>pending</i> status and require admin approval.</p>
+    <p style="font-size:11px;color:#666;margin-top:14px;text-align:center;line-height:1.5">Team members can sign in with their company Google account. Outside collaborators should use <b>Create account</b> instead.<br/>New accounts start in <i>pending</i> status and require admin approval.</p>
+    <div class="form-switch" style="text-align:center;margin-top:10px">Don't have an account? <a onclick="switchModal('signin-modal','register-modal')">Create account</a></div>
   </div>
 </div>
 
@@ -488,14 +489,14 @@ body.mobile-on .overlay{z-index:6000 !important;}
   <div class="modal">
     <button class="modal-close" onclick="closeModal('register-modal')">✕</button>
     <h2>Create account</h2>
-    <p class="sub">Only @legacyohiohomes.com emails are permitted. Your account requires admin approval before access is granted.</p>
+    <p class="sub">You can register with any email address. Your account requires admin approval before access is granted.</p>
     <div class="error-msg" id="reg-error"></div>
     <div class="success-msg" id="reg-success"></div>
     <div class="form-two">
       <div class="form-row"><label>First name</label><input type="text" id="reg-first" placeholder="First" /></div>
       <div class="form-row"><label>Last name</label><input type="text" id="reg-last" placeholder="Last" /></div>
     </div>
-    <div class="form-row"><label>Company email</label><input type="email" id="reg-email" placeholder="you@legacyohiohomes.com" /></div>
+    <div class="form-row"><label>Email</label><input type="email" id="reg-email" placeholder="you@example.com" /></div>
     <div class="form-row"><label>Phone number</label><input type="tel" id="reg-phone" placeholder="(614) 555-0100" /></div>
     <div class="form-row">
       <label>Job role</label>
@@ -930,13 +931,51 @@ async function doGoogleSignIn() {
 function doSignIn() { doGoogleSignIn(); }
 
 // ===================== REGISTER =====================
-// With Google SSO, account creation happens automatically the first time
-// someone signs in with their @legacyohiohomes.com Google account. The
-// auth trigger in Supabase creates a profile row with status="pending"
-// (or auto-approves it if the email is in the known-roles list).
-function doRegister() {
-  closeModal("register-modal");
-  openModal("signin-modal");
+// Self-serve registration with any email address. Creates the Supabase auth
+// user; the auth trigger creates a profile row with status="pending". The
+// person cannot access anything until an admin approves them in the Admin
+// Panel. Team members with a company Google account can still use the
+// "Sign in with Google" button instead.
+async function doRegister() {
+  const err = document.getElementById("reg-error");
+  const ok  = document.getElementById("reg-success");
+  if (err) err.style.display = "none";
+  if (ok)  ok.style.display  = "none";
+  const first = (document.getElementById("reg-first").value || "").trim();
+  const last  = (document.getElementById("reg-last").value  || "").trim();
+  const email = (document.getElementById("reg-email").value || "").trim().toLowerCase();
+  const phone = (document.getElementById("reg-phone").value || "").trim();
+  const role  = document.getElementById("reg-role").value || "";
+  const pass  = document.getElementById("reg-pass").value  || "";
+  const pass2 = document.getElementById("reg-pass2").value || "";
+  if (!first || !last)  { showErr(err, "Please enter your first and last name."); return; }
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { showErr(err, "Please enter a valid email address."); return; }
+  if (!role)            { showErr(err, "Please select your job role."); return; }
+  if (pass.length < 8)  { showErr(err, "Password must be at least 8 characters."); return; }
+  if (pass !== pass2)   { showErr(err, "The two passwords don't match."); return; }
+  const btn = document.querySelector("#register-modal .btn-full");
+  if (btn) { btn.disabled = true; btn.textContent = "Submitting..."; }
+  const { error } = await supabase.auth.signUp({
+    email: email,
+    password: pass,
+    options: { data: { first_name: first, last_name: last, phone: phone, role: role } }
+  });
+  if (btn) { btn.disabled = false; btn.textContent = "Submit for Approval"; }
+  if (error) {
+    const m = (error.message || "").toLowerCase();
+    if (m.includes("registered") || m.includes("already")) {
+      showErr(err, "An account with this email already exists. Try signing in instead.");
+    } else {
+      showErr(err, error.message || "Could not create your account. Please try again.");
+    }
+    return;
+  }
+  // Never leave a half-session signed in — access waits on admin approval.
+  try { await supabase.auth.signOut(); } catch (e) {}
+  if (ok) {
+    ok.textContent = "Account created! Your access is pending admin approval. You'll be able to sign in once an admin approves you.";
+    ok.style.display = "block";
+  }
 }
 
 // ===================== SIGN OUT =====================
