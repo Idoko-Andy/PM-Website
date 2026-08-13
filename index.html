@@ -800,7 +800,8 @@ async function init() {
       loadPropertiesFromSupabase(),
       loadMonthlyReportsFromSupabase(),
       loadTasks(),
-      loadCalendarEventsFromSupabase()
+      loadCalendarEventsFromSupabase(),
+      loadSavedAddresses()
     ]);
     document.getElementById("dash-body").innerHTML = renderGenericHome(user);
     applyPermissionsUI();
@@ -2294,7 +2295,10 @@ function renderPropertyBoard() {
     return `<div style="width:155px;flex-shrink:0">
       <div style="padding:7px 10px;border-radius:6px 6px 0 0;margin-bottom:6px;background:${ph.bg};display:flex;align-items:center;justify-content:space-between">
         <span style="font-size:10.5px;font-weight:500;color:${ph.text};line-height:1.3">${ph.name}</span>
-        <span style="font-size:10px;padding:1px 5px;border-radius:99px;background:${ph.cnt};color:${ph.text};flex-shrink:0;margin-left:3px">${pc.length}</span>
+        <span style="display:flex;align-items:center;gap:3px;flex-shrink:0;margin-left:3px">
+          ${isReadOnly()?'':`<span onclick="event.stopPropagation();addPropToPhase('${ph.name.replace(/'/g,"\\'")}')" title="Add a property to ${ph.name.replace(/"/g,'&quot;')}" style="cursor:pointer;font-size:14px;line-height:1;color:${ph.text};opacity:0.75;padding:0 1px">＋</span>`}
+          <span style="font-size:10px;padding:1px 5px;border-radius:99px;background:${ph.cnt};color:${ph.text}">${pc.length}</span>
+        </span>
       </div>
       <div ondragover="event.preventDefault();this.style.background='#f0f7ff'" ondragleave="this.style.background='transparent'" ondrop="this.style.background='transparent';propDrop(event,this.dataset.phase)" data-phase="${ph.name}" style="display:flex;flex-direction:column;gap:5px;min-height:60px;border-radius:6px;transition:background 0.15s">
         ${pc.map(c => {
@@ -2650,6 +2654,14 @@ async function savePropTask(propId){
 }
 
 // ===================== PROPERTY MODAL =====================
+// Open the Add-Property modal pre-set to a specific phase column, so a missing
+// property can be added straight into whichever board column it belongs in.
+function addPropToPhase(phase){
+  if(_blockIfReadOnly()) return;
+  openPropModal();
+  const el=document.getElementById("pm-phase");
+  if(el && phase) el.value=phase;
+}
 function openPropModal(mode, id) {
   const c = id ? propCards.find(x => x.id === id) : null;
   propEditingId = id || null;
@@ -3645,7 +3657,7 @@ function threeCalendarWidgets(u){
   const upTasks=(_tasksCache||[]).filter(t=>t.status==="open" && t.due_date && t.due_date>=todayStr).sort((a,b)=>a.due_date<b.due_date?-1:1).slice(0,4);
   const taskRows=upTasks.length? upTasks.map(t=>`<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:0.5px solid #1e1e1e"><div style="min-width:0"><div style="font-size:12px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(t.title)}</div><div style="font-size:10px;color:#666">${t.assignee?_calEsc(t.assignee):"Unassigned"}</div></div><div style="font-size:10px;color:#5dade2;white-space:nowrap">${_calEsc(t.due_date)}</div></div>`).join("") : `<div style="text-align:center;color:#555;font-size:12px;padding:16px 0">No upcoming tasks</div>`;
   const upEvents=(_calEventsCache||[]).filter(e=>e.event_date && e.event_date>=todayStr).sort((a,b)=>a.event_date<b.event_date?-1:1).slice(0,4);
-  const evRows=upEvents.length? upEvents.map(e=>{const lbl=e.kind==="contractor"?("★ "+_contractorName(e.contractor_id)):("📦 "+(e.title||"Material"));return `<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:0.5px solid #1e1e1e"><div style="min-width:0"><div style="font-size:12px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(lbl)}</div><div style="font-size:10px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(_propAddr(e.property_id))}</div></div><div style="font-size:10px;color:#f0c674;white-space:nowrap">${_calEsc(e.event_date)}</div></div>`;}).join("") : `<div style="text-align:center;color:#555;font-size:12px;padding:16px 0">No upcoming construction items</div>`;
+  const evRows=upEvents.length? upEvents.map(e=>{const lbl=e.kind==="contractor"?("★ "+_contractorName(e.contractor_id)):("📦 "+(e.title||"Material"));return `<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:0.5px solid #1e1e1e"><div style="min-width:0"><div style="font-size:12px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(lbl)}</div><div style="font-size:10px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(_locLabel(e))}</div></div><div style="font-size:10px;color:#f0c674;white-space:nowrap">${_calEsc(e.event_date)}</div></div>`;}).join("") : `<div style="text-align:center;color:#555;font-size:12px;padding:16px 0">No upcoming construction items</div>`;
   const card=(title,linkLabel,linkFn,body)=>`<div style="background:#111;border:1px solid #2a2a2a;border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
       <div style="padding:10px 14px;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;justify-content:space-between">
         <div style="font-size:12px;font-weight:500;color:#fff">${title}</div>
@@ -3661,9 +3673,9 @@ function threeCalendarWidgets(u){
   // ---- Overdue tasks strip (this person's, or everyone's for directors/super) ----
   const myName=(u?(`${u.firstName||""} ${u.lastName||""}`).trim():"");
   const seeAll=!!(u && (u.isSuperAdmin || u.accessLevel==="full" || u.role==="Project Director"));
-  const overdue=(_tasksCache||[]).filter(t=>t.status==="open" && t.due_date && t.due_date<todayStr && (seeAll || taskAssignees(t).indexOf(myName)>=0)).sort((a,b)=>a.due_date<b.due_date?-1:1);
+  const overdue=(_tasksCache||[]).filter(t=>t.status==="open" && t.due_date && t.due_date<todayStr && (seeAll || _taskHasAssignee(t,myName))).sort((a,b)=>a.due_date<b.due_date?-1:1);
   const overdueRows=overdue.length
-    ? overdue.slice(0,8).map(t=>`<div onclick="openTaskDetail('${t.id}')" style="display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:0.5px solid #2e1c1c;cursor:pointer"><div style="min-width:0"><div style="font-size:12px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.category?`<span style="font-size:9px;background:#4a2020;color:#ffb4a8;padding:1px 6px;border-radius:99px;margin-right:5px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div><div style="font-size:10px;color:#b98a82">${taskAssignees(t).length?_calEsc(taskAssignees(t).join(", ")):"Unassigned"}${t.property_id?" · "+_calEsc(_propAddr(t.property_id)):""}</div></div><div style="font-size:10px;color:#ff8a7a;white-space:nowrap">Due ${_calEsc(t.due_date)}</div></div>`).join("")
+    ? overdue.slice(0,8).map(t=>`<div onclick="openTaskDetail('${t.id}')" style="display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:0.5px solid #2e1c1c;cursor:pointer"><div style="min-width:0"><div style="font-size:12px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.category?`<span style="font-size:9px;background:#4a2020;color:#ffb4a8;padding:1px 6px;border-radius:99px;margin-right:5px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div><div style="font-size:10px;color:#b98a82">${taskAssignees(t).length?_calEsc(taskAssignees(t).join(", ")):"Unassigned"}${_locLabel(t)?" · "+_calEsc(_locLabel(t)):""}</div></div><div style="font-size:10px;color:#ff8a7a;white-space:nowrap">Due ${_calEsc(t.due_date)}</div></div>`).join("")
     : `<div style="text-align:center;color:#666;font-size:12px;padding:14px 0">🎉 Nothing overdue</div>`;
   const overdueCard=`<div style="background:#1a1111;border:1px solid ${overdue.length?'#5a2b2b':'#2a2a2a'};border-radius:10px;overflow:hidden;margin-top:14px">
       <div style="padding:10px 14px;border-bottom:1px solid #2a1a1a;display:flex;align-items:center;justify-content:space-between">
@@ -3983,7 +3995,7 @@ async function pmaToggleEvent(id){
   const now=!e.completed;
   const { error } = await supabase.from("pm_calendar_events").update({completed:now}).eq("id",id);
   if(error){ alert("Couldn't update event: "+(error.message||"")); return; }
-  _logAudit(now?"completed":"reopened","calendar", _propAddr(e.property_id), (e.title||e.kind||"event"));
+  _logAudit(now?"completed":"reopened","calendar", _locLabel(e), (e.title||e.kind||"event"));
   await loadCalendarEventsFromSupabase(); _pmaRerender();
 }
 function openPMAssistantDashboard(activeTab){
@@ -4061,7 +4073,7 @@ function getPMAContent(tab){
 function _pmaDueTasks(holders){
   const today=new Date(); today.setHours(0,0,0,0);
   const todayStr=_ymd(today); const tom=new Date(today); tom.setDate(today.getDate()+1); const tomStr=_ymd(tom);
-  return (_tasksCache||[]).filter(t=>t.status!=="done" && (t.due_date===todayStr||t.due_date===tomStr) && holders.some(n=>taskAssignees(t).includes(n)))
+  return (_tasksCache||[]).filter(t=>t.status!=="done" && (t.due_date===todayStr||t.due_date===tomStr) && holders.some(n=>_taskHasAssignee(t,n)))
     .sort((a,b)=>(a.due_date||'')<(b.due_date||'')?-1:1).map(t=>({...t,_today:t.due_date===todayStr}));
 }
 function _pmaWeekEvents(phases){
@@ -4070,8 +4082,8 @@ function _pmaWeekEvents(phases){
   return (_calEventsCache||[]).filter(e=>e.event_date>=todayStr && e.event_date<=weStr && phases.includes(_propPhase(e.property_id)))
     .sort((a,b)=>a.event_date<b.event_date?-1:1);
 }
-function _pmaTaskRow(t){ return `<div onclick="pmaToggleTask('${t.id}')" title="Click to mark completed" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:0.5px solid #f4f5f7"><div style="min-width:0;flex:1"><div style="font-size:13px;color:#111;font-weight:500">${t.category?`<span style="font-size:10px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:6px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div><div style="font-size:11px;color:#888;margin-top:2px">${t.property_id?_calEsc(_propAddr(t.property_id))+' · ':''}${_calEsc(taskAssignees(t).join(', '))}</div></div><div style="font-size:11px;font-weight:600;color:${t._today?'#c0392b':'#B7791F'};white-space:nowrap">${t.due_date||''} ☐</div></div>`; }
-function _pmaEvRow(e){ const lbl=e.kind==='contractor'?('★ '+_contractorName(e.contractor_id)):(e.kind==='custom'?('• '+(e.title||'Event')):('📦 '+(e.title||'Material'))); const done=!!e.completed; return `<div onclick="pmaToggleEvent('${e.id}')" title="Click to mark completed" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:0.5px solid #f4f5f7;${done?'opacity:0.55;':''}"><div style="min-width:0;flex:1"><div style="font-size:13px;color:#111;font-weight:500;${done?'text-decoration:line-through;':''}">${done?'✓ ':''}${_calEsc(lbl)}</div><div style="font-size:11px;color:#888;margin-top:2px">${_calEsc(_propAddr(e.property_id))}</div></div><div style="font-size:11px;color:#185FA5;white-space:nowrap">${_calEsc(e.event_date)}</div></div>`; }
+function _pmaTaskRow(t){ return `<div onclick="pmaToggleTask('${t.id}')" title="Click to mark completed" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:0.5px solid #f4f5f7"><div style="min-width:0;flex:1"><div style="font-size:13px;color:#111;font-weight:500">${t.category?`<span style="font-size:10px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:6px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div><div style="font-size:11px;color:#888;margin-top:2px">${_locLabel(t)?_calEsc(_locLabel(t))+' · ':''}${_calEsc(taskAssignees(t).join(', '))}</div></div><div style="font-size:11px;font-weight:600;color:${t._today?'#c0392b':'#B7791F'};white-space:nowrap">${t.due_date||''} ☐</div></div>`; }
+function _pmaEvRow(e){ const lbl=e.kind==='contractor'?('★ '+_contractorName(e.contractor_id)):(e.kind==='custom'?('• '+(e.title||'Event')):('📦 '+(e.title||'Material'))); const done=!!e.completed; return `<div onclick="pmaToggleEvent('${e.id}')" title="Click to mark completed" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:0.5px solid #f4f5f7;${done?'opacity:0.55;':''}"><div style="min-width:0;flex:1"><div style="font-size:13px;color:#111;font-weight:500;${done?'text-decoration:line-through;':''}">${done?'✓ ':''}${_calEsc(lbl)}</div><div style="font-size:11px;color:#888;margin-top:2px">${_calEsc(_locLabel(e))}</div></div><div style="font-size:11px;color:#185FA5;white-space:nowrap">${_calEsc(e.event_date)}</div></div>`; }
 function _pmaCard(title,rowsHtml,count,empty){ return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden"><div style="padding:10px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between"><div style="font-size:13px;font-weight:500;color:#111">${title}</div><span style="font-size:10px;background:#f4f5f7;color:#888;padding:2px 8px;border-radius:99px">${count}</span></div><div style="padding:4px 14px 12px">${count?rowsHtml:`<div style="text-align:center;color:#ccc;font-size:12px;padding:18px 0">${empty}</div>`}</div></div>`; }
 // Role landing: compact header + colored count boards (click to drill) + what's on their plate now.
 function pmAssistantRoleView(roleKey){
@@ -4209,7 +4221,7 @@ function onMarketToolsPanel(cards){
   const checklistBox=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden;margin-bottom:12px"><div style="padding:10px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between"><div style="font-size:13px;font-weight:500;color:#111">📋 On-the-Market Checklist</div><span style="font-size:10px;background:#FCEBEB;color:#791F1F;padding:2px 8px;border-radius:99px">${overdue.length} overdue</span></div><div style="padding:4px 14px 12px">${checklistBody}<div style="font-size:10px;color:#bbb;margin-top:8px">Due every 2 weeks. Will auto-fill from CompanyCam once that sync is built — use “Mark done” until then.</div></div></div>`;
   const ids=cards.map(c=>c.id);
   const tasks=(_tasksCache||[]).filter(t=>t.status!=='done' && t.property_id && ids.includes(t.property_id)).sort((a,b)=>(a.due_date||'9999')<(b.due_date||'9999')?-1:1);
-  const tRow=(t)=>`<div onclick="pmaToggleTask('${t.id}')" title="Click to mark completed" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:0.5px solid #f4f5f7"><div style="min-width:0;flex:1"><div style="font-size:12px;color:#111;font-weight:500">${t.category?`<span style="font-size:9px;background:#EEEDFE;color:#3C3489;padding:1px 5px;border-radius:99px;margin-right:5px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div><div style="font-size:10px;color:#999">${_calEsc(_propAddr(t.property_id))}${taskAssignees(t).length?(' · '+_calEsc(taskAssignees(t).join(', '))):''}</div></div><div style="font-size:10px;color:#B7791F;white-space:nowrap">${t.due_date||'—'} ☐</div></div>`;
+  const tRow=(t)=>`<div onclick="pmaToggleTask('${t.id}')" title="Click to mark completed" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:0.5px solid #f4f5f7"><div style="min-width:0;flex:1"><div style="font-size:12px;color:#111;font-weight:500">${t.category?`<span style="font-size:9px;background:#EEEDFE;color:#3C3489;padding:1px 5px;border-radius:99px;margin-right:5px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div><div style="font-size:10px;color:#999">${_calEsc(_locLabel(t))}${taskAssignees(t).length?(' · '+_calEsc(taskAssignees(t).join(', '))):''}</div></div><div style="font-size:10px;color:#B7791F;white-space:nowrap">${t.due_date||'—'} ☐</div></div>`;
   const tasksBox=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden"><div style="padding:10px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between"><div style="font-size:13px;font-weight:500;color:#111">✅ Tasks Needing Completion</div><span style="font-size:10px;background:#FAEEDA;color:#633806;padding:2px 8px;border-radius:99px">${tasks.length}</span></div><div style="padding:4px 14px 12px">${tasks.length?tasks.map(tRow).join(''):`<div style="text-align:center;color:#ccc;font-size:12px;padding:16px 0">No open tasks for on-market properties.</div>`}</div></div>`;
   return checklistBox+tasksBox;
 }
@@ -4263,7 +4275,7 @@ function pmAssistantMainDashboard(){
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:0.5px solid #f4f5f7">
       <div style="min-width:0;flex:1">
         <div style="font-size:13px;color:#111;font-weight:500">${t.category?`<span style="font-size:10px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:6px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div>
-        <div style="font-size:11px;color:#888;margin-top:2px">${t.property_id?_calEsc(_propAddr(t.property_id))+' · ':''}${t.due_date?('Due '+t.due_date):'No due date'}</div>
+        <div style="font-size:11px;color:#888;margin-top:2px">${_locLabel(t)?_calEsc(_locLabel(t))+' · ':''}${t.due_date?('Due '+t.due_date):'No due date'}</div>
       </div>
       ${asgSelect(t.id)}
     </div>`).join('')
@@ -4310,7 +4322,7 @@ function pmAssistantRoleContent(key){
 }
 function _assistantOpenTasks(name){
   const today=(()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;})();
-  return (_tasksCache||[]).filter(t=>t.status!=="done" && taskAssignees(t).includes(name))
+  return (_tasksCache||[]).filter(t=>t.status!=="done" && _taskHasAssignee(t,name))
     .map(t=>({...t, overdue: t.due_date && t.due_date<today}))
     .sort((a,b)=> (a.due_date||'9999')<(b.due_date||'9999')?-1:1);
 }
@@ -4323,7 +4335,7 @@ function pmAssistantTabContent(name){
   const taskRow=(t)=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:0.5px solid #f4f5f7">
       <div onclick="toggleTaskDone('${t.id}')" title="Mark done" style="cursor:pointer;flex:1;min-width:0">
         <div style="font-size:13px;color:#111;font-weight:500">${t.category?`<span style="font-size:10px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:6px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div>
-        <div style="font-size:11px;color:#888;margin-top:2px">${t.property_id?_calEsc(_propAddr(t.property_id))+' · ':''}${t.refer_to?('Questions → '+_calEsc(t.refer_to)):''}</div>
+        <div style="font-size:11px;color:#888;margin-top:2px">${_locLabel(t)?_calEsc(_locLabel(t))+' · ':''}${t.refer_to?('Questions → '+_calEsc(t.refer_to)):''}</div>
       </div>
       <div style="text-align:right;white-space:nowrap"><div style="font-size:11px;font-weight:600;color:${t.overdue?'#c0392b':'#E24B4A'}">${t.overdue?'⚠ Overdue':'Due'}</div><div style="font-size:11px;color:#aaa">${t.due_date||'—'}</div></div>
     </div>`;
@@ -4394,7 +4406,7 @@ function _execStat(label,val,color){
 // A personal dashboard tab for one exec/admin: header + their task stats + open tasks.
 function _personDashView(name, title){
   const today=new Date(); today.setHours(0,0,0,0); const todayStr=_ymd(today);
-  const mine=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status!=="done" && taskAssignees(t).includes(name));
+  const mine=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status!=="done" && _taskHasAssignee(t,name));
   const overdue=mine.filter(t=>t.due_date && t.due_date<todayStr);
   const dueToday=mine.filter(t=>t.due_date===todayStr);
   const rows=mine.slice().sort((a,b)=>(a.due_date||'zzz')<(b.due_date||'zzz')?-1:1).map(_pmaTaskRow).join('');
@@ -4458,8 +4470,8 @@ function _marloTab(){
   // Material orders pulled from the #material-lists Slack channel (stored as tasks with category "Material Order").
   const orders=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status!=='done' && (t.category||'')==='Material Order');
   const orderRows=orders.map(t=>`<div onclick="toggleTaskDone('${t.id}')" title="Click when ordered" style="cursor:pointer;padding:9px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px"><div style="font-weight:500;color:#111">📦 ${_calEsc(t.title)}</div>${t.notes?`<div style="font-size:12px;color:#666;margin-top:2px;white-space:pre-wrap">${_calEsc(t.notes)}</div>`:''}<div style="font-size:10px;color:#B7791F;margin-top:2px">Tap when ordered ✓</div></div>`).join('');
-  const taskRows=tasks.map(t=>`<div style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px"><div style="min-width:0">${t.category?`<span style="font-size:10px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:5px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}<div style="font-size:11px;color:#888">${t.property_id?_calEsc(_propAddr(t.property_id))+' · ':''}${_calEsc(taskAssignees(t).join(', '))}</div></div><span style="font-size:11px;color:#B7791F;white-space:nowrap">${t.due_date}</span></div>`).join('');
-  const matRows=mats.map(e=>`<div style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px"><div style="min-width:0">📦 ${_calEsc(e.title||'Material')}<div style="font-size:11px;color:#888">${_calEsc(_propAddr(e.property_id))}</div></div><span style="font-size:11px;color:#185FA5;white-space:nowrap">${e.event_date}</span></div>`).join('');
+  const taskRows=tasks.map(t=>`<div style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px"><div style="min-width:0">${t.category?`<span style="font-size:10px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:5px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}<div style="font-size:11px;color:#888">${_locLabel(t)?_calEsc(_locLabel(t))+' · ':''}${_calEsc(taskAssignees(t).join(', '))}</div></div><span style="font-size:11px;color:#B7791F;white-space:nowrap">${t.due_date}</span></div>`).join('');
+  const matRows=mats.map(e=>`<div style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px"><div style="min-width:0">📦 ${_calEsc(e.title||'Material')}<div style="font-size:11px;color:#888">${_calEsc(_locLabel(e))}</div></div><span style="font-size:11px;color:#185FA5;white-space:nowrap">${e.event_date}</span></div>`).join('');
   const propRows=list=>list.map(c=>`<div onclick="openPropDetail('${c.id}')" style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px;cursor:pointer"><span>${_calEsc(c.addr)}</span><span style="font-size:11px;color:#888">${c.pm?_calEsc(c.pm):''}</span></div>`).join('');
   const card=(title,rows,count,empty)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden"><div style="padding:10px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between"><div style="font-size:13px;font-weight:600;color:#111">${title}</div><span style="font-size:10px;background:#f4f5f7;color:#888;padding:2px 8px;border-radius:99px">${count}</span></div><div style="padding:4px 14px 12px">${count?rows:`<div style="text-align:center;color:#ccc;font-size:12px;padding:16px 0">${empty}</div>`}</div></div>`;
   return `<div style="padding:20px;max-width:1000px;margin:0 auto">
@@ -5110,11 +5122,34 @@ async function loadContractorsFromSupabase(){
   _contractorsCache = error ? [] : (data||[]);
 }
 async function loadCalendarEventsFromSupabase(){
-  const { data, error } = await supabase.from("pm_calendar_events").select("id,property_id,event_date,kind,title,contractor_id,notes,completed").order("event_date",{ascending:true});
+  let { data, error } = await supabase.from("pm_calendar_events").select("id,property_id,event_date,kind,title,contractor_id,notes,completed,location").order("event_date",{ascending:true});
+  if(error){ // location column may not exist on older DBs — fall back
+    ({ data, error } = await supabase.from("pm_calendar_events").select("id,property_id,event_date,kind,title,contractor_id,notes,completed").order("event_date",{ascending:true}));
+  }
   _calEventsCache = error ? [] : (data||[]);
 }
 function _contractorName(id){ const c=_contractorsCache.find(x=>x.id===id); return c?c.name:"Contractor"; }
 function _propAddr(id){ const p=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===id); return p?p.addr:""; }
+// Reusable free-typed addresses (warehouses, rentals, not-yet-ours properties).
+// Only added when the user explicitly checks "save this address".
+let _savedAddrCache = [];
+async function loadSavedAddresses(){
+  const { data, error } = await supabase.from("pm_saved_addresses").select("id,address").order("address",{ascending:true});
+  _savedAddrCache = error ? [] : (data||[]);
+}
+// Save an address for reuse, avoiding duplicates (case-insensitive).
+async function _saveAddressForReuse(addr){
+  addr=(addr||"").trim(); if(!addr) return;
+  if(_savedAddrCache.some(a=>(a.address||"").trim().toLowerCase()===addr.toLowerCase())) return;
+  const { error } = await supabase.from("pm_saved_addresses").insert({ address:addr });
+  if(!error) await loadSavedAddresses();
+}
+// <option> list of saved addresses for a property/location picker.
+function _savedAddrOptions(sel){
+  return _savedAddrCache.map(a=>`<option value="addr::${_calEsc(a.address)}" ${sel===("addr::"+a.address)?"selected":""}>${_calEsc(a.address)}</option>`).join("");
+}
+// The address/location to display for a task or event: real property, else free address.
+function _locLabel(o){ if(o&&o.property_id) return _propAddr(o.property_id)||""; return (o&&o.location)||""; }
 // Distinct custom construction-calendar types currently in use. Derived from the
 // events themselves, so a type stays selectable while any event uses it and
 // disappears automatically once none remain.
@@ -5128,7 +5163,15 @@ function _customCalTypes(){
 function teamMembers(){
   const base = getUsers()
     .filter(u => u.status==="approved" && (u.role||"").trim().toLowerCase()!=="other")
-    .map(u => (`${u.firstName||""} ${u.lastName||""}`).trim())
+    .map(u => {
+      const nm = (`${u.firstName||""} ${u.lastName||""}`).trim();
+      if(nm) return nm;
+      // No name saved yet — fall back to the email's name part so the person
+      // still shows up on the task list instead of silently disappearing.
+      const em = (u.email||"").trim();
+      if(em){ const lp = em.split("@")[0].replace(/[._]+/g," ").trim(); if(lp) return lp.replace(/\b\w/g, c=>c.toUpperCase()); }
+      return "";
+    })
     .filter(n => n);
   // Team members who don't have a login account yet but still get assigned tasks.
   const extra = ["Jenn"];
@@ -5257,7 +5300,7 @@ function calToday(){ _calState.day=_ymd(new Date()); _calRerender(); }
 function renderConstructionCalendar(){
   const st=_calState;
   if(st.y==null){ const d=new Date(); st.y=d.getFullYear(); st.m=d.getMonth(); }
-  if(!st.loaded){ st.loaded=true; Promise.all([loadContractorsFromSupabase(), loadCalendarEventsFromSupabase()]).then(_calRerender); }
+  if(!st.loaded){ st.loaded=true; Promise.all([loadContractorsFromSupabase(), loadCalendarEventsFromSupabase(), loadSavedAddresses()]).then(_calRerender); }
   const props=(typeof propCards!=='undefined'?propCards:[]);
   const ro=isReadOnly();
   // property selector: All Properties button + a "Select a property" dropdown (scales to 50+)
@@ -5297,7 +5340,7 @@ function renderConstructionCalendar(){
               : ("📦 "+(e.title||'Material'));
     const bg = e.kind==="contractor"?"#1a2744":e.kind==="custom"?"#EEEDFE":"#E6F1FB";
     const col= e.kind==="contractor"?"#fff":e.kind==="custom"?"#3C3489":"#0C447C";
-    return `<div onclick="event.stopPropagation();toggleCalEventDone('${e.id}')" title="${done?'Completed — click to reopen':'Click to mark completed'}: ${_calEsc(e.title||lbl)}" style="cursor:pointer;font-size:10px;background:${bg};color:${col};border-radius:4px;padding:2px 5px;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${deco}">${done?'✓ ':''}${_calEsc(lbl)}</div>`;
+    return `<div onclick="event.stopPropagation();openCalEventDetail('${e.id}')" title="Click to open / edit / delete: ${_calEsc(e.title||lbl)}" style="cursor:pointer;font-size:10px;background:${bg};color:${col};border-radius:4px;padding:2px 5px;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${deco}">${done?'✓ ':''}${_calEsc(lbl)}</div>`;
   };
   const cells=[];
   for(let i=0;i<startDow;i++){ cells.push(`<div style="background:#fafbfc;min-height:92px;border:0.5px solid #edf0f4"></div>`); }
@@ -5325,7 +5368,7 @@ function renderConstructionCalendar(){
     const isToday=dayStr===todayStr;
     const rowFor=(e)=>{ const done=!!e.completed;
       const lbl = e.kind==="contractor" ? ("★ Contractor start — "+_contractorName(e.contractor_id)) : e.kind==="custom" ? ("• "+(e.title||'Event')) : ("📦 Material delivery — "+(e.title||'Material'));
-      return `<div onclick="toggleCalEventDone('${e.id}')" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:0.5px solid #f1f3f7;${done?'opacity:0.6;':''}"><div style="min-width:0"><div style="font-size:14px;font-weight:500;color:#111;${done?'text-decoration:line-through;':''}">${done?'✓ ':''}${_calEsc(lbl)}</div><div style="font-size:12px;color:#888;margin-top:2px">${_calEsc(_propAddr(e.property_id)||'—')}</div></div><div style="font-size:11px;color:${done?'#3B6D11':'#B7791F'};white-space:nowrap">${done?'Done':'Tap ✓'}</div></div>`; };
+      return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:0.5px solid #f1f3f7;${done?'opacity:0.6;':''}"><div onclick="event.stopPropagation();toggleCalEventDone('${e.id}')" title="Mark ${done?'not done':'done'}" style="font-size:20px;cursor:pointer;line-height:1">${done?'✅':'⬜'}</div><div onclick="openCalEventDetail('${e.id}')" style="cursor:pointer;min-width:0;flex:1"><div style="font-size:14px;font-weight:500;color:#111;${done?'text-decoration:line-through;':''}">${_calEsc(lbl)}</div><div style="font-size:12px;color:#888;margin-top:2px">${_calEsc(_locLabel(e)||'—')}</div></div><div onclick="openCalEventDetail('${e.id}')" style="font-size:11px;color:#888;white-space:nowrap;cursor:pointer">Edit ›</div></div>`; };
     const dayBody=evs.length?`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">${evs.map(rowFor).join("")}</div>`:`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:34px;text-align:center;color:#bbb;font-size:13px">Nothing scheduled for this day.</div>`;
     return `<div style="padding:20px;max-width:760px;margin:0 auto">
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">${allBtn}${propSelect}${pmSelect}</div>
@@ -5372,7 +5415,7 @@ function openAddCalEvent(dateStr){
     <h2>Add to construction calendar</h2>
     <div class="error-msg" id="cal-err"></div>
     <div class="form-row"><label>Date</label><input type="date" id="cal-date" value="${_calEsc(dateStr||"")}" /></div>
-    <div class="form-row"><label>Property</label><select id="cal-prop"><option value="">— Select property —</option>${propOpts}</select></div>
+    ${_calAddrField("cal",null,null,"")}
     <div class="form-row"><label>Type</label>
       <select id="cal-kind" onchange="_calToggleKind()">
         <option value="material">📦 Material delivery</option>
@@ -5413,17 +5456,46 @@ function _calContractorChange(){
   const v=document.getElementById("cal-contractor").value;
   document.getElementById("cal-newc").style.display = v==="__new"?"":"none";
 }
+// Construction-calendar property/address picker (desktop). pfx is "cal" (add) or
+// "cale" (edit). Works like the task picker: a property, a saved address, or any typed address.
+function _calAddrField(pfx, propId, loc, dis){
+  const props=(typeof propCards!=='undefined'?propCards:[]);
+  const propOpts=props.map(p=>`<option value="${p.id}" ${propId===p.id?"selected":""}>${_calEsc(p.addr)}</option>`).join("");
+  const savedMatch = loc && _savedAddrCache.some(a=>a.address===loc);
+  const isOther = !!loc && !propId && !savedMatch;
+  const savedOpts = _savedAddrCache.map(a=>`<option value="addr::${_calEsc(a.address)}" ${(!propId&&loc===a.address)?"selected":""}>${_calEsc(a.address)}</option>`).join("");
+  return `<div class="form-row"><label>Property / address</label>
+      <select id="${pfx}-prop" onchange="_calAddrToggle('${pfx}')" ${dis||""}>
+        <option value="">— Select property —</option>
+        ${propOpts?`<optgroup label="Our properties">${propOpts}</optgroup>`:""}
+        ${savedOpts?`<optgroup label="Saved addresses">${savedOpts}</optgroup>`:""}
+        <option value="__other" ${isOther?"selected":""}>＋ Other address…</option>
+      </select>
+    </div>
+    <div class="form-row" id="${pfx}-addr-row" style="display:${isOther?'':'none'}">
+      <label>Address</label>
+      <input type="text" id="${pfx}-addr" value="${isOther?_calEsc(loc):''}" placeholder="Type any address — warehouse, rental, not-yet-ours…" ${dis||""} />
+      <label style="display:flex;align-items:center;gap:7px;margin-top:6px;font-size:12px;color:#555;cursor:pointer"><input type="checkbox" id="${pfx}-addr-save" ${dis||""} /> Save this address so I can pick it next time</label>
+    </div>`;
+}
+function _calAddrToggle(pfx){ const el=document.getElementById(pfx+"-prop"); const r=document.getElementById(pfx+"-addr-row"); if(el&&r) r.style.display = el.value==="__other"?"":"none"; }
+function _calResolveAddr(pfx){
+  const v=(document.getElementById(pfx+"-prop")||{}).value||"";
+  if(v==="__other"){ const loc=((document.getElementById(pfx+"-addr")||{}).value||"").trim()||null; const sv=document.getElementById(pfx+"-addr-save"); return {property_id:null,location:loc,saveAddr:!!(sv&&sv.checked)}; }
+  if(v.indexOf("addr::")===0) return {property_id:null,location:v.slice(6),saveAddr:false};
+  return {property_id:v||null,location:null,saveAddr:false};
+}
 async function saveCalEvent(){
   if(_blockIfReadOnly()) return;
   const err=document.getElementById("cal-err");
   const showE=(m)=>{ if(err){err.textContent=m;err.style.display="block";} };
   if(err) err.style.display="none";
   const date=document.getElementById("cal-date").value;
-  const prop=document.getElementById("cal-prop").value;
+  const _pl=_calResolveAddr("cal"); const prop=_pl.property_id; const location=_pl.location;
   const kindSel=document.getElementById("cal-kind").value;
   const notes=(document.getElementById("cal-notes").value||"").trim();
   if(!date){ showE("Pick a date."); return; }
-  if(!prop){ showE("Pick a property."); return; }
+  if(!prop && !location){ showE("Pick a property or type an address."); return; }
   let kind=kindSel, title=null, contractorId=null;
   if(kindSel==="material"){
     title=(document.getElementById("cal-title").value||"").trim();
@@ -5447,9 +5519,10 @@ async function saveCalEvent(){
       await loadContractorsFromSupabase();
     } else if(!contractorId){ showE("Pick a contractor (or add a new one)."); return; }
   }
-  const { error } = await supabase.from("pm_calendar_events").insert({ property_id:prop, event_date:date, kind, title, contractor_id:contractorId, notes });
+  const { error } = await supabase.from("pm_calendar_events").insert({ property_id:prop, location, event_date:date, kind, title, contractor_id:contractorId, notes });
   if(error){ showE("Failed to save: "+(error.message||"unknown error")); return; }
-  _logAudit("created","calendar", _propAddr(prop), kind==="contractor"?("Contractor start: "+_contractorName(contractorId)):(kind==="custom"?("Custom: "+title):("Material delivery: "+title)));
+  if(_pl.saveAddr && location) await _saveAddressForReuse(location);
+  _logAudit("created","calendar", prop?_propAddr(prop):location, kind==="contractor"?("Contractor start: "+_contractorName(contractorId)):(kind==="custom"?("Custom: "+title):("Material delivery: "+title)));
   await loadCalendarEventsFromSupabase();
   closeModal("calevent-modal");
   _calRerender();
@@ -5461,17 +5534,141 @@ async function toggleCalEventDone(id){
   const now=!e.completed;
   const { error } = await supabase.from("pm_calendar_events").update({ completed:now }).eq("id",id);
   if(error){ alert("Couldn't update event: "+(error.message||"")); return; }
-  _logAudit(now?"completed":"reopened","calendar", _propAddr(e.property_id), (e.title||e.kind||"event"));
+  _logAudit(now?"completed":"reopened","calendar", _locLabel(e), (e.title||e.kind||"event"));
   await loadCalendarEventsFromSupabase();
   const pd=document.getElementById("pd-content");
   if(pd){ if(typeof _calState!=='undefined' && _calState.loaded) _calRerender(); }
+  if(typeof _mRender==='function') _mRender();
+}
+
+// ---- View / edit / delete a construction event ----
+function openCalEventDetail(id){
+  const e=(_calEventsCache||[]).find(x=>x.id===id); if(!e){ alert("Event not found."); return; }
+  const ro=isReadOnly();
+  const props=(typeof propCards!=='undefined'?propCards:[]);
+  const propOpts=props.map(p=>`<option value="${p.id}" ${e.property_id===p.id?"selected":""}>${_calEsc(p.addr)}</option>`).join("");
+  const contractorOpts=_contractorsCache.map(c=>`<option value="${c.id}" ${e.contractor_id===c.id?"selected":""}>${_calEsc(c.name)}</option>`).join("");
+  // Build the Type dropdown with the current value preselected.
+  const custom=_customCalTypes();
+  const isCustom=(e.kind==="custom");
+  const isContractor=(e.kind==="contractor");
+  const isMaterial=(e.kind==="material");
+  // Ensure the current custom title is present as an option even if not in the saved list.
+  const customList=isCustom && e.title && custom.indexOf(e.title)<0 ? [e.title].concat(custom) : custom;
+  const done=!!e.completed;
+  const dis=ro?"disabled":"";
+  const html=`
+    <button class="modal-close" onclick="closeModal('calevent-modal')">✕</button>
+    <h2>${ro?'Construction event':'Edit construction event'}</h2>
+    <div class="error-msg" id="cale-err"></div>
+    ${ro?'<div style="font-size:12px;color:#999;margin-bottom:10px">You have read-only access — you can view this but not change it.</div>':`
+    <button class="btn-full" style="background:${done?'#eef4ea':'#e8f0fe'};color:${done?'#3B6D11':'#1a56db'};margin-bottom:14px" onclick="toggleCalEventDone('${e.id}');closeModal('calevent-modal')">${done?'✓ Completed — tap to reopen':'Mark completed'}</button>`}
+    <div class="form-row"><label>Date</label><input type="date" id="cale-date" value="${_calEsc(e.event_date||"")}" ${dis} /></div>
+    ${_calAddrField("cale", e.property_id, e.location, dis)}
+    <div class="form-row"><label>Type</label>
+      <select id="cale-kind" onchange="_caleToggleKind()" ${dis}>
+        <option value="material" ${isMaterial?"selected":""}>📦 Material delivery</option>
+        <option value="contractor" ${isContractor?"selected":""}>★ Contractor start</option>
+        ${customList.length?('<optgroup label="Custom types">'+customList.map(t=>`<option value="custom::${_calEsc(t)}" ${isCustom&&e.title===t?"selected":""}>• ${_calEsc(t)}</option>`).join("")+'</optgroup>'):""}
+        <option value="__newcustom">＋ Add custom type…</option>
+      </select>
+    </div>
+    <div class="form-row" id="cale-material-row" style="display:${isMaterial?'':'none'}"><label>What's being delivered</label><input type="text" id="cale-title" value="${isMaterial?_calEsc(e.title||''):''}" placeholder="e.g. Cabinets, flooring, windows" ${dis} /></div>
+    <div class="form-row" id="cale-custom-row" style="display:none"><label>New custom type</label><input type="text" id="cale-custom" placeholder="e.g. Drawings due, inspection" ${dis} /></div>
+    <div id="cale-contractor-row" style="display:${isContractor?'':'none'}">
+      <div class="form-row"><label>Contractor</label>
+        <select id="cale-contractor" onchange="_caleContractorChange()" ${dis}>
+          <option value="">— Select saved contractor —</option>
+          ${contractorOpts}
+          <option value="__new">＋ Add new contractor…</option>
+        </select>
+      </div>
+      <div id="cale-newc" style="display:none">
+        <div class="form-two">
+          <div class="form-row"><label>New contractor name</label><input type="text" id="cale-newc-name" placeholder="Company or person" ${dis} /></div>
+          <div class="form-row"><label>Phone</label><input type="text" id="cale-newc-phone" placeholder="(614) 555-0100" ${dis} /></div>
+        </div>
+      </div>
+    </div>
+    <div class="form-row"><label>Notes (optional)</label><input type="text" id="cale-notes" value="${_calEsc(e.notes||'')}" placeholder="Anything the team should know" ${dis} /></div>
+    ${ro?'':`
+    <button class="btn-full" onclick="saveCalEventEdit('${e.id}')">Save changes</button>
+    <div style="text-align:center;margin-top:12px"><a onclick="deleteCalEvent('${e.id}')" style="color:#c0392b;cursor:pointer;font-size:13px">Delete this event</a></div>`}`;
+  document.getElementById("calevent-inner").innerHTML=html;
+  openModal("calevent-modal");
+}
+function _caleToggleKind(){
+  const kind=document.getElementById("cale-kind").value;
+  document.getElementById("cale-material-row").style.display = kind==="material"?"":"none";
+  document.getElementById("cale-custom-row").style.display = kind==="__newcustom"?"":"none";
+  document.getElementById("cale-contractor-row").style.display = kind==="contractor"?"":"none";
+}
+function _caleContractorChange(){
+  const v=document.getElementById("cale-contractor").value;
+  document.getElementById("cale-newc").style.display = v==="__new"?"":"none";
+}
+async function saveCalEventEdit(id){
+  if(_blockIfReadOnly()) return;
+  const err=document.getElementById("cale-err");
+  const showE=(m)=>{ if(err){err.textContent=m;err.style.display="block";} };
+  if(err) err.style.display="none";
+  const date=document.getElementById("cale-date").value;
+  const _pl=_calResolveAddr("cale"); const prop=_pl.property_id; const location=_pl.location;
+  const kindSel=document.getElementById("cale-kind").value;
+  const notes=(document.getElementById("cale-notes").value||"").trim();
+  if(!date){ showE("Pick a date."); return; }
+  if(!prop && !location){ showE("Pick a property or type an address."); return; }
+  let kind=kindSel, title=null, contractorId=null;
+  if(kindSel==="material"){
+    title=(document.getElementById("cale-title").value||"").trim();
+    if(!title){ showE("Enter what's being delivered."); return; }
+  } else if(kindSel==="__newcustom"){
+    kind="custom";
+    title=(document.getElementById("cale-custom").value||"").trim();
+    if(!title){ showE("Type a name for your custom type."); return; }
+  } else if(kindSel.indexOf("custom::")===0){
+    kind="custom";
+    title=kindSel.slice(8);
+  } else {
+    kind="contractor";
+    contractorId=document.getElementById("cale-contractor").value;
+    if(contractorId==="__new"){
+      const nm=(document.getElementById("cale-newc-name").value||"").trim();
+      const ph=(document.getElementById("cale-newc-phone").value||"").trim();
+      if(!nm){ showE("Enter the new contractor's name."); return; }
+      const ins=await supabase.from("pm_contractors").insert({name:nm,phone:ph}).select("id").single();
+      if(ins.error){ showE("Couldn't save contractor: "+(ins.error.message||"")); return; }
+      contractorId=ins.data.id;
+      await loadContractorsFromSupabase();
+    } else if(!contractorId){ showE("Pick a contractor (or add a new one)."); return; }
+  }
+  const { error } = await supabase.from("pm_calendar_events").update({ property_id:prop, location, event_date:date, kind, title, contractor_id:contractorId, notes }).eq("id",id);
+  if(error){ showE("Failed to save: "+(error.message||"unknown error")); return; }
+  if(_pl.saveAddr && location) await _saveAddressForReuse(location);
+  _logAudit("edited","calendar", prop?_propAddr(prop):location, kind==="contractor"?("Contractor start: "+_contractorName(contractorId)):(kind==="custom"?("Custom: "+title):("Material delivery: "+title)));
+  await loadCalendarEventsFromSupabase();
+  closeModal("calevent-modal");
+  if(typeof _calState!=='undefined' && _calState.loaded) _calRerender();
+  if(typeof _mRender==='function') _mRender();
+}
+async function deleteCalEvent(id){
+  if(_blockIfReadOnly()) return;
+  const e=(_calEventsCache||[]).find(x=>x.id===id);
+  if(!confirm("Delete this construction event? This can't be undone.")) return;
+  const { error } = await supabase.from("pm_calendar_events").delete().eq("id",id);
+  if(error){ alert("Couldn't delete: "+(error.message||"")); return; }
+  if(e) _logAudit("deleted","calendar", _locLabel(e), (e.title||e.kind||"event"));
+  await loadCalendarEventsFromSupabase();
+  closeModal("calevent-modal");
+  if(typeof _calState!=='undefined' && _calState.loaded) _calRerender();
+  if(typeof _mRender==='function') _mRender();
 }
 
 // ===================== TASK SYSTEM + TASK CALENDAR =====================
 let _tasksCache = [];
 async function loadTasks(){
-  let { data, error } = await supabase.from("pm_tasks").select("id,title,assignee,assignees,due_date,start_date,category,refer_to,status,property_id,notes,comments").order("due_date",{ascending:true});
-  if(error){ // comments column may not exist yet on older DBs — fall back gracefully
+  let { data, error } = await supabase.from("pm_tasks").select("id,title,assignee,assignees,due_date,start_date,category,refer_to,status,property_id,notes,comments,location").order("due_date",{ascending:true});
+  if(error){ // some columns may not exist yet on older DBs — fall back gracefully
     ({ data, error } = await supabase.from("pm_tasks").select("id,title,assignee,assignees,due_date,start_date,category,refer_to,status,property_id,notes").order("due_date",{ascending:true}));
   }
   _tasksCache = error ? [] : (data||[]);
@@ -5482,6 +5679,20 @@ function taskAssignees(t){
   if(Array.isArray(t.assignees) && t.assignees.length) return t.assignees.filter(Boolean);
   return t.assignee ? [t.assignee] : [];
 }
+// Tolerant name compare so a task assigned to "Bruce" still matches "Bruce Barlett"
+// (and vice-versa) after someone's profile name is filled in or changed. Matches
+// on exact name, or on shared first name when one side is a bare first name.
+function _sameAssignee(a,b){
+  a=(a||"").trim().toLowerCase(); b=(b||"").trim().toLowerCase();
+  if(!a||!b) return false;
+  if(a===b) return true;
+  const af=a.split(" ")[0], bf=b.split(" ")[0];
+  // Only fall back to first-name match when one side is a single word (bare first name).
+  if((a.indexOf(" ")<0 || b.indexOf(" ")<0) && af===bf) return true;
+  return false;
+}
+// Does task t belong to the person "name" (tolerant of first-name-only assignments)?
+function _taskHasAssignee(t,name){ return taskAssignees(t).some(a=>_sameAssignee(a,name)); }
 const _taskCal = { y:null, m:null, day:null, view:"month", assignee:"all", loaded:false };
 function _taskRerender(){ const el=document.getElementById("pd-content"); if(el) el.innerHTML=renderTaskCalendar(); }
 function taskCalPrev(){ _taskCal.m--; if(_taskCal.m<0){_taskCal.m=11;_taskCal.y--;} _taskRerender(); }
@@ -5495,14 +5706,14 @@ function taskToday(){ _taskCal.day=_ymd(new Date()); _taskRerender(); }
 function renderTaskCalendar(){
   const st=_taskCal;
   if(st.y==null){ const d=new Date(); st.y=d.getFullYear(); st.m=d.getMonth(); }
-  if(!st.loaded){ st.loaded=true; loadTasks().then(_taskRerender); }
+  if(!st.loaded){ st.loaded=true; Promise.all([loadTasks(), loadSavedAddresses()]).then(_taskRerender); }
   const ro=isReadOnly();
   const assignees=["all"].concat(teamMembers()).concat(["Unassigned"]);
   const chip=(a)=>{ const lbl=a==="all"?"All":a; return `<div onclick="taskSetAssignee('${_calEsc(a).replace(/'/g,"\\'")}')" style="padding:5px 12px;font-size:11px;cursor:pointer;border-radius:999px;${st.assignee===a?'background:#111;color:#fff':'background:#fff;color:#666;border:0.5px solid #ddd'}">${_calEsc(lbl)}</div>`; };
   const filterBar=assignees.map(chip).join("");
   const first=new Date(st.y,st.m,1),startDow=first.getDay(),daysInMonth=new Date(st.y,st.m+1,0).getDate();
   const todayStr=(()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;})();
-  const _asgMatch=(t)=>{ const a=taskAssignees(t); return st.assignee==="all" || (st.assignee==="Unassigned"? a.length===0 : a.includes(st.assignee)); };
+  const _asgMatch=(t)=>{ const a=taskAssignees(t); return st.assignee==="all" || (st.assignee==="Unassigned"? a.length===0 : _taskHasAssignee(t,st.assignee)); };
   // A task can appear twice: a "start" marker on its start date and a "due"
   // marker on its due date. It does NOT fill in the days between.
   const tasksForDay=(day)=>{
@@ -5550,7 +5761,7 @@ function renderTaskCalendar(){
     });
     entries.sort((a,b)=>(a.t.status==="done"?1:0)-(b.t.status==="done"?1:0));
     const rowFor=(en)=>{ const t=en.t, done=t.status==="done"; const mk=en.marker==="start"?"▶ Start — ":(en.marker==="due"?"■ Due — ":""); const who=taskAssignees(t); const whoS=who.length?who.join(", "):"Unassigned";
-      return `<div style="display:flex;align-items:center;gap:11px;padding:12px 14px;border-bottom:0.5px solid #f1f3f7;${done?'opacity:0.6;':''}"><div onclick="event.stopPropagation();toggleTaskDone('${t.id}')" title="Mark ${done?'open':'done'}" style="font-size:20px;cursor:pointer;line-height:1">${done?'✅':'⬜'}</div><div onclick="openTaskDetail('${t.id}')" style="cursor:pointer;flex:1;min-width:0"><div style="font-size:14px;font-weight:500;color:#111;${done?'text-decoration:line-through;':''}">${mk}${t.category?`<span style="font-size:10px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:5px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div><div style="font-size:12px;color:#888;margin-top:2px">${t.property_id?_calEsc(_propAddr(t.property_id))+' · ':''}${_calEsc(whoS)}</div>${t.notes?`<div style="font-size:11px;color:#999;margin-top:3px;white-space:pre-wrap">💬 ${_calEsc(t.notes)}</div>`:''}</div><div onclick="openTaskDetail('${t.id}')" style="font-size:11px;color:#888;white-space:nowrap;cursor:pointer">Edit ›</div></div>`; };
+      return `<div style="display:flex;align-items:center;gap:11px;padding:12px 14px;border-bottom:0.5px solid #f1f3f7;${done?'opacity:0.6;':''}"><div onclick="event.stopPropagation();toggleTaskDone('${t.id}')" title="Mark ${done?'open':'done'}" style="font-size:20px;cursor:pointer;line-height:1">${done?'✅':'⬜'}</div><div onclick="openTaskDetail('${t.id}')" style="cursor:pointer;flex:1;min-width:0"><div style="font-size:14px;font-weight:500;color:#111;${done?'text-decoration:line-through;':''}">${mk}${t.category?`<span style="font-size:10px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:5px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div><div style="font-size:12px;color:#888;margin-top:2px">${_locLabel(t)?_calEsc(_locLabel(t))+' · ':''}${_calEsc(whoS)}</div>${t.notes?`<div style="font-size:11px;color:#999;margin-top:3px;white-space:pre-wrap">💬 ${_calEsc(t.notes)}</div>`:''}</div><div onclick="openTaskDetail('${t.id}')" style="font-size:11px;color:#888;white-space:nowrap;cursor:pointer">Edit ›</div></div>`; };
     const dayBody=entries.length?`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">${entries.map(rowFor).join("")}</div>`:`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:34px;text-align:center;color:#bbb;font-size:13px">No tasks starting or due this day.</div>`;
     return `<div style="padding:20px;max-width:760px;margin:0 auto">
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">${viewToggle}<div style="display:flex;gap:6px;flex-wrap:wrap">${filterBar}</div>${addTop}</div>
@@ -5639,7 +5850,7 @@ function openAddTask(dateStr){
       </div>
       <div class="form-row" id="task-repeat-until-row" style="display:none"><label>Repeat until</label><input type="date" id="task-repeat-until" /><div style="font-size:11px;color:#999;margin-top:4px">Leave blank to repeat for the next 3 months.</div></div>
     </div>
-    <div class="form-row"><label>Property (optional)</label><select id="task-prop"><option value="">— None —</option>${propOpts}</select></div>
+    ${_taskPropField(null,null,"")}
     <div class="form-row"><label>Refer questions to (optional)</label><input type="text" id="task-refer" list="task-refer-list" placeholder="Type or pick a name" /><datalist id="task-refer-list">${referList}</datalist></div>
     <div class="form-row"><label>Notes / comments (optional)</label><textarea id="task-notes" rows="2" placeholder="Details" style="width:100%"></textarea></div>
     <input type="hidden" id="task-edit-id" value="" />
@@ -5709,7 +5920,7 @@ function openTaskDetail(id){
       <div class="form-row"><label>Start date (optional)</label><input type="date" id="task-start" value="${_calEsc(t.start_date||'')}" ${dis} /></div>
       <div class="form-row"><label>Due date</label><input type="date" id="task-due" value="${_calEsc(t.due_date||'')}" ${dis} /></div>
     </div>
-    <div class="form-row"><label>Property (optional)</label><select id="task-prop" ${dis}><option value="">— None —</option>${propOpts}</select></div>
+    ${_taskPropField(t.property_id, t.location, dis)}
     <div class="form-row"><label>Refer questions to (optional)</label><input type="text" id="task-refer" list="task-refer-list" value="${_calEsc(t.refer_to||'')}" ${dis} /><datalist id="task-refer-list">${referList}</datalist></div>
     <div class="form-row"><label>Notes <span style="font-weight:400;color:#999;font-size:11px">— task description / details</span></label><textarea id="task-notes" rows="2" ${dis} style="width:100%">${_calEsc(t.notes||'')}</textarea></div>
     <div class="form-row"><label>💬 Comments <span style="font-weight:400;color:#999;font-size:11px">— a running log, kept forever</span></label>
@@ -5746,7 +5957,7 @@ function _recurDueDates(dueStr, mode, untilStr){
   if(!dueStr || !mode || mode==="none") return out;
   const until = untilStr || _dAddMonths(dueStr,3); // default horizon: 3 months
   let cur=dueStr, guard=0;
-  while(guard++ < 60){ // hard cap so a stray "until" can't create thousands of rows
+  while(guard++ < 400){ // hard cap so a stray "until" can't create thousands of rows (covers daily for ~13 months)
     let next;
     if(mode==="daily") next=_dAddDays(cur,1);
     else if(mode==="weekly") next=_dAddDays(cur,7);
@@ -5757,6 +5968,41 @@ function _recurDueDates(dueStr, mode, untilStr){
     out.push(next); cur=next;
   }
   return out;
+}
+// Property/address picker for the task form. Lets you pick one of our properties,
+// a previously-saved address, or type any address (warehouse, rental, a property
+// not yet ours). Typed addresses are only saved for reuse if the box is ticked.
+function _taskPropField(propId, loc, dis){
+  const props=(typeof propCards!=='undefined'?propCards:[]);
+  const propOpts=props.map(p=>`<option value="${p.id}" ${propId===p.id?"selected":""}>${_calEsc(p.addr)}</option>`).join("");
+  const savedMatch = loc && _savedAddrCache.some(a=>a.address===loc);
+  const isOther = !!loc && !propId && !savedMatch;
+  const savedOpts = _savedAddrCache.map(a=>`<option value="addr::${_calEsc(a.address)}" ${(!propId&&loc===a.address)?"selected":""}>${_calEsc(a.address)}</option>`).join("");
+  return `<div class="form-row"><label>Property / address (optional)</label>
+      <select id="task-prop" onchange="_taskPropChange()" ${dis||""}>
+        <option value="">— None —</option>
+        ${propOpts?`<optgroup label="Our properties">${propOpts}</optgroup>`:""}
+        ${savedOpts?`<optgroup label="Saved addresses">${savedOpts}</optgroup>`:""}
+        <option value="__other" ${isOther?"selected":""}>＋ Other address…</option>
+      </select>
+    </div>
+    <div class="form-row" id="task-otheraddr-row" style="display:${isOther?'':'none'}">
+      <label>Address</label>
+      <input type="text" id="task-otheraddr" value="${isOther?_calEsc(loc):''}" placeholder="Type any address — warehouse, rental, not-yet-ours…" ${dis||""} />
+      <label style="display:flex;align-items:center;gap:7px;margin-top:6px;font-size:12px;color:#555;cursor:pointer"><input type="checkbox" id="task-otheraddr-save" ${dis||""} /> Save this address so I can pick it next time</label>
+    </div>`;
+}
+function _taskPropChange(){ const el=document.getElementById("task-prop"); const r=document.getElementById("task-otheraddr-row"); if(el&&r) r.style.display = el.value==="__other"?"":"none"; }
+// Resolve the task property/address picker into {property_id, location, saveAddr}.
+function _resolveTaskProp(){
+  const v=(document.getElementById("task-prop")||{}).value||"";
+  if(v==="__other"){
+    const loc=(document.getElementById("task-otheraddr")||{}).value||"";
+    const sv=document.getElementById("task-otheraddr-save");
+    return { property_id:null, location:loc.trim()||null, saveAddr:!!(sv&&sv.checked) };
+  }
+  if(v.indexOf("addr::")===0) return { property_id:null, location:v.slice(6), saveAddr:false };
+  return { property_id:v||null, location:null, saveAddr:false };
 }
 async function saveTask(){
   if(_blockIfReadOnly()) return;
@@ -5771,7 +6017,7 @@ async function saveTask(){
   const asg=asgArr[0]||null; // legacy single-assignee mirror
   const start=document.getElementById("task-start").value||null;
   const due=document.getElementById("task-due").value||null;
-  const prop=document.getElementById("task-prop").value||null;
+  const _pl=_resolveTaskProp(); const prop=_pl.property_id; const location=_pl.location;
   const refer=(document.getElementById("task-refer").value||"").trim()||null;
   const notes=(document.getElementById("task-notes").value||"").trim()||null;
   if(!title){ showE("Enter a task."); return; }
@@ -5780,8 +6026,9 @@ async function saveTask(){
   const _eidEl=document.getElementById("task-edit-id");
   const editId=(_eidEl && _eidEl.value) ? _eidEl.value : "";
   if(editId){
-    const { error } = await supabase.from("pm_tasks").update({ title, category, assignee:asg, assignees:asgArr, start_date:start, due_date:due, property_id:prop, refer_to:refer, notes }).eq("id",editId);
+    const { error } = await supabase.from("pm_tasks").update({ title, category, assignee:asg, assignees:asgArr, start_date:start, due_date:due, property_id:prop, location, refer_to:refer, notes }).eq("id",editId);
     if(error){ showE("Failed to save: "+(error.message||"")); return; }
+    if(_pl.saveAddr && location) await _saveAddressForReuse(location);
     _logAudit("updated","task", category?(category+": "+title):title, asgArr.length?("Assigned to "+asgArr.join(", ")):"Unassigned");
     await loadTasks();
     closeModal("task-modal");
@@ -5793,17 +6040,18 @@ async function saveTask(){
   if(runtil && runtil<due){ showE("'Repeat until' can't be before the due date."); return; }
   const dueList=_recurDueDates(due, repeat, runtil);
   const offDays=(start!=null)?Math.round((_dParse(due)-_dParse(start))/86400000):null;
-  const rows=dueList.map(d=>({ title, category, assignee:asg, assignees:asgArr, start_date:(offDays!=null?_dAddDays(d,-offDays):null), due_date:d, property_id:prop, refer_to:refer, notes }));
+  const rows=dueList.map(d=>({ title, category, assignee:asg, assignees:asgArr, start_date:(offDays!=null?_dAddDays(d,-offDays):null), due_date:d, property_id:prop, location, refer_to:refer, notes }));
   const { error } = await supabase.from("pm_tasks").insert(rows);
   if(error){ showE("Failed to save: "+(error.message||"")); return; }
+  if(_pl.saveAddr && location) await _saveAddressForReuse(location);
   const _rlabel = dueList.length>1 ? (title+" (×"+dueList.length+", repeats "+repeat+")") : title;
   _logAudit("created","task", category?(category+": "+_rlabel):_rlabel, asgArr.length?("Assigned to "+asgArr.join(", ")):"Unassigned");
   // Material deliveries entered on the task list also drop onto the Construction
   // Calendar so it only has to be entered once (one calendar entry per occurrence).
-  if(category===_MATERIAL_TASK_CATEGORY && prop){
-    const evs=dueList.map(d=>({ property_id:prop, event_date:d, kind:"material", title, contractor_id:null, notes: notes || (asg?("Pickup/delivery: "+asg):null) }));
+  if(category===_MATERIAL_TASK_CATEGORY && (prop||location)){
+    const evs=dueList.map(d=>({ property_id:prop, location, event_date:d, kind:"material", title, contractor_id:null, notes: notes || (asg?("Pickup/delivery: "+asg):null) }));
     const { error:ce } = await supabase.from("pm_calendar_events").insert(evs);
-    if(!ce){ _logAudit("created","calendar", _propAddr(prop), "Material delivery (from task): "+title); await loadCalendarEventsFromSupabase(); }
+    if(!ce){ _logAudit("created","calendar", prop?_propAddr(prop):location, "Material delivery (from task): "+title); await loadCalendarEventsFromSupabase(); }
   }
   await loadTasks();
   closeModal("task-modal");
@@ -6133,12 +6381,12 @@ function _mDayTab(){
     ${mates.map(n=>`<button class="${_mWho===n?"on":""}" onclick="_mSetWho('${_calEsc(n).replace(/'/g,"\\'")}')">${_calEsc((n.split(" ")[0])||n)}</button>`).join("")}
   </div>`;
   const ro=isReadOnly();
-  const tasks=(typeof _tasksCache!=="undefined"?_tasksCache:[]).filter(t=>taskAssignees(t).indexOf(who)>=0 && (t.due_date===_mDay||t.start_date===_mDay));
+  const tasks=(typeof _tasksCache!=="undefined"?_tasksCache:[]).filter(t=>_taskHasAssignee(t,who) && (t.due_date===_mDay||t.start_date===_mDay));
   tasks.sort((a,b)=>(a.status==="done"?1:0)-(b.status==="done"?1:0));
   const rows=tasks.length?tasks.map(t=>{
     const done=t.status==="done";
     const mark=t.start_date===_mDay&&t.due_date!==_mDay?'<span class="m-pill" style="background:#EAF3DE;color:#3B6D11">Starts</span>':(t.due_date===_mDay?'<span class="m-pill" style="background:#FBEAF0;color:#72243E">Due</span>':'');
-    const prop=t.property_id?_propAddr(t.property_id):"";
+    const prop=_locLabel(t);
     const cc=(Array.isArray(t.comments)?t.comments.length:0);
     return `<div class="m-card" style="display:flex;gap:11px;align-items:flex-start;margin-bottom:10px">
       <div ${ro?"":`onclick="event.stopPropagation();_mToggleTask('${t.id}')"`} style="font-size:22px;cursor:${ro?"default":"pointer"};line-height:1">${done?"✅":"⬜"}</div>
@@ -6177,7 +6425,7 @@ function _mTaskDetail(id){
   const ro=isReadOnly();
   const done=t.status==="done";
   const who=taskAssignees(t);
-  const prop=t.property_id?_propAddr(t.property_id):"";
+  const prop=_locLabel(t);
   return `<button class="m-btn m-btn-lite" style="width:auto;padding:7px 14px;font-size:13px;border-radius:99px;margin:0 0 12px" onclick="_mGo('day')">‹ Back</button>
     <div class="m-card">
       <div style="font-size:17px;font-weight:700;color:${done?'#9aa0a6':'#111'};${done?'text-decoration:line-through':''}">${_calEsc(t.title)}</div>
@@ -6218,11 +6466,12 @@ function _mEventRow(e){
   const sub=_mKindLabel(e.kind).replace(/^\S+\s/,"")+(e.contractor_id?" · "+_calEsc(_contractorName(e.contractor_id)):"");
   return `<div class="m-card" style="display:flex;gap:11px;align-items:flex-start;margin-bottom:10px">
     <div ${ro?"":`onclick="_mToggleEvent('${e.id}')"`} style="font-size:22px;cursor:${ro?"default":"pointer"};line-height:1">${done?"✅":"⬜"}</div>
-    <div style="flex:1;min-width:0">
+    <div onclick="openCalEventDetail('${e.id}')" style="flex:1;min-width:0;cursor:pointer">
       <div style="font-size:14px;font-weight:600;color:${done?"#9aa0a6":"#111"};${done?"text-decoration:line-through":""}">${_calEsc(label)}</div>
       <div style="font-size:11px;color:#888;margin-top:3px">${sub}</div>
       ${e.notes?`<div style="font-size:12px;color:#666;margin-top:4px;white-space:pre-wrap">${_calEsc(e.notes)}</div>`:""}
     </div>
+    ${ro?"":`<div onclick="openCalEventDetail('${e.id}')" style="font-size:12px;color:#bbb;cursor:pointer;padding-left:4px">›</div>`}
   </div>`;
 }
 async function _mToggleEvent(id){
@@ -6303,6 +6552,30 @@ function _mPropOptions(withNone){
   const list=(typeof propCards!=="undefined"?propCards:[]).slice().sort((a,b)=>(a.addr||"").localeCompare(b.addr||""));
   return (withNone?`<option value="">— No property —</option>`:"")+list.map((p,i)=>`<option value="${p.id}" ${(!withNone&&i===0)?"selected":""}>${_calEsc(p.addr)}</option>`).join("");
 }
+// Mobile property/address picker: one of our properties, a saved address, or type
+// any address. Typed addresses only get saved when the box is ticked.
+function _mAddrPicker(pfx){
+  const props=(typeof propCards!=="undefined"?propCards:[]).slice().sort((a,b)=>(a.addr||"").localeCompare(b.addr||""));
+  const propOpts=props.map(p=>`<option value="${p.id}">${_calEsc(p.addr)}</option>`).join("");
+  const savedOpts=_savedAddrCache.map(a=>`<option value="addr::${_calEsc(a.address)}">${_calEsc(a.address)}</option>`).join("");
+  return `<select id="${pfx}-prop" class="m-select" onchange="_mAddrToggle('${pfx}')">
+      <option value="">— None —</option>
+      ${propOpts?`<optgroup label="Our properties">${propOpts}</optgroup>`:""}
+      ${savedOpts?`<optgroup label="Saved addresses">${savedOpts}</optgroup>`:""}
+      <option value="__other">＋ Other address…</option>
+    </select>
+    <div id="${pfx}-addr-row" style="display:none">
+      <input id="${pfx}-addr" class="m-input" style="margin-top:8px" placeholder="Type any address — warehouse, rental, not-yet-ours…"/>
+      <label style="display:flex;align-items:center;gap:7px;margin-top:8px;font-size:13px;color:#444"><input type="checkbox" id="${pfx}-addr-save"/> Save this address for next time</label>
+    </div>`;
+}
+function _mAddrToggle(pfx){ const el=document.getElementById(pfx+"-prop"); const r=document.getElementById(pfx+"-addr-row"); if(el&&r) r.style.display=el.value==="__other"?"":"none"; }
+function _mResolveAddr(pfx){
+  const v=(document.getElementById(pfx+"-prop")||{}).value||"";
+  if(v==="__other"){ const loc=((document.getElementById(pfx+"-addr")||{}).value||"").trim()||null; const sv=document.getElementById(pfx+"-addr-save"); return {property_id:null,location:loc,saveAddr:!!(sv&&sv.checked)}; }
+  if(v.indexOf("addr::")===0) return {property_id:null,location:v.slice(6),saveAddr:false};
+  return {property_id:v||null,location:null,saveAddr:false};
+}
 function _mAddFormTask(){
   const myName=_mMyName();
   const whoOpts=`<option value="">— Unassigned —</option>`+teamMembers().map(n=>`<option value="${_calEsc(n)}" ${n===myName?"selected":""}>${_calEsc(n)}</option>`).join("");
@@ -6310,7 +6583,7 @@ function _mAddFormTask(){
     <div class="m-label">Task</div><input id="mt-title" class="m-input" placeholder="What needs to get done"/>
     <div class="m-label" style="margin-top:12px">Header / category</div><input id="mt-cat" class="m-input" placeholder="Optional"/>
     <div class="m-label" style="margin-top:12px">Assign to</div><select id="mt-who" class="m-select">${whoOpts}</select>
-    <div class="m-label" style="margin-top:12px">Property</div><select id="mt-prop" class="m-select">${_mPropOptions(true)}</select>
+    <div class="m-label" style="margin-top:12px">Property / address</div>${_mAddrPicker("mt")}
     <div style="display:flex;gap:10px">
       <div style="flex:1"><div class="m-label" style="margin-top:12px">Start</div><input id="mt-start" type="date" class="m-input"/></div>
       <div style="flex:1"><div class="m-label" style="margin-top:12px">Due</div><input id="mt-due" type="date" class="m-input" value="${_mDay}"/></div>
@@ -6329,18 +6602,20 @@ async function _mSubmitTask(){
   if(!title){ alert("Enter a task."); return; }
   const cat=(document.getElementById("mt-cat").value||"").trim()||null;
   const who=document.getElementById("mt-who").value||null;
-  const prop=document.getElementById("mt-prop").value||null;
+  const _pl=_mResolveAddr("mt"); const prop=_pl.property_id; const location=_pl.location;
   const due=document.getElementById("mt-due").value||_mDay;
   const start=document.getElementById("mt-start").value||null;
   const notes=(document.getElementById("mt-notes").value||"").trim()||null;
+  if(start && start>due){ alert("Start date can't be after the due date."); return; }
   const repeat=(document.getElementById("mt-repeat")?document.getElementById("mt-repeat").value:"none")||"none";
   const runtil=(document.getElementById("mt-repeat-until")?document.getElementById("mt-repeat-until").value:"")||"";
   if(runtil && runtil<due){ alert("'Repeat until' can't be before the due date."); return; }
   const dueList=_recurDueDates(due, repeat, runtil);
   const offDays=(start!=null)?Math.round((_dParse(due)-_dParse(start))/86400000):null;
-  const rows=dueList.map(d=>({ title, category:cat, assignee:who, assignees:who?[who]:[], due_date:d, start_date:(offDays!=null?_dAddDays(d,-offDays):null), property_id:prop, notes, status:"open" }));
+  const rows=dueList.map(d=>({ title, category:cat, assignee:who, assignees:who?[who]:[], due_date:d, start_date:(offDays!=null?_dAddDays(d,-offDays):null), property_id:prop, location, notes, status:"open" }));
   const { error }=await supabase.from("pm_tasks").insert(rows);
   if(error){ alert("Couldn't save task: "+(error.message||"")); return; }
+  if(_pl.saveAddr && location) await _saveAddressForReuse(location);
   if(typeof _logAudit==="function") _logAudit("created","task", dueList.length>1?(title+" (×"+dueList.length+", repeats "+repeat+")"):title, who?("Assignee: "+who):"");
   await loadTasks(); _mGo("day");
 }
@@ -6349,7 +6624,7 @@ function _mAddFormEvent(preMaterial){
     ? `<input type="hidden" id="me-kind" value="material"/>`
     : `<div class="m-label" style="margin-top:12px">Type</div><select id="me-kind" class="m-select"><option value="contractor">★ Contractor start</option><option value="material">📦 Material delivery</option><option value="custom">• Custom</option></select>`;
   return _mFormWrap(preMaterial?"Add a material delivery":"Add a construction item",`
-    <div class="m-label">Property</div><select id="me-prop" class="m-select">${_mPropOptions(false)}</select>
+    <div class="m-label">Property / address</div>${_mAddrPicker("me")}
     <div class="m-label" style="margin-top:12px">Date</div><input id="me-date" type="date" class="m-input" value="${_mDay}"/>
     ${kindSel}
     <div class="m-label" style="margin-top:12px">${preMaterial?"What's being delivered":"Description"}</div><input id="me-title" class="m-input" placeholder="${preMaterial?"e.g. Cabinets, flooring":"e.g. Framing crew starts"}"/>
@@ -6359,17 +6634,18 @@ function _mAddFormEvent(preMaterial){
 }
 async function _mSubmitEvent(){
   if(_blockIfReadOnly()) return;
-  const prop=document.getElementById("me-prop").value;
+  const _pl=_mResolveAddr("me"); const prop=_pl.property_id; const location=_pl.location;
   const date=document.getElementById("me-date").value;
   const kind=document.getElementById("me-kind").value;
   const title=(document.getElementById("me-title").value||"").trim()||null;
   const notes=(document.getElementById("me-notes").value||"").trim()||null;
-  if(!prop){ alert("Pick a property."); return; }
+  if(!prop && !location){ alert("Pick a property or type an address."); return; }
   if(!date){ alert("Pick a date."); return; }
-  const row={ property_id:prop, event_date:date, kind, title, notes, completed:false };
+  const row={ property_id:prop, location, event_date:date, kind, title, notes, completed:false };
   const { error }=await supabase.from("pm_calendar_events").insert(row);
   if(error){ alert("Couldn't save: "+(error.message||"")); return; }
-  if(typeof _logAudit==="function") _logAudit("created","calendar", title||_mKindLabel(kind), _propAddr(prop));
+  if(_pl.saveAddr && location) await _saveAddressForReuse(location);
+  if(typeof _logAudit==="function") _logAudit("created","calendar", title||_mKindLabel(kind), prop?_propAddr(prop):location);
   await loadCalendarEventsFromSupabase(); _mProp=prop; _mDay=date; _mGo("build");
 }
 // ============================ end Mobile app =================================
