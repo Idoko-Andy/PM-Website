@@ -4000,7 +4000,7 @@ function renderPMHome(user) {
 // The person tabs (Alex, Gabe, …) are driven by JOB ROLE: anyone whose role is a
 // PM-assistant role auto-appears once they link their email — exactly like the PM
 // tabs. Seeded with Alex/Gabe so they show before their accounts exist.
-let PM_ASSISTANTS = ["Alex","Gabe"];
+let PM_ASSISTANTS = [];
 const _ASSISTANT_ROLES = ["PM Assistant","Start of Project Assistant","End of Project Assistant"];
 async function loadPMAssistants(){
   let roleNames = [];
@@ -4010,8 +4010,8 @@ async function loadPMAssistants(){
     roleNames = (data||[]).map(r=>(r.first_name||"").trim()).filter(Boolean);
   }catch(e){}
   const merged=[];
-  ["Alex","Gabe"].concat(roleNames).forEach(n=>{ if(merged.indexOf(n)<0) merged.push(n); });
-  PM_ASSISTANTS = merged.length ? merged : ["Alex","Gabe"];
+  roleNames.forEach(n=>{ if(merged.indexOf(n)<0) merged.push(n); });
+  PM_ASSISTANTS = merged;
 }
 function _assistantRole(name){
   const u = getUsers().find(x=>((x.firstName||"")+"").trim()===name && x.status==="approved");
@@ -4581,14 +4581,14 @@ function openArchitectDashboard(activeTab) {
   activeTab = activeTab || 'main';
   const tabs=[
     {id:'main',label:'Main Dashboard',icon:'📊'},
-    {id:'jenn',label:'Jenn',icon:'👤'},
+    {id:'jenn',label:'Jennifer Tatum',icon:'👤'},
     {id:'property',label:'Property Dashboard',icon:'🏗'},
     {id:'construction',label:'Construction Calendar',icon:'📅'},
     {id:'taskcal',label:'Task Calendar',icon:'🗓'},
   ];
   let content;
   switch(activeTab){
-    case 'jenn':         content=_personDashView('Jenn','Architect'); break;
+    case 'jenn':         content=_personDashView('Jennifer Tatum','Architect'); break;
     case 'property':     content=renderPropertyBoard(); break;
     case 'construction': content=renderConstructionCalendar(); break;
     case 'taskcal':      content=renderTaskCalendar(); break;
@@ -5212,9 +5212,8 @@ function teamMembers(){
       return "";
     })
     .filter(n => n);
-  // Team members who don't have a login account yet but still get assigned tasks.
-  const extra = ["Jenn"];
-  extra.forEach(n => { if(!base.some(x => x.split(" ")[0].toLowerCase() === n.toLowerCase())) base.push(n); });
+  // Only real, approved accounts with an actual (non-"Other") job role appear —
+  // no hardcoded seeds, so nobody shows up twice or without a real login.
   return base.sort((a,b)=>a.localeCompare(b));
 }
 // Distinct task categories/headers in use (e.g. "Build Scope of Work"), plus a
