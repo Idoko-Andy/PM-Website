@@ -1793,6 +1793,8 @@ function _propRowToCard(r) {
     checklists: (r.checklists && typeof r.checklists==="object") ? r.checklists : {},
     isRental:   !!r.is_rental,
     closingDate: r.closing_date || "",
+    vacancyDate: r.vacancy_date || "",
+    closingDateSell: r.closing_date_sell || "",
     closedDate:  r.closed_date || "",
     archived:   !!r.archived,
     closeApproved: !!r.close_approved
@@ -1814,6 +1816,8 @@ function _propCardToRow(p) {
     drive_url:   p.driveUrl || "",
     is_rental:   !!p.isRental,
     closing_date: p.closingDate || null,
+    vacancy_date: p.vacancyDate || null,
+    closing_date_sell: p.closingDateSell || null,
     notes:       p.notes || "",
     sub_phases:  p.subPhases || []
   };
@@ -1822,7 +1826,7 @@ function _propCardToRow(p) {
 async function loadPropertiesFromSupabase() {
   const { data, error } = await supabase
     .from("pm_properties")
-    .select("id,addr,phase,type,pm,position,budget,spent,start_date,end_date,company_cam,drive_url,notes,sub_phases,checklist_market_last,checklists,is_rental,closing_date,closed_date,archived,close_approved")
+    .select("id,addr,phase,type,pm,position,budget,spent,start_date,end_date,company_cam,drive_url,notes,sub_phases,checklist_market_last,checklists,is_rental,closing_date,vacancy_date,closing_date_sell,closed_date,archived,close_approved")
     .order("created_at", { ascending: true });
   if (error) {
     console.error("loadPropertiesFromSupabase failed:", error);
@@ -1970,6 +1974,30 @@ async function saveClosingDate(id){
   if(error){ alert("Failed to save closing date: "+(error.message||"")); return; }
   const c=propCards.find(x=>x.id===id);
   _logAudit("updated","property", c?c.addr:"", v?("Closing date set to "+v):"Closing date cleared");
+  await loadPropertiesFromSupabase();
+  openPropDetail(id);
+}
+// Save / update the vacancy date (when the property is expected to be vacated).
+async function saveVacancyDate(id){
+  if(_blockIfReadOnly()) return;
+  const el=document.getElementById("pd-vacancy-date");
+  const v=(el&&el.value)||null;
+  const { error }=await supabase.from("pm_properties").update({ vacancy_date:v }).eq("id",id);
+  if(error){ alert("Failed to save vacancy date: "+(error.message||"")); return; }
+  const c=propCards.find(x=>x.id===id);
+  _logAudit("updated","property", c?c.addr:"", v?("Vacancy date set to "+v):"Vacancy date cleared");
+  await loadPropertiesFromSupabase();
+  openPropDetail(id);
+}
+// Save / update the closing date for when WE are selling the property.
+async function saveClosingSellDate(id){
+  if(_blockIfReadOnly()) return;
+  const el=document.getElementById("pd-closing-sell");
+  const v=(el&&el.value)||null;
+  const { error }=await supabase.from("pm_properties").update({ closing_date_sell:v }).eq("id",id);
+  if(error){ alert("Failed to save closing date (selling): "+(error.message||"")); return; }
+  const c=propCards.find(x=>x.id===id);
+  _logAudit("updated","property", c?c.addr:"", v?("Closing date (us selling) set to "+v):"Closing date (us selling) cleared");
   await loadPropertiesFromSupabase();
   openPropDetail(id);
 }
@@ -2583,8 +2611,16 @@ function openPropDetail(id) {
                 ${c.driveUrl ? `<a href="${c.driveUrl}" target="_blank" style="font-size:12px;color:#185FA5;text-decoration:none">Open Folder ↗</a>` : (_ro_sp?`<span style="font-size:11px;color:#ccc">—</span>`:`<button onclick="openPropModal('drive','${c.id}')" style="font-size:11px;padding:2px 8px;border-radius:4px;background:transparent;color:#aaa;border:0.5px solid #ccc;cursor:pointer">+ Add Link</button>`)}
               </div>
               <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:0.5px solid #f4f5f7;font-size:13px">
-                <span style="color:#888;display:flex;align-items:center;gap:5px">🗓 Closing Date${c.closeApproved?` <span style="font-size:9px;background:#EAF3DE;color:#173404;padding:1px 5px;border-radius:4px">Closed ✓</span>`:''}</span>
+                <span style="color:#888;display:flex;align-items:center;gap:5px">🗓 Closing Date <span style="font-size:9px;background:#E6F1FB;color:#185FA5;padding:1px 5px;border-radius:4px">Us Buying</span>${c.closeApproved?` <span style="font-size:9px;background:#EAF3DE;color:#173404;padding:1px 5px;border-radius:4px">Closed ✓</span>`:''}</span>
                 ${_ro_sp ? `<span style="color:#111;font-weight:500">${c.closingDate||'—'}</span>` : `<span style="display:flex;gap:6px;align-items:center"><input type="date" id="pd-closing-date" value="${c.closingDate||''}" style="font-size:12px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"/><button onclick="saveClosingDate('${c.id}')" style="font-size:11px;padding:3px 9px;border-radius:5px;background:#111;color:#fff;border:none;cursor:pointer">Save</button></span>`}
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:0.5px solid #f4f5f7;font-size:13px">
+                <span style="color:#888;display:flex;align-items:center;gap:5px">🏠 Vacancy Date</span>
+                ${_ro_sp ? `<span style="color:#111;font-weight:500">${c.vacancyDate||'—'}</span>` : `<span style="display:flex;gap:6px;align-items:center"><input type="date" id="pd-vacancy-date" value="${c.vacancyDate||''}" style="font-size:12px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"/><button onclick="saveVacancyDate('${c.id}')" style="font-size:11px;padding:3px 9px;border-radius:5px;background:#111;color:#fff;border:none;cursor:pointer">Save</button></span>`}
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:0.5px solid #f4f5f7;font-size:13px">
+                <span style="color:#888;display:flex;align-items:center;gap:5px">🗓 Closing Date <span style="font-size:9px;background:#FCEBEB;color:#791F1F;padding:1px 5px;border-radius:4px">Us Selling</span></span>
+                ${_ro_sp ? `<span style="color:#111;font-weight:500">${c.closingDateSell||'—'}</span>` : `<span style="display:flex;gap:6px;align-items:center"><input type="date" id="pd-closing-sell" value="${c.closingDateSell||''}" style="font-size:12px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"/><button onclick="saveClosingSellDate('${c.id}')" style="font-size:11px;padding:3px 9px;border-radius:5px;background:#111;color:#fff;border:none;cursor:pointer">Save</button></span>`}
               </div>
             </div>
           </div>
@@ -2789,7 +2825,7 @@ function openPropModal(mode, id) {
       </div>
     </div>
     <div style="margin-bottom:12px">
-      <label style="display:block;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Closing Date <span style="font-size:9px;background:#E6F1FB;color:#185FA5;padding:1px 5px;border-radius:4px;text-transform:none">at In Contract</span></label>
+      <label style="display:block;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Closing Date (Us Buying) <span style="font-size:9px;background:#E6F1FB;color:#185FA5;padding:1px 5px;border-radius:4px;text-transform:none">at In Contract</span></label>
       <input id="pm-closing" type="date" value="${c?c.closingDate||'':''}" style="width:100%;padding:7px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:13px;color:#111;background:#fff;outline:none" />
       <div style="font-size:11px;color:#aaa;margin-top:5px">🏠 Rental status is now set with the Yes/No toggle on the property screen.</div>
     </div>
