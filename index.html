@@ -3296,11 +3296,22 @@ function openPMDashboard() {
   document.querySelectorAll(".ni.has-dd").forEach(x => x.classList.remove("on"));
 
   const body = document.getElementById("pm-dash-body");
+  // Build a card for every approved Project Manager account (so new PMs like Alex
+  // appear automatically), with Bruce (Director) kept first. Falls back to the
+  // original three if no accounts have loaded yet.
+  const _pmDef = { avgDailyWork:"--", budgetPct:{on:"--",over:"--"}, timelinePct:{on:"--",over:"--"}, flipsCompleted:"--", rentalHandoffs:"--" };
+  const _mkPmCard = (u) => { const key=((u.firstName||"").trim())||(u.email||""); return pmCard(key, (PM_DATA[key]||_pmDef), ((u.firstName||"")+" "+(u.lastName||"")).trim()); };
+  const _bruceAcct = getUsers().find(u=>u.status==="approved" && u.email==="bruce@legacyohiohomes.com");
+  const _pmAccts = getUsers().filter(u=>u.status==="approved" && u.role==="Project Manager").sort((a,b)=>(a.firstName||"").localeCompare(b.firstName||""));
+  const _pmList = [];
+  if(_bruceAcct) _pmList.push(_bruceAcct);
+  _pmAccts.forEach(u=>{ if(!_bruceAcct || u.id!==_bruceAcct.id) _pmList.push(u); });
+  const _pmCards = _pmList.length
+    ? _pmList.map(_mkPmCard).join("")
+    : (pmCard("Bruce", PM_DATA.Bruce, resolvePMName("Bruce")) + pmCard("Andrew", PM_DATA.Andrew, resolvePMName("Andrew")) + pmCard("Isaiah", PM_DATA.Isaiah, resolvePMName("Isaiah")));
   body.innerHTML = `
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:24px">
-      ${pmCard("Bruce", PM_DATA.Bruce, resolvePMName("Bruce"))}
-      ${pmCard("Andrew", PM_DATA.Andrew, resolvePMName("Andrew"))}
-      ${pmCard("Isaiah", PM_DATA.Isaiah, resolvePMName("Isaiah"))}
+      ${_pmCards}
     </div>
     <div class="pm-note" style="margin-top:20px">📌 All metrics will populate automatically once connected to your project management platform. Data updates in real time as projects are completed.</div>
   `;
@@ -3724,7 +3735,11 @@ function showErr(el, msg) { el.textContent = msg; el.style.display = "block"; }
 // The three-calendar home for Directors / PMs: Google · Task · Construction.
 function threeCalendarWidgets(u){
   const todayStr=(()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;})();
-  const upTasks=(_tasksCache||[]).filter(t=>t.status==="open" && t.due_date && t.due_date>=todayStr).sort((a,b)=>a.due_date<b.due_date?-1:1).slice(0,4);
+  // Whose tasks does this home show? A Project Director / super-admin sees everyone's;
+  // everyone else (e.g. a Project Manager like Alex) sees only tasks assigned to them.
+  const myName=(u?(`${u.firstName||""} ${u.lastName||""}`).trim():"");
+  const seeAll=!!(u && (u.isSuperAdmin || u.accessLevel==="full" || u.role==="Project Director"));
+  const upTasks=(_tasksCache||[]).filter(t=>t.status==="open" && t.due_date && t.due_date>=todayStr && (seeAll || _taskHasAssignee(t,myName))).sort((a,b)=>a.due_date<b.due_date?-1:1).slice(0,4);
   const taskRows=upTasks.length? upTasks.map(t=>`<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:0.5px solid #1e1e1e"><div style="min-width:0"><div style="font-size:12px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(t.title)}</div><div style="font-size:10px;color:#666">${t.assignee?_calEsc(t.assignee):"Unassigned"}</div></div><div style="font-size:10px;color:#5dade2;white-space:nowrap">${_calEsc(t.due_date)}</div></div>`).join("") : `<div style="text-align:center;color:#555;font-size:12px;padding:16px 0">No upcoming tasks</div>`;
   const upEvents=(_calEventsCache||[]).filter(e=>e.event_date && e.event_date>=todayStr).sort((a,b)=>a.event_date<b.event_date?-1:1).slice(0,4);
   const evRows=upEvents.length? upEvents.map(e=>{const lbl=e.kind==="contractor"?("★ "+_contractorName(e.contractor_id)):("📦 "+(e.title||"Material"));return `<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:0.5px solid #1e1e1e"><div style="min-width:0"><div style="font-size:12px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(lbl)}</div><div style="font-size:10px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(_locLabel(e))}</div></div><div style="font-size:10px;color:#f0c674;white-space:nowrap">${_calEsc(e.event_date)}</div></div>`;}).join("") : `<div style="text-align:center;color:#555;font-size:12px;padding:16px 0">No upcoming construction items</div>`;
@@ -3741,8 +3756,6 @@ function threeCalendarWidgets(u){
       <div onclick="window.open('https://calendar.google.com','_blank')" style="display:inline-block;font-size:11px;color:#111;background:#fff;border-radius:6px;padding:6px 12px;cursor:pointer;font-weight:500">Open Google Calendar</div>
     </div>`;
   // ---- Overdue tasks strip (this person's, or everyone's for directors/super) ----
-  const myName=(u?(`${u.firstName||""} ${u.lastName||""}`).trim():"");
-  const seeAll=!!(u && (u.isSuperAdmin || u.accessLevel==="full" || u.role==="Project Director"));
   const overdue=(_tasksCache||[]).filter(t=>t.status==="open" && t.due_date && t.due_date<todayStr && (seeAll || _taskHasAssignee(t,myName))).sort((a,b)=>a.due_date<b.due_date?-1:1);
   const overdueRows=overdue.length
     ? overdue.slice(0,8).map(t=>`<div onclick="openTaskDetail('${t.id}')" style="display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:0.5px solid #2e1c1c;cursor:pointer"><div style="min-width:0"><div style="font-size:12px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.category?`<span style="font-size:9px;background:#4a2020;color:#ffb4a8;padding:1px 6px;border-radius:99px;margin-right:5px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div><div style="font-size:10px;color:#b98a82">${taskAssignees(t).length?_calEsc(taskAssignees(t).join(", ")):"Unassigned"}${_locLabel(t)?" · "+_calEsc(_locLabel(t)):""}</div></div><div style="font-size:10px;color:#ff8a7a;white-space:nowrap">Due ${_calEsc(t.due_date)}</div></div>`).join("")
