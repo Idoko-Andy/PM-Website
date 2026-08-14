@@ -478,11 +478,15 @@ body.mobile-on .overlay{z-index:6000 !important;}
   <div class="modal">
     <button class="modal-close" onclick="closeModal('signin-modal')">✕</button>
     <h2>Sign in</h2>
-    <p class="sub">Use your @legacyohiohomes.com Google account</p>
+    <p class="sub">Sign in with Google, or with your email &amp; password</p>
     <div class="error-msg" id="signin-error"></div>
     <div class="success-msg" id="signin-success"></div>
     <div id="modal-gsi-btn" style="display:flex;justify-content:center;margin:10px 0 4px"></div>
-    <p style="font-size:11px;color:#666;margin-top:14px;text-align:center;line-height:1.5">Team members can sign in with their company Google account. Outside collaborators should use <b>Create account</b> instead.<br/>New accounts start in <i>pending</i> status and require admin approval.</p>
+    <div style="display:flex;align-items:center;gap:10px;margin:16px 0 8px;color:#666;font-size:11px"><div style="flex:1;height:1px;background:#2a2a2a"></div>OR<div style="flex:1;height:1px;background:#2a2a2a"></div></div>
+    <div class="form-row"><label>Email</label><input type="email" id="login-email" placeholder="you@example.com" autocomplete="username" /></div>
+    <div class="form-row"><label>Password</label><input type="password" id="login-pass" placeholder="Your password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doPasswordSignIn()" /></div>
+    <button class="btn-full" id="login-submit-btn" onclick="doPasswordSignIn()">Sign in with email</button>
+    <p style="font-size:11px;color:#666;margin-top:14px;text-align:center;line-height:1.5">Team members with a company Google account can use the Google button above. Outside collaborators sign in with the email &amp; password they created (use <b>Create account</b> first if you haven't).<br/>New accounts start in <i>pending</i> status and require admin approval.</p>
     <div class="form-switch" style="text-align:center;margin-top:10px">Don't have an account? <a onclick="switchModal('signin-modal','register-modal')">Create account</a></div>
   </div>
 </div>
@@ -933,6 +937,33 @@ async function doGoogleSignIn() {
 
 // Backwards-compat shims for any older inline handlers.
 function doSignIn() { doGoogleSignIn(); }
+
+// Email + password sign-in. This is how outside collaborators (anyone without a
+// company Google account) log in — they can't use the Google button because that
+// is locked to the legacyohiohomes.com Workspace. Their account still must be
+// approved by an admin; init()/refreshAuthState handles the approval gate.
+async function doPasswordSignIn() {
+  const err = document.getElementById("signin-error");
+  const ok  = document.getElementById("signin-success");
+  if (err) err.style.display = "none";
+  if (ok)  ok.style.display  = "none";
+  const email = (document.getElementById("login-email").value || "").trim().toLowerCase();
+  const pass  =  document.getElementById("login-pass").value  || "";
+  if (!email || !pass) { showErr(err, "Enter your email and password."); return; }
+  const btn = document.getElementById("login-submit-btn");
+  if (btn) { btn.disabled = true; btn.textContent = "Signing in…"; }
+  const { error } = await supabase.auth.signInWithPassword({ email, password: pass });
+  if (btn) { btn.disabled = false; btn.textContent = "Sign in with email"; }
+  if (error) {
+    const m = (error.message || "").toLowerCase();
+    if (m.includes("invalid"))            showErr(err, "Wrong email or password. If your account uses a company Google login, use the Google button above instead.");
+    else if (m.includes("not confirmed")) showErr(err, "Your email hasn't been confirmed yet. Ask Bruce to confirm your account, then try again.");
+    else                                   showErr(err, error.message || "Sign-in failed. Please try again.");
+    return;
+  }
+  closeModal("signin-modal");
+  // onAuthStateChange -> init() takes over (and enforces the approval gate).
+}
 
 // ===================== REGISTER =====================
 // Self-serve registration with any email address. Creates the Supabase auth
