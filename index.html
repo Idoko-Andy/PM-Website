@@ -3301,11 +3301,13 @@ function openPMDashboard() {
   // original three if no accounts have loaded yet.
   const _pmDef = { avgDailyWork:"--", budgetPct:{on:"--",over:"--"}, timelinePct:{on:"--",over:"--"}, flipsCompleted:"--", rentalHandoffs:"--" };
   const _mkPmCard = (u) => { const key=((u.firstName||"").trim())||(u.email||""); return pmCard(key, (PM_DATA[key]||_pmDef), ((u.firstName||"")+" "+(u.lastName||"")).trim()); };
-  const _bruceAcct = getUsers().find(u=>u.status==="approved" && u.email==="bruce@legacyohiohomes.com");
-  const _pmAccts = getUsers().filter(u=>u.status==="approved" && u.role==="Project Manager").sort((a,b)=>(a.firstName||"").localeCompare(b.firstName||""));
-  const _pmList = [];
-  if(_bruceAcct) _pmList.push(_bruceAcct);
-  _pmAccts.forEach(u=>{ if(!_bruceAcct || u.id!==_bruceAcct.id) _pmList.push(u); });
+  // A card shows for anyone who EITHER holds the Project Manager role OR is set as the
+  // PM on at least one active property (so Tommy, Bruce, Gabe — anyone running a project —
+  // appears). Bruce (Director) is kept first.
+  const _assignedPMs = new Set((typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived).map(c=>((c.pm||"").trim().toLowerCase())).filter(Boolean));
+  const _pmList = getUsers()
+    .filter(u=> u.status==="approved" && (u.role==="Project Manager" || u.email==="bruce@legacyohiohomes.com" || _assignedPMs.has((u.firstName||"").trim().toLowerCase())))
+    .sort((a,b)=>{ if(a.email==="bruce@legacyohiohomes.com") return -1; if(b.email==="bruce@legacyohiohomes.com") return 1; return (a.firstName||"").localeCompare(b.firstName||""); });
   const _pmCards = _pmList.length
     ? _pmList.map(_mkPmCard).join("")
     : (pmCard("Bruce", PM_DATA.Bruce, resolvePMName("Bruce")) + pmCard("Andrew", PM_DATA.Andrew, resolvePMName("Andrew")) + pmCard("Isaiah", PM_DATA.Isaiah, resolvePMName("Isaiah")));
@@ -3779,38 +3781,11 @@ function threeCalendarWidgets(u){
 // (Google · Task · Construction). Other roles keep the simpler cards for now.
 function sharedWidgets() {
   const u = currentUser();
-  if (u && (u.isSuperAdmin || u.accessLevel === "full" || u.role === "Project Director" || u.role === "Project Manager")) {
-    return threeCalendarWidgets(u);
-  }
-  return `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px">
-      <div style="background:#111;border:1px solid #2a2a2a;border-radius:10px;overflow:hidden">
-        <div style="padding:10px 16px;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;justify-content:space-between">
-          <div style="font-size:12px;font-weight:500;color:#fff;display:flex;align-items:center;gap:7px">✅ Upcoming Due Tasks</div>
-          <div style="font-size:10px;color:#444;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:4px;padding:2px 7px">Links to task list</div>
-        </div>
-        <div style="padding:12px 16px">
-          <div style="text-align:center;padding:18px 0">
-            <div style="font-size:22px;margin-bottom:6px">📋</div>
-            <div style="font-size:12px;color:#555">No tasks connected yet</div>
-            <div style="font-size:11px;color:#3a3a3a;margin-top:4px">Will auto-populate once task list is built</div>
-          </div>
-        </div>
-      </div>
-      <div style="background:#111;border:1px solid #2a2a2a;border-radius:10px;overflow:hidden">
-        <div style="padding:10px 16px;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;justify-content:space-between">
-          <div style="font-size:12px;font-weight:500;color:#fff;display:flex;align-items:center;gap:7px">📅 Upcoming Events <span style="font-size:10px;color:#555;font-weight:400">(2 weeks out)</span></div>
-          <div style="font-size:10px;color:#444;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:4px;padding:2px 7px">Links to calendars</div>
-        </div>
-        <div style="padding:12px 16px">
-          <div style="text-align:center;padding:18px 0">
-            <div style="font-size:22px;margin-bottom:6px">🗓</div>
-            <div style="font-size:12px;color:#555">No calendars connected yet</div>
-            <div style="font-size:11px;color:#3a3a3a;margin-top:4px">Will sync with internal &amp; Google Calendar</div>
-          </div>
-        </div>
-      </div>
-    </div>`;
+  // Every role's home shows the live calendars, with the task lists filtered to
+  // THAT person only (Project Directors / super-admins still see everyone's — that
+  // choice is made inside threeCalendarWidgets). Nobody's home over-populates with
+  // other team members' tasks.
+  return threeCalendarWidgets(u);
 }
 
 // Shared financial YTD table (Bruce + Senior VA)
