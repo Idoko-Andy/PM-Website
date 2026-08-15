@@ -4203,9 +4203,11 @@ function phasePage(id){
 // (completed, and approved where required) before it can advance to a later phase.
 const STAGE_CHECKLISTS = {
   "Vacant / On Standby": [
-    { key:"vos_lockbox",  label:"Lockbox",                  approve:false },
-    { key:"vos_utilities",label:"Utilities",                approve:false },
-    { key:"vos_starter",  label:"Starter Project Checklist",approve:false },
+    { key:"vos_lockbox",       label:"Lockbox",                    approve:false },
+    { key:"vos_util_electric", label:"Utilities — Electric",       approve:false },
+    { key:"vos_util_water",    label:"Utilities — Water",          approve:false },
+    { key:"vos_util_gas",      label:"Utilities — Gas",            approve:false },
+    { key:"vos_starter",       label:"First Time Access Checklist", approve:false },
   ],
 };
 function _checklistFor(phase){ return STAGE_CHECKLISTS[phase] || []; }
