@@ -1884,6 +1884,25 @@ async function _maybeArchiveClosed(){
   }catch(e){ /* never block load */ }
 }
 
+// Inline "Property Info" save — edits happen right on the property card (no modal).
+// Passes EVERY field (merged from the current card) so nothing else gets wiped.
+async function savePropInfo(id){
+  if(_blockIfReadOnly()) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===id); if(!c) return;
+  const g=(k,d)=>{ const el=document.getElementById(k); return el?el.value:d; };
+  const data={
+    addr:c.addr, phase:g('pi-phase',c.phase), pm:g('pi-pm',c.pm), type:g('pi-type',c.type),
+    position:c.position, budget:c.budget, spent:c.spent,
+    start:g('pi-start',c.start), end:g('pi-end',c.end),
+    companyCam:c.companyCam||'', driveUrl:c.driveUrl||'', isRental:!!c.isRental,
+    closingDate:c.closingDate||'', vacancyDate:c.vacancyDate||'', closingDateSell:c.closingDateSell||'',
+    notes:c.notes||'', subPhases:c.subPhases||[]
+  };
+  const ok=await savePropertyToSupabase(id, data);
+  if(!ok) return;
+  openPropDetail(id);
+}
+
 async function savePropertyToSupabase(id, data) {
   if (_blockIfReadOnly()) return false;
   if (id) {
@@ -2615,11 +2634,11 @@ function openPropDetail(id) {
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
           <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden">
-            <div style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;font-size:12px;font-weight:500;color:#111">Property Info</div>
+            <div style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;font-size:12px;font-weight:500;color:#111;display:flex;align-items:center;justify-content:space-between">Property Info${_ro_sp?'':`<button onclick="savePropInfo('${c.id}')" style="font-size:11px;padding:3px 10px;border-radius:4px;background:#111;color:#fff;border:none;cursor:pointer">Save</button>`}</div>
             <div style="padding:10px 14px">
-              <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px"><span style="color:#888">Project Manager</span><span style="color:#111;font-weight:500">${c.pm||'—'}</span></div>
-              <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px"><span style="color:#888">Property Type</span><span style="color:#111;font-weight:500">${c.type||'—'}</span></div>
-              <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px"><span style="color:#888">Main Phase</span><span style="color:#111;font-weight:500">${c.phase||'—'}</span></div>
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px"><span style="color:#888">Project Manager</span>${_ro_sp?`<span style="color:#111;font-weight:500">${c.pm||'—'}</span>`:`<select id="pi-pm" style="font-size:12px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"><option value="">— Assign —</option>${PM_MANAGERS.map(pm=>`<option ${c.pm===pm?'selected':''}>${_calEsc(pm)}</option>`).join('')}</select>`}</div>
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px"><span style="color:#888">Property Type</span>${_ro_sp?`<span style="color:#111;font-weight:500">${c.type||'—'}</span>`:`<select id="pi-type" style="font-size:12px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"><option value="">— Type —</option>${PROP_TYPES.map(t=>`<option ${c.type===t?'selected':''}>${_calEsc(t)}</option>`).join('')}</select>`}</div>
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px"><span style="color:#888">Main Phase</span>${_ro_sp?`<span style="color:#111;font-weight:500">${c.phase||'—'}</span>`:`<select id="pi-phase" style="font-size:12px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none">${PROP_PHASES.map(p=>`<option ${c.phase===p.name?'selected':''}>${_calEsc(p.name)}</option>`).join('')}</select>`}</div>
               <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px">
                 <span style="color:#888">🏗 Permitted?</span>
                 ${_ro_sp ? `<span style="color:#111;font-weight:500">${(c.checklists&&c.checklists.permitted)==='yes'?'Yes':((c.checklists&&c.checklists.permitted)==='no'?'No':'—')}</span>` : `<span style="display:inline-flex;gap:4px">
@@ -2634,8 +2653,8 @@ function openPropDetail(id) {
                   <button onclick="setPropertyRental('${c.id}','no')" style="font-size:11px;padding:3px 11px;border-radius:5px;cursor:pointer;border:0.5px solid ${!c.isRental?'#B42318':'#ddd'};background:${!c.isRental?'#FCEBEB':'#fff'};color:${!c.isRental?'#B42318':'#666'}">No</button>
                 </span>`}
               </div>
-              <div style="display:flex;justify-content:space-between;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px"><span style="color:#888">Start Date</span><span style="color:#111;font-weight:500">${c.start||'—'}</span></div>
-              <div style="display:flex;justify-content:space-between;padding:7px 0;font-size:13px"><span style="color:#888">Target Completion</span><span style="color:#111;font-weight:500">${c.end||'—'}</span></div>
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px"><span style="color:#888">Start Date</span>${_ro_sp?`<span style="color:#111;font-weight:500">${c.start||'—'}</span>`:`<input type="date" id="pi-start" value="${c.start||''}" style="font-size:12px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"/>`}</div>
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;font-size:13px"><span style="color:#888">Target Completion</span>${_ro_sp?`<span style="color:#111;font-weight:500">${c.end||'—'}</span>`:`<input type="date" id="pi-end" value="${c.end||''}" style="font-size:12px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"/>`}</div>
               <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;font-size:13px">
                 <span style="color:#888;display:flex;align-items:center;gap:5px">📷 CompanyCam <span style="font-size:9px;background:#E6F1FB;color:#185FA5;padding:1px 5px;border-radius:4px">Auto-links when folder created</span></span>
                 ${c.companyCam ? `<a href="${c.companyCam}" target="_blank" style="font-size:12px;color:#185FA5;text-decoration:none">Open Folder ↗</a>` : `<button onclick="openPropModal('companycam','${c.id}')" style="font-size:11px;padding:2px 8px;border-radius:4px;background:transparent;color:#aaa;border:0.5px solid #ccc;cursor:pointer">+ Add Link</button>`}
@@ -2675,7 +2694,6 @@ function openPropDetail(id) {
         <div style="display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-top:12px">
           ${c.driveUrl ? `<a href="${c.driveUrl}" target="_blank" style="display:flex;align-items:center;gap:5px;padding:7px 14px;font-size:12px;border-radius:6px;cursor:pointer;background:#fff;color:#185FA5;border:0.5px solid #cdd7e6;text-decoration:none">📁 Open Folder ↗</a>` : ''}
           ${_ro_sp ? '' : `<button onclick="deleteProperty('${c.id}')" style="display:flex;align-items:center;gap:5px;padding:7px 14px;font-size:12px;border-radius:6px;cursor:pointer;background:#fff;color:#B42318;border:0.5px solid #f0c0bb">🗑 Delete</button>`}
-          <button onclick="openPropModal('edit','${c.id}')" style="display:flex;align-items:center;gap:5px;padding:7px 14px;font-size:12px;border-radius:6px;cursor:pointer;background:#111;color:#fff;border:none">✎ Edit Property</button>
         </div>
       </div>
     </div>`;
