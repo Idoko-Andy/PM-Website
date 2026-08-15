@@ -2208,7 +2208,8 @@ async function toggleSubPhaseComplete(propId, name){
   let s=subs.find(x=>x.name===name);
   if(!s){ s={name}; subs.push(s); }
   s.completed=!s.completed;
-  if(!s.completed){ s.approved=false; delete s.approvedBy; }
+  if(s.completed){ if(!s.completedAt) s.completedAt=new Date().toISOString(); }
+  else { s.approved=false; delete s.approvedBy; delete s.completedAt; }
   if(s.completed) _applyChain(subs, name, "complete");
   const { error } = await supabase.from("pm_properties").update({ sub_phases:subs }).eq("id",propId);
   if(error){ alert("Couldn't update subphase: "+(error.message||"")); return; }
@@ -2626,6 +2627,7 @@ function openPropDetail(id) {
               <span style="font-size:9px;background:#E6F1FB;color:#185FA5;padding:1px 5px;border-radius:4px">Google Sheet</span>
             </div>
             <div style="font-size:17px;font-weight:500;color:#185FA5">${c.position||'—'}</div>
+            ${(()=>{ const fa=(c.subPhases||[]).find(s=>s.name==='First Time Access Checklist'&&s.completed&&s.completedAt); if(!fa) return ''; const st=new Date(fa.completedAt); const en=c.closedDate?new Date(c.closedDate):new Date(); const d=Math.max(0,Math.floor((en-st)/86400000)); return `<div style="margin-top:6px;font-size:11px;font-weight:600;color:#0B5A46;background:#E1F5EA;border-radius:5px;padding:3px 8px;display:inline-block">📆 ${d} day${d===1?'':'s'} accumulated${c.closedDate?' · closed':''}</div>`; })()}
             ${(c.checklists&&c.checklists.trackerUrl)?`<a href="${c.checklists.trackerUrl}" target="_blank" style="font-size:11px;color:#185FA5;margin-top:2px;display:inline-block;text-decoration:none;font-weight:600">📊 Open Project Tracker ↗</a>`:`<div style="font-size:11px;color:#aaa;margin-top:2px">Links to live tracker</div>`}
           </div>
         </div>
