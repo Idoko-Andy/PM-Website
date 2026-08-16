@@ -2188,7 +2188,7 @@ async function saveSubPhaseSchedule(id){
     let taskId=prev.taskId||null;
     // First Time Access (Start-of-Project Assistant) and approval steps (approvers) never
     // go on the PM's task calendar — so they never create/keep a mirrored pm_task here.
-    const _pmTaskEligible = name!=="First Time Access Checklist" && !/approval/i.test(name);
+    const _pmTaskEligible = name!=="First Time Access Checklist" && !_isPureApproval(name);
     const scheduled = start && due && _pmTaskEligible;
     if(scheduled){
       const payload={ title:name, category:name, assignee:card.pm||null, assignees:card.pm?[card.pm]:[], start_date:start, due_date:due, property_id:id, notes:"Auto-created from "+(card.addr||"property")+" subphase schedule" };
@@ -2254,6 +2254,9 @@ async function _maybeAutoAdvance(propId){
 // Mirror every SCHEDULED subphase (has start+due) onto the PM's task calendar.
 // Runs after the workflow chain auto-starts subphases, so fan-out steps show up as
 // real tasks on the assigned PM's schedule. De-dupes against existing mirrored tasks.
+// A "pure" approval step (e.g. Pending Permit Approval) belongs to the approvers only.
+// Combined steps like "SOW Creation & Approval" are PM creation work and DO go on PM calendars.
+function _isPureApproval(nm){ return /approval/i.test(nm||"") && !/creat/i.test(nm||""); }
 async function _syncSubphaseTasks(propId){
   const card=(typeof propCards!=='undefined'?propCards:[]).find(p=>p.id===propId); if(!card) return;
   const subs=(card.subPhases||[]).map(sp=>({...sp}));
@@ -2261,7 +2264,7 @@ async function _syncSubphaseTasks(propId){
   for(const sp of subs){
     // First Time Access Checklist belongs to the Start-of-Project Assistant, and approval steps
     // belong to the approvers (Tommy/Bruce) — neither should appear on the PM's task calendar.
-    if(sp.name==="First Time Access Checklist" || /approval/i.test(sp.name||"")) continue;
+    if(sp.name==="First Time Access Checklist" || _isPureApproval(sp.name)) continue;
     if(sp.start && sp.due && !sp.taskId){
       const ex=await supabase.from("pm_tasks").select("id").eq("property_id",propId).eq("category",sp.name).eq("due_date",sp.due).limit(1);
       if(ex.data && ex.data.length){ sp.taskId=ex.data[0].id; changed=true; continue; }
@@ -3047,7 +3050,7 @@ function pmTabContent(name) {
   function isOver(ds) { if(!ds) return false; const d=new Date(ds);d.setHours(0,0,0,0);return d<today; }
   function within5(ds) { if(!ds) return false; const d=new Date(ds);d.setHours(0,0,0,0);return d>=today&&d<=cutoff5; }
   function within14(ds) { if(!ds) return false; const d=new Date(ds);d.setHours(0,0,0,0);return d>=today&&d<=cutoff14; }
-  const isApprovalStep = (nm)=>/approval/i.test(nm||"");
+  const isApprovalStep = (nm)=>_isPureApproval(nm);
 
   // Build boards from THIS PM's properties only
   const myProps = propCards.filter(c => c.pm === name);
@@ -3075,6 +3078,11 @@ function pmTabContent(name) {
       if (isApprovalStep(sp.name)) {
         if (sp.start && !sp.approved && !sp.completed)
           boards[bn].push({addr:card.addr,pm:card.pm,sub:sp.name+" — awaiting sign-off",due:sp.due||"",overdue:isOver(sp.due),pending:true});
+        return;
+      }
+      // Combined creation+approval steps: once the PM marks them complete they wait on sign-off.
+      if (typeof subphaseNeedsApproval==='function' && subphaseNeedsApproval(sp.name) && sp.completed && !sp.approved) {
+        boards[bn].push({addr:card.addr,pm:card.pm,sub:sp.name+" — awaiting sign-off",due:sp.due||"",overdue:false,pending:true});
         return;
       }
       if (within5(sp.due)||isOver(sp.due))
@@ -4662,6 +4670,78 @@ function _execStat(label,val,color){
   return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:14px 16px"><div style="font-size:24px;font-weight:600;color:${color}">${val}</div><div style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em;margin-top:2px">${label}</div></div>`;
 }
 // A personal dashboard tab for one exec/admin: header + their task stats + open tasks.
+// ===== Approver (Bruce/Tommy) extras: pending approvals w/ 48h timers + Tommy's money boxes =====
+// Everything awaiting sign-off: pure approval steps that are started but not approved,
+// plus combined creation+approval steps that are completed but not approved.
+function _apprPending(){
+  const out=[]; const now=Date.now();
+  (typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived).forEach(c=>(c.subPhases||[]).forEach(sp=>{
+    let pending=false, sinceIso=null;
+    if(_isPureApproval(sp.name)){ if(sp.start && !sp.approved && !sp.completed){ pending=true; sinceIso=sp.start; } }
+    else if(typeof subphaseNeedsApproval==='function' && subphaseNeedsApproval(sp.name)){ if(sp.completed && !sp.approved){ pending=true; sinceIso=sp.completedAt||sp.start||null; } }
+    if(pending){ const since=sinceIso?new Date(sinceIso).getTime():now; const hrsLeft=Math.round(48-(now-since)/3600000); out.push({c,sp,hrsLeft}); }
+  }));
+  return out.sort((a,b)=>a.hrsLeft-b.hrsLeft);
+}
+function _moneyRank(){
+  return (typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived)
+    .map(c=>({c, v:parseFloat(String(c.position||"").replace(/[^0-9.\-]/g,""))}))
+    .filter(x=>!isNaN(x.v)).sort((a,b)=>b.v-a.v);
+}
+function _upcomingClosings(){
+  const today=_ymd(new Date()); const out=[];
+  (typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived).forEach(c=>{
+    if(c.closingDate && c.closingDate>=today && !c.purchaseConfirmed) out.push({c,d:c.closingDate,t:'BUYING'});
+    if(c.closingDateSell && c.closingDateSell>=today && !c.closeApproved) out.push({c,d:c.closingDateSell,t:'SELLING'});
+  });
+  return out.sort((a,b)=>a.d<b.d?-1:1);
+}
+function _ceoBoxes(name){
+  const first=(name||"").trim().split(" ")[0];
+  if(first!=="Bruce" && first!=="Tommy") return "";
+  const back = first==="Tommy" ? "tommy" : "bruce";
+  const boxes=[ _dirBox("Pre Construction — Approvals", _apprPending().length, "48-hr sign-off timers", "#E67E22", "_pDrill('appr','"+back+"')") ];
+  if(first==="Tommy"){
+    const td=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && c.phase==="Upcoming Takedowns").length;
+    boxes.push(_dirBox("Money Position", _moneyRank().length, "Top 5 nearest positive", "#0B7285", "_pDrill('money','tommy')"));
+    boxes.push(_dirBox("Upcoming Takedowns", td, "properties", "#E24B4A", "_pDrill('takedowns','tommy')"));
+    boxes.push(_dirBox("Upcoming Closings", _upcomingClosings().length, "buying + selling, labeled", "#7F77DD", "_pDrill('closings','tommy')"));
+  }
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;margin-bottom:16px">${boxes.join("")}</div>`;
+}
+function _pDrill(kind, back){
+  const el=document.getElementById('pd-content'); if(!el) return;
+  const head=(t)=>`<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px"><button onclick="openDirectorCEODashboard('${back}')" style="font-size:12px;padding:6px 12px;border:0.5px solid #cdd7e6;border-radius:6px;background:#fff;color:#185FA5;cursor:pointer">‹ Back</button><div style="font-size:15px;font-weight:600;color:#111">${t}</div></div>`;
+  const list=(rows)=>rows.length?`<div style="display:flex;flex-direction:column;gap:8px;max-width:760px">${rows}</div>`:`<div style="color:#bbb;font-size:13px;padding:20px 0">Nothing here right now.</div>`;
+  let html="";
+  if(kind==='appr'){
+    const rows=_apprPending().map(a=>{ const late=a.hrsLeft<=0; const col=late?'#B42318':(a.hrsLeft<12?'#B7791F':'#2E7D32');
+      return `<div onclick="openPropDetail('${a.c.id}')" style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid #E67E22;border-radius:8px;padding:10px 13px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px">
+        <div><div style="font-size:12.5px;font-weight:600;color:#111">${_calEsc(a.c.addr||'')}</div><div style="font-size:11px;color:#999">${_calEsc(a.sp.name)} · ${a.c.pm?_calEsc(a.c.pm):'—'}</div></div>
+        <div style="text-align:right"><div style="font-size:12px;font-weight:700;color:${col}">${late?('OVERDUE '+Math.abs(a.hrsLeft)+'h'):(a.hrsLeft+'h left')}</div><div style="font-size:10px;color:#aaa">48-hr window</div></div>
+      </div>`; }).join("");
+    html=head("Pre Construction — Approvals Needed")+list(rows);
+  } else if(kind==='money'){
+    const m=_moneyRank(); const top=m.slice(0,5); const rest=m.slice(5).slice().reverse();
+    const row=(x,i)=>`<div onclick="openPropDetail('${x.c.id}')" style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid ${x.v>=0?'#2E7D32':'#B42318'};border-radius:8px;padding:9px 12px;cursor:pointer;display:flex;justify-content:space-between;align-items:center">
+      <div style="font-size:12px;font-weight:600;color:#111">${i!=null?('<span style="color:#aaa;margin-right:6px">'+(i+1)+'.</span>'):''}${_calEsc(x.c.addr||'')}</div>
+      <div style="font-size:12px;font-weight:700;color:${x.v>=0?'#2E7D32':'#B42318'}">${x.v<0?'-':''}$${Math.abs(x.v).toLocaleString()}</div></div>`;
+    html=head("Money Position — closest to positive")+`<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:900px">
+      <div><div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#8a93a3;margin-bottom:8px">Top 5 — closest to positive</div><div style="display:flex;flex-direction:column;gap:8px">${top.map((x,i)=>row(x,i)).join("")||'<div style="color:#bbb;font-size:12px">No money data yet</div>'}</div></div>
+      <div><div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#8a93a3;margin-bottom:8px">Furthest → closer</div><div style="display:flex;flex-direction:column;gap:8px">${rest.map(x=>row(x,null)).join("")||'<div style="color:#bbb;font-size:12px">—</div>'}</div></div>
+    </div>`;
+  } else if(kind==='takedowns'){
+    const rows=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && c.phase==="Upcoming Takedowns").map(_dirPropRow).join("");
+    html=head("Upcoming Takedowns")+list(rows);
+  } else if(kind==='closings'){
+    const rows=_upcomingClosings().map(u=>`<div onclick="openPropDetail('${u.c.id}')" style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid ${u.t==='BUYING'?'#185FA5':'#B42318'};border-radius:8px;padding:10px 13px;cursor:pointer;display:flex;justify-content:space-between;align-items:center">
+      <div><div style="font-size:12.5px;font-weight:600;color:#111">${_calEsc(u.c.addr||'')}</div><div style="font-size:11px;color:#999">${u.c.pm?_calEsc(u.c.pm):'—'}</div></div>
+      <div style="text-align:right"><span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:99px;background:${u.t==='BUYING'?'#E6F1FB':'#FCEBEB'};color:${u.t==='BUYING'?'#185FA5':'#791F1F'}">${u.t}</span><div style="font-size:11px;color:#666;margin-top:3px">${u.d}</div></div>
+    </div>`).join("");
+    html=head("Upcoming Closings — buying & selling")+list(rows);
+  }
+  el.innerHTML=`<div style="padding:20px">${html}</div>`;
+}
 function _personDashView(name, title){
   const today=new Date(); today.setHours(0,0,0,0); const todayStr=_ymd(today);
   const mine=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status!=="done" && _taskHasAssignee(t,name));
@@ -4679,6 +4759,7 @@ function _personDashView(name, title){
       ${_execStat('Overdue', overdue.length, overdue.length?'#B42318':'#888')}
       ${_execStat('Due Today', dueToday.length, dueToday.length?'#B7791F':'#888')}
     </div>
+    ${_ceoBoxes(name)}
     ${_pmaCard('Tasks assigned to '+_calEsc(name), rows, mine.length, 'No open tasks assigned right now.')}
   </div>`;
 }
@@ -4783,7 +4864,11 @@ function _dirCollect(){
   const upSale=cards.filter(c=>c.closingDateSell&&c.closingDateSell>today&&!c.closeApproved);
   const overdue=tasks.filter(t=>t.status!=='done'&&t.due_date&&t.due_date<today);
   const approvals=[];
-  cards.forEach(c=>(c.subPhases||[]).forEach(s=>{ if(isAppr(s.name)&&s.start&&!s.approved&&!s.completed) approvals.push({c,s}); }));
+  cards.forEach(c=>(c.subPhases||[]).forEach(s=>{
+    const pure=isAppr(s.name)&&!/creat/i.test(s.name||"");
+    const combo=(typeof subphaseNeedsApproval==='function'&&subphaseNeedsApproval(s.name));
+    if((pure&&s.start&&!s.approved&&!s.completed)||(combo&&s.completed&&!s.approved)) approvals.push({c,s});
+  }));
   return {cards,tasks,today,buyDue,sellDue,upPurch,upSale,overdue,approvals};
 }
 function renderDirectorHome(){
