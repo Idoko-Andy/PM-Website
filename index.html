@@ -1845,7 +1845,8 @@ function _propRowToCard(r) {
     closingDateSell: r.closing_date_sell || "",
     closedDate:  r.closed_date || "",
     archived:   !!r.archived,
-    closeApproved: !!r.close_approved
+    closeApproved: !!r.close_approved,
+    purchaseConfirmed: !!r.purchase_confirmed
   };
 }
 
@@ -1874,7 +1875,7 @@ function _propCardToRow(p) {
 async function loadPropertiesFromSupabase() {
   const { data, error } = await supabase
     .from("pm_properties")
-    .select("id,addr,phase,type,pm,position,budget,spent,start_date,end_date,company_cam,drive_url,notes,sub_phases,checklist_market_last,checklists,is_rental,closing_date,vacancy_date,closing_date_sell,closed_date,archived,close_approved")
+    .select("id,addr,phase,type,pm,position,budget,spent,start_date,end_date,company_cam,drive_url,notes,sub_phases,checklist_market_last,checklists,is_rental,closing_date,vacancy_date,closing_date_sell,closed_date,archived,close_approved,purchase_confirmed")
     .order("created_at", { ascending: true });
   if (error) {
     console.error("loadPropertiesFromSupabase failed:", error);
@@ -2075,10 +2076,22 @@ async function approveClose(id){
   if(!canApprove(_myProfile)){ alert("Only Bruce, Marlo or Tommy can confirm a closing."); return; }
   const c=propCards.find(x=>x.id===id); if(!c) return;
   if(!confirm('Confirm that "'+(c.addr||"this property")+'" has closed?\n\nThis moves it to Closed and flags end-of-project — Marlo to start her process and Patience to remove utilities.')) return;
-  const closed=c.closingDate||_ymd(new Date());
+  const closed=c.closingDateSell||c.closingDate||_ymd(new Date());
   const { error }=await supabase.from("pm_properties").update({ close_approved:true, closed_date:closed, phase:"Closed" }).eq("id",id);
   if(error){ alert("Failed: "+(error.message||"")); return; }
-  _logAudit("approved","property", c.addr||"", "Closing confirmed — moved to Closed · Marlo + Patience to be notified (utilities removal)");
+  _logAudit("approved","property", c.addr||"", "Sale closing confirmed — moved to Closed · Marlo + Patience to be notified (utilities removal)");
+  await loadPropertiesFromSupabase();
+  openProjectDashboard('trello');
+}
+// Confirm we actually closed on the PURCHASE (us buying) — we now own the property.
+// Separate from the sale close; does not move phase. Reschedule the "Us Buying" date to clear the flag if it didn't close.
+async function confirmPurchase(id){
+  if(!canApprove(_myProfile)){ alert("Only Bruce, Marlo or Tommy can confirm a purchase closing."); return; }
+  const c=propCards.find(x=>x.id===id); if(!c) return;
+  if(!confirm('Confirm the PURCHASE of "'+(c.addr||"this property")+'" has closed — we now own it?\n\nIf it didn\'t close, cancel and reschedule the "Us Buying" date instead.')) return;
+  const { error }=await supabase.from("pm_properties").update({ purchase_confirmed:true }).eq("id",id);
+  if(error){ alert("Failed: "+(error.message||"")); return; }
+  _logAudit("confirmed","property", c.addr||"", "Purchase closing confirmed — we now own it");
   await loadPropertiesFromSupabase();
   openProjectDashboard('trello');
 }
@@ -2545,13 +2558,19 @@ function openPropDetail(id) {
   const _isClosed = c.phase === "Closed";
   const _showPushRental = c.isRental && !_isClosed && c.phase !== "Rental Handoff Process";
   const _showRentalComplete = c.phase === "Rental Handoff Process";
-  const _closingDue = c.closingDate && c.closingDate <= _today && !c.closeApproved && !_isClosed;
+  // Two independent closing flags:
+  //  • Us Buying  (closingDate)     → confirm we actually closed on the purchase (we own it).
+  //  • Us Selling (closingDateSell) → confirm the sale closed → moves to Closed (end of project).
+  // Rescheduling either date past today clears its flag automatically.
+  const _buyDue  = c.closingDate     && c.closingDate     <= _today && !c.purchaseConfirmed && !_isClosed;
+  const _sellDue = c.closingDateSell && c.closingDateSell <= _today && !c.closeApproved     && !_isClosed;
   if(!document.getElementById("pd-flash-style")){ const st=document.createElement("style"); st.id="pd-flash-style"; st.textContent="@keyframes pdflash{0%,100%{box-shadow:0 0 0 0 rgba(212,35,24,.55)}50%{box-shadow:0 0 0 7px rgba(212,35,24,0)}}"; document.head.appendChild(st); }
   const rentalCloseBar = _ro_sp ? '' : `
-    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:${(_showPushRental||_showRentalComplete||_closingDue)?'12px':'0'};align-items:center">
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:${(_showPushRental||_showRentalComplete||_buyDue||_sellDue)?'12px':'0'};align-items:center">
       ${_showPushRental ? `<button onclick="pushToRentalHandoff('${c.id}')" style="display:flex;align-items:center;gap:6px;padding:8px 14px;font-size:12px;border-radius:6px;cursor:pointer;background:#fff;color:#0B5A46;border:0.5px solid #9ad9c6;font-weight:600">🏠 Push to Rental Handoff</button>`:''}
       ${_showRentalComplete ? `<button onclick="completeRentalHandoff('${c.id}')" style="display:flex;align-items:center;gap:6px;padding:8px 14px;font-size:12px;border-radius:6px;cursor:pointer;background:#12987A;color:#fff;border:none;font-weight:600">✓ Mark Rental Handoff Complete → Closed</button>`:''}
-      ${_closingDue ? `<button onclick="approveClose('${c.id}')" style="display:flex;align-items:center;gap:6px;padding:9px 16px;font-size:12.5px;border-radius:6px;cursor:pointer;background:#B42318;color:#fff;border:none;font-weight:700;animation:pdflash 1.2s infinite">⚑ Approve Close — confirm ${c.closingDate} closing</button>`:''}
+      ${_buyDue ? `<button onclick="confirmPurchase('${c.id}')" style="display:flex;align-items:center;gap:6px;padding:9px 16px;font-size:12.5px;border-radius:6px;cursor:pointer;background:#185FA5;color:#fff;border:none;font-weight:700;animation:pdflash 1.2s infinite">⚑ Confirm Purchase Closed — we own it (${c.closingDate})</button>`:''}
+      ${_sellDue ? `<button onclick="approveClose('${c.id}')" style="display:flex;align-items:center;gap:6px;padding:9px 16px;font-size:12.5px;border-radius:6px;cursor:pointer;background:#B42318;color:#fff;border:none;font-weight:700;animation:pdflash 1.2s infinite">⚑ Approve Close — confirm ${c.closingDateSell} sale closing</button>`:''}
     </div>`;
   // Quick phase move (no dragging) — pick a phase from the dropdown.
   const moveBar = _ro_sp ? '' : `<div style="display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap">
@@ -2709,7 +2728,7 @@ function openPropDetail(id) {
                 ${c.driveUrl ? `<a href="${c.driveUrl}" target="_blank" style="font-size:12px;color:#185FA5;text-decoration:none">Open Folder ↗</a>` : (_ro_sp?`<span style="font-size:11px;color:#ccc">—</span>`:`<button onclick="openPropModal('drive','${c.id}')" style="font-size:11px;padding:2px 8px;border-radius:4px;background:transparent;color:#aaa;border:0.5px solid #ccc;cursor:pointer">+ Add Link</button>`)}
               </div>
               <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:0.5px solid #f4f5f7;font-size:13px">
-                <span style="color:#888;display:flex;align-items:center;gap:5px">🗓 Closing Date <span style="font-size:9px;background:#E6F1FB;color:#185FA5;padding:1px 5px;border-radius:4px">Us Buying</span>${c.closeApproved?` <span style="font-size:9px;background:#EAF3DE;color:#173404;padding:1px 5px;border-radius:4px">Closed ✓</span>`:''}</span>
+                <span style="color:#888;display:flex;align-items:center;gap:5px">🗓 Closing Date <span style="font-size:9px;background:#E6F1FB;color:#185FA5;padding:1px 5px;border-radius:4px">Us Buying</span>${c.purchaseConfirmed?` <span style="font-size:9px;background:#EAF3DE;color:#173404;padding:1px 5px;border-radius:4px">Owned ✓</span>`:''}</span>
                 ${_ro_sp ? `<span style="color:#111;font-weight:500">${c.closingDate||'—'}</span>` : `<span style="display:flex;gap:6px;align-items:center"><input type="date" id="pd-closing-date" value="${c.closingDate||''}" style="font-size:12px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"/><button onclick="saveClosingDate('${c.id}')" style="font-size:11px;padding:3px 9px;border-radius:5px;background:#111;color:#fff;border:none;cursor:pointer">Save</button></span>`}
               </div>
               <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:0.5px solid #f4f5f7;font-size:13px">
@@ -2717,7 +2736,7 @@ function openPropDetail(id) {
                 ${_ro_sp ? `<span style="color:#111;font-weight:500">${c.vacancyDate||'—'}</span>` : `<span style="display:flex;gap:6px;align-items:center"><input type="date" id="pd-vacancy-date" value="${c.vacancyDate||''}" style="font-size:12px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"/><button onclick="saveVacancyDate('${c.id}')" style="font-size:11px;padding:3px 9px;border-radius:5px;background:#111;color:#fff;border:none;cursor:pointer">Save</button></span>`}
               </div>
               <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:0.5px solid #f4f5f7;font-size:13px">
-                <span style="color:#888;display:flex;align-items:center;gap:5px">🗓 Closing Date <span style="font-size:9px;background:#FCEBEB;color:#791F1F;padding:1px 5px;border-radius:4px">Us Selling</span></span>
+                <span style="color:#888;display:flex;align-items:center;gap:5px">🗓 Closing Date <span style="font-size:9px;background:#FCEBEB;color:#791F1F;padding:1px 5px;border-radius:4px">Us Selling</span>${c.closeApproved?` <span style="font-size:9px;background:#EAF3DE;color:#173404;padding:1px 5px;border-radius:4px">Sold ✓</span>`:''}</span>
                 ${_ro_sp ? `<span style="color:#111;font-weight:500">${c.closingDateSell||'—'}</span>` : `<span style="display:flex;gap:6px;align-items:center"><input type="date" id="pd-closing-sell" value="${c.closingDateSell||''}" style="font-size:12px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"/><button onclick="saveClosingSellDate('${c.id}')" style="font-size:11px;padding:3px 9px;border-radius:5px;background:#111;color:#fff;border:none;cursor:pointer">Save</button></span>`}
               </div>
             </div>
