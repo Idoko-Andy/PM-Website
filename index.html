@@ -6597,9 +6597,26 @@ function _mLoginHTML(){
   return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:32px">
     <div style="font-size:26px;font-weight:800;color:#111">Legacy Homes</div>
     <div style="font-size:13px;color:#888;margin-top:6px">Project Management · Field App</div>
-    <button class="m-btn" style="max-width:280px;margin-top:28px" onclick="doGoogleSignIn()">Sign in with Google</button>
-    <div style="font-size:11px;color:#aaa;margin-top:16px;max-width:260px">Use your @legacyohiohomes.com Google account.</div>
+    <button class="m-btn" style="max-width:280px;margin-top:24px" onclick="doGoogleSignIn()">Sign in with Google</button>
+    <div style="font-size:11px;color:#aaa;margin-top:8px;max-width:260px">Company Google account — or sign in with email &amp; password below.</div>
+    <div style="width:100%;max-width:280px;margin-top:20px;display:flex;flex-direction:column;gap:8px">
+      <input type="email" id="m-login-email" placeholder="you@example.com" autocomplete="username" style="padding:12px;border:1px solid #d7dbe0;border-radius:10px;font-size:15px" />
+      <input type="password" id="m-login-pass" placeholder="Password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doMobilePasswordSignIn()" style="padding:12px;border:1px solid #d7dbe0;border-radius:10px;font-size:15px" />
+      <button class="m-btn" id="m-login-btn" style="margin-top:2px" onclick="doMobilePasswordSignIn()">Sign in with email</button>
+      <div id="m-login-err" style="display:none;color:#c0392b;font-size:12px;margin-top:2px"></div>
+    </div>
   </div>`;
+}
+async function doMobilePasswordSignIn(){
+  const err=document.getElementById("m-login-err"); if(err) err.style.display="none";
+  const email=(document.getElementById("m-login-email").value||"").trim().toLowerCase();
+  const pass=document.getElementById("m-login-pass").value||"";
+  if(!email||!pass){ if(err){err.textContent="Enter your email and password.";err.style.display="block";} return; }
+  const btn=document.getElementById("m-login-btn"); if(btn){btn.disabled=true;btn.textContent="Signing in…";}
+  const { error }=await supabase.auth.signInWithPassword({ email, password: pass });
+  if(btn){btn.disabled=false;btn.textContent="Sign in with email";}
+  if(error){ if(err){ const m=(error.message||"").toLowerCase(); err.textContent=m.includes("invalid")?"Wrong email or password. If your account uses the company Google login, use the Google button above.":(error.message||"Sign-in failed."); err.style.display="block"; } return; }
+  // onAuthStateChange -> init() takes over (enforces the approval gate).
 }
 function _mRender(){
   const body=document.getElementById("m-body"), nav=document.getElementById("m-nav");
