@@ -1694,10 +1694,13 @@ function subphaseNeedsApproval(name){ return !!SUBPHASE_APPROVAL[name]; }
 // When a subphase is finished, the NEXT subphase's clock starts: start = today,
 // due = today + dueDays. Trigger is "complete" for most, "approve" for approval steps.
 let SUBPHASE_CHAIN = {
-  "First Time Access Checklist": { next:"SOW Creation",    dueDays:7, on:"complete" },
-  "SOW Creation":               { next:"SOW Approval",    dueDays:2, on:"complete" },
-  "SOW Approval":               { next:"Budget Creation", dueDays:2, on:"approve"  },
-  "Budget Creation":            { next:"Budget Approval", dueDays:2, on:"complete" },
+  "First Time Access Checklist": { on:"complete", starts:[
+    { name:"SOW Creation",               dueDays:7  },
+    { name:"Budget Creation",            dueDays:10 },
+    { name:"Drawing / Structural Phase", dueDays:14 },
+  ] },
+  "SOW Creation":    { on:"complete", starts:[ { name:"SOW Approval",    dueDays:3 } ] },
+  "Budget Creation": { on:"complete", starts:[ { name:"Budget Approval", dueDays:3 } ] },
 };
 // A property auto-advances to `next` once every required subphase is finished
 // (completed, and approved where the subphase needs approval).
@@ -1736,6 +1739,17 @@ function _workflowConfigNow(){
     advance:   PHASE_ADVANCE
   }));
 }
+// Normalize a chain config to the fan-out shape: { source: { on, starts:[{name,dueDays}] } }.
+// Also accepts the legacy single-target shape { source:{next,dueDays,on} }.
+function _normChain(ch){
+  const out={};
+  for(const k in (ch||{})){
+    const e=ch[k]||{};
+    if(Array.isArray(e.starts)) out[k]={ on:e.on||"complete", starts:e.starts.filter(s=>s&&s.name).map(s=>({ name:s.name, dueDays:(s.dueDays==null?2:s.dueDays) })) };
+    else if(e.next) out[k]={ on:e.on||"complete", starts:[{ name:e.next, dueDays:(e.dueDays==null?2:e.dueDays) }] };
+  }
+  return out;
+}
 // Replace the live workflow structures from a saved/edited config. Missing keys
 // fall back to defaults so a partial save can never blank out the engine.
 function applyWorkflowConfig(cfg){
@@ -1744,7 +1758,7 @@ function applyWorkflowConfig(cfg){
   SUB_PHASES        = Array.isArray(cfg.subPhases) && cfg.subPhases.length ? cfg.subPhases.slice() : d.subPhases.slice();
   SUB_PHASE_BOARD   = (cfg.board   && typeof cfg.board==="object")   ? Object.assign({}, cfg.board)   : Object.assign({}, d.board);
   SUBPHASE_APPROVAL = (cfg.approval&& typeof cfg.approval==="object")? Object.assign({}, cfg.approval): Object.assign({}, d.approval);
-  SUBPHASE_CHAIN    = (cfg.chain   && typeof cfg.chain==="object")   ? JSON.parse(JSON.stringify(cfg.chain))   : JSON.parse(JSON.stringify(d.chain));
+  SUBPHASE_CHAIN    = _normChain((cfg.chain && typeof cfg.chain==="object") ? cfg.chain : d.chain);
   PHASE_ADVANCE     = (cfg.advance && typeof cfg.advance==="object") ? JSON.parse(JSON.stringify(cfg.advance)) : JSON.parse(JSON.stringify(d.advance));
 }
 async function loadWorkflowSettings(){
@@ -2184,9 +2198,14 @@ function _ymdPlus(days){ return _ymd(new Date(Date.now()+days*86400000)); }
 // When a subphase finishes (trigger event), start the next subphase's clock.
 function _applyChain(subs, name, event){
   const ch=SUBPHASE_CHAIN[name]; if(!ch || ch.on!==event) return;
-  let n=subs.find(x=>x.name===ch.next); if(!n){ n={name:ch.next}; subs.push(n); }
-  if(!n.start) n.start=_ymd(new Date());       // don't override a manually set date
-  if(!n.due)   n.due=_ymdPlus(ch.dueDays);
+  // A trigger can start MULTIPLE subphases at once (fan-out), each with its own due window.
+  const starts = Array.isArray(ch.starts) ? ch.starts : (ch.next ? [{ name:ch.next, dueDays:ch.dueDays }] : []);
+  starts.forEach(st=>{
+    if(!st || !st.name) return;
+    let n=subs.find(x=>x.name===st.name); if(!n){ n={name:st.name}; subs.push(n); }
+    if(!n.start) n.start=_ymd(new Date());       // don't override a manually set date
+    if(!n.due)   n.due=_ymdPlus(st.dueDays);
+  });
 }
 // After a subphase change, auto-advance the property if its phase requirements are met.
 async function _maybeAutoAdvance(propId){
@@ -6224,26 +6243,38 @@ function _renderSettings(){
     </div>`;
   }).join("");
 
-  // ---- Section 2: auto-scheduling windows (chain) ----
+  // ---- Section 2: auto-scheduling windows (chain, fan-out — start multiple at once) ----
+  const subOptions=subs.map(s=>`<option value="${_wfEsc(s)}">${_wfEsc(s)}</option>`).join("");
   const chainKeys=Object.keys(d.chain||{});
   const chainRows = chainKeys.map(k=>{
-    const e=d.chain[k]||{};
-    return `<div style="display:flex;gap:8px;align-items:center;padding:9px 12px;border-bottom:0.5px solid #f1f3f7;background:#fff;font-size:12.5px;color:#333">
-      <span style="flex:1">When <b>${_wfEsc(k)}</b> ${e.on==="approve"?"is approved":"is completed"} →</span>
-      <span>start <b>${_wfEsc(e.next)}</b>, due in</span>
-      <input type="number" min="0" value="${e.dueDays==null?"":e.dueDays}" onchange="_wfSetChainDays('${_wfEsc(k).replace(/'/g,"\\'")}', this.value)" style="width:64px;padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px;text-align:center"/>
-      <span>days</span>
-      <span onclick="_wfRemoveChain('${_wfEsc(k).replace(/'/g,"\\'")}')" title="Remove rule" style="cursor:pointer;color:#c0392b;font-size:14px;padding:0 4px">✕</span>
+    const e=d.chain[k]||{}; const starts=Array.isArray(e.starts)?e.starts:(e.next?[{name:e.next,dueDays:e.dueDays}]:[]);
+    const kE=_wfEsc(k).replace(/'/g,"\\'");
+    const startRows=starts.map((st,si)=>`<div style="display:flex;gap:8px;align-items:center;margin-top:6px;padding-left:14px">
+        <span style="color:#777">↳ start</span>
+        <select onchange="_wfSetChainStartName('${kE}',${si},this.value)" style="padding:5px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px">${subs.map(s=>`<option value="${_wfEsc(s)}"${s===st.name?" selected":""}>${_wfEsc(s)}</option>`).join("")}</select>
+        <span>due in</span>
+        <input type="number" min="0" value="${st.dueDays==null?"":st.dueDays}" onchange="_wfSetChainStartDays('${kE}',${si},this.value)" style="width:58px;padding:5px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px;text-align:center"/>
+        <span>days</span>
+        <span onclick="_wfRemoveChainStart('${kE}',${si})" title="Remove" style="cursor:pointer;color:#c0392b;font-size:13px;padding:0 4px">✕</span>
+      </div>`).join("");
+    return `<div style="padding:10px 12px;border-bottom:0.5px solid #f1f3f7;background:#fff;font-size:12.5px;color:#333">
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="flex:1">When <b>${_wfEsc(k)}</b> is
+          <select onchange="_wfSetChainOn('${kE}',this.value)" style="padding:4px 6px;border:1px solid #ddd;border-radius:6px;font-size:12px"><option value="complete"${e.on!=="approve"?" selected":""}>completed</option><option value="approve"${e.on==="approve"?" selected":""}>approved</option></select>
+          → start:</span>
+        <span onclick="_wfRemoveChain('${kE}')" title="Remove all starts for this step" style="cursor:pointer;color:#c0392b;font-size:14px;padding:0 4px">✕</span>
+      </div>
+      ${startRows}
+      <div style="margin-top:6px;padding-left:14px"><button onclick="_wfAddChainStart('${kE}')" style="padding:4px 10px;background:#eef1f6;color:#333;border:1px solid #dce0e8;border-radius:6px;font-size:11.5px;cursor:pointer">+ start another subphase</button></div>
     </div>`;
   }).join("") || `<div style="padding:12px;color:#aaa;font-size:12px">No auto-scheduling rules.</div>`;
-  const subOptions=subs.map(s=>`<option value="${_wfEsc(s)}">${_wfEsc(s)}</option>`).join("");
-  const chainAdd = `<div style="display:flex;gap:8px;align-items:center;padding:10px 12px;background:#fafbfc;font-size:12px">
-      <span>Add: after</span>
+  const chainAdd = `<div style="display:flex;gap:8px;align-items:center;padding:10px 12px;background:#fafbfc;font-size:12px;flex-wrap:wrap">
+      <span>New rule — when</span>
       <select id="wf-ch-from" style="padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px">${subOptions}</select>
-      <span>→ start</span>
+      <span>finishes, start</span>
       <select id="wf-ch-to" style="padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px">${subOptions}</select>
-      <span>due in</span><input id="wf-ch-days" type="number" min="0" value="2" style="width:60px;padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px;text-align:center"/><span>days</span>
-      <button onclick="_wfAddChain()" style="padding:6px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer">+ Add rule</button>
+      <span>due in</span><input id="wf-ch-days" type="number" min="0" value="3" style="width:58px;padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-size:12px;text-align:center"/><span>days</span>
+      <button onclick="_wfAddChain()" style="padding:6px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer">+ Add</button>
     </div>`;
 
   // ---- Section 3: phase auto-advance ----
@@ -6319,7 +6350,7 @@ function _wfRenameSub(i,val){
   if(b[old]!==undefined){ b[val]=b[old]; delete b[old]; }
   if(ap[old]!==undefined){ ap[val]=ap[old]; delete ap[old]; }
   if(ch[old]){ ch[val]=ch[old]; delete ch[old]; }
-  Object.keys(ch).forEach(k=>{ if(ch[k]&&ch[k].next===old) ch[k].next=val; });
+  Object.keys(ch).forEach(k=>{ const e=ch[k]; if(!e) return; if(e.next===old) e.next=val; if(Array.isArray(e.starts)) e.starts.forEach(s=>{ if(s&&s.name===old) s.name=val; }); });
   Object.keys(ad).forEach(k=>{ if(Array.isArray(ad[k].requires)) ad[k].requires=ad[k].requires.map(x=>x===old?val:x); });
   _renderSettings();
 }
@@ -6331,18 +6362,25 @@ function _wfRemoveSub(i){
   _wfDraft.subPhases.splice(i,1);
   delete _wfDraft.board[name]; delete _wfDraft.approval[name];
   const ch=_wfDraft.chain; delete ch[name];
-  Object.keys(ch).forEach(k=>{ if(ch[k]&&ch[k].next===name) delete ch[k]; });
+  Object.keys(ch).forEach(k=>{ const e=ch[k]; if(!e) return; if(Array.isArray(e.starts)){ e.starts=e.starts.filter(s=>s&&s.name!==name); if(!e.starts.length) delete ch[k]; } else if(e.next===name){ delete ch[k]; } });
   Object.keys(_wfDraft.advance).forEach(k=>{ const a=_wfDraft.advance[k]; if(Array.isArray(a.requires)) a.requires=a.requires.filter(x=>x!==name); });
   _renderSettings();
 }
 function _wfAddSub(){ const n=_wfUniqueName("New Subphase"); _wfDraft.subPhases.push(n); _wfDraft.board[n]=WORKFLOW_BOARDS[0]; _renderSettings(); }
-function _wfSetChainDays(k,val){ if(_wfDraft.chain[k]){ const n=parseInt(val,10); _wfDraft.chain[k].dueDays=isNaN(n)?0:n; } }
+function _wfChainStarts(k){ const e=_wfDraft.chain[k]; if(!e) return null; if(!Array.isArray(e.starts)) e.starts = e.next ? [{name:e.next,dueDays:(e.dueDays==null?2:e.dueDays)}] : []; delete e.next; delete e.dueDays; return e.starts; }
+function _wfSetChainStartDays(k,idx,val){ const s=_wfChainStarts(k); if(s&&s[idx]){ const n=parseInt(val,10); s[idx].dueDays=isNaN(n)?0:n; } }
+function _wfSetChainStartName(k,idx,val){ const s=_wfChainStarts(k); if(s&&s[idx]){ s[idx].name=val; } }
+function _wfSetChainOn(k,val){ if(_wfDraft.chain[k]) _wfDraft.chain[k].on=val; }
+function _wfRemoveChainStart(k,idx){ const s=_wfChainStarts(k); if(s){ s.splice(idx,1); if(!s.length) delete _wfDraft.chain[k]; } _renderSettings(); }
+function _wfAddChainStart(k){ const s=_wfChainStarts(k); if(!s) return; s.push({ name:(_wfDraft.subPhases[0]||""), dueDays:3 }); _renderSettings(); }
 function _wfRemoveChain(k){ delete _wfDraft.chain[k]; _renderSettings(); }
 function _wfAddChain(){
   const from=document.getElementById("wf-ch-from").value, to=document.getElementById("wf-ch-to").value;
   const days=parseInt(document.getElementById("wf-ch-days").value,10);
   if(!from||!to||from===to){ alert("Pick two different subphases."); return; }
-  _wfDraft.chain[from]={ next:to, dueDays:isNaN(days)?2:days, on:(_wfDraft.approval[from]?"approve":"complete") };
+  if(!_wfDraft.chain[from]) _wfDraft.chain[from]={ on:(_wfDraft.approval[from]?"approve":"complete"), starts:[] };
+  const s=_wfChainStarts(from);
+  if(!s.some(x=>x.name===to)) s.push({ name:to, dueDays:isNaN(days)?3:days });
   _renderSettings();
 }
 function _wfSetAdvanceNext(ph,val){ if(_wfDraft.advance[ph]) _wfDraft.advance[ph].next=val; }
