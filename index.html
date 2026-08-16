@@ -3318,6 +3318,30 @@ function resolvePMStatus(pmKey) {
   return users.find(u => u.email === pmEmail && u.status === "approved") || null;
 }
 
+// #114 Compute a PM's team-overview metrics from live data (properties + tasks).
+// Budget metrics stay "--" until budget figures exist in the data.
+function _computePMMetrics(name){
+  const today=new Date(); today.setHours(0,0,0,0);
+  const todayStr=_ymd(today);
+  const cards=(typeof propCards!=='undefined'?propCards:[]);
+  const mine=cards.filter(c=>_sameAssignee(c.pm,name));
+  const isDone=(ph)=>/complete|closed|archiv/i.test(ph||"");
+  const flips=mine.filter(c=>isDone(c.phase) && !c.rental).length;
+  const handoffs=mine.filter(c=>c.rental && (isDone(c.phase) || /rental handoff/i.test(c.phase||""))).length;
+  const tasks=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>_taskHasAssignee(t,name));
+  const total=tasks.length;
+  const done=tasks.filter(t=>t.status==="done").length;
+  const taskPct= total? Math.round(done/total*100) : "--";
+  const resched=tasks.filter(t=>(t.reschedule_count||0)>0).length;
+  const reschedPct= total? Math.round(resched/total*100) : "--";
+  const overdue=tasks.filter(t=>t.status!=="done" && t.due_date && t.due_date<todayStr).length;
+  const onTime= total? Math.round((total-overdue)/total*100) : "--";
+  const overTime= (onTime==="--")?"--":(100-onTime);
+  const ago30=_ymd(new Date(today.getTime()-30*86400000));
+  const doneRecent=tasks.filter(t=>t.status==="done" && t.due_date && t.due_date>=ago30).length;
+  const perDay=(doneRecent/30).toFixed(1);
+  return { avgDailyWork:perDay, budgetPct:{on:"--",over:"--"}, timelinePct:{on:onTime,over:overTime}, flipsCompleted:flips, rentalHandoffs:handoffs, taskCompletionPct:taskPct, reschedulePct:reschedPct };
+}
 function pmCard(name, d, liveName) {
   const colors = { Bruce: "blue", Andrew: "green", Isaiah: "purple" };
   const titles = { Bruce: "Project Director", Andrew: "Project Manager", Isaiah: "Project Manager" };
@@ -3335,9 +3359,9 @@ function pmCard(name, d, liveName) {
       </div>
       <div style="padding:14px 16px;display:flex;flex-direction:column;gap:10px">
         <div class="pm-stat-card ${c}" style="margin:0">
-          <div class="pm-stat-label">Avg. Work Completed / Day</div>
-          <div class="pm-stat-value">${d.avgDailyWork === "--" ? "--" : "$" + d.avgDailyWork}</div>
-          <div class="pm-stat-sub">Across all projects</div>
+          <div class="pm-stat-label">Avg. Tasks Completed / Day</div>
+          <div class="pm-stat-value">${d.avgDailyWork}</div>
+          <div class="pm-stat-sub">Last 30 days</div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div class="pm-stat-card green" style="margin:0">
@@ -3373,6 +3397,18 @@ function pmCard(name, d, liveName) {
             <div class="pm-stat-sub">All time</div>
           </div>
         </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div class="pm-stat-card blue" style="margin:0">
+            <div class="pm-stat-label">Task Completion</div>
+            <div class="pm-stat-value" style="font-size:20px">${d.taskCompletionPct===undefined||d.taskCompletionPct==="--"?"--":d.taskCompletionPct+"%"}</div>
+            <div class="pm-stat-sub">Done vs assigned</div>
+          </div>
+          <div class="pm-stat-card amber" style="margin:0">
+            <div class="pm-stat-label">Rescheduled</div>
+            <div class="pm-stat-value" style="font-size:20px">${d.reschedulePct===undefined||d.reschedulePct==="--"?"--":d.reschedulePct+"%"}</div>
+            <div class="pm-stat-sub">Tasks moved ≥1×</div>
+          </div>
+        </div>
       </div>
     </div>`;
 }
@@ -3385,8 +3421,7 @@ function openPMDashboard() {
   // Build a card for every approved Project Manager account (so new PMs like Alex
   // appear automatically), with Bruce (Director) kept first. Falls back to the
   // original three if no accounts have loaded yet.
-  const _pmDef = { avgDailyWork:"--", budgetPct:{on:"--",over:"--"}, timelinePct:{on:"--",over:"--"}, flipsCompleted:"--", rentalHandoffs:"--" };
-  const _mkPmCard = (u) => { const key=((u.firstName||"").trim())||(u.email||""); return pmCard(key, (PM_DATA[key]||_pmDef), ((u.firstName||"")+" "+(u.lastName||"")).trim()); };
+  const _mkPmCard = (u) => { const key=((u.firstName||"").trim())||(u.email||""); return pmCard(key, _computePMMetrics(key), ((u.firstName||"")+" "+(u.lastName||"")).trim()); };
   // A card shows for anyone who EITHER holds the Project Manager role OR is set as the
   // PM on at least one active property (so Tommy, Bruce, Gabe — anyone running a project —
   // appears). Bruce (Director) is kept first.
@@ -3396,13 +3431,24 @@ function openPMDashboard() {
     .sort((a,b)=>{ if(a.email==="bruce@legacyohiohomes.com") return -1; if(b.email==="bruce@legacyohiohomes.com") return 1; return (a.firstName||"").localeCompare(b.firstName||""); });
   const _pmCards = _pmList.length
     ? _pmList.map(_mkPmCard).join("")
-    : (pmCard("Bruce", PM_DATA.Bruce, resolvePMName("Bruce")) + pmCard("Andrew", PM_DATA.Andrew, resolvePMName("Andrew")) + pmCard("Isaiah", PM_DATA.Isaiah, resolvePMName("Isaiah")));
+    : (pmCard("Bruce", _computePMMetrics("Bruce"), resolvePMName("Bruce")) + pmCard("Andrew", _computePMMetrics("Andrew"), resolvePMName("Andrew")) + pmCard("Isaiah", _computePMMetrics("Isaiah"), resolvePMName("Isaiah")));
   body.innerHTML = `
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:24px">
       ${_pmCards}
     </div>
-    <div class="pm-note" style="margin-top:20px">📌 All metrics will populate automatically once connected to your project management platform. Data updates in real time as projects are completed.</div>
+    <div class="pm-note" style="margin-top:20px">📌 Metrics reflect live task &amp; property data. Budget figures appear once cost data is entered.</div>
   `;
+
+  // Refresh from live caches so completion / reschedule / flip counts are current.
+  Promise.all([
+    (typeof loadTasks==='function')?loadTasks():Promise.resolve(),
+    (typeof loadPropertiesFromSupabase==='function')?loadPropertiesFromSupabase():Promise.resolve()
+  ]).then(()=>{
+    const b=document.getElementById("pm-dash-body"); if(!b) return;
+    const cards=_pmList.length ? _pmList.map(_mkPmCard).join("")
+      : (pmCard("Bruce",_computePMMetrics("Bruce"),resolvePMName("Bruce"))+pmCard("Andrew",_computePMMetrics("Andrew"),resolvePMName("Andrew"))+pmCard("Isaiah",_computePMMetrics("Isaiah"),resolvePMName("Isaiah")));
+    b.innerHTML = `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:24px">${cards}</div><div class="pm-note" style="margin-top:20px">📌 Metrics reflect live task &amp; property data. Budget figures appear once cost data is entered.</div>`;
+  });
 
   openModal("pm-dash-modal");
 }
