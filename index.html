@@ -256,6 +256,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
   <div class="ni has-dd" id="pm-t">🏗 Proj. Manager ▾
     <div class="dd" id="pm-d">
       <div class="ddl">Project Manager</div>
+      <div class="ddi" onclick="openPMAssistantDashboard()">🗂 PM Assistant Dashboard</div>
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
       <div class="ddi" onclick="openTVDashboard()">📺 TV Dashboard</div>
@@ -3184,42 +3185,16 @@ function pmTabContent(name) {
       <div style="padding:8px 13px">${taskRows}</div>
     </div>
 
-    <!-- PM board tabs: click a tile to drill into its properties -->
-    <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px">
-      ${_pmBoardTile(name,"precon","Pre Construction","#185FA5")}
-      ${_pmBoardTile(name,"active","Active Projects","#0B7285")}
-      ${_pmBoardTile(name,"finishes","Finishes / Pre-List & Punchout","#D85A30")}
-      ${_pmBoardTile(name,"eop","End of Project / PM Bonuses","#3B6D11")}
+    <!-- 6 boards grid -->
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+      ${boardCardPM("Pre Construction",             "#E6F1FB","#185FA5", boards["SOW & Budgets"])}
+      ${boardCardPM("Permits & Drawings",           "#FBEAF0","#D4537E", boards["Permits & Drawings"])}
+      ${boardCardPM("Design Budgets & Status",      "#EEEDFE","#7F77DD", boards["Design Budgets & Design Status"])}
+      ${boardCardPM("Takedowns / Vacancies",        "#FCEBEB","#E24B4A", boards["Takedowns / Vacancies"])}
+      ${boardCardPM("Pre Listing Phase",            "#FAECE7","#D85A30", boards["Pre Listing Phase"])}
+      ${boardCardPM("Remedy / Upcoming Closings",   "#EAF3DE","#3B6D11", boards["Remedy Requests / Upcoming Closings"])}
     </div>`;
 }
-// PM board groups — the phases a project manager sees. Takedowns / Vacant / Occupied
-// are intentionally hidden from PMs (those belong to the Start-of-Project Assistant).
-const _PM_BOARD_GROUPS = {
-  precon:   { title:"Pre Construction",               phases:["Pre Construction","Waiting Permits"] },
-  active:   { title:"Active Projects",                 phases:["Framing, MEPS, Insulation","Drywall / Exterior Work"] },
-  finishes: { title:"Finishes / Pre-List & Punchout",  phases:["Finishes","Pre List / Punchout Process","Rental Handoff Process"] },
-  eop:      { title:"End of Project / PM Bonuses",      phases:["Listed on the Market","In Contract","RTR In Process","RTR Completed (Pending Closing)"] },
-};
-function _pmBoardTile(pmName,key,title,color){
-  const g=_PM_BOARD_GROUPS[key];
-  const n=(typeof propCards!=='undefined'?propCards:[]).filter(c=>c.pm===pmName && g.phases.includes(c.phase)).length;
-  return `<div onclick="_pmBoardDrill('${pmName.replace(/'/g,"")}','${key}')" style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${color};border-radius:10px;padding:14px 16px;cursor:pointer" onmouseover="this.style.boxShadow='0 4px 14px rgba(0,0,0,0.08)'" onmouseout="this.style.boxShadow='none'">
-    <div style="display:flex;align-items:center;justify-content:space-between"><div style="font-size:12.5px;font-weight:600;color:#111">${title}</div><span style="color:#ccc">›</span></div>
-    <div style="font-size:26px;font-weight:600;color:${color};margin-top:6px">${n}</div>
-    <div style="font-size:10.5px;color:#999">propert${n===1?'y':'ies'}</div>
-  </div>`;
-}
-function _pmBoardDrill(pmName,key){
-  const el=document.getElementById('pd-content'); if(!el) return;
-  const g=_PM_BOARD_GROUPS[key]; if(!g) return;
-  const cards=(typeof propCards!=='undefined'?propCards:[]).filter(c=>c.pm===pmName && g.phases.includes(c.phase));
-  const rows=cards.length?cards.map(_dirPropRow).join(""):'<div style="color:#bbb;font-size:13px;padding:20px 0">No properties in this group right now.</div>';
-  el.innerHTML=`<div style="padding:20px">
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px"><button onclick="_pmBoardBack('${pmName.replace(/'/g,"")}')" style="font-size:12px;padding:6px 12px;border:0.5px solid #cdd7e6;border-radius:6px;background:#fff;color:#185FA5;cursor:pointer">‹ Back</button><div style="font-size:15px;font-weight:600;color:#111">${g.title} — ${_calEsc(resolvePMName(pmName))}</div></div>
-    <div style="display:flex;flex-direction:column;gap:8px;max-width:760px">${rows}</div>
-  </div>`;
-}
-function _pmBoardBack(pmName){ const el=document.getElementById('pd-content'); if(el) el.innerHTML=pmTabContent(pmName); }
 
 function pmStatRow(label, val, color) {
   return `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:0.5px solid #f4f5f7;font-size:12px">
