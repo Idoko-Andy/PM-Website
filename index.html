@@ -2090,7 +2090,7 @@ async function saveClosingSellDate(id){
 async function approveClose(id){
   if(!canApprove(_myProfile)){ alert("Only Bruce, Marlo or Tommy can confirm a closing."); return; }
   const c=propCards.find(x=>x.id===id); if(!c) return;
-  if(!confirm('Confirm that "'+(c.addr||"this property")+'" has closed?\n\nThis moves it to Closed and flags end-of-project — Marlo to start her process and Patience to remove utilities.')) return;
+  if(!confirm('Confirm the SALE of "'+(c.addr||"this property")+'" has closed (us selling)?\n\nThis moves it to Closed and flags end-of-project — Marlo to start her process and Patience to remove utilities.\n\nIf it didn\'t close, cancel and reschedule the "Us Selling" date instead.')) return;
   const closed=c.closingDateSell||c.closingDate||_ymd(new Date());
   const { error }=await supabase.from("pm_properties").update({ close_approved:true, closed_date:closed, phase:"Closed" }).eq("id",id);
   if(error){ alert("Failed: "+(error.message||"")); return; }
@@ -2430,7 +2430,7 @@ function renderMainDashboard() {
       ${statCard('On the Market', countOnMarket(), 'Listed properties', '#5dade2')}
       ${statCard('Closed This Year', countClosedThisYear(), 'This calendar year', '#2ecc71')}
       ${statCard('Team Tasks Done', _teamTasksDone7(), 'Whole team · last 7 days', '#185FA5')}
-      ${statCard('Team Avg $ / Day', _teamDollarsDay(), 'Rolling year · project spent', '#0B7285')}
+      ${statCard('Team Avg $ / Day', _teamDollarsDay(), 'Spent ÷ construction days', '#0B7285')}
     </div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:0">
       ${boardCard("Pre Construction",             "#E6F1FB","#185FA5", sortBoard(boards["SOW & Budgets"]))}
@@ -4827,6 +4827,7 @@ function _personDashView(name, title){
       ${_execStat('Due Today', dueToday.length, dueToday.length?'#B7791F':'#888')}
     </div>
     ${_ceoBoxes(name)}
+    ${(name||'').trim().split(' ')[0]==='Bruce' ? `<div style="margin:4px 0 16px">${threeCalendarWidgets({firstName:'Bruce',lastName:'',role:'Project Director'})}</div>` : ''}
     ${_pmaCard('Tasks assigned to '+_calEsc(name), rows, mine.length, 'No open tasks assigned right now.')}
   </div>`;
 }
@@ -5820,6 +5821,8 @@ function renderConstructionCalendar(){
   if(st.y==null){ const d=new Date(); st.y=d.getFullYear(); st.m=d.getMonth(); }
   // End-of-Project Assistant (Gabe): default to RTR-only events on first open.
   if(!st._rtrInit){ st._rtrInit=true; const u=(typeof currentUser==='function')?currentUser():null; if(u&&u.role==="End of Project Assistant") st.rtrOnly=true; }
+  // Default to the logged-in PM's own calendar on first open.
+  if(!st._selfInit){ st._selfInit=true; try{ const u=(typeof currentUser==='function')?currentUser():null; if(u&&u.role==="Project Manager"&&st.prop==="all"&&st.pm==="all"){ const nm=((u.firstName||"")+" "+(u.lastName||"")).trim(); const pms=[...new Set((typeof propCards!=='undefined'?propCards:[]).map(c=>c.pm).filter(Boolean))]; const hit=pms.find(p=>p===nm)||pms.find(p=>u.firstName&&p.split(" ")[0]===u.firstName); if(hit) st.pm=hit; } }catch(e){} }
   if(!st.loaded){ st.loaded=true; Promise.all([loadContractorsFromSupabase(), loadCalendarEventsFromSupabase(), loadSavedAddresses()]).then(_calRerender); }
   const props=(typeof propCards!=='undefined'?propCards:[]);
   const ro=isReadOnly();
@@ -6242,6 +6245,8 @@ function taskToday(){ _taskCal.day=_ymd(new Date()); _taskRerender(); }
 function renderTaskCalendar(){
   const st=_taskCal;
   if(st.y==null){ const d=new Date(); st.y=d.getFullYear(); st.m=d.getMonth(); }
+  // Default to the logged-in user's own tasks on first open.
+  if(!st._selfInit){ st._selfInit=true; try{ const u=(typeof currentUser==='function')?currentUser():null; if(u&&st.assignee==="all"){ const nm=((u.firstName||"")+" "+(u.lastName||"")).trim(); const tm=teamMembers(); const hit=tm.find(m=>m===nm)||tm.find(m=>u.firstName&&m.split(" ")[0]===u.firstName); if(hit) st.assignee=hit; } }catch(e){} }
   if(!st.loaded){ st.loaded=true; Promise.all([loadTasks(), loadSavedAddresses()]).then(_taskRerender); }
   const ro=isReadOnly();
   // Assignee picker: "All" button + a person dropdown (matches the construction calendar's picker)
