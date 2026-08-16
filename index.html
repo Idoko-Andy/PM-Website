@@ -2220,6 +2220,28 @@ async function _maybeAutoAdvance(propId){
   return true;
 }
 // A PM marks a subphase completed; un-checking clears any prior approval.
+// Mirror every SCHEDULED subphase (has start+due) onto the PM's task calendar.
+// Runs after the workflow chain auto-starts subphases, so fan-out steps show up as
+// real tasks on the assigned PM's schedule. De-dupes against existing mirrored tasks.
+async function _syncSubphaseTasks(propId){
+  const card=(typeof propCards!=='undefined'?propCards:[]).find(p=>p.id===propId); if(!card) return;
+  const subs=(card.subPhases||[]).map(sp=>({...sp}));
+  let changed=false;
+  for(const sp of subs){
+    if(sp.start && sp.due && !sp.taskId){
+      const ex=await supabase.from("pm_tasks").select("id").eq("property_id",propId).eq("category",sp.name).eq("due_date",sp.due).limit(1);
+      if(ex.data && ex.data.length){ sp.taskId=ex.data[0].id; changed=true; continue; }
+      const payload={ title:sp.name, category:sp.name, assignee:card.pm||null, assignees:card.pm?[card.pm]:[], start_date:sp.start, due_date:sp.due, property_id:propId, notes:"Auto-scheduled from "+(card.addr||"property")+" workflow", status:"open" };
+      const ins=await supabase.from("pm_tasks").insert(payload).select("id").single();
+      if(!ins.error){ sp.taskId=ins.data.id; changed=true; }
+    }
+  }
+  if(changed){
+    await supabase.from("pm_properties").update({ sub_phases:subs }).eq("id",propId);
+    await loadPropertiesFromSupabase();
+    await loadTasks();
+  }
+}
 async function toggleSubPhaseComplete(propId, name){
   if(_blockIfReadOnly()) return;
   const card=propCards.find(p=>p.id===propId); if(!card) return;
@@ -2234,6 +2256,7 @@ async function toggleSubPhaseComplete(propId, name){
   if(error){ alert("Couldn't update subphase: "+(error.message||"")); return; }
   _logAudit(s.completed?"completed":"reopened","property", card.addr||"", "Subphase: "+name);
   await loadPropertiesFromSupabase();
+  await _syncSubphaseTasks(propId);
   const advanced = s.completed ? await _maybeAutoAdvance(propId) : false;
   if(advanced && document.getElementById("pd-root")) openProjectDashboard('trello'); else openPropDetail(propId);
 }
@@ -2251,6 +2274,7 @@ async function approveSubPhase(propId, name){
   if(error){ alert("Couldn't approve: "+(error.message||"")); return; }
   _logAudit("approved","property", card.addr||"", "Subphase approved: "+name+" by "+s.approvedBy);
   await loadPropertiesFromSupabase();
+  await _syncSubphaseTasks(propId);
   const advanced = await _maybeAutoAdvance(propId);
   if(advanced && document.getElementById("pd-root")) openProjectDashboard('trello'); else openPropDetail(propId);
 }
