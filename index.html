@@ -2235,6 +2235,9 @@ function _applyChain(subs, name, event){
 async function _maybeAutoAdvance(propId){
   const card=propCards.find(p=>p.id===propId); if(!card) return false;
   const cfg=PHASE_ADVANCE[card.phase]; if(!cfg) return false;
+  // A phase with no required subphases must NOT auto-advance — otherwise checking any
+  // subphase box would instantly jump the card to the next phase.
+  if(!Array.isArray(cfg.requires) || cfg.requires.length===0) return false;
   if(_phaseAdvanceBlocking(card).length) return false;
   const { error } = await supabase.from("pm_properties").update({ phase:cfg.next }).eq("id",propId);
   if(error) return false;
@@ -2285,7 +2288,7 @@ async function toggleSubPhaseComplete(propId, name){
   await loadPropertiesFromSupabase();
   await _syncSubphaseTasks(propId);
   const advanced = s.completed ? await _maybeAutoAdvance(propId) : false;
-  if(advanced && document.getElementById("pd-root")) openProjectDashboard('trello'); else openPropDetail(propId);
+  openPropDetail(propId); // stay on the property card after checking a box (don't kick back to the board)
 }
 // Bruce / Marlo / Tommy (or an admin) approve a completed subphase.
 async function approveSubPhase(propId, name){
@@ -2303,7 +2306,7 @@ async function approveSubPhase(propId, name){
   await loadPropertiesFromSupabase();
   await _syncSubphaseTasks(propId);
   const advanced = await _maybeAutoAdvance(propId);
-  if(advanced && document.getElementById("pd-root")) openProjectDashboard('trello'); else openPropDetail(propId);
+  openPropDetail(propId); // stay on the property card after checking a box (don't kick back to the board)
 }
 
 function phInfo(name){ return PROP_PHASES.find(p=>p.name===name)||{bg:"#f4f5f7",text:"#555",cnt:"#aaa",dot:"#aaa"}; }
