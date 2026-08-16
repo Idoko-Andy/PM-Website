@@ -4727,6 +4727,78 @@ function openAdminDashboard(activeTab) {
   _execShell('openAdminDashboard', tabs, activeTab, content);
 }
 
+// ===== Director / CEO home: clickable drill-in boxes =====
+function _dirBox(title, count, sub, color, onclick){
+  return `<div onclick="${onclick}" style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${color};border-radius:10px;padding:14px 16px;cursor:pointer" onmouseover="this.style.boxShadow='0 4px 14px rgba(0,0,0,0.08)'" onmouseout="this.style.boxShadow='none'">
+    <div style="font-size:26px;font-weight:600;color:${color}">${count}</div>
+    <div style="font-size:12.5px;font-weight:600;color:#111;margin-top:2px">${title}</div>
+    <div style="font-size:10.5px;color:#999;margin-top:2px">${sub}</div>
+  </div>`;
+}
+function _dirGroup(label){ return `<div style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#8a93a3;margin:18px 4px 8px">${label}</div>`; }
+function _dirCollect(){
+  const cards=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived);
+  const tasks=(typeof _tasksCache!=='undefined'?_tasksCache:[]);
+  const today=_ymd(new Date());
+  const isAppr=(nm)=>/approval/i.test(nm||"");
+  const buyDue=cards.filter(c=>c.closingDate&&c.closingDate<=today&&!c.purchaseConfirmed&&c.phase!=='Closed');
+  const sellDue=cards.filter(c=>c.closingDateSell&&c.closingDateSell<=today&&!c.closeApproved&&c.phase!=='Closed');
+  const upPurch=cards.filter(c=>c.closingDate&&c.closingDate>today&&!c.purchaseConfirmed);
+  const upSale=cards.filter(c=>c.closingDateSell&&c.closingDateSell>today&&!c.closeApproved);
+  const overdue=tasks.filter(t=>t.status!=='done'&&t.due_date&&t.due_date<today);
+  const approvals=[];
+  cards.forEach(c=>(c.subPhases||[]).forEach(s=>{ if(isAppr(s.name)&&s.start&&!s.approved&&!s.completed) approvals.push({c,s}); }));
+  return {cards,tasks,today,buyDue,sellDue,upPurch,upSale,overdue,approvals};
+}
+function renderDirectorHome(){
+  if(typeof _tasksCache==='undefined'||!_tasksCache.length){ Promise.all([(typeof loadTasks==='function')?loadTasks():Promise.resolve(),(typeof loadPropertiesFromSupabase==='function')?loadPropertiesFromSupabase():Promise.resolve()]).then(()=>{const el=document.getElementById('pd-content'); if(el) el.innerHTML=renderDirectorHome();}); }
+  const d=_dirCollect();
+  const phases=["Upcoming Takedowns","Vacant / On Standby","Pre Construction","Framing, MEPS, Insulation","Drywall / Exterior Work","Finishes","Waiting Permits","Listed on the Market","In Contract","Occupied / Closed","Closed"];
+  const money=[
+    _dirBox("Purchase closings due", d.buyDue.length, "Confirm we own it", "#185FA5", "_dirDrill('buyDue')"),
+    _dirBox("Sale closings due", d.sellDue.length, "Approve → Closed", "#B42318", "_dirDrill('sellDue')"),
+    _dirBox("Upcoming purchases", d.upPurch.length, "Us buying (future)", "#2E7D32", "_dirDrill('upPurch')"),
+    _dirBox("Upcoming sales", d.upSale.length, "Us selling (future)", "#7F77DD", "_dirDrill('upSale')"),
+  ].join("");
+  const attn=[
+    _dirBox("Overdue tasks", d.overdue.length, "Past due, not done", "#c0392b", "_dirDrill('overdue')"),
+    _dirBox("Pending approvals", d.approvals.length, "SOW / Budget sign-offs", "#E67E22", "_dirDrill('approvals')"),
+    _dirBox("Closings to sign", d.buyDue.length+d.sellDue.length, "Buy + sell flags", "#B42318", "_dirDrill('buyDue')"),
+  ].join("");
+  const pms=(typeof PM_MANAGERS!=='undefined'?PM_MANAGERS:[]);
+  const pmBoxes=pms.map(nm=>{ const m=(typeof _computePMMetrics==='function')?_computePMMetrics(nm):{}; const props=d.cards.filter(c=>_sameAssignee(c.pm,nm)).length; const pct=(m&&m.taskCompletionPct!=null&&m.taskCompletionPct!=='--')?m.taskCompletionPct+'%':'—'; return _dirBox(nm, props, "Tasks done: "+pct, "#122A4A", "_dirDrill('pm','"+nm.replace(/'/g,"")+"')"); }).join("");
+  const phaseBoxes=phases.map(ph=>{ const p=(typeof phInfo==='function')?phInfo(ph):{dot:'#888'}; const n=d.cards.filter(c=>c.phase===ph).length; return _dirBox(ph, n, "properties", p.dot||'#888', "_dirDrill('phase','"+ph.replace(/'/g,"")+"')"); }).join("");
+  const grid=(inner)=>`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px">${inner}</div>`;
+  return `<div style="padding:20px">
+    <div style="font-size:16px;font-weight:600;color:#111;margin-bottom:2px">Director / CEO Overview</div>
+    <div style="font-size:12px;color:#888">Click any box to drill in.</div>
+    ${_dirGroup("Money &amp; Closings")}${grid(money)}
+    ${_dirGroup("Attention Needed")}${grid(attn)}
+    ${_dirGroup("Project Managers")}${grid(pmBoxes||'<div style=\"color:#bbb;font-size:12px\">No PMs yet</div>')}
+    ${_dirGroup("Phase Boards")}${grid(phaseBoxes)}
+  </div>`;
+}
+function _dirBack(){ const el=document.getElementById('pd-content'); if(el) el.innerHTML=renderDirectorHome(); }
+function _dirDrillHead(title){ return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px"><button onclick="_dirBack()" style="font-size:12px;padding:6px 12px;border:0.5px solid #cdd7e6;border-radius:6px;background:#fff;color:#185FA5;cursor:pointer">‹ Back</button><div style="font-size:15px;font-weight:600;color:#111">${title}</div></div>`; }
+function _dirPropRow(c){ const p=(typeof phInfo==='function')?phInfo(c.phase):{dot:'#888'}; return `<div onclick="openPropDetail('${c.id}')" style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid ${p.dot||'#888'};border-radius:8px;padding:10px 13px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px">
+    <div><div style="font-size:12.5px;font-weight:600;color:#111">${_calEsc(c.addr||'')}</div><div style="font-size:11px;color:#999">${_calEsc(c.phase||'')} · ${c.pm?_calEsc(c.pm):'—'}</div></div>
+    <div style="font-size:11px;color:#aaa;text-align:right">${c.closingDate?('Buy '+c.closingDate):''}${c.closingDateSell?('<br>Sell '+c.closingDateSell):''}</div>
+  </div>`; }
+function _dirList(rows){ return rows.length?`<div style="display:flex;flex-direction:column;gap:8px;max-width:760px">${rows}</div>`:`<div style="color:#bbb;font-size:13px;padding:20px 0">Nothing here right now.</div>`; }
+function _dirDrill(kind,arg){
+  const el=document.getElementById('pd-content'); if(!el) return;
+  const d=_dirCollect();
+  let title="", rows="";
+  if(kind==='phase'){ title=arg; rows=_dirList(d.cards.filter(c=>c.phase===arg).map(_dirPropRow).join("")); }
+  else if(kind==='buyDue'){ title="Purchase closings due"; rows=_dirList(d.buyDue.map(_dirPropRow).join("")); }
+  else if(kind==='sellDue'){ title="Sale closings due"; rows=_dirList(d.sellDue.map(_dirPropRow).join("")); }
+  else if(kind==='upPurch'){ title="Upcoming purchases"; rows=_dirList(d.upPurch.map(_dirPropRow).join("")); }
+  else if(kind==='upSale'){ title="Upcoming sales"; rows=_dirList(d.upSale.map(_dirPropRow).join("")); }
+  else if(kind==='overdue'){ title="Overdue tasks"; rows=_dirList(d.overdue.map(t=>`<div onclick="openTaskDetail('${t.id}')" style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid #c0392b;border-radius:8px;padding:10px 13px;cursor:pointer;display:flex;justify-content:space-between"><div><div style="font-size:12.5px;font-weight:600;color:#111">${_calEsc(t.title||t.category||'Task')}</div><div style="font-size:11px;color:#999">${_calEsc(taskAssignees(t).join(', ')||'Unassigned')}</div></div><div style="font-size:11px;color:#c0392b;font-weight:600">Due ${t.due_date}</div></div>`).join("")); }
+  else if(kind==='approvals'){ title="Pending approvals"; rows=_dirList(d.approvals.map(a=>`<div onclick="openPropDetail('${a.c.id}')" style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid #E67E22;border-radius:8px;padding:10px 13px;cursor:pointer;display:flex;justify-content:space-between"><div><div style="font-size:12.5px;font-weight:600;color:#111">${_calEsc(a.c.addr||'')}</div><div style="font-size:11px;color:#999">${_calEsc(a.s.name)}</div></div><div style="font-size:11px;color:#E67E22;font-weight:600">Awaiting sign-off</div></div>`).join("")); }
+  else if(kind==='pm'){ title=arg+" — properties"; const m=(typeof _computePMMetrics==='function')?_computePMMetrics(arg):{}; const cells=[['Flips',m.flipsCompleted],['Rental handoffs',m.rentalHandoffs],['On timeline',(m.timelinePct&&m.timelinePct.on!=null?m.timelinePct.on+'%':'—')],['Task completion',(m.taskCompletionPct!=null&&m.taskCompletionPct!=='--'?m.taskCompletionPct+'%':'—')],['Rescheduled',(m.reschedulePct!=null&&m.reschedulePct!=='--'?m.reschedulePct+'%':'—')]]; const stat=`<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">${cells.map(s=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:8px 12px;min-width:96px"><div style="font-size:10px;color:#999;text-transform:uppercase">${s[0]}</div><div style="font-size:18px;font-weight:600;color:#111">${s[1]==null?'—':s[1]}</div></div>`).join('')}</div>`; rows=stat+_dirList(d.cards.filter(c=>_sameAssignee(c.pm,arg)).map(_dirPropRow).join("")); }
+  el.innerHTML=_dirDrillHead(title)+rows;
+}
 function openDirectorCEODashboard(activeTab) {
   activeTab = activeTab || 'main';
   const tabs=[
@@ -4746,7 +4818,7 @@ function openDirectorCEODashboard(activeTab) {
     case 'property':     content=renderPropertyBoard(); break;
     case 'construction': content=renderConstructionCalendar(); break;
     case 'taskcal':      content=renderTaskCalendar(); break;
-    default:             content=renderMainDashboard();
+    default:             content=renderDirectorHome();
   }
   _execShell('openDirectorCEODashboard', tabs, activeTab, content);
 }
