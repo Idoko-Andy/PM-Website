@@ -1938,6 +1938,17 @@ async function updatePropertyPhaseInSupabase(id, newPhase) {
   const patch = { phase: newPhase };
   // The date a property enters "Closed" is its close date (drives the Completed archive).
   if (newPhase === "Closed" && !(_pc && _pc.closedDate)) patch.closed_date = _ymd(new Date());
+  // Entering "Vacant / On Standby" auto-starts the First Time Access Checklist:
+  // start = the day it moved in, due = 3 days (72h) later. Set automatically on every move
+  // (unless the checklist is already completed).
+  if (newPhase === "Vacant / On Standby") {
+    const _today = _ymd(new Date()), _due = _ymdPlus(3);
+    const _subs = Array.isArray(_pc && _pc.subPhases) ? _pc.subPhases.map(s=>({...s})) : [];
+    let _fta = _subs.find(s=>s.name==="First Time Access Checklist");
+    if(!_fta){ _fta={name:"First Time Access Checklist"}; _subs.unshift(_fta); }
+    if(!_fta.completed){ _fta.start=_today; _fta.due=_due; }
+    patch.sub_phases = _subs;
+  }
   const { error } = await supabase.from("pm_properties").update(patch).eq("id", id);
   if (error) { alert("Failed to update phase: " + (error.message || "unknown error")); return false; }
   _logAudit("moved","property", _pc?_pc.addr:"", "Moved to “"+newPhase+"”");
