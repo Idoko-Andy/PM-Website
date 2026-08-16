@@ -1659,6 +1659,7 @@ const PROP_PHASES = [
 ];
 
 const PROP_TYPES = [
+  "Hotel Flip",
   "Rental Turn / Flip",
   "Whole Tail / Flip",
   "Sub To GC",
@@ -1926,12 +1927,15 @@ async function savePropInfo(id){
 
 async function savePropertyToSupabase(id, data) {
   if (_blockIfReadOnly()) return false;
+  // A silently-expired login makes every write fail with a confusing RLS error — catch it first.
+  try{ const _s=await supabase.auth.getSession(); if(!_s.data.session){ alert("Your login session has expired — refresh the page and log back in, then try again."); return false; } }catch(e){}
+  const _friendly=(m)=>/row-level security/i.test(m||"") ? "Your login session looks expired or lacks permission — refresh the page and log back in, then try again." : (m||"unknown error");
   if (id) {
     const { error } = await supabase.from("pm_properties").update(_propCardToRow(data)).eq("id", id);
-    if (error) { alert("Failed to save property: " + (error.message || "unknown error")); return false; }
+    if (error) { alert("Failed to save property: " + _friendly(error.message)); return false; }
   } else {
     const { error } = await supabase.from("pm_properties").insert(_propCardToRow(data));
-    if (error) { alert("Failed to create property: " + (error.message || "unknown error")); return false; }
+    if (error) { alert("Failed to create property: " + _friendly(error.message)); return false; }
   }
   _logAudit(id?"updated":"created","property", data.addr||"", id?"Edited property details":"Added a new property");
   await loadPropertiesFromSupabase();
@@ -1976,7 +1980,8 @@ async function movePropertyToPhase(id, newPhase){
   if(oldPhase===newPhase){ openPropDetail(id); return; }
   const _oi=PROP_PHASES.findIndex(p=>p.name===oldPhase);
   const _ti=PROP_PHASES.findIndex(p=>p.name===newPhase);
-  if(_ti>_oi && !canMoveFreely()){
+  // Hotel Flips move freely: anybody can put them in any main phase at any time.
+  if(_ti>_oi && !canMoveFreely() && !/hotel/i.test(card.type||'')){
     const blocking=_phaseAdvanceBlocking(card).map(nm=>{ const sp=(card.subPhases||[]).find(s=>s.name===nm); const note=!sp||!sp.completed?" — not completed":(subphaseNeedsApproval(nm)&&!sp.approved?" — awaiting approval":""); return nm+note; });
     if(blocking.length){ alert("Can't advance \""+(card.addr||"this property")+"\" to "+newPhase+" yet.\n\nFinish these first (approvals by Bruce/Marlo/Tommy where required):\n\n• "+blocking.join("\n• ")); openPropDetail(id); return; }
   }
@@ -5089,20 +5094,23 @@ function openVAAdminDashboard(activeTab) {
     {id:'main',label:'Main Dashboard',icon:'📊'},
     {id:'va',label:vaName,icon:'👤'},
     {id:'utilities',label:'Utilities',icon:'⚡'},
+    {id:'trackers',label:'Trackers',icon:'📋'},
     {id:'property',label:'Property Dashboard',icon:'🏗'},
     {id:'construction',label:'Construction Calendar',icon:'📅'},
     {id:'taskcal',label:'Task Calendar',icon:'🗓'},
   ];
   let content;
   switch(activeTab){
-    case 'va':           content=_personDashView(vaName,'Virtual Administrative Assistant'); break;
+    case 'va':           content=_vaPersonView(vaName); break;
     case 'utilities':    content=_utilitiesDashboard(); break;
+    case 'trackers':     content=_vaTrackers(); break;
     case 'property':     content=renderPropertyBoard(); break;
     case 'construction': content=renderConstructionCalendar(); break;
     case 'taskcal':      content=renderTaskCalendar(); break;
-    default:             content=_utilitiesDashboard();
+    default:             content=_vaMainDashboard(vaName);
   }
   _execShell('openVAAdminDashboard', tabs, activeTab, content);
+  if(activeTab==='trackers' && !window._trkLoaded){ Promise.all([_trkLoad(), loadContractorsFromSupabase()]).then(()=>openVAAdminDashboard('trackers')); }
 }
 async function _utilToggle(id,key){ await toggleChecklistItem(id,key); openVAAdminDashboard('utilities'); }
 // Utilities dashboard (Patience): electric/water/gas status per active property.
@@ -5120,6 +5128,49 @@ function _utilitiesDashboard(){
     <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">
       <thead><tr style="background:#122A4A;color:#fff"><th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">Electric</th><th style="padding:9px">Water</th><th style="padding:9px">Gas</th><th style="padding:9px">Status</th></tr></thead>
       <tbody>${cards.map(row).join("")||'<tr><td colspan="5" style="padding:20px;text-align:center;color:#bbb">No active properties.</td></tr>'}</tbody></table></div>
+  </div>`;
+}
+// VA-Admin main: quick overview boxes (no utilities table here — that lives on its own tab).
+function _vaMainDashboard(vaName){
+  const mine=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status!=="done" && _taskHasAssignee(t,vaName));
+  const phases=["Vacant / On Standby","Pre Construction","Waiting Permits","Framing, MEPS, Insulation","Drywall / Exterior Work","Finishes","Pre List / Punchout Process","Listed on the Market"];
+  const cards=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived);
+  const utilPending=cards.filter(c=>phases.includes(c.phase) && ["vos_util_electric","vos_util_water","vos_util_gas"].some(k=>!((c.checklists||{})[k]||{}).done)).length;
+  const rtr=cards.filter(c=>["RTR In Process","RTR Completed (Pending Closing)","Closed"].includes(c.phase)).length;
+  const box=(t,v,sub,color,fn)=>`<div onclick="${fn}" style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${color};border-radius:10px;padding:14px 16px;cursor:pointer"><div style="font-size:12.5px;font-weight:600;color:#111">${t}</div><div style="font-size:26px;font-weight:600;color:${color};margin-top:6px">${v}</div><div style="font-size:10.5px;color:#999">${sub}</div></div>`;
+  return `<div style="padding:20px;max-width:900px;margin:0 auto">
+    <div style="font-size:16px;font-weight:600;color:#111;margin-bottom:12px">📊 VA Admin — Main</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">
+      ${box('My Open Tasks', mine.length, 'assigned to '+_calEsc(vaName), '#185FA5', "openVAAdminDashboard('va')")}
+      ${box('Utilities Pending', utilPending, 'properties missing a utility', '#B7791F', "openVAAdminDashboard('utilities')")}
+      ${box('End of Project', rtr, 'RTR / Closed — utilities to remove', '#0B7285', "openVAAdminDashboard('utilities')")}
+      ${box('Trackers', '📋', 'W-9 · Mowing · Checklists', '#7A3FA8', "openVAAdminDashboard('trackers')")}
+    </div>
+  </div>`;
+}
+// VA person tab: her upcoming tasks + Google Calendar.
+function _vaPersonView(vaName){
+  const g=`<div style="max-width:900px;margin:0 auto;padding:0 20px 20px"><div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:14px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><div><div style="font-size:13px;font-weight:600;color:#111">📆 Google Calendar</div><div style="font-size:11px;color:#888">${_calEsc(vaName)}'s calendar — property deadlines sync automatically (Account → Calendar).</div></div><div onclick="window.open('https://calendar.google.com','_blank')" style="font-size:12px;background:#111;color:#fff;border-radius:6px;padding:8px 14px;cursor:pointer">Open Google Calendar</div></div></div>`;
+  return _personDashView(vaName,'Virtual Administrative Assistant')+g;
+}
+// ---- Trackers (W-9 / Mowing / Checklists) — persisted in pm_settings key 'trackers'. ----
+async function _trkLoad(){ window._trkLoaded=true; try{ const r=await supabase.from("pm_settings").select("data").eq("key","trackers").maybeSingle(); window._trkData=(r.data&&r.data.data)||{}; }catch(e){ window._trkData={}; } }
+async function _trkToggle(kind,id){ if(_blockIfReadOnly()) return; const d=window._trkData||{}; d[kind]=d[kind]||{}; d[kind][id]=!d[kind][id]; window._trkData=d; await supabase.from("pm_settings").upsert({ key:'trackers', data:d }, { onConflict:'key' }); openVAAdminDashboard('trackers'); }
+function _trkTable(title,color,head,rows){ return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:auto;margin-bottom:16px"><div style="padding:10px 14px;border-bottom:0.5px solid #e0e4ec;font-size:13px;font-weight:700;color:${color}">${title}</div><table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="background:#122A4A;color:#fff">${head}</tr></thead><tbody>${rows}</tbody></table></div>`; }
+function _vaTrackers(){
+  const d=window._trkData||{}; const ro=isReadOnly();
+  const chk=(kind,id,on)=> ro?(on?'✅':'⬜'):`<span onclick="_trkToggle('${kind}','${id}')" style="cursor:pointer;font-size:16px">${on?'✅':'⬜'}</span>`;
+  const cons=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]);
+  const w9rows=cons.length?cons.map(c=>`<tr style="border-top:0.5px solid #eef0f6"><td style="padding:7px 10px;font-weight:600;color:#111">${_calEsc(c.name||'')}</td><td style="text-align:center;padding:7px">${chk('w9',c.id,(d.w9||{})[c.id])}</td></tr>`).join(""):'<tr><td colspan="2" style="padding:16px;color:#bbb;text-align:center">No contractors in the directory yet.</td></tr>';
+  const active=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && !["Closed","Completed"].includes(c.phase));
+  const mowrows=active.length?active.map(c=>`<tr style="border-top:0.5px solid #eef0f6"><td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span><div style="font-size:10px;color:#999">${_calEsc(c.phase||'')}</div></td><td style="text-align:center;padding:7px">${chk('mow',c.id,(d.mow||{})[c.id])}</td></tr>`).join(""):'<tr><td colspan="2" style="padding:16px;color:#bbb;text-align:center">No active properties.</td></tr>';
+  const clrows=active.length?active.map(c=>{ const subs=c.subPhases||[]; const fta=subs.find(s=>s.name==="First Time Access Checklist"); const po=subs.find(s=>/punch/i.test(s.name||'')); return `<tr style="border-top:0.5px solid #eef0f6"><td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span></td><td style="text-align:center;padding:7px">${fta&&fta.completed?'✅':'⬜'}</td><td style="text-align:center;padding:7px">${po?(po.completed?'✅':'⬜'):'—'}</td></tr>`; }).join(""):'<tr><td colspan="3" style="padding:16px;color:#bbb;text-align:center">No active properties.</td></tr>';
+  return `<div style="padding:20px;max-width:900px;margin:0 auto">
+    <div style="font-size:15px;font-weight:600;color:#111">📋 Trackers</div>
+    <div style="font-size:12px;color:#888;margin-bottom:12px">W-9s on file, mowing status, and property checklist status. Click a box to toggle.</div>
+    ${_trkTable('🧾 W-9 Tracker','#7A3FA8','<th style="padding:9px 10px;text-align:left">Contractor</th><th style="padding:9px">W-9 on file</th>',w9rows)}
+    ${_trkTable('🌱 Mowing Tracker','#3B6D11','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">Mowing handled</th>',mowrows)}
+    ${_trkTable('✅ Checklist Tracker','#185FA5','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">First Time Access</th><th style="padding:9px">Punch Out</th>',clrows)}
   </div>`;
 }
 function openArchitectDashboard(activeTab) {
@@ -5667,7 +5718,7 @@ function propDrop(event, targetPhase) {
   // (ones with a due date) are both completed AND approved by Bruce, Marlo or Tommy.
   const _oi = PROP_PHASES.findIndex(p => p.name === oldPhase);
   const _ti = PROP_PHASES.findIndex(p => p.name === targetPhase);
-  if (_ti > _oi && !canMoveFreely()) {
+  if (_ti > _oi && !canMoveFreely() && !/hotel/i.test((propCards[idx].type)||'')) {
     const card = propCards[idx];
     // The stage's required subphases (per the automated workflow) must be finished first.
     const blocking = _phaseAdvanceBlocking(card).map(nm => {
