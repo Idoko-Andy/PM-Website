@@ -5097,6 +5097,7 @@ function openAdminDashboard(activeTab) {
   const tabs=[
     {id:'main',label:'Main Dashboard',icon:'📊'},
     {id:'marlo',label:'Marlo',icon:'👤'},
+    {id:'trackers',label:'Trackers',icon:'📋'},
     {id:'property',label:'Property Dashboard',icon:'🏗'},
     {id:'construction',label:'Construction Calendar',icon:'📅'},
     {id:'taskcal',label:'Task Calendar',icon:'🗓'},
@@ -5104,12 +5105,14 @@ function openAdminDashboard(activeTab) {
   let content;
   switch(activeTab){
     case 'marlo':        content=_marloTab(); break;
+    case 'trackers':     window._trkRerender=()=>openAdminDashboard('trackers'); content=_vaTrackers(); break;
     case 'property':     content=renderPropertyBoard(); break;
     case 'construction': content=renderConstructionCalendar(); break;
     case 'taskcal':      content=renderTaskCalendar(); break;
     default:             content=_adminMainDashboard();
   }
   _execShell('openAdminDashboard', tabs, activeTab, content);
+  if(activeTab==='trackers' && !window._trkLoaded){ Promise.all([_trkLoad(), loadContractorsFromSupabase()]).then(()=>openAdminDashboard('trackers')); }
 }
 
 // ===== Director / CEO home: clickable drill-in boxes =====
@@ -5233,7 +5236,7 @@ function openVAAdminDashboard(activeTab) {
   switch(activeTab){
     case 'va':           content=_vaPersonView(vaName); break;
     case 'utilities':    content=_utilitiesDashboard(); break;
-    case 'trackers':     content=_vaTrackers(); break;
+    case 'trackers':     window._trkRerender=()=>openVAAdminDashboard('trackers'); content=_vaTrackers(); break;
     case 'property':     content=renderPropertyBoard(); break;
     case 'construction': content=renderConstructionCalendar(); break;
     case 'taskcal':      content=renderTaskCalendar(); break;
@@ -5285,7 +5288,7 @@ function _vaPersonView(vaName){
 }
 // ---- Trackers (W-9 / Mowing / Checklists) — persisted in pm_settings key 'trackers'. ----
 async function _trkLoad(){ window._trkLoaded=true; try{ const r=await supabase.from("pm_settings").select("data").eq("key","trackers").maybeSingle(); window._trkData=(r.data&&r.data.data)||{}; }catch(e){ window._trkData={}; } }
-async function _trkToggle(kind,id){ if(_blockIfReadOnly()) return; const d=window._trkData||{}; d[kind]=d[kind]||{}; d[kind][id]=!d[kind][id]; window._trkData=d; await supabase.from("pm_settings").upsert({ key:'trackers', data:d }, { onConflict:'key' }); openVAAdminDashboard('trackers'); }
+async function _trkToggle(kind,id){ if(_blockIfReadOnly()) return; const d=window._trkData||{}; d[kind]=d[kind]||{}; d[kind][id]=!d[kind][id]; window._trkData=d; await supabase.from("pm_settings").upsert({ key:'trackers', data:d }, { onConflict:'key' }); (window._trkRerender||function(){openVAAdminDashboard('trackers');})(); }
 function _trkTable(title,color,head,rows){ return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:auto;margin-bottom:16px"><div style="padding:10px 14px;border-bottom:0.5px solid #e0e4ec;font-size:13px;font-weight:700;color:${color}">${title}</div><table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="background:#122A4A;color:#fff">${head}</tr></thead><tbody>${rows}</tbody></table></div>`; }
 function _vaTrackers(){
   const d=window._trkData||{}; const ro=isReadOnly();
@@ -5300,6 +5303,7 @@ function _vaTrackers(){
     <div style="font-size:12px;color:#888;margin-bottom:12px">W-9s on file, mowing status, and property checklist status. Click a box to toggle.</div>
     ${_trkTable('🧾 W-9 Tracker','#7A3FA8','<th style="padding:9px 10px;text-align:left">Contractor</th><th style="padding:9px">W-9 on file</th>',w9rows)}
     ${_trkTable('🌱 Mowing Tracker','#3B6D11','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">Mowing handled</th>',mowrows)}
+    ${_trkTable('🪟 Window Tracker','#185FA5','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">Windows handled</th>',active.length?active.map(c=>`<tr style="border-top:0.5px solid #eef0f6"><td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span><div style="font-size:10px;color:#999">${_calEsc(c.phase||'')}</div></td><td style="text-align:center;padding:7px">${chk('window',c.id,(d.window||{})[c.id])}</td></tr>`).join(""):'<tr><td colspan="2" style="padding:16px;color:#bbb;text-align:center">No active properties.</td></tr>')}
     ${_trkTable('✅ Checklist Tracker','#185FA5','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">First Time Access</th><th style="padding:9px">Punch Out</th>',clrows)}
   </div>`;
 }
@@ -5887,7 +5891,7 @@ async function loadContractorsFromSupabase(){
   _contractorsCache = error ? [] : (data||[]);
 }
 async function loadCalendarEventsFromSupabase(){
-  let { data, error } = await supabase.from("pm_calendar_events").select("id,property_id,event_date,kind,title,contractor_id,notes,completed,location").order("event_date",{ascending:true});
+  let { data, error } = await supabase.from("pm_calendar_events").select("id,property_id,event_date,end_date,kind,title,contractor_id,notes,completed,location").order("event_date",{ascending:true});
   if(error){ // location column may not exist on older DBs — fall back
     ({ data, error } = await supabase.from("pm_calendar_events").select("id,property_id,event_date,kind,title,contractor_id,notes,completed").order("event_date",{ascending:true}));
   }
@@ -6097,7 +6101,7 @@ function renderConstructionCalendar(){
   };
   const eventsForDay=(day)=>{
     const ds=`${st.y}-${String(st.m+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
-    return _calEventsCache.filter(e=> e.event_date===ds
+    return _calEventsCache.filter(e=> (e.event_date===ds || (e.end_date && e.event_date<=ds && ds<=e.end_date))
       && (st.prop==="all"||e.property_id===st.prop)
       && (st.pm==="all"||_propPM(e.property_id)===st.pm)
       && (!st.rtrOnly || ["RTR In Process","RTR Completed (Pending Closing)"].includes(_propPhase(e.property_id)))
@@ -6184,7 +6188,8 @@ function openAddCalEvent(dateStr){
     <button class="modal-close" onclick="closeModal('calevent-modal')">✕</button>
     <h2>Add to construction calendar</h2>
     <div class="error-msg" id="cal-err"></div>
-    <div class="form-row"><label>Date</label><input type="date" id="cal-date" value="${_calEsc(dateStr||"")}" /></div>
+    <div class="form-row"><label>Start date</label><input type="date" id="cal-date" value="${_calEsc(dateStr||"")}" /></div>
+    <div class="form-row"><label>Finish date <span style="font-size:10px;color:#999">(optional — shows on every day in the range)</span></label><input type="date" id="cal-end" /></div>
     ${_calAddrField("cal",null,null,"")}
     <div class="form-row"><label>Type</label>
       <select id="cal-kind" onchange="_calToggleKind()">
@@ -6289,7 +6294,9 @@ async function saveCalEvent(){
       await loadContractorsFromSupabase();
     } else if(!contractorId){ showE("Pick a contractor (or add a new one)."); return; }
   }
-  const { error } = await supabase.from("pm_calendar_events").insert({ property_id:prop, location, event_date:date, kind, title, contractor_id:contractorId, notes });
+  const _endV=((document.getElementById("cal-end")||{}).value||"");
+  const end_date=(_endV && _endV>date)?_endV:null;
+  const { error } = await supabase.from("pm_calendar_events").insert({ property_id:prop, location, event_date:date, end_date, kind, title, contractor_id:contractorId, notes });
   if(error){ showE("Failed to save: "+(error.message||"unknown error")); return; }
   if(_pl.saveAddr && location) await _saveAddressForReuse(location);
   _logAudit("created","calendar", prop?_propAddr(prop):location, kind==="contractor"?("Contractor start: "+_contractorName(contractorId)):(kind==="custom"?("Custom: "+title):("Material delivery: "+title)));
