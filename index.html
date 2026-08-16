@@ -2186,7 +2186,10 @@ async function saveSubPhaseSchedule(id){
     const start=startEl?startEl.value||"":(prev.start||"");
     const due=dueEl?dueEl.value||"":(prev.due||"");
     let taskId=prev.taskId||null;
-    const scheduled = start && due;
+    // First Time Access (Start-of-Project Assistant) and approval steps (approvers) never
+    // go on the PM's task calendar — so they never create/keep a mirrored pm_task here.
+    const _pmTaskEligible = name!=="First Time Access Checklist" && !/approval/i.test(name);
+    const scheduled = start && due && _pmTaskEligible;
     if(scheduled){
       const payload={ title:name, category:name, assignee:card.pm||null, assignees:card.pm?[card.pm]:[], start_date:start, due_date:due, property_id:id, notes:"Auto-created from "+(card.addr||"property")+" subphase schedule" };
       if(taskId){
