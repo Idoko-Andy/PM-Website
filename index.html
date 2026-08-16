@@ -310,6 +310,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openPMDashboard()">👥 PM Team Overview</div>
       <div class="ddl" style="margin-top:4px">Task Data</div>
       <div class="ddi" onclick="openTaskDataHousing()">🗄 Task Data Housing</div>
+      <div class="ddi" onclick="openDollarsDayHousing()">💵 $ / Day Housing</div>
     </div>
   </div>
   <div class="ni has-dd" id="rep-t">📊 Reporting ▾
@@ -1132,6 +1133,7 @@ const ONCLICK_PERM = [
   ["openTVDashboard",           "dash_tv"],
   ["openPMAssistantDashboard",  "dash_pmassistant"],
   ["openTaskDataHousing",       "data_pmoverview"],
+  ["openDollarsDayHousing",     "data_pmoverview"],
   ["openAdminDashboard",        "dash_admin"],
   ["openSeniorVADashboard",     "dash_seniorva"],
   ["openVAAdminDashboard",      "dash_vaadmin"],
@@ -1942,6 +1944,11 @@ async function updatePropertyPhaseInSupabase(id, newPhase) {
   const patch = { phase: newPhase };
   // The date a property enters "Closed" is its close date (drives the Completed archive).
   if (newPhase === "Closed" && !(_pc && _pc.closedDate)) patch.closed_date = _ymd(new Date());
+  // Entering "Waiting Permits" starts the construction-days clock ($ of work / day denominator).
+  if (newPhase === "Waiting Permits") {
+    const _cl = Object.assign({}, (_pc && _pc.checklists) || {});
+    if (!_cl.construction_start) { _cl.construction_start = _ymd(new Date()); patch.checklists = _cl; }
+  }
   // Entering "Vacant / On Standby" auto-starts the First Time Access Checklist:
   // start = the day it moved in, due = 3 days (72h) later. Set automatically on every move
   // (unless the checklist is already completed).
@@ -2246,7 +2253,10 @@ async function _maybeAutoAdvance(propId){
   // subphase box would instantly jump the card to the next phase.
   if(!Array.isArray(cfg.requires) || cfg.requires.length===0) return false;
   if(_phaseAdvanceBlocking(card).length) return false;
-  const { error } = await supabase.from("pm_properties").update({ phase:cfg.next }).eq("id",propId);
+  const _patch={ phase:cfg.next };
+  // Auto-advance into Waiting Permits also starts the construction-days clock.
+  if(cfg.next==="Waiting Permits"){ const _cl=Object.assign({},card.checklists||{}); if(!_cl.construction_start){ _cl.construction_start=_ymd(new Date()); _patch.checklists=_cl; } }
+  const { error } = await supabase.from("pm_properties").update(_patch).eq("id",propId);
   if(error) return false;
   const pmName=card.pm||"";
   _logAudit("advanced","property", card.addr||"", "Auto-advanced "+card.phase+" → "+cfg.next+(cfg.notifyPM&&pmName?(" · PM notified: "+pmName):""));
@@ -2326,7 +2336,10 @@ function phInfo(name){ return PROP_PHASES.find(p=>p.name===name)||{bg:"#f4f5f7",
 // ===================== MAIN DASHBOARD 5 BOARDS =====================
 // Combined team stats for the Main Dashboard (all PMs + assistants).
 function _teamTasksDone7(){ const t=new Date();t.setHours(0,0,0,0); const a=_ymd(new Date(t.getTime()-7*86400000)); const s=_ymd(t); return (typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(x=>x.status==='done'&&x.due_date&&x.due_date>=a&&x.due_date<=s).length; }
-function _teamDollarsDay(){ const t=new Date();t.setHours(0,0,0,0); let S=0,D=0; (typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived).forEach(c=>{ const v=parseFloat(String(c.spent||"").replace(/[^0-9.\-]/g,"")); if(isNaN(v)||v<=0||!c.start) return; const sd=new Date(c.start); if(isNaN(sd)) return; S+=v; D+=Math.max(1,Math.round((t-sd)/86400000)); }); return D?('$'+Math.round(S/D).toLocaleString()):'—'; }
+// Construction-days clock: starts when the property moves into Waiting Permits
+// (stamped in checklists.construction_start); older cards fall back to their Start Date.
+function _velStart(c){ return (c.checklists && c.checklists.construction_start) || c.start || null; }
+function _teamDollarsDay(){ const t=new Date();t.setHours(0,0,0,0); let S=0,D=0; (typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived).forEach(c=>{ const v=parseFloat(String(c.spent||"").replace(/[^0-9.\-]/g,"")); const _vs=_velStart(c); if(isNaN(v)||v<=0||!_vs) return; const sd=new Date(_vs); if(isNaN(sd)) return; S+=v; D+=Math.max(1,Math.round((t-sd)/86400000)); }); return D?('$'+Math.round(S/D).toLocaleString()):'—'; }
 function renderMainDashboard() {
   const statCard = (label, val, sub, color) => `
     <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:12px 14px">
@@ -3409,7 +3422,37 @@ function _tdhRun(){
   const row=(label,s,bold)=>`<tr style="${bold?'background:#EEF3FA;font-weight:700;':''}border-top:0.5px solid #eef0f6"><td style="padding:8px 10px;font-weight:600;color:#111">${_calEsc(label)}</td><td style="padding:8px 10px;text-align:center">${s.total}</td><td style="padding:8px 10px;text-align:center">${s.done}</td><td style="padding:8px 10px;text-align:center">${s.pct==null?'—':s.pct+'%'}</td><td style="padding:8px 10px;text-align:center">${s.resPct==null?'—':s.resPct+'%'}</td><td style="padding:8px 10px;text-align:center">${s.perDay}</td></tr>`;
   let rows=names.map(n=>row(n,_tdhStats(n,from,to))).join("");
   if(who==='__team') rows+=row('TEAM TOTAL', _tdhStats(null,from,to), true);
-  out.innerHTML=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="background:#122A4A;color:#fff"><th style="padding:9px 10px;text-align:left">Person</th><th style="padding:9px 10px">Tasks due</th><th style="padding:9px 10px">Completed</th><th style="padding:9px 10px">Completion %</th><th style="padding:9px 10px">Rescheduled %</th><th style="padding:9px 10px">Done / day</th></tr></thead><tbody>${rows}</tbody></table></div><div style="font-size:11px;color:#999;margin-top:8px">$ of work per day joins this table once cost data is attached to tasks/properties.</div>`;
+  out.innerHTML=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="background:#122A4A;color:#fff"><th style="padding:9px 10px;text-align:left">Person</th><th style="padding:9px 10px">Tasks due</th><th style="padding:9px 10px">Completed</th><th style="padding:9px 10px">Completion %</th><th style="padding:9px 10px">Rescheduled %</th><th style="padding:9px 10px">Done / day</th></tr></thead><tbody>${rows}</tbody></table></div><div style="font-size:11px;color:#999;margin-top:8px">$ of work per day lives in the 💵 $ / Day Housing tab.</div>`;
+}
+// ===== $ Completed / Day Housing: construction velocity per property, permitted vs non =====
+function openDollarsDayHousing(){
+  document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
+  document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
+  const today=new Date(); today.setHours(0,0,0,0);
+  const rows=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived).map(c=>{
+    const v=parseFloat(String(c.spent||"").replace(/[^0-9.\-]/g,""));
+    const vs=_velStart(c); if(isNaN(v)||v<=0||!vs) return null;
+    const sd=new Date(vs); if(isNaN(sd)) return null;
+    const days=Math.max(1,Math.round((today-sd)/86400000));
+    return { addr:c.addr||'', pm:c.pm||'—', permitted:(c.checklists&&c.checklists.permitted)==='yes', start:vs, days, spent:v, rate:Math.round(v/days) };
+  }).filter(Boolean).sort((a,b)=>b.rate-a.rate);
+  const tbl=(list,title,color)=>{
+    const S=list.reduce((a,r)=>a+r.spent,0), D=list.reduce((a,r)=>a+r.days,0);
+    const trs=list.length?list.map(r=>`<tr style="border-top:0.5px solid #eef0f6"><td style="padding:8px 10px;font-weight:600;color:#111">${_calEsc(r.addr)}</td><td style="padding:8px 10px">${_calEsc(r.pm)}</td><td style="padding:8px 10px;text-align:center">${_calEsc(r.start)}</td><td style="padding:8px 10px;text-align:center">${r.days}</td><td style="padding:8px 10px;text-align:right">$${r.spent.toLocaleString()}</td><td style="padding:8px 10px;text-align:right;font-weight:700;color:${color}">$${r.rate.toLocaleString()}</td></tr>`).join("")
+      :`<tr><td colspan="6" style="padding:14px 10px;color:#bbb">No properties with spend + a construction start date yet.</td></tr>`;
+    const avg=D?('$'+Math.round(S/D).toLocaleString()):'—';
+    return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:auto;margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:0.5px solid #e0e4ec;flex-wrap:wrap;gap:6px"><div style="font-size:13px;font-weight:700;color:#111">${title} <span style="color:#999;font-weight:400">(${list.length})</span></div><div style="font-size:12px;color:#555">Group avg (dollar-weighted): <b style="color:${color}">${avg}/day</b></div></div>
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="background:#122A4A;color:#fff"><th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px 10px;text-align:left">PM</th><th style="padding:9px 10px">Constr. start</th><th style="padding:9px 10px">Days</th><th style="padding:9px 10px;text-align:right">Spent</th><th style="padding:9px 10px;text-align:right">$ / day</th></tr></thead><tbody>${trs}</tbody></table></div>`;
+  };
+  document.getElementById("dash-body").innerHTML=`
+   <div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content">
+    <div style="padding:20px;max-width:1000px;margin:0 auto">
+      <div style="font-size:16px;font-weight:600;color:#111">💵 $ Completed / Day Housing</div>
+      <div style="font-size:12px;color:#888;margin-bottom:14px">Construction velocity per property: rehab spent ÷ construction days. The clock starts when the property moves into Waiting Permits (older cards fall back to their Start Date). Split by permit status.</div>
+      ${tbl(rows.filter(r=>r.permitted),'Permitted jobs','#7A3FA8')}
+      ${tbl(rows.filter(r=>!r.permitted),'Non-permitted jobs','#0B7285')}
+    </div></div></div>`;
 }
 function openDataSection(type) {
   const u = currentUser();
@@ -3499,8 +3542,9 @@ function _computePMMetrics(name){
   let _vSpent=0,_vDays=0;
   mine.forEach(c=>{
     const v=parseFloat(String(c.spent||"").replace(/[^0-9.\-]/g,""));
-    if(isNaN(v)||v<=0||!c.start) return;
-    const sd=new Date(c.start); if(isNaN(sd)) return;
+    const _vs=_velStart(c);
+    if(isNaN(v)||v<=0||!_vs) return;
+    const sd=new Date(_vs); if(isNaN(sd)) return;
     _vSpent+=v; _vDays+=Math.max(1,Math.round((today-sd)/86400000));
   });
   const dollarsDay= _vDays? Math.round(_vSpent/_vDays) : null;
