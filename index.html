@@ -3120,9 +3120,10 @@ function pmTabContent(name) {
   let allTasks = [];
   myProps.forEach(card => {
     (card.subPhases||[]).forEach(sp => {
-      if(sp.due && !isApprovalStep(sp.name)) allTasks.push({addr:card.addr, task:sp.name, due:sp.due, overdue:isOver(sp.due)});
+      if(sp.due && !isApprovalStep(sp.name) && !sp.completed && (within5(sp.due)||isOver(sp.due))) allTasks.push({addr:card.addr, task:sp.name, due:sp.due, overdue:isOver(sp.due)});
     });
-    if(card.end) allTasks.push({addr:card.addr, task:'Completion', due:card.end, overdue:isOver(card.end)});
+    // Completion (target end date) only appears once it's within the 5-day window.
+    if(card.end && within5(card.end)) allTasks.push({addr:card.addr, task:'Completion', due:card.end, overdue:false});
   });
   allTasks.sort((a,b)=>new Date(a.due)-new Date(b.due));
   const top10 = allTasks.slice(0,10);
@@ -5797,6 +5798,7 @@ function _propPhase(id){ const p=(typeof propCards!=='undefined'?propCards:[]).f
 function calSelectProp(id){ if(id==='__pick') return; _calState.prop=id; if(id!=="all") _calState.pm="all"; _calRerender(); }
 function calSelectPM(name){ _calState.pm=name; if(name!=="all") _calState.prop="all"; _calRerender(); }
 function calSetFilter(f){ _calState.filter=f; _calRerender(); }
+function calToggleRTR(){ _calState.rtrOnly=!_calState.rtrOnly; _calRerender(); }
 function calPrevMonth(){ _calState.m--; if(_calState.m<0){_calState.m=11;_calState.y--;} _calRerender(); }
 function calNextMonth(){ _calState.m++; if(_calState.m>11){_calState.m=0;_calState.y++;} _calRerender(); }
 function calSetView(v){ _calState.view=v; if(v==="day" && !_calState.day) _calState.day=_ymd(new Date()); _calRerender(); }
@@ -5807,12 +5809,14 @@ function calToday(){ _calState.day=_ymd(new Date()); _calRerender(); }
 function renderConstructionCalendar(){
   const st=_calState;
   if(st.y==null){ const d=new Date(); st.y=d.getFullYear(); st.m=d.getMonth(); }
+  // End-of-Project Assistant (Gabe): default to RTR-only events on first open.
+  if(!st._rtrInit){ st._rtrInit=true; const u=(typeof currentUser==='function')?currentUser():null; if(u&&u.role==="End of Project Assistant") st.rtrOnly=true; }
   if(!st.loaded){ st.loaded=true; Promise.all([loadContractorsFromSupabase(), loadCalendarEventsFromSupabase(), loadSavedAddresses()]).then(_calRerender); }
   const props=(typeof propCards!=='undefined'?propCards:[]);
   const ro=isReadOnly();
   // property selector: All Properties button + a "Select a property" dropdown (scales to 50+)
   const allActive = st.prop==="all" && st.pm==="all";
-  const allBtn = `<div onclick="calSelectProp('all');calSelectPM('all')" style="padding:7px 14px;font-size:12px;cursor:pointer;border-radius:8px;${allActive?'background:#111;color:#fff':'background:#fff;color:#555;border:0.5px solid #ddd'}">All Properties</div>`;
+  const allBtn = `<div onclick="calSelectProp('all');calSelectPM('all')" style="padding:7px 14px;font-size:12px;cursor:pointer;border-radius:8px;${allActive?'background:#111;color:#fff':'background:#fff;color:#555;border:0.5px solid #ddd'}">All Properties</div><div onclick="calToggleRTR()" title="Only show events on RTR properties (End-of-Project)" style="padding:7px 14px;font-size:12px;cursor:pointer;border-radius:8px;${st.rtrOnly?'background:#3B6D11;color:#fff':'background:#fff;color:#555;border:0.5px solid #ddd'}">RTR only</div>`;
   const propSelect = `<select onchange="calSelectProp(this.value)" style="padding:7px 12px;font-size:12px;border:0.5px solid #ddd;border-radius:8px;background:#fff;color:#333;max-width:300px">
     <option value="__pick" ${st.prop==="all"?"selected":""}>Select a property…</option>
     ${props.map(p=>`<option value="${p.id}" ${st.prop===p.id?"selected":""}>${_calEsc(p.addr)}</option>`).join("")}
@@ -5838,6 +5842,7 @@ function renderConstructionCalendar(){
     return _calEventsCache.filter(e=> e.event_date===ds
       && (st.prop==="all"||e.property_id===st.prop)
       && (st.pm==="all"||_propPM(e.property_id)===st.pm)
+      && (!st.rtrOnly || ["RTR In Process","RTR Completed (Pending Closing)"].includes(_propPhase(e.property_id)))
       && _matchFilter(e));
   };
   const evChip=(e)=>{
