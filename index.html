@@ -1651,6 +1651,7 @@ const PROP_PHASES = [
   {name:"Finishes",                       bg:"#E1F5EE",text:"#085041",cnt:"#5DCAA5",dot:"#1D9E75"},
   {name:"Pre List / Punchout Process",    bg:"#FAECE7",text:"#712B13",cnt:"#F0997B",dot:"#D85A30"},
   {name:"Rental Handoff Process",         bg:"#E1F5EE",text:"#0B5A46",cnt:"#5DCAA5",dot:"#12987A"},
+  {name:"Listed on the Market / Final Inspections", bg:"#F3E8FB",text:"#4A1D6E",cnt:"#B98AE0",dot:"#7A3FA8"},
   {name:"Listed on the Market",           bg:"#EAF3DE",text:"#3B6D11",cnt:"#639922",dot:"#3B6D11"},
   {name:"In Contract",                    bg:"#E6F1FB",text:"#185FA5",cnt:"#378ADD",dot:"#185FA5"},
   {name:"RTR In Process",                 bg:"#FAEEDA",text:"#854F0B",cnt:"#BA7517",dot:"#BA7517"},
@@ -1659,7 +1660,6 @@ const PROP_PHASES = [
 ];
 
 const PROP_TYPES = [
-  "Hotel Flip",
   "Rental Turn / Flip",
   "Whole Tail / Flip",
   "Sub To GC",
@@ -1698,6 +1698,15 @@ let SUB_PHASE_BOARD = {
 // Which subphases require sign-off (Bruce/Marlo/Tommy). Others just need "completed".
 let SUBPHASE_APPROVAL = { "SOW Approval":true, "Budget Approval":true, "Design Budget Approval":true };
 function subphaseNeedsApproval(name){ return !!SUBPHASE_APPROVAL[name]; }
+// Which properties a subphase applies to: 'all' | 'permitted' | 'nonpermitted'.
+// Defaults: permit-approval and inspection steps only apply to PERMITTED properties.
+let SUBPHASE_APPLIES = {};
+function _spApplies(name, card){
+  const mode = SUBPHASE_APPLIES[name] || (/(permit approval|inspection)/i.test(name||'') ? 'permitted' : 'all');
+  if(mode==='all') return true;
+  const perm = !!(card && card.checklists && card.checklists.permitted==='yes');
+  return mode==='permitted' ? perm : !perm;
+}
 // When a subphase is finished, the NEXT subphase's clock starts: start = today,
 // due = today + dueDays. Trigger is "complete" for most, "approve" for approval steps.
 let SUBPHASE_CHAIN = {
@@ -1715,13 +1724,15 @@ let PHASE_ADVANCE = {
   "Vacant / On Standby": { requires:["First Time Access Checklist"], next:"Pre Construction", notifyPM:true },
   "Pre Construction":    { requires:["SOW Creation","SOW Approval","Budget Creation","Budget Approval"], next:"Waiting Permits", notifyPM:true },
   "Waiting Permits":     { requires:["Drawing / Structural Phase","Pending Permit Approval"], next:"Framing, MEPS, Insulation", notifyPM:true },
+  "Listed on the Market / Final Inspections": { requires:["Final Electric Inspection","Final Plumbing Inspection"], next:"Listed on the Market", notifyPM:true },
 };
 function _subDone(sp,name){ return !!(sp && sp.completed && (!subphaseNeedsApproval(name) || sp.approved)); }
 // Which required subphases are still outstanding for the property's current phase.
 function _phaseAdvanceBlocking(card){
   const cfg=PHASE_ADVANCE[card.phase]; if(!cfg) return [];
   const subs=card.subPhases||[];
-  return cfg.requires.filter(name => !_subDone(subs.find(s=>s.name===name), name));
+  // Only subphases that APPLY to this property (permitted vs non-permitted) can block it.
+  return cfg.requires.filter(name => _spApplies(name, card) && !_subDone(subs.find(s=>s.name===name), name));
 }
 
 // ---- Editable workflow config (Settings tab) ----------------------------
@@ -1743,7 +1754,8 @@ function _workflowConfigNow(){
     board:     SUB_PHASE_BOARD,
     approval:  SUBPHASE_APPROVAL,
     chain:     SUBPHASE_CHAIN,
-    advance:   PHASE_ADVANCE
+    advance:   PHASE_ADVANCE,
+    applies:   SUBPHASE_APPLIES
   }));
 }
 // Normalize a chain config to the fan-out shape: { source: { on, starts:[{name,dueDays}] } }.
@@ -1767,6 +1779,7 @@ function applyWorkflowConfig(cfg){
   SUBPHASE_APPROVAL = (cfg.approval&& typeof cfg.approval==="object")? Object.assign({}, cfg.approval): Object.assign({}, d.approval);
   SUBPHASE_CHAIN    = _normChain((cfg.chain && typeof cfg.chain==="object") ? cfg.chain : d.chain);
   PHASE_ADVANCE     = (cfg.advance && typeof cfg.advance==="object") ? JSON.parse(JSON.stringify(cfg.advance)) : JSON.parse(JSON.stringify(d.advance));
+  SUBPHASE_APPLIES  = (cfg.applies && typeof cfg.applies==="object") ? Object.assign({}, cfg.applies) : {};
 }
 async function loadWorkflowSettings(){
   try{
@@ -1953,6 +1966,17 @@ async function updatePropertyPhaseInSupabase(id, newPhase) {
     const _cl = Object.assign({}, (_pc && _pc.checklists) || {});
     if (!_cl.construction_start) { _cl.construction_start = _ymd(new Date()); patch.checklists = _cl; }
   }
+  // Permitted properties must pass Final Inspections before hitting Listed on the Market.
+  if (newPhase === "Listed on the Market" && _pc && (_pc.checklists && _pc.checklists.permitted)==='yes') {
+    const _subs2 = Array.isArray(_pc.subPhases)?_pc.subPhases.map(s=>({...s})):[];
+    const _fi=["Final Electric Inspection","Final Plumbing Inspection"];
+    const _done=_fi.every(n=>{const s=_subs2.find(x=>x.name===n);return s&&s.completed;});
+    if(!_done){
+      patch.phase="Listed on the Market / Final Inspections";
+      _fi.forEach(n=>{ let s=_subs2.find(x=>x.name===n); if(!s){ s={name:n}; _subs2.push(s); } if(!s.completed){ if(!s.start) s.start=_ymd(new Date()); if(!s.due) s.due=_ymdPlus(3); } });
+      patch.sub_phases=_subs2;
+    }
+  }
   // Entering "Vacant / On Standby" auto-starts the First Time Access Checklist:
   // start = the day it moved in, due = 3 days (72h) later. Set automatically on every move
   // (unless the checklist is already completed).
@@ -1980,8 +2004,8 @@ async function movePropertyToPhase(id, newPhase){
   if(oldPhase===newPhase){ openPropDetail(id); return; }
   const _oi=PROP_PHASES.findIndex(p=>p.name===oldPhase);
   const _ti=PROP_PHASES.findIndex(p=>p.name===newPhase);
-  // Hotel Flips move freely: anybody can put them in any main phase at any time.
-  if(_ti>_oi && !canMoveFreely() && !/hotel/i.test(card.type||'')){
+  // Whole Tail Flips move freely: anybody can put them in any main phase at any time.
+  if(_ti>_oi && !canMoveFreely() && !/whole\s*tail/i.test(card.type||'')){
     const blocking=_phaseAdvanceBlocking(card).map(nm=>{ const sp=(card.subPhases||[]).find(s=>s.name===nm); const note=!sp||!sp.completed?" — not completed":(subphaseNeedsApproval(nm)&&!sp.approved?" — awaiting approval":""); return nm+note; });
     if(blocking.length){ alert("Can't advance \""+(card.addr||"this property")+"\" to "+newPhase+" yet.\n\nFinish these first (approvals by Bruce/Marlo/Tommy where required):\n\n• "+blocking.join("\n• ")); openPropDetail(id); return; }
   }
@@ -2203,7 +2227,7 @@ async function saveSubPhaseSchedule(id){
     let taskId=prev.taskId||null;
     // First Time Access (Start-of-Project Assistant) and approval steps (approvers) never
     // go on the PM's task calendar — so they never create/keep a mirrored pm_task here.
-    const _pmTaskEligible = name!=="First Time Access Checklist" && !_isPureApproval(name);
+    const _pmTaskEligible = name!=="First Time Access Checklist" && !_isPureApproval(name) && _spApplies(name, card);
     const scheduled = start && due && _pmTaskEligible;
     if(scheduled){
       const payload={ title:name, category:name, assignee:card.pm||null, assignees:card.pm?[card.pm]:[], start_date:start, due_date:due, property_id:id, notes:"Auto-created from "+(card.addr||"property")+" subphase schedule" };
@@ -2239,12 +2263,13 @@ async function saveSubPhaseSchedule(id){
 function canApprove(u){ return !!(u && (u.isSuperAdmin || ["CEO","Project Director"].indexOf(u.role)>=0 || ["Marlo","Marlow"].indexOf((u.firstName||"").trim())>=0)); }
 function _ymdPlus(days){ return _ymd(new Date(Date.now()+days*86400000)); }
 // When a subphase finishes (trigger event), start the next subphase's clock.
-function _applyChain(subs, name, event){
+function _applyChain(subs, name, event, card){
   const ch=SUBPHASE_CHAIN[name]; if(!ch || ch.on!==event) return;
   // A trigger can start MULTIPLE subphases at once (fan-out), each with its own due window.
   const starts = Array.isArray(ch.starts) ? ch.starts : (ch.next ? [{ name:ch.next, dueDays:ch.dueDays }] : []);
   starts.forEach(st=>{
     if(!st || !st.name) return;
+    if(card && !_spApplies(st.name, card)) return; // skip steps that don't apply (permitted vs not)
     let n=subs.find(x=>x.name===st.name); if(!n){ n={name:st.name}; subs.push(n); }
     if(!n.start) n.start=_ymd(new Date());       // don't override a manually set date
     if(!n.due)   n.due=_ymdPlus(st.dueDays);
@@ -2283,6 +2308,7 @@ async function _syncSubphaseTasks(propId){
     // First Time Access Checklist belongs to the Start-of-Project Assistant, and approval steps
     // belong to the approvers (Tommy/Bruce) — neither should appear on the PM's task calendar.
     if(sp.name==="First Time Access Checklist" || _isPureApproval(sp.name)) continue;
+    if(!_spApplies(sp.name, card)) continue; // permitted-only (or non-permitted-only) steps skip cards they don't apply to
     if(sp.start && sp.due && !sp.taskId){
       const ex=await supabase.from("pm_tasks").select("id").eq("property_id",propId).eq("category",sp.name).eq("due_date",sp.due).limit(1);
       if(ex.data && ex.data.length){ sp.taskId=ex.data[0].id; changed=true; continue; }
@@ -2308,7 +2334,7 @@ async function toggleSubPhaseComplete(propId, name){
   s.completed=!s.completed;
   if(s.completed){ if(!s.completedAt) s.completedAt=new Date().toISOString(); }
   else { s.approved=false; delete s.approvedBy; delete s.completedAt; }
-  if(s.completed) _applyChain(subs, name, "complete");
+  if(s.completed) _applyChain(subs, name, "complete", card);
   const { error } = await supabase.from("pm_properties").update({ sub_phases:subs }).eq("id",propId);
   if(error){ alert("Couldn't update subphase: "+(error.message||"")); return; }
   _logAudit(s.completed?"completed":"reopened","property", card.addr||"", "Subphase: "+name);
@@ -2326,7 +2352,7 @@ async function approveSubPhase(propId, name){
   const s=subs.find(x=>x.name===name);
   if(!s||!s.completed){ alert("Mark it completed before approving."); return; }
   s.approved=true; s.approvedBy=((me&&me.firstName)||"Approver");
-  _applyChain(subs, name, "approve");
+  _applyChain(subs, name, "approve", card);
   const { error } = await supabase.from("pm_properties").update({ sub_phases:subs }).eq("id",propId);
   if(error){ alert("Couldn't approve: "+(error.message||"")); return; }
   _logAudit("approved","property", card.addr||"", "Subphase approved: "+name+" by "+s.approvedBy);
@@ -2633,6 +2659,7 @@ function openPropDetail(id) {
     </div>`;
   const _savedSub = (name)=> (c.subPhases||[]).find(sp=>sp.name===name) || {};
   const subPhaseRows = SUB_PHASES.map((name,i) => {
+    if(!_spApplies(name,c)) return ''; // hide steps that don't apply to this property (keeps save indices aligned)
     const sp=_savedSub(name);
     const board = SUB_PHASE_BOARD[name] || '—';
     const nEsc = name.replace(/'/g,"\\'");
@@ -5718,7 +5745,7 @@ function propDrop(event, targetPhase) {
   // (ones with a due date) are both completed AND approved by Bruce, Marlo or Tommy.
   const _oi = PROP_PHASES.findIndex(p => p.name === oldPhase);
   const _ti = PROP_PHASES.findIndex(p => p.name === targetPhase);
-  if (_ti > _oi && !canMoveFreely() && !/hotel/i.test((propCards[idx].type)||'')) {
+  if (_ti > _oi && !canMoveFreely() && !/whole\s*tail/i.test((propCards[idx].type)||'')) {
     const card = propCards[idx];
     // The stage's required subphases (per the automated workflow) must be finished first.
     const blocking = _phaseAdvanceBlocking(card).map(nm => {
@@ -6825,6 +6852,9 @@ function _renderSettings(){
       <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:#555;white-space:nowrap;cursor:pointer">
         <input type="checkbox" ${appr?"checked":""} onchange="_wfToggleApproval('${_wfEsc(name).replace(/'/g,"\\'")}', this.checked)"/> Sign-off
       </label>
+      <select title="Which properties this subphase applies to" onchange="_wfSetApplies('${_wfEsc(name).replace(/'/g,"\\'")}', this.value)" style="min-width:118px;padding:7px 6px;border:1px solid #ddd;border-radius:6px;font-size:11.5px;color:#555">
+        ${(()=>{const cur=(d.applies&&d.applies[name])||(/(permit approval|inspection)/i.test(name)?'permitted':'all');return `<option value="all"${cur==='all'?' selected':''}>All properties</option><option value="permitted"${cur==='permitted'?' selected':''}>Permitted only</option><option value="nonpermitted"${cur==='nonpermitted'?' selected':''}>Non-permitted only</option>`;})()}
+      </select>
       <span onclick="_wfRemoveSub(${i})" title="Remove subphase" style="cursor:pointer;color:#c0392b;font-size:14px;padding:0 4px">✕</span>
     </div>`;
   }).join("");
@@ -6932,9 +6962,10 @@ function _wfRenameSub(i,val){
   const old=_wfDraft.subPhases[i]; if(val===old) return;
   if(_wfDraft.subPhases.indexOf(val)>=0){ alert("A subphase called \""+val+"\" already exists."); _renderSettings(); return; }
   _wfDraft.subPhases[i]=val;
-  const b=_wfDraft.board, ap=_wfDraft.approval, ch=_wfDraft.chain, ad=_wfDraft.advance;
+  const b=_wfDraft.board, ap=_wfDraft.approval, ch=_wfDraft.chain, ad=_wfDraft.advance, apl=(_wfDraft.applies=_wfDraft.applies||{});
   if(b[old]!==undefined){ b[val]=b[old]; delete b[old]; }
   if(ap[old]!==undefined){ ap[val]=ap[old]; delete ap[old]; }
+  if(apl[old]!==undefined){ apl[val]=apl[old]; delete apl[old]; }
   if(ch[old]){ ch[val]=ch[old]; delete ch[old]; }
   Object.keys(ch).forEach(k=>{ const e=ch[k]; if(!e) return; if(e.next===old) e.next=val; if(Array.isArray(e.starts)) e.starts.forEach(s=>{ if(s&&s.name===old) s.name=val; }); });
   Object.keys(ad).forEach(k=>{ if(Array.isArray(ad[k].requires)) ad[k].requires=ad[k].requires.map(x=>x===old?val:x); });
@@ -6942,11 +6973,12 @@ function _wfRenameSub(i,val){
 }
 function _wfSetBoard(name,val){ _wfDraft.board[name]=val; }
 function _wfToggleApproval(name,checked){ if(checked) _wfDraft.approval[name]=true; else delete _wfDraft.approval[name]; }
+function _wfSetApplies(name,val){ if(!_wfDraft.applies) _wfDraft.applies={}; if(val==='all') delete _wfDraft.applies[name]; else _wfDraft.applies[name]=val; }
 function _wfRemoveSub(i){
   const name=_wfDraft.subPhases[i];
   if(!confirm('Remove the subphase "'+name+'"?\nProperties that already have it will keep their saved copy until updated.')) return;
   _wfDraft.subPhases.splice(i,1);
-  delete _wfDraft.board[name]; delete _wfDraft.approval[name];
+  delete _wfDraft.board[name]; delete _wfDraft.approval[name]; if(_wfDraft.applies) delete _wfDraft.applies[name];
   const ch=_wfDraft.chain; delete ch[name];
   Object.keys(ch).forEach(k=>{ const e=ch[k]; if(!e) return; if(Array.isArray(e.starts)){ e.starts=e.starts.filter(s=>s&&s.name!==name); if(!e.starts.length) delete ch[k]; } else if(e.next===name){ delete ch[k]; } });
   Object.keys(_wfDraft.advance).forEach(k=>{ const a=_wfDraft.advance[k]; if(Array.isArray(a.requires)) a.requires=a.requires.filter(x=>x!==name); });
