@@ -2324,7 +2324,7 @@ function phInfo(name){ return PROP_PHASES.find(p=>p.name===name)||{bg:"#f4f5f7",
 // ===================== MAIN DASHBOARD 5 BOARDS =====================
 // Combined team stats for the Main Dashboard (all PMs + assistants).
 function _teamTasksDone7(){ const t=new Date();t.setHours(0,0,0,0); const a=_ymd(new Date(t.getTime()-7*86400000)); const s=_ymd(t); return (typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(x=>x.status==='done'&&x.due_date&&x.due_date>=a&&x.due_date<=s).length; }
-function _teamDollarsDay(){ const t=new Date(); const ys=new Date(t.getFullYear(),0,1); const days=Math.max(1,Math.round((t-ys)/86400000)); const tot=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived).reduce((a,c)=>{const v=parseFloat(String(c.spent||"").replace(/[^0-9.\-]/g,""));return a+(isNaN(v)?0:v);},0); return tot?('$'+Math.round(tot/days).toLocaleString()):'—'; }
+function _teamDollarsDay(){ const t=new Date();t.setHours(0,0,0,0); let S=0,D=0; (typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived).forEach(c=>{ const v=parseFloat(String(c.spent||"").replace(/[^0-9.\-]/g,"")); if(isNaN(v)||v<=0||!c.start) return; const sd=new Date(c.start); if(isNaN(sd)) return; S+=v; D+=Math.max(1,Math.round((t-sd)/86400000)); }); return D?('$'+Math.round(S/D).toLocaleString()):'—'; }
 function renderMainDashboard() {
   const statCard = (label, val, sub, color) => `
     <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:12px 14px">
@@ -3194,7 +3194,7 @@ function pmTabContent(name) {
         <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 20px;text-align:center;min-width:110px">
           <div style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Avg $ Work / Day</div>
           <div style="font-size:28px;font-weight:500;color:#0B7285">${_mx.dollarsPerDayYear!=null?'$'+_mx.dollarsPerDayYear.toLocaleString():'—'}</div>
-          <div style="font-size:10px;color:#aaa;margin-top:2px">Rolling year · project spent</div>
+          <div style="font-size:10px;color:#aaa;margin-top:2px">Spent ÷ construction days</div>
         </div>
         <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 20px;text-align:center;min-width:110px">
           <div style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Rescheduled</div>
@@ -3473,11 +3473,16 @@ function _computePMMetrics(name){
   const ago30=_ymd(new Date(today.getTime()-30*86400000));
   const doneRecent=tasks.filter(t=>t.status==="done" && t.due_date && t.due_date>=ago30).length;
   const perDay=(doneRecent/30).toFixed(1);
-  // Avg $ of work per day — rolling year, from project spent on this PM's properties.
-  const yearStart=new Date(today.getFullYear(),0,1);
-  const daysYTD=Math.max(1,Math.round((today-yearStart)/86400000));
-  const spentTotal=mine.reduce((a,c)=>{const v=parseFloat(String(c.spent||"").replace(/[^0-9.\-]/g,""));return a+(isNaN(v)?0:v);},0);
-  const dollarsDay= spentTotal? Math.round(spentTotal/daysYTD) : null;
+  // Construction velocity (Andy's handoff): Completed $/day = rehab spent ÷ construction days
+  // (property Start Date → today). PM number is dollar-weighted: total spent ÷ total days.
+  let _vSpent=0,_vDays=0;
+  mine.forEach(c=>{
+    const v=parseFloat(String(c.spent||"").replace(/[^0-9.\-]/g,""));
+    if(isNaN(v)||v<=0||!c.start) return;
+    const sd=new Date(c.start); if(isNaN(sd)) return;
+    _vSpent+=v; _vDays+=Math.max(1,Math.round((today-sd)/86400000));
+  });
+  const dollarsDay= _vDays? Math.round(_vSpent/_vDays) : null;
   // Rescheduled % over the last 7 days.
   const ago7=_ymd(new Date(today.getTime()-7*86400000));
   const t7=tasks.filter(t=>t.due_date && t.due_date>=ago7 && t.due_date<=todayStr);
@@ -3503,7 +3508,7 @@ function pmCard(name, d, liveName) {
         <div class="pm-stat-card ${c}" style="margin:0">
           <div class="pm-stat-label">Avg. $ of Work Completed / Day</div>
           <div class="pm-stat-value">${d.dollarsPerDayYear!=null?'$'+d.dollarsPerDayYear.toLocaleString():'—'}</div>
-          <div class="pm-stat-sub">Rolling year · from project spent</div>
+          <div class="pm-stat-sub">Spent ÷ construction days (velocity)</div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div class="pm-stat-card green" style="margin:0">
@@ -4758,12 +4763,16 @@ function _ceoBoxes(name){
   const first=(name||"").trim().split(" ")[0];
   if(first!=="Bruce" && first!=="Tommy") return "";
   const back = first==="Tommy" ? "tommy" : "bruce";
-  const boxes=[ _dirBox("Pre Construction — Approvals", _apprPending().length, "48-hr sign-off timers", "#E67E22", "_pDrill('appr','"+back+"')") ];
+  const apprBox=_dirBox("Pre Construction — Approvals", _apprPending().length, "48-hr sign-off timers", "#E67E22", "_pDrill('appr','"+back+"')");
+  let boxes=[apprBox];
   if(first==="Tommy"){
     const td=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && c.phase==="Upcoming Takedowns").length;
-    boxes.push(_dirBox("Money Position", _moneyRank().length, "Top 5 nearest positive", "#0B7285", "_pDrill('money','tommy')"));
-    boxes.push(_dirBox("Upcoming Takedowns", td, "properties", "#E24B4A", "_pDrill('takedowns','tommy')"));
-    boxes.push(_dirBox("Upcoming Closings", _upcomingClosings().length, "buying + selling, labeled", "#7F77DD", "_pDrill('closings','tommy')"));
+    boxes=[
+      _dirBox("Upcoming Takedowns", td, "properties", "#E24B4A", "_pDrill('takedowns','tommy')"),
+      apprBox,
+      _dirBox("Upcoming Closings", _upcomingClosings().length, "buying + selling, labeled", "#7F77DD", "_pDrill('closings','tommy')"),
+      _dirBox("Total Money Position", _moneyRank().length, "Top 5 nearest positive", "#0B7285", "_pDrill('money','tommy')"),
+    ];
   }
   return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;margin-bottom:16px">${boxes.join("")}</div>`;
 }
@@ -4780,13 +4789,13 @@ function _pDrill(kind, back){
       </div>`; }).join("");
     html=head("Pre Construction — Approvals Needed")+list(rows);
   } else if(kind==='money'){
-    const m=_moneyRank(); const top=m.slice(0,5); const rest=m.slice(5).slice().reverse();
+    const m=_moneyRank(); const top=m.slice(0,5); const rest=m.slice(5);
     const row=(x,i)=>`<div onclick="openPropDetail('${x.c.id}')" style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid ${x.v>=0?'#2E7D32':'#B42318'};border-radius:8px;padding:9px 12px;cursor:pointer;display:flex;justify-content:space-between;align-items:center">
       <div style="font-size:12px;font-weight:600;color:#111">${i!=null?('<span style="color:#aaa;margin-right:6px">'+(i+1)+'.</span>'):''}${_calEsc(x.c.addr||'')}</div>
       <div style="font-size:12px;font-weight:700;color:${x.v>=0?'#2E7D32':'#B42318'}">${x.v<0?'-':''}$${Math.abs(x.v).toLocaleString()}</div></div>`;
     html=head("Money Position — closest to positive")+`<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:900px">
       <div><div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#8a93a3;margin-bottom:8px">Top 5 — closest to positive</div><div style="display:flex;flex-direction:column;gap:8px">${top.map((x,i)=>row(x,i)).join("")||'<div style="color:#bbb;font-size:12px">No money data yet</div>'}</div></div>
-      <div><div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#8a93a3;margin-bottom:8px">Furthest → closer</div><div style="display:flex;flex-direction:column;gap:8px">${rest.map(x=>row(x,null)).join("")||'<div style="color:#bbb;font-size:12px">—</div>'}</div></div>
+      <div><div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#8a93a3;margin-bottom:8px">Closer → furthest</div><div style="display:flex;flex-direction:column;gap:8px">${rest.map(x=>row(x,null)).join("")||'<div style="color:#bbb;font-size:12px">—</div>'}</div></div>
     </div>`;
   } else if(kind==='takedowns'){
     const rows=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && c.phase==="Upcoming Takedowns").map(_dirPropRow).join("");
