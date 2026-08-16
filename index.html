@@ -2252,6 +2252,9 @@ async function _syncSubphaseTasks(propId){
   const subs=(card.subPhases||[]).map(sp=>({...sp}));
   let changed=false;
   for(const sp of subs){
+    // First Time Access Checklist belongs to the Start-of-Project Assistant, and approval steps
+    // belong to the approvers (Tommy/Bruce) — neither should appear on the PM's task calendar.
+    if(sp.name==="First Time Access Checklist" || /approval/i.test(sp.name||"")) continue;
     if(sp.start && sp.due && !sp.taskId){
       const ex=await supabase.from("pm_tasks").select("id").eq("property_id",propId).eq("category",sp.name).eq("due_date",sp.due).limit(1);
       if(ex.data && ex.data.length){ sp.taskId=ex.data[0].id; changed=true; continue; }
