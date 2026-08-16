@@ -315,7 +315,14 @@ body.mobile-on .overlay{z-index:6000 !important;}
   </div>
   <div class="ni has-dd" id="rep-t">📊 Reporting ▾
     <div class="dd" id="rep-d" style="min-width:220px">
-      <div class="ddl">Reports</div>
+      <div class="ddl">Weekly Meetings</div>
+      <div class="ddi" onclick="openWeeklyMeeting('team')">🤝 Project Team Meeting</div>
+      <div class="ddi" onclick="openWeeklyMeeting('kickoff')">🚀 Kickoff Meeting</div>
+      <div class="ddi" onclick="openWeeklyMeeting('company')">🏢 Full Company Meeting</div>
+      <div class="ddi" onclick="openWeeklyMeeting('ceo')">👔 Director / CEO Meeting</div>
+      <div class="ddl" style="margin-top:4px">Daily</div>
+      <div class="ddi" onclick="openDailyReports()">📝 Daily Reports (Man Huddles)</div>
+      <div class="ddl" style="margin-top:4px">Reports</div>
       <div class="ddi">🗓 Biweekly Reports</div>
       <div class="ddi" onclick="openMonthlyReports()">📅 Monthly Reports</div>
       <div class="ddi">📆 Yearly Reports</div>
@@ -2403,7 +2410,7 @@ async function _snapshotSpentDaily(){
 // Stay on the same page across browser refreshes: remember the last view opened and
 // re-open it once the app (and its data) has loaded, instead of dumping back to home.
 (function(){
-  const NAVS=["openProjectDashboard","openPMDashboard","openPMAssistantDashboard","openDirectorCEODashboard","openAdminDashboard","openVAAdminDashboard","openArchitectDashboard","openTaskDataHousing","openDollarsDayHousing","openSettings","openStartOfProjectDashboard","openEndOfProjectDashboard","openSeniorVADashboard","openPropDetail"];
+  const NAVS=["openProjectDashboard","openPMDashboard","openPMAssistantDashboard","openDirectorCEODashboard","openAdminDashboard","openVAAdminDashboard","openArchitectDashboard","openTaskDataHousing","openDollarsDayHousing","openSettings","openStartOfProjectDashboard","openEndOfProjectDashboard","openSeniorVADashboard","openPropDetail","openWeeklyMeeting","openDailyReports"];
   setTimeout(()=>{ // wrap after all functions are defined
     NAVS.forEach(fn=>{
       const orig=window[fn];
@@ -2833,6 +2840,7 @@ function openPropDetail(id) {
             ${(c.checklists&&c.checklists.trackerUrl)?`<a href="${c.checklists.trackerUrl}" target="_blank" style="font-size:11px;color:#185FA5;margin-top:2px;display:inline-block;text-decoration:none;font-weight:600">📊 Open Project Tracker ↗</a>`:`<div style="font-size:11px;color:#aaa;margin-top:2px">Links to live tracker</div>`}
           </div>
         </div>
+        ${(()=>{ const ci=PROP_PHASES.findIndex(p=>p.name==="Pre Construction"); const pi=PROP_PHASES.findIndex(p=>p.name===c.phase); if(ci>=0&&pi>=ci&&(!c.start||!c.end)) return `<div style="background:#FFF7E0;border:1px solid #EAD9A8;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12.5px;color:#6b5310"><b>⚠️ Set this project's Start &amp; Finish dates.</b> ${(!c.start&&!c.end)?'Both are':(!c.start?'The start date is':'The finish date is')} missing — the $/day tracker and On-Timeline scoring need them. Set them in Property Info or in Monday's Project Team Meeting.</div>`; return ''; })()}
         <div style="background:#f4f5f7;border-radius:6px;height:6px;margin-bottom:16px;overflow:hidden">
           <div style="height:100%;width:${Math.min(pct,100)}%;background:${progColor};border-radius:6px"></div>
         </div>
@@ -3583,6 +3591,85 @@ function openDollarsDayHousing(){
       ${tbl(rows.filter(r=>r.permitted),'Permitted jobs','#7A3FA8')}
       ${tbl(rows.filter(r=>!r.permitted),'Non-permitted jobs','#0B7285')}
     </div></div></div>`;
+}
+// ===== Weekly Meetings (Reporting → Weekly Meetings) — Monday 8am templates =====
+// The Project Team Meeting auto-prefills from live data (budgets, spend, $/day, missing
+// dates, permits) so it's ~half done before anyone opens it; PMs fill in the rest.
+function _wmWeekKey(){ const d=new Date(); d.setHours(0,0,0,0); const day=d.getDay(); const add=(day===1)?0:(((8-day)%7)||7); return _ymd(new Date(d.getTime()+add*86400000)); }
+async function _pdnToggle2(pm,i){ const l=(((window._pdnData||{})[pm]||{}).precon)||[]; if(l[i]){ l[i].done=!l[i].done; await _pdnSave(); openWeeklyMeeting('team'); } }
+async function _wmLoad(){ try{ const r=await supabase.from("pm_settings").select("data").eq("key","meeting_notes").maybeSingle(); window._wmData=(r.data&&r.data.data)||{}; }catch(e){ window._wmData={}; } }
+async function _wmSaveNote(kind,pid){ const el=document.getElementById('wm-'+pid); if(!el) return; const d=window._wmData=window._wmData||{}; const wk=_wmWeekKey(); d[wk]=d[wk]||{}; d[wk][kind]=d[wk][kind]||{}; d[wk][kind][pid]=el.value; try{ await supabase.from("pm_settings").upsert({key:'meeting_notes',data:d},{onConflict:'key'}); }catch(e){} const ok=document.getElementById('wm-ok-'+pid); if(ok){ ok.style.display='inline'; setTimeout(()=>{ok.style.display='none';},1500); } }
+async function _pdnAdd2(pm,key,elId){ const el=document.getElementById(elId); if(!el||!el.value.trim()) return; const d=window._pdnData=window._pdnData||{}; d[pm]=d[pm]||{}; d[pm][key]=d[pm][key]||[]; d[pm][key].push({t:el.value.trim(),done:false,at:_ymd(new Date())}); await _pdnSave(); openWeeklyMeeting('team'); }
+function openDailyReports(){
+  document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
+  document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
+  document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div style="padding:24px;max-width:760px;margin:0 auto">
+    <div style="font-size:16px;font-weight:600;color:#111">📝 Daily Reports — Man Huddles</div>
+    <div style="font-size:12.5px;color:#666;margin-top:8px;line-height:1.7;background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:16px 18px">End-of-day reports are coming here and to the field app: each PM answers a short automatic checklist (what got done today, contractors on site, blockers, tomorrow's plan, photos taken) plus their own notes. Those daily answers will roll up automatically into Monday's Project Team Meeting so the meeting doc is mostly written before the meeting starts. Tell me the exact questions you want on the daily form and I'll wire it up.</div>
+  </div></div></div>`;
+}
+function openWeeklyMeeting(kind){
+  document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
+  document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
+  if(window._wmData===undefined||window._wmData===null){ if(window._wmData===undefined){ window._wmData=null; Promise.all([_wmLoad(), (window._pdnData===undefined?( (window._pdnData=null), _pdnLoad()):Promise.resolve())]).then(()=>openWeeklyMeeting(kind)); document.getElementById("dash-body").innerHTML='<div style="padding:40px;text-align:center;color:#999">Loading meeting…</div>'; return; } }
+  const titles={team:'🤝 Project Team Meeting',kickoff:'🚀 Kickoff Meeting',company:'🏢 Full Company Meeting',ceo:'👔 Director / CEO Meeting'};
+  const wk=_wmWeekKey();
+  const notes=(((window._wmData||{})[wk]||{})[kind])||{};
+  const money=(v)=>{const n=parseFloat(String(v||"").replace(/[^0-9.\-]/g,""));return isNaN(n)?null:n;};
+  const fmt=(n)=>n==null?'—':('$'+Math.round(n).toLocaleString());
+  const ta=(pid,ph)=>`<div style="margin-top:8px"><textarea id="wm-${pid}" placeholder="${ph}" style="width:100%;min-height:64px;padding:9px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:12.5px;color:#222;resize:vertical;font-family:inherit">${_calEsc(notes[pid]||'')}</textarea><div style="display:flex;align-items:center;gap:8px;margin-top:4px"><button onclick="_wmSaveNote('${kind}','${pid}')" style="padding:6px 14px;background:#111;color:#fff;border:none;border-radius:6px;font-size:11.5px;cursor:pointer">Save</button><span id="wm-ok-${pid}" style="display:none;font-size:11px;color:#1D9E75">Saved ✓</span></div></div>`;
+  let body='';
+  if(kind==='team'){
+    const cons=["Pre Construction","Waiting Permits","Framing, MEPS, Insulation","Drywall / Exterior Work","Finishes","Pre List / Punchout Process","Listed on the Market / Final Inspections"];
+    const cards=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && cons.includes(c.phase));
+    const needDates=cards.filter(c=>!c.start||!c.end);
+    const nd=needDates.length?needDates.map(c=>`<div style="display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:0.5px solid #f4e9c8;font-size:12.5px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span><span style="color:#8a6d1a">missing ${(!c.start&&!c.end)?'start & finish':(!c.start?'start':'finish')} date · ${_calEsc(c.pm||'no PM')}</span></div>`).join(''):'<div style="font-size:12.5px;color:#1D9E75">✅ Every construction property has its start & finish dates set.</div>';
+    const blocks=cards.map(c=>{
+      const b=money(c.budget), s=money(c.spent); const left=(b!=null&&s!=null)?b-s:null;
+      const vs=_velStart(c); let rate=null,days=null;
+      if(s&&vs){ const t=new Date();t.setHours(0,0,0,0); const sd=new Date(vs); if(!isNaN(sd)){ days=Math.max(1,Math.round((t-sd)/86400000)); rate=Math.round(s/days); } }
+      const perm=(c.checklists&&c.checklists.permitted)==='yes';
+      const fa=(c.subPhases||[]).find(x=>x.name==='First Time Access Checklist'&&x.completed&&x.completedAt);
+      const acc=fa?Math.max(0,Math.floor((new Date()-new Date(fa.completedAt))/86400000)):null;
+      const cell=(l,v,color)=>`<div style="background:#f7f8fb;border-radius:7px;padding:7px 10px"><div style="font-size:9.5px;color:#999;text-transform:uppercase">${l}</div><div style="font-size:13px;font-weight:600;color:${color||'#111'}">${v}</div></div>`;
+      return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:14px 16px;margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+          <span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-size:14.5px;font-weight:700;color:#185FA5">${_calEsc(c.addr||'')}</span>
+          <span style="font-size:11px;color:#666">${_calEsc(c.phase||'')} · PM: ${_calEsc(c.pm||'—')}${perm?' · 🏛 Permitted':''}</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:7px">
+          ${cell('Budgeted',fmt(b))}${cell('Spent',fmt(s))}${cell('Leftover',fmt(left),left!=null&&left<0?'#B42318':'#0F7B54')}${cell('$ / day',rate!=null?('$'+rate.toLocaleString()):'—','#4A1D6E')}${cell('Start',c.start||'⚠️ set')}${cell('Projected end',c.end||'⚠️ set')}${cell('Days accumulated',acc!=null?acc:'—')}
+        </div>
+        ${perm?'<div style="margin-top:7px;font-size:11px;color:#72243E;background:#FBEAF0;border-radius:6px;padding:5px 9px;display:inline-block">IF PERMITS — fill in: days since drawings/engineer back · days since last touch with GC</div>':''}
+        ${ta(c.id,'Money analysis (on/off budget & why) · lag-time items (windows, permits…) · wins this week · estimated timeline to finish · follow-ups & priorities')}
+      </div>`;
+    }).join('');
+    // Pre Construction comments across ALL PMs — directors see + add on one page.
+    const pms=[...new Set(cards.map(c=>c.pm).filter(Boolean))];
+    const pdn=window._pdnData||{};
+    const pmNotes=pms.map(pm=>{
+      const list=(((pdn[pm]||{}).precon)||[]);
+      const items=list.map((n,i)=>`<div style="display:flex;gap:7px;align-items:flex-start;padding:5px 0;border-bottom:0.5px solid #f1f3f7"><span onclick="_pdnToggle2('${pm.replace(/'/g,"")}',${i})" style="font-size:13px;cursor:pointer">${n.done?'✅':'⬜'}</span><div style="flex:1;font-size:11.5px;color:${n.done?'#aaa':'#333'};${n.done?'text-decoration:line-through;':''}">${_calEsc(n.t)} <span style="color:#bbb;font-size:9.5px">${_calEsc(n.at||'')}</span></div></div>`).join('')||'<div style="font-size:11px;color:#bbb;padding:4px 0">No comments yet.</div>';
+      const elId='pdn-mtg-'+pm.replace(/[^a-z0-9]/gi,'');
+      return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 14px"><div style="font-size:12.5px;font-weight:700;color:#111;margin-bottom:4px">${_calEsc(pm)} — Pre Construction comments</div>${items}
+        ${isReadOnly()?'':`<div style="display:flex;gap:6px;margin-top:8px"><input id="${elId}" placeholder="Add a comment…" style="flex:1;min-width:0;padding:6px 9px;border:0.5px solid #ddd;border-radius:6px;font-size:11.5px"/><button onclick="_pdnAdd2('${pm.replace(/'/g,"")}','precon','${elId}')" style="padding:6px 11px;background:#111;color:#fff;border:none;border-radius:6px;font-size:11.5px;cursor:pointer">Add</button></div>`}
+      </div>`;
+    }).join('');
+    body=`
+      <div style="background:#FFF7E0;border:0.5px solid #EAD9A8;border-radius:12px;padding:14px 16px;margin-bottom:16px"><div style="font-size:13px;font-weight:700;color:#6b5310;margin-bottom:6px">⚠️ Properties needing Start &amp; Finish dates (set in this meeting)</div>${nd}</div>
+      <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:14px 16px;margin-bottom:16px"><div style="font-size:13px;font-weight:700;color:#111">🎯 Priority Q for Tommy</div>${ta('__pq','Questions and decisions that need Tommy this week…')}</div>
+      ${blocks || '<div style="color:#bbb;font-size:13px;padding:20px 0">No construction properties right now.</div>'}
+      <div style="font-size:13px;font-weight:700;color:#111;margin:18px 0 8px">💬 Pre Construction comments — all PMs</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">${pmNotes||'<div style="color:#bbb;font-size:12px">No PMs with construction properties.</div>'}</div>`;
+  } else {
+    const agendas={kickoff:'Kickoff agenda — new properties starting, first-time access status, who owns what this week…',company:'Full company agenda — wins, numbers, announcements, cross-team needs…',ceo:'Director / CEO agenda — money position, approvals pending, escalations, strategy…'};
+    body=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:14px 16px">${ta('__agenda',agendas[kind]||'Agenda…')}</div>`;
+  }
+  document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div style="padding:20px;max-width:1000px;margin:0 auto">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:4px"><div style="font-size:17px;font-weight:700;color:#111">${titles[kind]||'Weekly Meeting'}</div><div style="font-size:12px;color:#888">Week of ${_calEsc(wk)} · Monday 8:00 AM</div></div>
+    <div style="font-size:11.5px;color:#999;margin-bottom:14px">Auto-prefilled from live data — type into the boxes and Save. Notes are shared with everyone for this week's meeting.</div>
+    ${body}
+  </div></div></div>`;
 }
 function openDataSection(type) {
   const u = currentUser();
@@ -5349,6 +5436,28 @@ function _vaTrackers(){
   const active=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && !["Closed","Completed"].includes(c.phase));
   const mowrows=active.length?active.map(c=>`<tr style="border-top:0.5px solid #eef0f6"><td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span><div style="font-size:10px;color:#999">${_calEsc(c.phase||'')}</div></td><td style="text-align:center;padding:7px">${chk('mow',c.id,(d.mow||{})[c.id])}</td></tr>`).join(""):'<tr><td colspan="2" style="padding:16px;color:#bbb;text-align:center">No active properties.</td></tr>';
   const clrows=active.length?active.map(c=>{ const subs=c.subPhases||[]; const fta=subs.find(s=>s.name==="First Time Access Checklist"); const po=subs.find(s=>/punch/i.test(s.name||'')); return `<tr style="border-top:0.5px solid #eef0f6"><td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span></td><td style="text-align:center;padding:7px">${fta&&fta.completed?'✅':'⬜'}</td><td style="text-align:center;padding:7px">${po?(po.completed?'✅':'⬜'):'—'}</td></tr>`; }).join(""):'<tr><td colspan="3" style="padding:16px;color:#bbb;text-align:center">No active properties.</td></tr>';
+  // Window rows — its own tracker: Measured → Ordered → Installed per property.
+  const winrows=active.length?active.map(c=>`<tr style="border-top:0.5px solid #eef0f6"><td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span><div style="font-size:10px;color:#999">${_calEsc(c.phase||'')}</div></td><td style="text-align:center;padding:7px">${chk('win_measured',c.id,(d.win_measured||{})[c.id])}</td><td style="text-align:center;padding:7px">${chk('win_ordered',c.id,(d.win_ordered||{})[c.id])}</td><td style="text-align:center;padding:7px">${chk('window',c.id,(d.window||{})[c.id])}</td></tr>`).join(""):'<tr><td colspan="4" style="padding:16px;color:#bbb;text-align:center">No active properties.</td></tr>';
+  const w9out=cons.filter(c=>!(d.w9||{})[c.id]).length;
+  const mowout=active.filter(c=>!(d.mow||{})[c.id]).length;
+  const winout=active.filter(c=>!((d.win_measured||{})[c.id]&&(d.win_ordered||{})[c.id]&&(d.window||{})[c.id])).length;
+  const clout=active.filter(c=>{const subs=c.subPhases||[];const f=subs.find(s=>s.name==="First Time Access Checklist");return !(f&&f.completed);}).length;
+  const view=window._trkView||'summary';
+  const tile=(key,icon,title,n,color)=>`<div onclick="window._trkView='${key}';(window._trkRerender||function(){openVAAdminDashboard('trackers');})()" style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${color};border-radius:10px;padding:13px 15px;cursor:pointer"><div style="display:flex;justify-content:space-between"><div style="font-size:12.5px;font-weight:600;color:#111">${icon} ${title}</div><span style="color:#ccc">›</span></div><div style="font-size:24px;font-weight:600;color:${color};margin-top:5px">${n}</div><div style="font-size:10px;color:#999">outstanding</div></div>`;
+  const tiles=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:16px">${tile('w9','🧾','W-9 Tracker',w9out,'#7A3FA8')}${tile('window','🪟','Window Tracker',winout,'#185FA5')}${tile('mow','🌱','Mowing Tracker',mowout,'#3B6D11')}${tile('checklist','✅','Checklist Tracker',clout,'#0B7285')}</div>`;
+  const back=`<div onclick="window._trkView='summary';(window._trkRerender||function(){openVAAdminDashboard('trackers');})()" style="display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#185FA5;cursor:pointer;margin-bottom:10px">‹ Back to Trackers</div>`;
+  const shell=(inner)=>`<div style="padding:20px;max-width:940px;margin:0 auto"><div style="font-size:15px;font-weight:600;color:#111;margin-bottom:10px">📋 Trackers</div>${tiles}${inner}</div>`;
+  if(view==='w9') return shell(back+_trkTable('🧾 W-9 Tracker','#7A3FA8','<th style="padding:9px 10px;text-align:left">Contractor</th><th style="padding:9px">W-9 on file</th>',w9rows));
+  if(view==='mow') return shell(back+_trkTable('🌱 Mowing Tracker','#3B6D11','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">Mowing handled</th>',mowrows));
+  if(view==='window') return shell(back+_trkTable('🪟 Window Tracker','#185FA5','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">Measured</th><th style="padding:9px">Ordered</th><th style="padding:9px">Installed</th>',winrows));
+  if(view==='checklist') return shell(back+_trkTable('✅ Checklist Tracker','#0B7285','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">First Time Access</th><th style="padding:9px">Punch Out</th>',clrows));
+  const li=(txt)=>`<div style="font-size:11.5px;color:#333;padding:4px 0;border-bottom:0.5px solid #f1f3f7">• ${txt}</div>`;
+  const sum=(title,color,items)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 14px"><div style="font-size:12.5px;font-weight:700;color:${color};margin-bottom:4px">${title}</div>${items.length?items.slice(0,6).map(li).join('')+(items.length>6?`<div style="font-size:10.5px;color:#999;padding-top:4px">+ ${items.length-6} more — click the tile</div>`:''):'<div style="font-size:11px;color:#1D9E75;padding:4px 0">All caught up ✅</div>'}</div>`;
+  const w9i=cons.filter(c=>!(d.w9||{})[c.id]).map(c=>_calEsc(c.name||''));
+  const mi=active.filter(c=>!(d.mow||{})[c.id]).map(c=>_calEsc(c.addr||''));
+  const wi=active.filter(c=>!((d.win_measured||{})[c.id]&&(d.win_ordered||{})[c.id]&&(d.window||{})[c.id])).map(c=>_calEsc(c.addr||'')+' — needs '+[!(d.win_measured||{})[c.id]?'measure':null,!(d.win_ordered||{})[c.id]?'order':null,!(d.window||{})[c.id]?'install':null].filter(Boolean).join(', '));
+  const ci=active.filter(c=>{const subs=c.subPhases||[];const f=subs.find(s=>s.name==="First Time Access Checklist");return !(f&&f.completed);}).map(c=>_calEsc(c.addr||'')+' — First Time Access open');
+  return shell(`<div style="font-size:11.5px;color:#888;margin:-6px 0 10px">What's outstanding right now — click a tile to open the full tracker.</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">${sum('🧾 W-9s needed','#7A3FA8',w9i)}${sum('🪟 Windows','#185FA5',wi)}${sum('🌱 Mowing','#3B6D11',mi)}${sum('✅ Checklists','#0B7285',ci)}</div>`);
   return `<div style="padding:20px;max-width:900px;margin:0 auto">
     <div style="font-size:15px;font-weight:600;color:#111">📋 Trackers</div>
     <div style="font-size:12px;color:#888;margin-bottom:12px">W-9s on file, mowing status, and property checklist status. Click a box to toggle.</div>
@@ -5942,7 +6051,10 @@ async function loadContractorsFromSupabase(){
   _contractorsCache = error ? [] : (data||[]);
 }
 async function loadCalendarEventsFromSupabase(){
-  let { data, error } = await supabase.from("pm_calendar_events").select("id,property_id,event_date,end_date,kind,title,contractor_id,notes,completed,location").order("event_date",{ascending:true});
+  let { data, error } = await supabase.from("pm_calendar_events").select("id,property_id,event_date,end_date,kind,title,contractor_id,notes,completed,location,reschedule_count,last_rescheduled_at,reschedule_reasons").order("event_date",{ascending:true});
+  if(error){ // reschedule_reasons may not exist yet — fall back without it
+    ({ data, error } = await supabase.from("pm_calendar_events").select("id,property_id,event_date,end_date,kind,title,contractor_id,notes,completed,location,reschedule_count,last_rescheduled_at").order("event_date",{ascending:true}));
+  }
   if(error){ // location column may not exist on older DBs — fall back
     ({ data, error } = await supabase.from("pm_calendar_events").select("id,property_id,event_date,kind,title,contractor_id,notes,completed").order("event_date",{ascending:true}));
   }
@@ -6437,18 +6549,70 @@ function _caleContractorChange(){
   document.getElementById("cale-newc").style.display = v==="__new"?"":"none";
 }
 // Reschedule a construction event (tracked, like tasks).
-async function rescheduleCalEvent(id){
+async function rescheduleCalEvent(id){ _openRescheduleModal('event', id); }
+// ---- Clean reschedule pop-up (tasks + contractor/construction events) ----
+function _openRescheduleModal(kind, id){
   if(_blockIfReadOnly()) return;
-  const e=(_calEventsCache||[]).find(x=>x.id===id); if(!e) return;
-  const cur=e.event_date||_ymd(new Date());
-  const nd=prompt("New event date (YYYY-MM-DD) — this counts as a reschedule:", cur);
-  if(!nd) return;
-  if(!/^\d{4}-\d{2}-\d{2}$/.test(nd)){ alert("Please enter the date as YYYY-MM-DD."); return; }
-  const upd={ event_date:nd, reschedule_count:(e.reschedule_count||0)+1, last_rescheduled_at:new Date().toISOString() };
-  const { error }=await supabase.from("pm_calendar_events").update(upd).eq("id",id);
-  if(error){ alert("Couldn't reschedule: "+(error.message||"")); return; }
-  if(typeof _logAudit==="function") _logAudit("rescheduled","construction event", e.title||e.kind||"event", (e.event_date||'?')+" → "+nd+" (#"+upd.reschedule_count+")");
-  await loadCalendarEventsFromSupabase(); openCalEventDetail(id); if(typeof _calRerender==='function') _calRerender();
+  const isTask = kind==='task';
+  const rec = isTask ? (_tasksCache||[]).find(x=>x.id===id) : (_calEventsCache||[]).find(x=>x.id===id);
+  if(!rec) return;
+  const cur = isTask ? (rec.due_date||_ymd(new Date())) : (rec.event_date||_ymd(new Date()));
+  const reasons=['Contractor rescheduled us','Weather','Prior step not finished','Overbooked','Materials delay','Other'];
+  const chips=reasons.map(r=>`<button type="button" class="rs-chip" data-r="${_calEsc(r)}" onclick="document.querySelectorAll('.rs-chip').forEach(b=>b.style.cssText=window.__rsChipOff);this.style.cssText=window.__rsChipOn;window.__rsReason='${_calEsc(r)}'" style="">${_calEsc(r)}</button>`).join('');
+  window.__rsChipOff='padding:7px 13px;border-radius:99px;border:1px solid #dde2ec;background:#fff;color:#556;font-size:12px;cursor:pointer;margin:0 6px 6px 0';
+  window.__rsChipOn='padding:7px 13px;border-radius:99px;border:1px solid #185FA5;background:#E6F1FB;color:#185FA5;font-weight:600;font-size:12px;cursor:pointer;margin:0 6px 6px 0';
+  window.__rsReason='';
+  const old=document.getElementById('rs-modal'); if(old) old.remove();
+  const wrap=document.createElement('div');
+  wrap.id='rs-modal';
+  wrap.innerHTML=`<div style="position:fixed;inset:0;background:rgba(15,20,30,0.45);backdrop-filter:blur(2px);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px" onclick="if(event.target===this)document.getElementById('rs-modal').remove()">
+    <div style="background:#fff;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.25);max-width:440px;width:100%;padding:22px 24px">
+      <div style="font-size:16px;font-weight:700;color:#111">🔄 Reschedule ${isTask?'task':'event'}</div>
+      <div style="font-size:12px;color:#888;margin:2px 0 14px">${_calEsc(isTask?(rec.title||''):(rec.title||rec.kind||''))}</div>
+      <div style="font-size:11px;font-weight:600;color:#666;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:5px">New ${isTask?'due':'start'} date</div>
+      <input type="date" id="rs-date" value="${cur}" style="width:100%;padding:10px 12px;border:1px solid #dde2ec;border-radius:10px;font-size:14px;margin-bottom:12px"/>
+      ${(!isTask && rec.end_date)?`<div style="font-size:11px;font-weight:600;color:#666;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:5px">New finish date</div><input type="date" id="rs-end" value="${rec.end_date}" style="width:100%;padding:10px 12px;border:1px solid #dde2ec;border-radius:10px;font-size:14px;margin-bottom:12px"/>`:''}
+      <div style="font-size:11px;font-weight:600;color:#666;text-transform:uppercase;letter-spacing:0.4px;margin-bottom:7px">Why is it moving?</div>
+      <div style="margin-bottom:4px">${chips}</div>
+      <input id="rs-why" placeholder="Add a detail (optional)…" style="width:100%;padding:9px 12px;border:1px solid #dde2ec;border-radius:10px;font-size:13px;margin:6px 0 16px"/>
+      <div style="display:flex;gap:10px;justify-content:flex-end">
+        <button onclick="document.getElementById('rs-modal').remove()" style="padding:10px 18px;border-radius:10px;border:1px solid #dde2ec;background:#fff;color:#555;font-size:13px;cursor:pointer">Cancel</button>
+        <button onclick="_confirmReschedule('${kind}','${id}')" style="padding:10px 22px;border-radius:10px;border:none;background:#111;color:#fff;font-size:13px;font-weight:600;cursor:pointer">Reschedule</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.appendChild(wrap);
+  setTimeout(()=>{ document.querySelectorAll('.rs-chip').forEach(b=>b.style.cssText=window.__rsChipOff); },0);
+}
+async function _confirmReschedule(kind,id){
+  const nd=(document.getElementById('rs-date')||{}).value||'';
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(nd)){ alert('Pick a valid date.'); return; }
+  const detail=((document.getElementById('rs-why')||{}).value||'').trim();
+  const reason=(window.__rsReason||'')+(detail?((window.__rsReason?' — ':'')+detail):'');
+  const isTask=kind==='task';
+  const rec=isTask?(_tasksCache||[]).find(x=>x.id===id):(_calEventsCache||[]).find(x=>x.id===id);
+  if(!rec) return;
+  if(isTask){
+    const upd={ due_date:nd, reschedule_count:(rec.reschedule_count||0)+1, last_rescheduled_at:new Date().toISOString() };
+    if(reason) upd.reschedule_reasons=[...(rec.reschedule_reasons||[]), reason];
+    if(rec.start_date && rec.due_date){ const delta=Math.round((new Date(nd)-new Date(rec.due_date))/86400000); if(delta) upd.start_date=_ymd(new Date(new Date(rec.start_date).getTime()+delta*86400000)); }
+    const { error }=await supabase.from("pm_tasks").update(upd).eq("id",id);
+    if(error){ alert("Couldn't reschedule: "+(error.message||"")); return; }
+    if(typeof _logAudit==="function") _logAudit("rescheduled","task", rec.title, (rec.due_date||'?')+" → "+nd+(reason?(" · "+reason):"")+" (#"+upd.reschedule_count+")");
+    document.getElementById('rs-modal').remove();
+    await loadTasks(); openTaskDetail(id); _taskRerender();
+  } else {
+    const ne=((document.getElementById('rs-end')||{}).value||'')||null;
+    const upd={ event_date:nd, reschedule_count:(rec.reschedule_count||0)+1, last_rescheduled_at:new Date().toISOString() };
+    if(rec.end_date) upd.end_date=(ne && ne>nd)?ne:rec.end_date;
+    if(reason) upd.reschedule_reasons=[...(rec.reschedule_reasons||[]), reason];
+    let { error }=await supabase.from("pm_calendar_events").update(upd).eq("id",id);
+    if(error && reason){ delete upd.reschedule_reasons; ({ error }=await supabase.from("pm_calendar_events").update(upd).eq("id",id)); }
+    if(error){ alert("Couldn't reschedule: "+(error.message||"")); return; }
+    if(typeof _logAudit==="function") _logAudit("rescheduled","construction event", rec.title||rec.kind||"event", (rec.event_date||'?')+" → "+nd+(reason?(" · "+reason):"")+" (#"+upd.reschedule_count+")");
+    document.getElementById('rs-modal').remove();
+    await loadCalendarEventsFromSupabase(); openCalEventDetail(id); if(typeof _calRerender==='function') _calRerender();
+  }
 }
 async function saveCalEventEdit(id){
   if(_blockIfReadOnly()) return;
@@ -6791,25 +6955,7 @@ function openTaskDetail(id){
 }
 // Reschedule a task to a new due date. Unlike a silent edit, this is tracked:
 // it bumps reschedule_count and stamps last_rescheduled_at (surfaced in team metrics).
-async function rescheduleTask(id){
-  if(_blockIfReadOnly()) return;
-  const t=(_tasksCache||[]).find(x=>x.id===id); if(!t) return;
-  const cur=t.due_date||_ymd(new Date());
-  const nd=prompt("New due date (YYYY-MM-DD) — this counts as a reschedule:", cur);
-  if(!nd) return;
-  if(!/^\d{4}-\d{2}-\d{2}$/.test(nd)){ alert("Please enter the date as YYYY-MM-DD."); return; }
-  const _why=(prompt("Why is this being rescheduled? (e.g. squatters, acquisitions, overbooked — tracked in Task Data Housing)","")||"").trim();
-  const upd={ due_date:nd, reschedule_count:(t.reschedule_count||0)+1, last_rescheduled_at:new Date().toISOString() };
-  if(_why) upd.reschedule_reasons=[...(t.reschedule_reasons||[]), _why];
-  if(t.start_date && t.due_date){
-    const delta=Math.round((new Date(nd)-new Date(t.due_date))/86400000);
-    if(delta) upd.start_date=_ymd(new Date(new Date(t.start_date).getTime()+delta*86400000));
-  }
-  const { error }=await supabase.from("pm_tasks").update(upd).eq("id",id);
-  if(error){ alert("Couldn't reschedule: "+(error.message||"")); return; }
-  if(typeof _logAudit==="function") _logAudit("rescheduled","task", t.title, (t.due_date||'?')+" → "+nd+" (#"+upd.reschedule_count+")");
-  await loadTasks(); openTaskDetail(id); _taskRerender();
-}
+async function rescheduleTask(id){ _openRescheduleModal('task', id); }
 async function deleteTask(id){
   if(_blockIfReadOnly()) return;
   if(!confirm("Delete this task? This can't be undone.")) return;
