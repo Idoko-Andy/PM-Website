@@ -308,6 +308,8 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" id="dd-teamspent" onclick="openDataSection('teamspent')">💸 Project Team Spent</div>
       <div class="ddl" style="margin-top:4px">Project Managers</div>
       <div class="ddi" onclick="openPMDashboard()">👥 PM Team Overview</div>
+      <div class="ddl" style="margin-top:4px">Task Data</div>
+      <div class="ddi" onclick="openTaskDataHousing()">🗄 Task Data Housing</div>
     </div>
   </div>
   <div class="ni has-dd" id="rep-t">📊 Reporting ▾
@@ -1129,6 +1131,7 @@ const ONCLICK_PERM = [
   ["openDesignDashboard",       "dash_design"],
   ["openTVDashboard",           "dash_tv"],
   ["openPMAssistantDashboard",  "dash_pmassistant"],
+  ["openTaskDataHousing",       "data_pmoverview"],
   ["openAdminDashboard",        "dash_admin"],
   ["openSeniorVADashboard",     "dash_seniorva"],
   ["openVAAdminDashboard",      "dash_vaadmin"],
@@ -2319,6 +2322,9 @@ async function approveSubPhase(propId, name){
 function phInfo(name){ return PROP_PHASES.find(p=>p.name===name)||{bg:"#f4f5f7",text:"#555",cnt:"#aaa",dot:"#aaa"}; }
 
 // ===================== MAIN DASHBOARD 5 BOARDS =====================
+// Combined team stats for the Main Dashboard (all PMs + assistants).
+function _teamTasksDone7(){ const t=new Date();t.setHours(0,0,0,0); const a=_ymd(new Date(t.getTime()-7*86400000)); const s=_ymd(t); return (typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(x=>x.status==='done'&&x.due_date&&x.due_date>=a&&x.due_date<=s).length; }
+function _teamDollarsDay(){ const t=new Date(); const ys=new Date(t.getFullYear(),0,1); const days=Math.max(1,Math.round((t-ys)/86400000)); const tot=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived).reduce((a,c)=>{const v=parseFloat(String(c.spent||"").replace(/[^0-9.\-]/g,""));return a+(isNaN(v)?0:v);},0); return tot?('$'+Math.round(tot/days).toLocaleString()):'—'; }
 function renderMainDashboard() {
   const statCard = (label, val, sub, color) => `
     <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:12px 14px">
@@ -2418,11 +2424,13 @@ function renderMainDashboard() {
     </div>`;
 
   return `
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px">
+    <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:14px">
       ${statCard('Active Projects', countActive(), 'Framing → Pre-listing', '#111')}
       ${statCard('Waiting Permits', countWaitingPermit(), 'Pending approval', '#f39c12')}
       ${statCard('On the Market', countOnMarket(), 'Listed properties', '#5dade2')}
       ${statCard('Closed This Year', countClosedThisYear(), 'This calendar year', '#2ecc71')}
+      ${statCard('Team Tasks Done', _teamTasksDone7(), 'Whole team · last 7 days', '#185FA5')}
+      ${statCard('Team Avg $ / Day', _teamDollarsDay(), 'Rolling year · project spent', '#0B7285')}
     </div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:0">
       ${boardCard("Pre Construction",             "#E6F1FB","#185FA5", sortBoard(boards["SOW & Budgets"]))}
@@ -3160,6 +3168,7 @@ function pmTabContent(name) {
   const _done7 = _my7.filter(t=>t.status==="done").length;
   const _pct7 = _my7.length ? Math.round(_done7/_my7.length*100) : null;
   const _pctColor = _pct7===null ? '#aaa' : (_pct7>=80?'#2ecc71':(_pct7>=50?'#f39c12':'#c0392b'));
+  const _mx=_computePMMetrics(name);
 
   return `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:12px">
@@ -3180,6 +3189,16 @@ function pmTabContent(name) {
           <div style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Task Completion</div>
           <div style="font-size:28px;font-weight:500;color:${_pctColor}">${_pct7===null?'—':_pct7+'%'}</div>
           <div style="font-size:10px;color:#aaa;margin-top:2px">${_pct7===null?'No tasks last 7 days':_done7+' of '+_my7.length+' · last 7 days'}</div>
+        </div>
+        <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 20px;text-align:center;min-width:110px">
+          <div style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Avg $ Work / Day</div>
+          <div style="font-size:28px;font-weight:500;color:#0B7285">${_mx.dollarsPerDayYear!=null?'$'+_mx.dollarsPerDayYear.toLocaleString():'—'}</div>
+          <div style="font-size:10px;color:#aaa;margin-top:2px">Rolling year · project spent</div>
+        </div>
+        <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 20px;text-align:center;min-width:110px">
+          <div style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Rescheduled</div>
+          <div style="font-size:28px;font-weight:500;color:#B7791F">${_mx.reschedulePct7==='--'?'—':_mx.reschedulePct7+'%'}</div>
+          <div style="font-size:10px;color:#aaa;margin-top:2px">Tasks moved · last 7 days</div>
         </div>
       </div>
     </div>
@@ -3331,6 +3350,45 @@ function showAccessDenied(msg) {
   openModal("access-denied-modal");
 }
 
+// ===== Task Data Housing: query the task database by date range + person/team =====
+function openTaskDataHousing(){
+  document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
+  document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
+  const t=new Date(); const to=_ymd(t); const from=_ymd(new Date(t.getTime()-30*86400000));
+  document.getElementById("dash-body").innerHTML=`
+   <div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content">
+    <div style="padding:20px;max-width:1000px;margin:0 auto">
+      <div style="font-size:16px;font-weight:600;color:#111">🗄 Task Data Housing</div>
+      <div style="font-size:12px;color:#888;margin-bottom:14px">Query the task database: pick a date range and a person (or the whole team), then Run.</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:14px 16px;margin-bottom:16px">
+        <div><div style="font-size:10px;color:#999;text-transform:uppercase;margin-bottom:4px">From</div><input type="date" id="tdh-from" value="${from}" style="padding:8px 10px;border:0.5px solid #ddd;border-radius:6px;font-size:13px"/></div>
+        <div><div style="font-size:10px;color:#999;text-transform:uppercase;margin-bottom:4px">To</div><input type="date" id="tdh-to" value="${to}" style="padding:8px 10px;border:0.5px solid #ddd;border-radius:6px;font-size:13px"/></div>
+        <div><div style="font-size:10px;color:#999;text-transform:uppercase;margin-bottom:4px">Person</div><select id="tdh-who" style="padding:8px 10px;border:0.5px solid #ddd;border-radius:6px;font-size:13px"><option value="__team">Whole team</option>${teamMembers().map(n=>`<option>${_calEsc(n)}</option>`).join("")}</select></div>
+        <button onclick="_tdhRun()" style="padding:9px 18px;background:#111;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer">Run</button>
+      </div>
+      <div id="tdh-out"><div style="color:#bbb;font-size:13px">Pick a range and hit Run.</div></div>
+    </div></div></div>`;
+  if(typeof loadTasks==='function') loadTasks().then(()=>{ _tdhRun(); });
+}
+function _tdhStats(name, from, to){
+  const all=(typeof _tasksCache!=='undefined'?_tasksCache:[]);
+  const t=name?all.filter(x=>_taskHasAssignee(x,name)):all;
+  const inR=t.filter(x=>x.due_date && x.due_date>=from && x.due_date<=to);
+  const done=inR.filter(x=>x.status==='done').length;
+  const res=inR.filter(x=>(x.reschedule_count||0)>0).length;
+  const days=Math.max(1,Math.round((new Date(to)-new Date(from))/86400000)+1);
+  return { total:inR.length, done, pct: inR.length?Math.round(done/inR.length*100):null, resPct: inR.length?Math.round(res/inR.length*100):null, perDay:(done/days).toFixed(2) };
+}
+function _tdhRun(){
+  const fe=document.getElementById('tdh-from'), te=document.getElementById('tdh-to'), we=document.getElementById('tdh-who');
+  const out=document.getElementById('tdh-out'); if(!out||!fe||!te||!we) return;
+  const from=fe.value, to=te.value, who=we.value;
+  const names = who==='__team' ? teamMembers() : [who];
+  const row=(label,s,bold)=>`<tr style="${bold?'background:#EEF3FA;font-weight:700;':''}border-top:0.5px solid #eef0f6"><td style="padding:8px 10px;font-weight:600;color:#111">${_calEsc(label)}</td><td style="padding:8px 10px;text-align:center">${s.total}</td><td style="padding:8px 10px;text-align:center">${s.done}</td><td style="padding:8px 10px;text-align:center">${s.pct==null?'—':s.pct+'%'}</td><td style="padding:8px 10px;text-align:center">${s.resPct==null?'—':s.resPct+'%'}</td><td style="padding:8px 10px;text-align:center">${s.perDay}</td></tr>`;
+  let rows=names.map(n=>row(n,_tdhStats(n,from,to))).join("");
+  if(who==='__team') rows+=row('TEAM TOTAL', _tdhStats(null,from,to), true);
+  out.innerHTML=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="background:#122A4A;color:#fff"><th style="padding:9px 10px;text-align:left">Person</th><th style="padding:9px 10px">Tasks due</th><th style="padding:9px 10px">Completed</th><th style="padding:9px 10px">Completion %</th><th style="padding:9px 10px">Rescheduled %</th><th style="padding:9px 10px">Done / day</th></tr></thead><tbody>${rows}</tbody></table></div><div style="font-size:11px;color:#999;margin-top:8px">$ of work per day joins this table once cost data is attached to tasks/properties.</div>`;
+}
 function openDataSection(type) {
   const u = currentUser();
   document.querySelectorAll(".dd").forEach(x => x.classList.remove("open"));
@@ -3414,7 +3472,16 @@ function _computePMMetrics(name){
   const ago30=_ymd(new Date(today.getTime()-30*86400000));
   const doneRecent=tasks.filter(t=>t.status==="done" && t.due_date && t.due_date>=ago30).length;
   const perDay=(doneRecent/30).toFixed(1);
-  return { avgDailyWork:perDay, budgetPct:{on:"--",over:"--"}, timelinePct:{on:onTime,over:overTime}, flipsCompleted:flips, rentalHandoffs:handoffs, taskCompletionPct:taskPct, reschedulePct:reschedPct };
+  // Avg $ of work per day — rolling year, from project spent on this PM's properties.
+  const yearStart=new Date(today.getFullYear(),0,1);
+  const daysYTD=Math.max(1,Math.round((today-yearStart)/86400000));
+  const spentTotal=mine.reduce((a,c)=>{const v=parseFloat(String(c.spent||"").replace(/[^0-9.\-]/g,""));return a+(isNaN(v)?0:v);},0);
+  const dollarsDay= spentTotal? Math.round(spentTotal/daysYTD) : null;
+  // Rescheduled % over the last 7 days.
+  const ago7=_ymd(new Date(today.getTime()-7*86400000));
+  const t7=tasks.filter(t=>t.due_date && t.due_date>=ago7 && t.due_date<=todayStr);
+  const resched7= t7.length? Math.round(t7.filter(t=>(t.reschedule_count||0)>0).length/t7.length*100) : "--";
+  return { avgDailyWork:perDay, dollarsPerDayYear:dollarsDay, reschedulePct7:resched7, budgetPct:{on:"--",over:"--"}, timelinePct:{on:onTime,over:overTime}, flipsCompleted:flips, rentalHandoffs:handoffs, taskCompletionPct:taskPct, reschedulePct:reschedPct };
 }
 function pmCard(name, d, liveName) {
   const colors = { Bruce: "blue", Andrew: "green", Isaiah: "purple" };
@@ -3433,30 +3500,20 @@ function pmCard(name, d, liveName) {
       </div>
       <div style="padding:14px 16px;display:flex;flex-direction:column;gap:10px">
         <div class="pm-stat-card ${c}" style="margin:0">
-          <div class="pm-stat-label">Avg. Tasks Completed / Day</div>
-          <div class="pm-stat-value">${d.avgDailyWork}</div>
-          <div class="pm-stat-sub">Last 30 days</div>
+          <div class="pm-stat-label">Avg. $ of Work Completed / Day</div>
+          <div class="pm-stat-value">${d.dollarsPerDayYear!=null?'$'+d.dollarsPerDayYear.toLocaleString():'—'}</div>
+          <div class="pm-stat-sub">Rolling year · from project spent</div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div class="pm-stat-card green" style="margin:0">
             <div class="pm-stat-label">In Budget</div>
             <div class="pm-stat-value" style="font-size:20px">${d.budgetPct.on}%</div>
-            <div class="pm-stat-sub">${d.budgetPct.over}% over</div>
-          </div>
-          <div class="pm-stat-card amber" style="margin:0">
-            <div class="pm-stat-label">Over Budget</div>
-            <div class="pm-stat-value" style="font-size:20px">${d.budgetPct.over}%</div>
-            <div class="pm-stat-sub">${d.budgetPct.on}% on target</div>
+            <div class="pm-stat-sub">Awaits cost data</div>
           </div>
           <div class="pm-stat-card blue" style="margin:0">
             <div class="pm-stat-label">On Timeline</div>
             <div class="pm-stat-value" style="font-size:20px">${d.timelinePct.on}%</div>
-            <div class="pm-stat-sub">${d.timelinePct.over}% over</div>
-          </div>
-          <div class="pm-stat-card coral" style="margin:0">
-            <div class="pm-stat-label">Over Timeline</div>
-            <div class="pm-stat-value" style="font-size:20px">${d.timelinePct.over}%</div>
-            <div class="pm-stat-sub">${d.timelinePct.on}% on time</div>
+            <div class="pm-stat-sub">Open tasks not overdue</div>
           </div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
@@ -4948,10 +5005,46 @@ function openSeniorVADashboard() {
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
   document.getElementById("dash-body").innerHTML = `<div class="empty-state"><div class="icon">💼</div><p style="color:#888;font-size:15px;font-weight:500">Senior VA Dashboard</p><p style="color:#555;font-size:13px;margin-top:6px">Being built out. Check back soon.</p></div>`;
 }
-function openVAAdminDashboard() {
-  document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
-  document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
-  document.getElementById("dash-body").innerHTML = `<div class="empty-state"><div class="icon">🖥</div><p style="color:#888;font-size:15px;font-weight:500">VA Admin Dashboard</p><p style="color:#555;font-size:13px;margin-top:6px">Being built out. Check back soon.</p></div>`;
+function openVAAdminDashboard(activeTab) {
+  activeTab = activeTab || 'main';
+  const va=(getUsers().find(u=>u.status==="approved"&&u.role==="Virtual Administrative Assistant")||{firstName:"Patience"});
+  const vaName=(va.firstName||"Patience");
+  const tabs=[
+    {id:'main',label:'Main Dashboard',icon:'📊'},
+    {id:'va',label:vaName,icon:'👤'},
+    {id:'utilities',label:'Utilities',icon:'⚡'},
+    {id:'property',label:'Property Dashboard',icon:'🏗'},
+    {id:'construction',label:'Construction Calendar',icon:'📅'},
+    {id:'taskcal',label:'Task Calendar',icon:'🗓'},
+  ];
+  let content;
+  switch(activeTab){
+    case 'va':           content=_personDashView(vaName,'Virtual Administrative Assistant'); break;
+    case 'utilities':    content=_utilitiesDashboard(); break;
+    case 'property':     content=renderPropertyBoard(); break;
+    case 'construction': content=renderConstructionCalendar(); break;
+    case 'taskcal':      content=renderTaskCalendar(); break;
+    default:             content=_utilitiesDashboard();
+  }
+  _execShell('openVAAdminDashboard', tabs, activeTab, content);
+}
+async function _utilToggle(id,key){ await toggleChecklistItem(id,key); openVAAdminDashboard('utilities'); }
+// Utilities dashboard (Patience): electric/water/gas status per active property.
+function _utilitiesDashboard(){
+  const phases=["Vacant / On Standby","Pre Construction","Waiting Permits","Framing, MEPS, Insulation","Drywall / Exterior Work","Finishes","Pre List / Punchout Process","Listed on the Market"];
+  const cards=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && phases.includes(c.phase));
+  const items=[["vos_util_electric","Electric"],["vos_util_water","Water"],["vos_util_gas","Gas"]];
+  const ro=isReadOnly();
+  const row=(c)=>{ const cl=c.checklists||{}; const cells=items.map(it=>{const st=cl[it[0]]||{}; return ro?`<td style="text-align:center;padding:7px">${st.done?'✅':'⬜'}</td>`:`<td style="text-align:center;padding:7px"><span onclick="_utilToggle('${c.id}','${it[0]}')" style="cursor:pointer;font-size:16px">${st.done?'✅':'⬜'}</span></td>`;}).join("");
+    const on=items.filter(it=> (cl[it[0]]||{}).done).length;
+    return `<tr style="border-top:0.5px solid #eef0f6"><td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span><div style="font-size:10px;color:#999">${_calEsc(c.phase||'')}</div></td>${cells}<td style="text-align:center;padding:7px;font-size:11px;font-weight:600;color:${on===3?'#2E7D32':'#B7791F'}">${on}/3</td></tr>`; };
+  return `<div style="padding:20px;max-width:860px;margin:0 auto">
+    <div style="font-size:15px;font-weight:600;color:#111">⚡ Utilities Dashboard</div>
+    <div style="font-size:12px;color:#888;margin-bottom:12px">Electric / water / gas per active property. Click a box to mark it on or off; click an address to open the card.</div>
+    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px">
+      <thead><tr style="background:#122A4A;color:#fff"><th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">Electric</th><th style="padding:9px">Water</th><th style="padding:9px">Gas</th><th style="padding:9px">Status</th></tr></thead>
+      <tbody>${cards.map(row).join("")||'<tr><td colspan="5" style="padding:20px;text-align:center;color:#bbb">No active properties.</td></tr>'}</tbody></table></div>
+  </div>`;
 }
 function openArchitectDashboard(activeTab) {
   activeTab = activeTab || 'main';
