@@ -3501,7 +3501,28 @@ function _tdhRun(){
   const row=(label,s,bold)=>`<tr style="${bold?'background:#EEF3FA;font-weight:700;':''}border-top:0.5px solid #eef0f6"><td style="padding:8px 10px;font-weight:600;color:#111">${_calEsc(label)}</td><td style="padding:8px 10px;text-align:center">${s.total}</td><td style="padding:8px 10px;text-align:center">${s.done}</td><td style="padding:8px 10px;text-align:center">${s.pct==null?'—':s.pct+'%'}</td><td style="padding:8px 10px;text-align:center">${s.resPct==null?'—':s.resPct+'%'}</td><td style="padding:8px 10px;text-align:center">${s.perDay}</td></tr>`;
   let rows=names.map(n=>row(n,_tdhStats(n,from,to))).join("");
   if(who==='__team') rows+=row('TEAM TOTAL', _tdhStats(null,from,to), true);
-  out.innerHTML=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="background:#122A4A;color:#fff"><th style="padding:9px 10px;text-align:left">Person</th><th style="padding:9px 10px">Tasks due</th><th style="padding:9px 10px">Completed</th><th style="padding:9px 10px">Completion %</th><th style="padding:9px 10px">Rescheduled %</th><th style="padding:9px 10px">Done / day</th></tr></thead><tbody>${rows}</tbody></table></div><div style="font-size:11px;color:#999;margin-top:8px">$ of work per day lives in the 💵 $ / Day Housing tab.</div>`;
+  // Reschedule-reason keywords (why tasks slip: squatters, acquisitions, overbooked, …).
+  const _allT=(typeof _tasksCache!=='undefined'?_tasksCache:[]);
+  const _inRange=_allT.filter(x=>x.due_date && x.due_date>=from && x.due_date<=to);
+  const _kw={};
+  _inRange.forEach(t=>{ (t.reschedule_reasons||[]).forEach(r=>{ const k=String(r).trim().toLowerCase(); if(k) _kw[k]=(_kw[k]||0)+1; }); });
+  const _kwRows=Object.entries(_kw).sort((a,b)=>b[1]-a[1]).slice(0,20).map(([k,n])=>`<tr style="border-top:0.5px solid #eef0f6"><td style="padding:8px 10px;color:#111">${_calEsc(k)}</td><td style="padding:8px 10px;text-align:center;font-weight:600">${n}</td></tr>`).join('')||'<tr><td colspan="2" style="padding:14px 10px;color:#bbb">No reschedule reasons logged in this range yet — reasons are captured whenever someone reschedules a task.</td></tr>';
+  // Total tasks per property (feeds rehab-type average templates).
+  const _byProp={};
+  _allT.forEach(t=>{ if(t.property_id){ _byProp[t.property_id]=(_byProp[t.property_id]||0)+1; } });
+  const _propRows=Object.entries(_byProp).map(([pid,n])=>{ const c=(typeof propCards!=='undefined'?propCards:[]).find(p=>p.id===pid); return c?{addr:c.addr||'?',type:c.type||'—',n}:null; }).filter(Boolean).sort((a,b)=>b.n-a.n);
+  const _typeAvg={};
+  _propRows.forEach(r=>{ const t=r.type||'—'; (_typeAvg[t]=_typeAvg[t]||[]).push(r.n); });
+  const _propTbl=_propRows.map(r=>`<tr style="border-top:0.5px solid #eef0f6"><td style="padding:8px 10px;font-weight:600;color:#111">${_calEsc(r.addr)}</td><td style="padding:8px 10px">${_calEsc(r.type)}</td><td style="padding:8px 10px;text-align:center">${r.n}</td></tr>`).join('')||'<tr><td colspan="3" style="padding:14px 10px;color:#bbb">No property-linked tasks yet.</td></tr>';
+  const _avgTbl=Object.entries(_typeAvg).map(([t,arr])=>`<tr style="border-top:0.5px solid #eef0f6"><td style="padding:8px 10px;color:#111">${_calEsc(t)}</td><td style="padding:8px 10px;text-align:center">${arr.length}</td><td style="padding:8px 10px;text-align:center;font-weight:600">${Math.round(arr.reduce((a,b)=>a+b,0)/arr.length)}</td></tr>`).join('')||'<tr><td colspan="3" style="padding:14px 10px;color:#bbb">—</td></tr>';
+  out.innerHTML=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="background:#122A4A;color:#fff"><th style="padding:9px 10px;text-align:left">Person</th><th style="padding:9px 10px">Tasks due</th><th style="padding:9px 10px">Completed</th><th style="padding:9px 10px">Completion %</th><th style="padding:9px 10px">Rescheduled %</th><th style="padding:9px 10px">Done / day</th></tr></thead><tbody>${rows}</tbody></table></div><div style="font-size:11px;color:#999;margin-top:8px">$ of work per day lives in the 💵 $ / Day Housing tab.</div>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;align-items:start">
+    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:auto"><div style="padding:10px 14px;border-bottom:0.5px solid #e0e4ec;font-size:13px;font-weight:700;color:#B7791F">🔄 Reschedule Reasons (in range)</div><table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="background:#122A4A;color:#fff"><th style="padding:9px 10px;text-align:left">Reason / keyword</th><th style="padding:9px 10px">Count</th></tr></thead><tbody>${_kwRows}</tbody></table></div>
+    <div>
+      <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:auto;margin-bottom:16px"><div style="padding:10px 14px;border-bottom:0.5px solid #e0e4ec;font-size:13px;font-weight:700;color:#185FA5">🏠 Total Tasks per Property</div><table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="background:#122A4A;color:#fff"><th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px 10px;text-align:left">Type</th><th style="padding:9px 10px">Tasks</th></tr></thead><tbody>${_propTbl}</tbody></table></div>
+      <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:auto"><div style="padding:10px 14px;border-bottom:0.5px solid #e0e4ec;font-size:13px;font-weight:700;color:#0B7285">📐 Avg Tasks by Rehab Type (template)</div><table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="background:#122A4A;color:#fff"><th style="padding:9px 10px;text-align:left">Rehab type</th><th style="padding:9px 10px">Properties</th><th style="padding:9px 10px">Avg tasks</th></tr></thead><tbody>${_avgTbl}</tbody></table></div>
+    </div>
+  </div>`;
 }
 // ===== $ Completed / Day Housing: construction velocity per property, permitted vs non =====
 function openDollarsDayHousing(){
@@ -6459,7 +6480,7 @@ async function deleteCalEvent(id){
 // ===================== TASK SYSTEM + TASK CALENDAR =====================
 let _tasksCache = [];
 async function loadTasks(){
-  let { data, error } = await supabase.from("pm_tasks").select("id,title,assignee,assignees,due_date,due_time,start_date,category,refer_to,status,property_id,notes,comments,location").order("due_date",{ascending:true});
+  let { data, error } = await supabase.from("pm_tasks").select("id,title,assignee,assignees,due_date,due_time,start_date,category,refer_to,status,property_id,notes,comments,location,reschedule_count,last_rescheduled_at,reschedule_reasons").order("due_date",{ascending:true});
   if(error){ // some columns may not exist yet on older DBs — fall back gracefully
     ({ data, error } = await supabase.from("pm_tasks").select("id,title,assignee,assignees,due_date,start_date,category,refer_to,status,property_id,notes").order("due_date",{ascending:true}));
   }
@@ -6747,7 +6768,9 @@ async function rescheduleTask(id){
   const nd=prompt("New due date (YYYY-MM-DD) — this counts as a reschedule:", cur);
   if(!nd) return;
   if(!/^\d{4}-\d{2}-\d{2}$/.test(nd)){ alert("Please enter the date as YYYY-MM-DD."); return; }
+  const _why=(prompt("Why is this being rescheduled? (e.g. squatters, acquisitions, overbooked — tracked in Task Data Housing)","")||"").trim();
   const upd={ due_date:nd, reschedule_count:(t.reschedule_count||0)+1, last_rescheduled_at:new Date().toISOString() };
+  if(_why) upd.reschedule_reasons=[...(t.reschedule_reasons||[]), _why];
   if(t.start_date && t.due_date){
     const delta=Math.round((new Date(nd)-new Date(t.due_date))/86400000);
     if(delta) upd.start_date=_ymd(new Date(new Date(t.start_date).getTime()+delta*86400000));
