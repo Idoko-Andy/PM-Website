@@ -2388,7 +2388,7 @@ function renderMainDashboard() {
       ${statCard('Closed This Year', countClosedThisYear(), 'This calendar year', '#2ecc71')}
     </div>
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:0">
-      ${boardCard("SOW & Budgets",                "#E6F1FB","#185FA5", sortBoard(boards["SOW & Budgets"]))}
+      ${boardCard("Pre Construction",             "#E6F1FB","#185FA5", sortBoard(boards["SOW & Budgets"]))}
       ${boardCard("Permits & Drawings",           "#FBEAF0","#D4537E", sortBoard(boards["Permits & Drawings"]))}
       ${boardCard("Design Budgets & Status",      "#EEEDFE","#7F77DD", sortBoard(boards["Design Budgets & Design Status"]))}
       ${boardCard("Takedowns / Vacancies",        "#FCEBEB","#E24B4A", sortBoard(boards["Takedowns / Vacancies"]))}
@@ -3007,6 +3007,7 @@ function pmTabContent(name) {
   function isOver(ds) { if(!ds) return false; const d=new Date(ds);d.setHours(0,0,0,0);return d<today; }
   function within5(ds) { if(!ds) return false; const d=new Date(ds);d.setHours(0,0,0,0);return d>=today&&d<=cutoff5; }
   function within14(ds) { if(!ds) return false; const d=new Date(ds);d.setHours(0,0,0,0);return d>=today&&d<=cutoff14; }
+  const isApprovalStep = (nm)=>/approval/i.test(nm||"");
 
   // Build boards from THIS PM's properties only
   const myProps = propCards.filter(c => c.pm === name);
@@ -3029,7 +3030,14 @@ function pmTabContent(name) {
       boards["Remedy Requests / Upcoming Closings"].push({addr:card.addr,pm:card.pm,sub:card.phase,due:card.end||"",overdue:isOver(card.end)});
     (card.subPhases||[]).forEach(sp => {
       const bn = SUB_PHASE_BOARD[sp.name];
-      if (bn && boards[bn] && (within5(sp.due)||isOver(sp.due)))
+      if (!bn || !boards[bn]) return;
+      // Approval steps aren't shown as normal due items — surface them as "awaiting sign-off" pills on their board
+      if (isApprovalStep(sp.name)) {
+        if (sp.start && !sp.approved && !sp.completed)
+          boards[bn].push({addr:card.addr,pm:card.pm,sub:sp.name+" — awaiting sign-off",due:sp.due||"",overdue:isOver(sp.due),pending:true});
+        return;
+      }
+      if (within5(sp.due)||isOver(sp.due))
         boards[bn].push({addr:card.addr,pm:card.pm,sub:sp.name,due:sp.due||"",overdue:isOver(sp.due)});
     });
   });
@@ -3045,18 +3053,18 @@ function pmTabContent(name) {
     });
   }
 
-  // Count upcoming tasks within 14 days across all sub phases
-  let upcoming14Count = 0;
+  // Count upcoming CREATION tasks within 5 days (approval steps excluded)
+  let upcoming5Count = 0;
   myProps.forEach(card => {
-    (card.subPhases||[]).forEach(sp => { if(within14(sp.due)) upcoming14Count++; });
-    if(within14(card.end)) upcoming14Count++;
+    (card.subPhases||[]).forEach(sp => { if(!isApprovalStep(sp.name) && within5(sp.due)) upcoming5Count++; });
+    if(within5(card.end)) upcoming5Count++;
   });
 
   // Top 10 closest due tasks across all boards for this PM
   let allTasks = [];
   myProps.forEach(card => {
     (card.subPhases||[]).forEach(sp => {
-      if(sp.due) allTasks.push({addr:card.addr, task:sp.name, due:sp.due, overdue:isOver(sp.due)});
+      if(sp.due && !isApprovalStep(sp.name)) allTasks.push({addr:card.addr, task:sp.name, due:sp.due, overdue:isOver(sp.due)});
     });
     if(card.end) allTasks.push({addr:card.addr, task:'Completion', due:card.end, overdue:isOver(card.end)});
   });
@@ -3077,7 +3085,7 @@ function pmTabContent(name) {
             <div style="padding:5px 0;border-bottom:0.5px solid #f4f5f7">
               <div style="font-size:11px;color:#111;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${it.addr}</div>
               <div style="font-size:10px;color:#888">${it.sub||it.phase||''}</div>
-              <div style="font-size:10px;font-weight:600;color:${it.overdue?'#c0392b':'#E24B4A'};margin-top:2px">${it.overdue?'⚠ Overdue: ':'Due: '}${it.due}</div>
+              <div style="font-size:10px;font-weight:600;color:${it.pending?'#b8860b':(it.overdue?'#c0392b':'#E24B4A')};margin-top:2px">${it.pending?('⏳ Awaiting sign-off'+(it.due?' · due '+it.due:'')):((it.overdue?'⚠ Overdue: ':'Due: ')+it.due)}</div>
             </div>`).join('')}
         ${sorted.length>5?`<div style="font-size:10px;color:#aaa;padding:4px 0">+${sorted.length-5} more</div>`:''}
       </div>
@@ -3097,19 +3105,34 @@ function pmTabContent(name) {
 
   const activeCount = countActiveForPM(name);
 
+  // #113 Task completion % over the last 7 days (tasks assigned to this PM, due in the window)
+  const _wkAgoStr = _ymd(new Date(today.getTime()-7*86400000));
+  const _todayStr = _ymd(today);
+  const _my7 = (_tasksCache||[]).filter(t=>_taskHasAssignee(t,name) && t.due_date && t.due_date>=_wkAgoStr && t.due_date<=_todayStr);
+  const _done7 = _my7.filter(t=>t.status==="done").length;
+  const _pct7 = _my7.length ? Math.round(_done7/_my7.length*100) : null;
+  const _pctColor = _pct7===null ? '#aaa' : (_pct7>=80?'#2ecc71':(_pct7>=50?'#f39c12':'#c0392b'));
+
   return `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:12px">
       <div style="display:flex;align-items:center;gap:10px">
         <div style="width:34px;height:34px;border-radius:50%;background:${pmColor};color:#fff;font-size:15px;font-weight:500;display:flex;align-items:center;justify-content:center">${liveName[0]}</div>
         <div>
           <div style="font-size:14px;font-weight:500;color:#111">${liveName}</div>
-          <div style="font-size:11px;color:#888">Project Manager · ${myProps.length} propert${myProps.length===1?'y':'ies'} · <span style="color:#E24B4A;font-weight:500">${upcoming14Count} task${upcoming14Count!==1?'s':''} due in 14 days</span></div>
+          <div style="font-size:11px;color:#888">Project Manager · ${myProps.length} propert${myProps.length===1?'y':'ies'} · <span style="color:#E24B4A;font-weight:500">${upcoming5Count} task${upcoming5Count!==1?'s':''} due in 5 days</span></div>
         </div>
       </div>
-      <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 20px;text-align:center;flex-shrink:0;min-width:110px">
-        <div style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Active Projects</div>
-        <div style="font-size:28px;font-weight:500;color:#111">${activeCount}</div>
-        <div style="font-size:10px;color:#aaa;margin-top:2px">Framing → Pre-listing</div>
+      <div style="display:flex;gap:10px;flex-shrink:0">
+        <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 20px;text-align:center;min-width:110px">
+          <div style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Active Projects</div>
+          <div style="font-size:28px;font-weight:500;color:#111">${activeCount}</div>
+          <div style="font-size:10px;color:#aaa;margin-top:2px">Framing → Pre-listing</div>
+        </div>
+        <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 20px;text-align:center;min-width:110px">
+          <div style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Task Completion</div>
+          <div style="font-size:28px;font-weight:500;color:${_pctColor}">${_pct7===null?'—':_pct7+'%'}</div>
+          <div style="font-size:10px;color:#aaa;margin-top:2px">${_pct7===null?'No tasks last 7 days':_done7+' of '+_my7.length+' · last 7 days'}</div>
+        </div>
       </div>
     </div>
 
@@ -3118,7 +3141,7 @@ function pmTabContent(name) {
       <div style="padding:9px 13px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between">
         <div style="font-size:11.5px;font-weight:500;color:#111">📋 Upcoming Due Tasks</div>
         <div style="display:flex;align-items:center;gap:8px">
-          <span style="font-size:10px;background:#E6F1FB;color:#185FA5;padding:2px 8px;border-radius:99px">${upcoming14Count} due in 14 days</span>
+          <span style="font-size:10px;background:#E6F1FB;color:#185FA5;padding:2px 8px;border-radius:99px">${upcoming5Count} due in 5 days</span>
           <span style="font-size:10px;color:#aaa;background:#f9f9f9;padding:2px 7px;border-radius:4px">Task portal only — connects to Tasks/Schedule tab</span>
         </div>
       </div>
@@ -3127,7 +3150,7 @@ function pmTabContent(name) {
 
     <!-- 6 boards grid -->
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
-      ${boardCardPM("SOW & Budgets",                "#E6F1FB","#185FA5", boards["SOW & Budgets"])}
+      ${boardCardPM("Pre Construction",             "#E6F1FB","#185FA5", boards["SOW & Budgets"])}
       ${boardCardPM("Permits & Drawings",           "#FBEAF0","#D4537E", boards["Permits & Drawings"])}
       ${boardCardPM("Design Budgets & Status",      "#EEEDFE","#7F77DD", boards["Design Budgets & Design Status"])}
       ${boardCardPM("Takedowns / Vacancies",        "#FCEBEB","#E24B4A", boards["Takedowns / Vacancies"])}
@@ -6250,7 +6273,7 @@ function _renderSettings(){
   const subs=d.subPhases||[];
   // ---- Section 1: subphases ----
   const subRows = subs.map((name,i)=>{
-    const boardSel = WORKFLOW_BOARDS.map(b=>`<option value="${_wfEsc(b)}"${(d.board[name]===b)?" selected":""}>${_wfEsc(b)}</option>`).join("");
+    const boardSel = WORKFLOW_BOARDS.map(b=>`<option value="${_wfEsc(b)}"${(d.board[name]===b)?" selected":""}>${_wfEsc(b==="SOW & Budgets"?"Pre Construction":b)}</option>`).join("");
     const appr = !!d.approval[name];
     return `<div style="display:flex;gap:8px;align-items:center;padding:10px 12px;border-bottom:0.5px solid #f1f3f7;background:#fff">
       <div style="display:flex;flex-direction:column;gap:2px">
