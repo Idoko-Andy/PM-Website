@@ -2400,6 +2400,36 @@ async function _snapshotSpentDaily(){
   }catch(e){ return true; }
 }
 (function(){ let _tries=0; const _t=setInterval(async()=>{ _tries++; let done=false; try{ done=await _snapshotSpentDaily(); }catch(e){ done=true; } if(done||_tries>20) clearInterval(_t); }, 3000); })();
+// Stay on the same page across browser refreshes: remember the last view opened and
+// re-open it once the app (and its data) has loaded, instead of dumping back to home.
+(function(){
+  const NAVS=["openProjectDashboard","openPMDashboard","openPMAssistantDashboard","openDirectorCEODashboard","openAdminDashboard","openVAAdminDashboard","openArchitectDashboard","openTaskDataHousing","openDollarsDayHousing","openSettings","openStartOfProjectDashboard","openEndOfProjectDashboard","openSeniorVADashboard","openPropDetail"];
+  setTimeout(()=>{ // wrap after all functions are defined
+    NAVS.forEach(fn=>{
+      const orig=window[fn];
+      if(typeof orig!=='function') return;
+      window[fn]=function(...a){ try{ if(!window.__restoringView) sessionStorage.setItem('_lastView', JSON.stringify({fn, a})); }catch(e){} return orig.apply(this,a); };
+    });
+    // Restore the saved view once data is ready (retry a few times while caches load).
+    let tries=0;
+    const t=setInterval(()=>{
+      tries++;
+      try{
+        const raw=sessionStorage.getItem('_lastView');
+        if(!raw || tries>8){ clearInterval(t); return; }
+        const v=JSON.parse(raw);
+        if(!v || typeof window[v.fn]!=='function') { clearInterval(t); return; }
+        const loggedIn = (typeof currentUser==='function') && !!currentUser();
+        if(!loggedIn) return; // wait for session
+        if(v.fn==='openPropDetail' && !((typeof propCards!=='undefined') && propCards.length)) return; // wait for cards
+        window.__restoringView=true;
+        try{ window[v.fn](...(v.a||[])); }catch(e){}
+        window.__restoringView=false;
+        clearInterval(t);
+      }catch(e){ clearInterval(t); }
+    }, 1200);
+  }, 300);
+})();
 function _teamDollarsDay(){ const t=new Date();t.setHours(0,0,0,0); let S=0,D=0; (typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived).forEach(c=>{ const v=parseFloat(String(c.spent||"").replace(/[^0-9.\-]/g,"")); const _vs=_velStart(c); if(isNaN(v)||v<=0||!_vs) return; const sd=new Date(_vs); if(isNaN(sd)) return; S+=v; D+=Math.max(1,Math.round((t-sd)/86400000)); }); return D?('$'+Math.round(S/D).toLocaleString()):'—'; }
 function renderMainDashboard() {
   const statCard = (label, val, sub, color) => `
