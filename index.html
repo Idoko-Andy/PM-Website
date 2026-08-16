@@ -2271,7 +2271,9 @@ async function _syncSubphaseTasks(propId){
     if(sp.start && sp.due && !sp.taskId){
       const ex=await supabase.from("pm_tasks").select("id").eq("property_id",propId).eq("category",sp.name).eq("due_date",sp.due).limit(1);
       if(ex.data && ex.data.length){ sp.taskId=ex.data[0].id; changed=true; continue; }
-      const payload={ title:sp.name, category:sp.name, assignee:card.pm||null, assignees:card.pm?[card.pm]:[], start_date:sp.start, due_date:sp.due, property_id:propId, notes:"Auto-scheduled from "+(card.addr||"property")+" workflow", status:"open" };
+      // Drawing subphases also go on the architect's (Jenn's) task list.
+      const _asg=card.pm?[card.pm]:[]; if(/drawing/i.test(sp.name)){ const _j=(typeof teamMembers==='function'?teamMembers():[]).find(m=>/^jenn/i.test(m)); if(_j && !_asg.includes(_j)) _asg.push(_j); }
+      const payload={ title:sp.name, category:sp.name, assignee:card.pm||(_asg[0]||null), assignees:_asg, start_date:sp.start, due_date:sp.due, property_id:propId, notes:"Auto-scheduled from "+(card.addr||"property")+" workflow", status:"open" };
       const ins=await supabase.from("pm_tasks").insert(payload).select("id").single();
       if(!ins.error){ sp.taskId=ins.data.id; changed=true; }
     }
@@ -3219,6 +3221,7 @@ function pmTabContent(name) {
     <!-- PM board tabs: click a tile to drill into its properties -->
     <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px">
       ${_pmBoardTile(name,"precon","Pre Construction","#185FA5")}
+      ${_pmBoardTile(name,"permits","Permits & Inspections","#7A3FA8")}
       ${_pmBoardTile(name,"active","Active Projects","#0B7285")}
       ${_pmBoardTile(name,"finishes","Finishes / Pre-List & Punchout","#D85A30")}
       ${_pmBoardTile(name,"eop","End of Project / PM Bonuses","#3B6D11")}
@@ -3228,13 +3231,17 @@ function pmTabContent(name) {
 // are intentionally hidden from PMs (those belong to the Start-of-Project Assistant).
 const _PM_BOARD_GROUPS = {
   precon:   { title:"Pre Construction",               phases:["Pre Construction","Waiting Permits"] },
+  permits:  { title:"Permits & Inspections",           phases:["Waiting Permits","Framing, MEPS, Insulation","Listed on the Market / Final Inspections"], permittedOnly:true },
   active:   { title:"Active Projects",                 phases:["Framing, MEPS, Insulation","Drywall / Exterior Work"] },
   finishes: { title:"Finishes / Pre-List & Punchout",  phases:["Finishes","Pre List / Punchout Process","Rental Handoff Process"] },
   eop:      { title:"End of Project / PM Bonuses",      phases:["Listed on the Market","In Contract","RTR In Process","RTR Completed (Pending Closing)"] },
 };
+function _pmGroupCards(pmName,key){
+  const g=_PM_BOARD_GROUPS[key]; if(!g) return [];
+  return (typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && c.pm===pmName && g.phases.includes(c.phase) && (!g.permittedOnly || (c.checklists&&c.checklists.permitted)==='yes'));
+}
 function _pmBoardTile(pmName,key,title,color){
-  const g=_PM_BOARD_GROUPS[key];
-  const n=(typeof propCards!=='undefined'?propCards:[]).filter(c=>c.pm===pmName && g.phases.includes(c.phase)).length;
+  const n=_pmGroupCards(pmName,key).length;
   return `<div onclick="_pmBoardDrill('${pmName.replace(/'/g,"")}','${key}')" style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${color};border-radius:10px;padding:14px 16px;cursor:pointer" onmouseover="this.style.boxShadow='0 4px 14px rgba(0,0,0,0.08)'" onmouseout="this.style.boxShadow='none'">
     <div style="display:flex;align-items:center;justify-content:space-between"><div style="font-size:12.5px;font-weight:600;color:#111">${title}</div><span style="color:#ccc">›</span></div>
     <div style="font-size:26px;font-weight:600;color:${color};margin-top:6px">${n}</div>
@@ -3244,11 +3251,25 @@ function _pmBoardTile(pmName,key,title,color){
 function _pmBoardDrill(pmName,key){
   const el=document.getElementById('pd-content'); if(!el) return;
   const g=_PM_BOARD_GROUPS[key]; if(!g) return;
-  const cards=(typeof propCards!=='undefined'?propCards:[]).filter(c=>c.pm===pmName && g.phases.includes(c.phase));
+  const cards=_pmGroupCards(pmName,key);
   const rows=cards.length?cards.map(_dirPropRow).join(""):'<div style="color:#bbb;font-size:13px;padding:20px 0">No properties in this group right now.</div>';
+  // Middle column: what still needs completed on each property (open subphases).
+  const needs=cards.length?cards.map(c=>{
+    const subs=(c.subPhases||[]).filter(sp=>!sp.completed && (sp.start||sp.due));
+    const items=subs.length?subs.map(sp=>`<div style="font-size:11.5px;color:#333;padding:3px 0">• ${_calEsc(sp.name)}${sp.due?` <span style="color:#B7791F">due ${_calEsc(sp.due)}</span>`:''}</div>`).join(""):'<div style="font-size:11px;color:#bbb;padding:3px 0">Nothing outstanding</div>';
+    return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:10px 12px;margin-bottom:8px"><div style="font-size:12px;font-weight:600;color:#111;margin-bottom:4px">${_calEsc(c.addr||'')}</div>${items}</div>`;
+  }).join(""):'<div style="color:#bbb;font-size:12px;padding:16px 0">No properties here yet.</div>';
+  // Right column: this PM's upcoming tasks on these properties, soonest first.
+  const ids=new Set(cards.map(c=>c.id));
+  const up=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status==='open' && t.property_id && ids.has(t.property_id) && t.due_date).sort((a,b)=>a.due_date<b.due_date?-1:1).slice(0,20);
+  const upRows=up.length?up.map(t=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:8px 12px;margin-bottom:6px;display:flex;justify-content:space-between;gap:8px"><div style="min-width:0"><div style="font-size:11.5px;color:#111;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(t.title)}</div><div style="font-size:10px;color:#999">${_calEsc(_locLabel(t)||'')}</div></div><div style="font-size:10.5px;color:#185FA5;white-space:nowrap">${_calEsc(t.due_date)}</div></div>`).join(""):'<div style="color:#bbb;font-size:12px;padding:16px 0">No upcoming tasks in this group.</div>';
   el.innerHTML=`<div style="padding:20px">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px"><button onclick="_pmBoardBack('${pmName.replace(/'/g,"")}')" style="font-size:12px;padding:6px 12px;border:0.5px solid #cdd7e6;border-radius:6px;background:#fff;color:#185FA5;cursor:pointer">‹ Back</button><div style="font-size:15px;font-weight:600;color:#111">${g.title} — ${_calEsc(resolvePMName(pmName))}</div></div>
-    <div style="display:flex;flex-direction:column;gap:8px;max-width:760px">${rows}</div>
+    <div style="display:grid;grid-template-columns:1.2fr 1.2fr 1fr;gap:16px;align-items:start">
+      <div><div style="font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Properties</div><div style="display:flex;flex-direction:column;gap:8px">${rows}</div></div>
+      <div><div style="font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Needs completed</div>${needs}</div>
+      <div><div style="font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Upcoming, by date</div>${upRows}</div>
+    </div>
   </div>`;
 }
 function _pmBoardBack(pmName){ const el=document.getElementById('pd-content'); if(el) el.innerHTML=pmTabContent(pmName); }
