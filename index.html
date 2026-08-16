@@ -5709,6 +5709,7 @@ function openCalEventDetail(id){
     ${ro?'<div style="font-size:12px;color:#999;margin-bottom:10px">You have read-only access — you can view this but not change it.</div>':`
     <button class="btn-full" style="background:${done?'#eef4ea':'#e8f0fe'};color:${done?'#3B6D11':'#1a56db'};margin-bottom:14px" onclick="toggleCalEventDone('${e.id}');closeModal('calevent-modal')">${done?'✓ Completed — tap to reopen':'Mark completed'}</button>`}
     <div class="form-row"><label>Date</label><input type="date" id="cale-date" value="${_calEsc(e.event_date||"")}" ${dis} /></div>
+    ${ro?'':`<div style="margin:-2px 0 12px"><button type="button" onclick="rescheduleCalEvent('${e.id}')" style="padding:7px 12px;background:#fff;color:#b8860b;border:1px solid #e0c069;border-radius:6px;font-size:12px;cursor:pointer">🔄 Reschedule…</button>${(e.reschedule_count||0)>0?`<span style="font-size:11px;color:#b8860b;margin-left:8px">Rescheduled ${e.reschedule_count}×</span>`:''}</div>`}
     ${_calAddrField("cale", e.property_id, e.location, dis)}
     <div class="form-row"><label>Type</label>
       <select id="cale-kind" onchange="_caleToggleKind()" ${dis}>
@@ -5751,6 +5752,20 @@ function _caleToggleKind(){
 function _caleContractorChange(){
   const v=document.getElementById("cale-contractor").value;
   document.getElementById("cale-newc").style.display = v==="__new"?"":"none";
+}
+// Reschedule a construction event (tracked, like tasks).
+async function rescheduleCalEvent(id){
+  if(_blockIfReadOnly()) return;
+  const e=(_calEventsCache||[]).find(x=>x.id===id); if(!e) return;
+  const cur=e.event_date||_ymd(new Date());
+  const nd=prompt("New event date (YYYY-MM-DD) — this counts as a reschedule:", cur);
+  if(!nd) return;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(nd)){ alert("Please enter the date as YYYY-MM-DD."); return; }
+  const upd={ event_date:nd, reschedule_count:(e.reschedule_count||0)+1, last_rescheduled_at:new Date().toISOString() };
+  const { error }=await supabase.from("pm_calendar_events").update(upd).eq("id",id);
+  if(error){ alert("Couldn't reschedule: "+(error.message||"")); return; }
+  if(typeof _logAudit==="function") _logAudit("rescheduled","construction event", e.title||e.kind||"event", (e.event_date||'?')+" → "+nd+" (#"+upd.reschedule_count+")");
+  await loadCalendarEventsFromSupabase(); openCalEventDetail(id); if(typeof _calRerender==='function') _calRerender();
 }
 async function saveCalEventEdit(id){
   if(_blockIfReadOnly()) return;
@@ -5853,9 +5868,16 @@ function renderTaskCalendar(){
   if(st.y==null){ const d=new Date(); st.y=d.getFullYear(); st.m=d.getMonth(); }
   if(!st.loaded){ st.loaded=true; Promise.all([loadTasks(), loadSavedAddresses()]).then(_taskRerender); }
   const ro=isReadOnly();
-  const assignees=["all"].concat(teamMembers()).concat(["Unassigned"]);
-  const chip=(a)=>{ const lbl=a==="all"?"All":a; return `<div onclick="taskSetAssignee('${_calEsc(a).replace(/'/g,"\\'")}')" style="padding:5px 12px;font-size:11px;cursor:pointer;border-radius:999px;${st.assignee===a?'background:#111;color:#fff':'background:#fff;color:#666;border:0.5px solid #ddd'}">${_calEsc(lbl)}</div>`; };
-  const filterBar=assignees.map(chip).join("");
+  // Assignee picker: "All" button + a person dropdown (matches the construction calendar's picker)
+  const _tmembers=teamMembers();
+  const _allActiveTC = st.assignee==="all";
+  const _allBtnTC = `<div onclick="taskSetAssignee('all')" style="padding:7px 14px;font-size:12px;cursor:pointer;border-radius:8px;${_allActiveTC?'background:#111;color:#fff':'background:#fff;color:#555;border:0.5px solid #ddd'}">All</div>`;
+  const _asgSelTC = `<select onchange="taskSetAssignee(this.value)" style="padding:7px 12px;font-size:12px;border:0.5px solid #ddd;border-radius:8px;background:#fff;color:#333;max-width:240px">
+    <option value="all" ${st.assignee==="all"?"selected":""}>Select a person…</option>
+    ${_tmembers.map(nm=>`<option value="${_calEsc(nm)}" ${st.assignee===nm?"selected":""}>👤 ${_calEsc(nm)}</option>`).join("")}
+    <option value="Unassigned" ${st.assignee==="Unassigned"?"selected":""}>Unassigned</option>
+  </select>`;
+  const filterBar = _allBtnTC + _asgSelTC;
   const first=new Date(st.y,st.m,1),startDow=first.getDay(),daysInMonth=new Date(st.y,st.m+1,0).getDate();
   const todayStr=(()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;})();
   const _asgMatch=(t)=>{ const a=taskAssignees(t); return st.assignee==="all" || (st.assignee==="Unassigned"? a.length===0 : _taskHasAssignee(t,st.assignee)); };
@@ -6069,6 +6091,7 @@ function openTaskDetail(id){
       <div class="form-row"><label>Due date</label><input type="date" id="task-due" value="${_calEsc(t.due_date||'')}" ${dis} /></div>
     </div>
     <div class="form-row"><label>Time (optional)</label><input type="time" id="task-due-time" value="${_calEsc(t.due_time||'')}" ${dis} /></div>
+    ${ro?'':`<div style="margin:-2px 0 12px"><button type="button" onclick="rescheduleTask('${t.id}')" style="padding:7px 12px;background:#fff;color:#b8860b;border:1px solid #e0c069;border-radius:6px;font-size:12px;cursor:pointer">🔄 Reschedule…</button>${(t.reschedule_count||0)>0?`<span style="font-size:11px;color:#b8860b;margin-left:8px">Rescheduled ${t.reschedule_count}×${t.last_rescheduled_at?' · last '+_calEsc(_fmtCommentDate(t.last_rescheduled_at)):''}</span>`:''}</div>`}
     ${_taskPropField(t.property_id, t.location, dis)}
     <div class="form-row"><label>Refer questions to (optional)</label><input type="text" id="task-refer" list="task-refer-list" value="${_calEsc(t.refer_to||'')}" ${dis} /><datalist id="task-refer-list">${referList}</datalist></div>
     <div class="form-row"><label>Notes <span style="font-weight:400;color:#999;font-size:11px">— task description / details</span></label><textarea id="task-notes" rows="2" ${dis} style="width:100%">${_calEsc(t.notes||'')}</textarea></div>
@@ -6080,6 +6103,25 @@ function openTaskDetail(id){
     ${ro?'':`<button class="btn-full" onclick="saveTask()">Save changes</button>
     <div onclick="deleteTask('${t.id}')" style="text-align:center;margin-top:12px;color:#c0392b;font-size:12px;cursor:pointer">Delete task</div>`}`;
   openModal("task-modal");
+}
+// Reschedule a task to a new due date. Unlike a silent edit, this is tracked:
+// it bumps reschedule_count and stamps last_rescheduled_at (surfaced in team metrics).
+async function rescheduleTask(id){
+  if(_blockIfReadOnly()) return;
+  const t=(_tasksCache||[]).find(x=>x.id===id); if(!t) return;
+  const cur=t.due_date||_ymd(new Date());
+  const nd=prompt("New due date (YYYY-MM-DD) — this counts as a reschedule:", cur);
+  if(!nd) return;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(nd)){ alert("Please enter the date as YYYY-MM-DD."); return; }
+  const upd={ due_date:nd, reschedule_count:(t.reschedule_count||0)+1, last_rescheduled_at:new Date().toISOString() };
+  if(t.start_date && t.due_date){
+    const delta=Math.round((new Date(nd)-new Date(t.due_date))/86400000);
+    if(delta) upd.start_date=_ymd(new Date(new Date(t.start_date).getTime()+delta*86400000));
+  }
+  const { error }=await supabase.from("pm_tasks").update(upd).eq("id",id);
+  if(error){ alert("Couldn't reschedule: "+(error.message||"")); return; }
+  if(typeof _logAudit==="function") _logAudit("rescheduled","task", t.title, (t.due_date||'?')+" → "+nd+" (#"+upd.reschedule_count+")");
+  await loadTasks(); openTaskDetail(id); _taskRerender();
 }
 async function deleteTask(id){
   if(_blockIfReadOnly()) return;
