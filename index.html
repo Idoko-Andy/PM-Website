@@ -321,7 +321,8 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openWeeklyMeeting('company')">🏢 Full Company Meeting</div>
       <div class="ddi" onclick="openWeeklyMeeting('ceo')">👔 Director / CEO Meeting</div>
       <div class="ddl" style="margin-top:4px">Daily</div>
-      <div class="ddi" onclick="openDailyReports()">📝 Daily Reports (Man Huddles)</div>
+      <div class="ddi" onclick="openDailyReports()">📝 Daily Reports and Huddles</div>
+      <div class="ddi" onclick="openEndOfDayReports()">🌙 End of Day Reports</div>
       <div class="ddl" style="margin-top:4px">Reports</div>
       <div class="ddi">🗓 Biweekly Reports</div>
       <div class="ddi" onclick="openMonthlyReports()">📅 Monthly Reports</div>
@@ -2438,7 +2439,7 @@ async function _snapshotSpentDaily(){
 // Stay on the same page across browser refreshes: remember the last view opened and
 // re-open it once the app (and its data) has loaded, instead of dumping back to home.
 (function(){
-  const NAVS=["openProjectDashboard","openPMDashboard","openPMAssistantDashboard","openDirectorCEODashboard","openAdminDashboard","openVAAdminDashboard","openArchitectDashboard","openTaskDataHousing","openDollarsDayHousing","openSettings","openStartOfProjectDashboard","openEndOfProjectDashboard","openSeniorVADashboard","openPropDetail","openWeeklyMeeting","openDailyReports"];
+  const NAVS=["openProjectDashboard","openPMDashboard","openPMAssistantDashboard","openDirectorCEODashboard","openAdminDashboard","openVAAdminDashboard","openArchitectDashboard","openTaskDataHousing","openDollarsDayHousing","openSettings","openStartOfProjectDashboard","openEndOfProjectDashboard","openSeniorVADashboard","openPropDetail","openWeeklyMeeting","openDailyReports","openEndOfDayReports"];
   setTimeout(()=>{ // wrap after all functions are defined
     NAVS.forEach(fn=>{
       const orig=window[fn];
@@ -3629,11 +3630,19 @@ async function _pdnToggle2(pm,i){ const l=(((window._pdnData||{})[pm]||{}).preco
 async function _wmLoad(){ try{ const r=await supabase.from("pm_settings").select("data").eq("key","meeting_notes").maybeSingle(); window._wmData=(r.data&&r.data.data)||{}; }catch(e){ window._wmData={}; } }
 async function _wmSaveNote(kind,pid){ const el=document.getElementById('wm-'+pid); if(!el) return; const d=window._wmData=window._wmData||{}; const wk=_wmWeekKey(); d[wk]=d[wk]||{}; d[wk][kind]=d[wk][kind]||{}; d[wk][kind][pid]=el.value; try{ await supabase.from("pm_settings").upsert({key:'meeting_notes',data:d},{onConflict:'key'}); }catch(e){} const ok=document.getElementById('wm-ok-'+pid); if(ok){ ok.style.display='inline'; setTimeout(()=>{ok.style.display='none';},1500); } }
 async function _pdnAdd2(pm,key,elId){ const el=document.getElementById(elId); if(!el||!el.value.trim()) return; const d=window._pdnData=window._pdnData||{}; d[pm]=d[pm]||{}; d[pm][key]=d[pm][key]||[]; d[pm][key].push({t:el.value.trim(),done:false,at:_ymd(new Date())}); await _pdnSave(); openWeeklyMeeting('team'); }
+function openEndOfDayReports(){
+  document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
+  document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
+  document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div style="padding:24px;max-width:760px;margin:0 auto">
+    <div style="font-size:16px;font-weight:600;color:#111">🌙 End of Day Reports</div>
+    <div style="font-size:12.5px;color:#666;margin-top:8px;line-height:1.7;background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:16px 18px">Each PM will close out the day from the field app with a short set of automatic questions plus their own notes. Those answers roll straight into Monday's Project Team Meeting, so the meeting doc is mostly written before anyone sits down — and nobody has to be chased for an update. Send me the exact questions you want on the form and I'll wire it up.</div>
+  </div></div></div>`;
+}
 function openDailyReports(){
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
   document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div style="padding:24px;max-width:760px;margin:0 auto">
-    <div style="font-size:16px;font-weight:600;color:#111">📝 Daily Reports — Man Huddles</div>
+    <div style="font-size:16px;font-weight:600;color:#111">📝 Daily Reports and Huddles</div>
     <div style="font-size:12.5px;color:#666;margin-top:8px;line-height:1.7;background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:16px 18px">End-of-day reports are coming here and to the field app: each PM answers a short automatic checklist (what got done today, contractors on site, blockers, tomorrow's plan, photos taken) plus their own notes. Those daily answers will roll up automatically into Monday's Project Team Meeting so the meeting doc is mostly written before the meeting starts. Tell me the exact questions you want on the daily form and I'll wire it up.</div>
   </div></div></div>`;
 }
@@ -5676,46 +5685,114 @@ function _vaPersonView(vaName){
 }
 // ---- Trackers (W-9 / Mowing / Checklists) — persisted in pm_settings key 'trackers'. ----
 async function _trkLoad(){ window._trkLoaded=true; try{ const r=await supabase.from("pm_settings").select("data").eq("key","trackers").maybeSingle(); window._trkData=(r.data&&r.data.data)||{}; }catch(e){ window._trkData={}; } }
-async function _trkToggle(kind,id){ if(_blockIfReadOnly()) return; const d=window._trkData||{}; d[kind]=d[kind]||{}; d[kind][id]=!d[kind][id]; window._trkData=d; await supabase.from("pm_settings").upsert({ key:'trackers', data:d }, { onConflict:'key' }); (window._trkRerender||function(){openVAAdminDashboard('trackers');})(); }
+async function _trkSave(){ try{ await supabase.from("pm_settings").upsert({ key:'trackers', data:(window._trkData||{}) }, { onConflict:'key' }); }catch(e){} }
+async function _trkToggle(kind,id){ if(_blockIfReadOnly()) return; const d=window._trkData||{}; d[kind]=d[kind]||{}; d[kind][id]=!d[kind][id]; window._trkData=d; await _trkSave(); (window._trkRerender||function(){openVAAdminDashboard('trackers');})(); }
+// Generic field setter for the richer trackers (window / mowing / W-9 detail rows).
+async function _trkSet(kind,id,field,val,rerender){
+  if(_blockIfReadOnly()) return;
+  const d=window._trkData||{}; d[kind]=d[kind]||{}; d[kind][id]=Object.assign({},d[kind][id]||{});
+  d[kind][id][field]=val; window._trkData=d; await _trkSave();
+  const ok=document.getElementById('trk-ok'); if(ok){ ok.style.display='inline'; setTimeout(()=>{ok.style.display='none';},1200); }
+  if(rerender) (window._trkRerender||function(){openVAAdminDashboard('trackers');})();
+}
+function _trkVal(kind,id,field){ const e=((window._trkData||{})[kind]||{})[id]; return (e&&e[field])||''; }
+function _trkOn(kind,id,field){ const e=((window._trkData||{})[kind]||{})[id]; return !!(e&&e[field]); }
+// A window date is also a job on the construction calendar so the PM sees it without asking.
+async function _trkWinDate(id,field,val){
+  await _trkSet('win',id,field,val,false);
+  const labels={measure_date:'Window measure',order_date:'Windows ordered',arrival_date:'Windows arriving',install_date:'Window install'};
+  const title=labels[field]||'Windows';
+  if(!val) return;
+  try{
+    const ex=(typeof _calEventsCache!=='undefined'?_calEventsCache:[]).find(e=>e.property_id===id && (e.title||'')===title);
+    if(ex){ await supabase.from("pm_calendar_events").update({ event_date:val }).eq("id",ex.id); }
+    else  { await supabase.from("pm_calendar_events").insert({ property_id:id, event_date:val, kind:'material', title:title, notes:'Auto-added from the Window Tracker.' }); }
+    if(typeof loadCalendarEventsFromSupabase==='function') await loadCalendarEventsFromSupabase();
+  }catch(e){}
+}
 function _trkTable(title,color,head,rows){ return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:auto;margin-bottom:16px"><div style="padding:10px 14px;border-bottom:0.5px solid #e0e4ec;font-size:13px;font-weight:700;color:${color}">${title}</div><table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="background:#122A4A;color:#fff">${head}</tr></thead><tbody>${rows}</tbody></table></div>`; }
+// Type-to-filter that keeps your cursor in the box (filters rows in place, no re-render).
+function _trkSearchBox(ph){ return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><input id="trk-search" placeholder="${ph}" oninput="_trkFilter()" style="flex:1;max-width:340px;padding:8px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:12.5px;outline:none"/><span id="trk-ok" style="display:none;font-size:11px;color:#1D9E75">Saved ✓</span></div>`; }
+function _trkFilter(){
+  const q=(document.getElementById('trk-search')||{}).value||'';
+  const t=q.trim().toLowerCase();
+  document.querySelectorAll('tr[data-trk]').forEach(r=>{ r.style.display = (!t || (r.getAttribute('data-trk')||'').toLowerCase().includes(t)) ? '' : 'none'; });
+}
 function _vaTrackers(){
   const d=window._trkData||{}; const ro=isReadOnly();
   const chk=(kind,id,on)=> ro?(on?'✅':'⬜'):`<span onclick="_trkToggle('${kind}','${id}')" style="cursor:pointer;font-size:16px">${on?'✅':'⬜'}</span>`;
+  const fchk=(kind,id,field)=>{ const on=_trkOn(kind,id,field); return ro?(on?'✅':'⬜'):`<span onclick="_trkSet('${kind}','${id}','${field}',${on?'false':'true'},true)" style="cursor:pointer;font-size:16px">${on?'✅':'⬜'}</span>`; };
+  const dt=(kind,id,field,handler)=>ro?(_trkVal(kind,id,field)||'—'):`<input type="date" value="${_trkVal(kind,id,field)}" onchange="${handler||`_trkSet('${kind}','${id}','${field}',this.value,false)`}" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:11.5px;width:126px"/>`;
+  const txt=(kind,id,field,ph,w)=>ro?(_trkVal(kind,id,field)||'—'):`<input value="${_calEsc(_trkVal(kind,id,field))}" placeholder="${ph||''}" onchange="_trkSet('${kind}','${id}','${field}',this.value,false)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:11.5px;width:${w||100}px"/>`;
   const cons=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]);
-  const w9rows=cons.length?cons.map(c=>`<tr style="border-top:0.5px solid #eef0f6"><td style="padding:7px 10px;font-weight:600;color:#111">${_calEsc(c.name||'')}</td><td style="text-align:center;padding:7px">${chk('w9',c.id,(d.w9||{})[c.id])}</td></tr>`).join(""):'<tr><td colspan="2" style="padding:16px;color:#bbb;text-align:center">No contractors in the directory yet.</td></tr>';
-  const active=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && !["Closed","Completed"].includes(c.phase));
-  const mowrows=active.length?active.map(c=>`<tr style="border-top:0.5px solid #eef0f6"><td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span><div style="font-size:10px;color:#999">${_calEsc(c.phase||'')}</div></td><td style="text-align:center;padding:7px">${chk('mow',c.id,(d.mow||{})[c.id])}</td></tr>`).join(""):'<tr><td colspan="2" style="padding:16px;color:#bbb;text-align:center">No active properties.</td></tr>';
-  const clrows=active.length?active.map(c=>{ const subs=c.subPhases||[]; const fta=subs.find(s=>s.name==="First Time Access Checklist"); const po=subs.find(s=>/punch/i.test(s.name||'')); return `<tr style="border-top:0.5px solid #eef0f6"><td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span></td><td style="text-align:center;padding:7px">${fta&&fta.completed?'✅':'⬜'}</td><td style="text-align:center;padding:7px">${po?(po.completed?'✅':'⬜'):'—'}</td></tr>`; }).join(""):'<tr><td colspan="3" style="padding:16px;color:#bbb;text-align:center">No active properties.</td></tr>';
-  // Window rows — its own tracker: Measured → Ordered → Installed per property.
-  const winrows=active.length?active.map(c=>`<tr style="border-top:0.5px solid #eef0f6"><td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span><div style="font-size:10px;color:#999">${_calEsc(c.phase||'')}</div></td><td style="text-align:center;padding:7px">${chk('win_measured',c.id,(d.win_measured||{})[c.id])}</td><td style="text-align:center;padding:7px">${chk('win_ordered',c.id,(d.win_ordered||{})[c.id])}</td><td style="text-align:center;padding:7px">${chk('window',c.id,(d.window||{})[c.id])}</td></tr>`).join(""):'<tr><td colspan="4" style="padding:16px;color:#bbb;text-align:center">No active properties.</td></tr>';
+  const all=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived);
+  const active=all.filter(c=>!["Closed","Completed"].includes(c.phase));
+  const closed=all.filter(c=>["Closed","Completed"].includes(c.phase));
+  const nm=(c)=>_calEsc(c.addr||'');
+
+  // ---------- W-9 tracker (mirrors the 2026 W-9 workbook + ties to the Contractor Directory) ----------
+  const w9rows=cons.length?cons.map(c=>`<tr data-trk="${nm(c)+' '+_calEsc(c.name||'')}" style="border-top:0.5px solid #eef0f6">
+    <td style="padding:7px 10px;font-weight:600;color:#111">${_calEsc(c.name||'')}</td>
+    <td style="padding:7px">${txt('w9info',c.id,'w9name','Name on W-9',150)}</td>
+    <td style="text-align:center;padding:7px">${chk('w9',c.id,(d.w9||{})[c.id])}</td>
+    <td style="padding:7px">${txt('w9info',c.id,'note','Notes / no W-9 needed',170)}</td>
+    <td style="padding:7px">${txt('w9info',c.id,'email','Email',140)}</td>
+    <td style="padding:7px">${txt('w9info',c.id,'phone','Phone',110)}</td></tr>`).join(""):'<tr><td colspan="6" style="padding:16px;color:#bbb;text-align:center">No contractors in the directory yet.</td></tr>';
+
+  // ---------- Mowing tracker (mirrors the Active Mowing Tracker sheet) ----------
+  const mowRow=(c)=>`<tr data-trk="${nm(c)}" style="border-top:0.5px solid #eef0f6">
+    <td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${nm(c)}</span><div style="font-size:10px;color:#999">${_calEsc(c.phase||'')}</div></td>
+    <td style="padding:7px">${txt('mowinfo',c.id,'who','Who is mowing',130)}</td>
+    <td style="padding:7px">${txt('mowinfo',c.id,'freq','Weekly / bi-weekly',110)}</td>
+    <td style="padding:7px">${txt('mowinfo',c.id,'cost','$ per mow',70)}</td>
+    <td style="padding:7px">${txt('mowinfo',c.id,'phone','Contact #',110)}</td>
+    <td style="padding:7px;font-size:11.5px;color:#555">${_calEsc(c.pm||'—')}</td>
+    <td style="padding:7px">${txt('mowinfo',c.id,'pay','Check / card',90)}</td>
+    <td style="text-align:center;padding:7px">${chk('mow',c.id,(d.mow||{})[c.id])}</td>
+    <td style="text-align:center;padding:7px">${fchk('mowinfo',c.id,'removed')}</td></tr>`;
+  const mowrows=active.length?active.map(mowRow).join(""):'<tr><td colspan="9" style="padding:16px;color:#bbb;text-align:center">No active properties.</td></tr>';
+
+  // ---------- Window tracker — four dated stages + what's being replaced + notes ----------
+  const winRow=(c)=>`<tr data-trk="${nm(c)}" style="border-top:0.5px solid #eef0f6">
+    <td style="padding:7px 10px;min-width:170px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${nm(c)}</span><div style="font-size:10px;color:#999">${_calEsc(c.phase||'')} · PM ${_calEsc(c.pm||'—')}</div>
+      <div style="margin-top:4px;font-size:10.5px;color:#666;display:flex;gap:9px">
+        <span>${fchk('win',c.id,'glass')} Glass</span><span>${fchk('win',c.id,'windows')} Windows</span><span>${fchk('win',c.id,'both')} Both</span></div></td>
+    <td style="padding:7px;text-align:center">${dt('win',c.id,'measure_date',`_trkWinDate('${c.id}','measure_date',this.value)`)}<div style="margin-top:3px">${fchk('win',c.id,'measured')}</div></td>
+    <td style="padding:7px;text-align:center">${dt('win',c.id,'order_date',`_trkWinDate('${c.id}','order_date',this.value)`)}<div style="margin-top:3px">${fchk('win',c.id,'ordered')}</div></td>
+    <td style="padding:7px;text-align:center">${dt('win',c.id,'arrival_date',`_trkWinDate('${c.id}','arrival_date',this.value)`)}<div style="margin-top:3px">${fchk('win',c.id,'arrived')}</div></td>
+    <td style="padding:7px;text-align:center">${dt('win',c.id,'install_date',`_trkWinDate('${c.id}','install_date',this.value)`)}<div style="margin-top:3px">${fchk('win',c.id,'installed')}</div></td>
+    <td style="padding:7px">${txt('win',c.id,'notes','Notes & comments',190)}</td></tr>`;
+  const winrows=active.length?active.map(winRow).join(""):'<tr><td colspan="6" style="padding:16px;color:#bbb;text-align:center">No active properties.</td></tr>';
+  const winClosed=closed.length?`<div style="margin-top:14px">${_trkTable('🗄 Closed properties — window history','#888','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">Measured</th><th style="padding:9px">Ordered</th><th style="padding:9px">Arrived</th><th style="padding:9px">Installed</th><th style="padding:9px;text-align:left">Notes</th>',closed.map(winRow).join(""))}</div>`:'';
+
+  // ---------- Checklist tracker ----------
+  const clrows=active.length?active.map(c=>{ const subs=c.subPhases||[]; const fta=subs.find(s=>s.name==="First Time Access Checklist"); const po=subs.find(s=>/punch/i.test(s.name||'')); return `<tr data-trk="${nm(c)}" style="border-top:0.5px solid #eef0f6"><td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${nm(c)}</span></td><td style="text-align:center;padding:7px">${fta&&fta.completed?'✅':'⬜'}</td><td style="text-align:center;padding:7px">${po?(po.completed?'✅':'⬜'):'—'}</td></tr>`; }).join(""):'<tr><td colspan="3" style="padding:16px;color:#bbb;text-align:center">No active properties.</td></tr>';
+
+  // ---------- Outstanding counts ----------
+  const winDone=(c)=>_trkOn('win',c.id,'measured')&&_trkOn('win',c.id,'ordered')&&_trkOn('win',c.id,'arrived')&&_trkOn('win',c.id,'installed');
   const w9out=cons.filter(c=>!(d.w9||{})[c.id]).length;
   const mowout=active.filter(c=>!(d.mow||{})[c.id]).length;
-  const winout=active.filter(c=>!((d.win_measured||{})[c.id]&&(d.win_ordered||{})[c.id]&&(d.window||{})[c.id])).length;
+  const winout=active.filter(c=>!winDone(c)).length;
   const clout=active.filter(c=>{const subs=c.subPhases||[];const f=subs.find(s=>s.name==="First Time Access Checklist");return !(f&&f.completed);}).length;
+
   const view=window._trkView||'summary';
   const tile=(key,icon,title,n,color)=>`<div onclick="window._trkView='${key}';(window._trkRerender||function(){openVAAdminDashboard('trackers');})()" style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${color};border-radius:10px;padding:13px 15px;cursor:pointer"><div style="display:flex;justify-content:space-between"><div style="font-size:12.5px;font-weight:600;color:#111">${icon} ${title}</div><span style="color:#ccc">›</span></div><div style="font-size:24px;font-weight:600;color:${color};margin-top:5px">${n}</div><div style="font-size:10px;color:#999">outstanding</div></div>`;
   const tiles=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:16px">${tile('w9','🧾','W-9 Tracker',w9out,'#7A3FA8')}${tile('window','🪟','Window Tracker',winout,'#185FA5')}${tile('mow','🌱','Mowing Tracker',mowout,'#3B6D11')}${tile('checklist','✅','Checklist Tracker',clout,'#0B7285')}</div>`;
   const back=`<div onclick="window._trkView='summary';(window._trkRerender||function(){openVAAdminDashboard('trackers');})()" style="display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#185FA5;cursor:pointer;margin-bottom:10px">‹ Back to Trackers</div>`;
-  const shell=(inner)=>`<div style="padding:20px;max-width:940px;margin:0 auto"><div style="font-size:15px;font-weight:600;color:#111;margin-bottom:10px">📋 Trackers</div>${tiles}${inner}</div>`;
-  if(view==='w9') return shell(back+_trkTable('🧾 W-9 Tracker','#7A3FA8','<th style="padding:9px 10px;text-align:left">Contractor</th><th style="padding:9px">W-9 on file</th>',w9rows));
-  if(view==='mow') return shell(back+_trkTable('🌱 Mowing Tracker','#3B6D11','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">Mowing handled</th>',mowrows));
-  if(view==='window') return shell(back+_trkTable('🪟 Window Tracker','#185FA5','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">Measured</th><th style="padding:9px">Ordered</th><th style="padding:9px">Installed</th>',winrows));
-  if(view==='checklist') return shell(back+_trkTable('✅ Checklist Tracker','#0B7285','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">First Time Access</th><th style="padding:9px">Punch Out</th>',clrows));
+  const shell=(inner)=>`<div style="padding:20px;max-width:1120px;margin:0 auto"><div style="font-size:15px;font-weight:600;color:#111;margin-bottom:10px">📋 Trackers</div>${tiles}${inner}</div>`;
+
+  if(view==='w9') return shell(back+_trkSearchBox('Search a contractor…')+_trkTable('🧾 W-9 Tracker','#7A3FA8','<th style="padding:9px 10px;text-align:left">Contractor</th><th style="padding:9px;text-align:left">Name on W-9</th><th style="padding:9px">On file</th><th style="padding:9px;text-align:left">Notes</th><th style="padding:9px;text-align:left">Email</th><th style="padding:9px;text-align:left">Phone</th>',w9rows)+`<div style="font-size:11px;color:#999">Ticking "On file" here also marks the contractor in the Contractor Directory.</div>`);
+  if(view==='mow') return shell(back+_trkSearchBox('Search a property…')+_trkTable('🌱 Mowing Tracker','#3B6D11','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px;text-align:left">Who is mowing</th><th style="padding:9px;text-align:left">How often</th><th style="padding:9px;text-align:left">Cost/mow</th><th style="padding:9px;text-align:left">Contact #</th><th style="padding:9px;text-align:left">PM</th><th style="padding:9px;text-align:left">Payment</th><th style="padding:9px">On route</th><th style="padding:9px">Removed after</th>',mowrows));
+  if(view==='window') return shell(back+_trkSearchBox('Search a property…')+_trkTable('🪟 Window Tracker','#185FA5','<th style="padding:9px 10px;text-align:left">Property / what’s being replaced</th><th style="padding:9px">Measure</th><th style="padding:9px">Ordered</th><th style="padding:9px">Arrival</th><th style="padding:9px">Install</th><th style="padding:9px;text-align:left">Notes &amp; comments</th>',winrows)+`<div style="font-size:11px;color:#999;margin-top:-8px">Dates you set here land on that property’s construction calendar automatically, and Slack posts 48 hours before the measure and install dates.</div>`+winClosed);
+  if(view==='checklist') return shell(back+_trkSearchBox('Search a property…')+_trkTable('✅ Checklist Tracker','#0B7285','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">First Time Access</th><th style="padding:9px">Punch Out</th>',clrows));
+
   const li=(txt)=>`<div style="font-size:11.5px;color:#333;padding:4px 0;border-bottom:0.5px solid #f1f3f7">• ${txt}</div>`;
   const sum=(title,color,items)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 14px"><div style="font-size:12.5px;font-weight:700;color:${color};margin-bottom:4px">${title}</div>${items.length?items.slice(0,6).map(li).join('')+(items.length>6?`<div style="font-size:10.5px;color:#999;padding-top:4px">+ ${items.length-6} more — click the tile</div>`:''):'<div style="font-size:11px;color:#1D9E75;padding:4px 0">All caught up ✅</div>'}</div>`;
   const w9i=cons.filter(c=>!(d.w9||{})[c.id]).map(c=>_calEsc(c.name||''));
-  const mi=active.filter(c=>!(d.mow||{})[c.id]).map(c=>_calEsc(c.addr||''));
-  const wi=active.filter(c=>!((d.win_measured||{})[c.id]&&(d.win_ordered||{})[c.id]&&(d.window||{})[c.id])).map(c=>_calEsc(c.addr||'')+' — needs '+[!(d.win_measured||{})[c.id]?'measure':null,!(d.win_ordered||{})[c.id]?'order':null,!(d.window||{})[c.id]?'install':null].filter(Boolean).join(', '));
-  const ci=active.filter(c=>{const subs=c.subPhases||[];const f=subs.find(s=>s.name==="First Time Access Checklist");return !(f&&f.completed);}).map(c=>_calEsc(c.addr||'')+' — First Time Access open');
+  const mi=active.filter(c=>!(d.mow||{})[c.id]).map(c=>nm(c));
+  const wi=active.filter(c=>!winDone(c)).map(c=>nm(c)+' — needs '+[!_trkOn('win',c.id,'measured')?'measure':null,!_trkOn('win',c.id,'ordered')?'order':null,!_trkOn('win',c.id,'arrived')?'arrival':null,!_trkOn('win',c.id,'installed')?'install':null].filter(Boolean).join(', '));
+  const ci=active.filter(c=>{const subs=c.subPhases||[];const f=subs.find(s=>s.name==="First Time Access Checklist");return !(f&&f.completed);}).map(c=>nm(c)+' — First Time Access open');
   return shell(`<div style="font-size:11.5px;color:#888;margin:-6px 0 10px">What's outstanding right now — click a tile to open the full tracker.</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">${sum('🧾 W-9s needed','#7A3FA8',w9i)}${sum('🪟 Windows','#185FA5',wi)}${sum('🌱 Mowing','#3B6D11',mi)}${sum('✅ Checklists','#0B7285',ci)}</div>`);
-  return `<div style="padding:20px;max-width:900px;margin:0 auto">
-    <div style="font-size:15px;font-weight:600;color:#111">📋 Trackers</div>
-    <div style="font-size:12px;color:#888;margin-bottom:12px">W-9s on file, mowing status, and property checklist status. Click a box to toggle.</div>
-    ${_trkTable('🧾 W-9 Tracker','#7A3FA8','<th style="padding:9px 10px;text-align:left">Contractor</th><th style="padding:9px">W-9 on file</th>',w9rows)}
-    ${_trkTable('🌱 Mowing Tracker','#3B6D11','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">Mowing handled</th>',mowrows)}
-    ${_trkTable('🪟 Window Tracker','#185FA5','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">Windows handled</th>',active.length?active.map(c=>`<tr style="border-top:0.5px solid #eef0f6"><td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span><div style="font-size:10px;color:#999">${_calEsc(c.phase||'')}</div></td><td style="text-align:center;padding:7px">${chk('window',c.id,(d.window||{})[c.id])}</td></tr>`).join(""):'<tr><td colspan="2" style="padding:16px;color:#bbb;text-align:center">No active properties.</td></tr>')}
-    ${_trkTable('✅ Checklist Tracker','#185FA5','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">First Time Access</th><th style="padding:9px">Punch Out</th>',clrows)}
-  </div>`;
 }
 function openArchitectDashboard(activeTab) {
   activeTab = activeTab || 'main';
