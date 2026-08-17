@@ -1274,12 +1274,14 @@ function previewAsUser(id) {
   applyPermissionsUI();
   let b = document.getElementById("preview-banner");
   if (!b) { b = document.createElement("div"); b.id = "preview-banner"; b.style.cssText = "position:fixed;bottom:0;left:0;right:0;background:#1a2744;border-top:1px solid #2e4070;color:#8da4c8;padding:10px 16px;font-size:13px;display:flex;align-items:center;justify-content:center;gap:14px;z-index:2000"; document.body.appendChild(b); }
-  b.innerHTML = `👁 Previewing the menus <b style="color:#fff;margin:0 4px">${_previewPerms.name}</b> would see. <button onclick="exitPreview()" style="background:#fff;color:#111;border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer">Exit preview</button>`;
+  try{ goHome(); }catch(e){}
+  b.innerHTML = `👁 Previewing the home screen and menus <b style="color:#fff;margin:0 4px">${_previewPerms.name}</b> would see. <button onclick="exitPreview()" style="background:#fff;color:#111;border:none;border-radius:6px;padding:5px 12px;font-size:12px;font-weight:600;cursor:pointer">Exit preview</button>`;
   b.style.display = "flex";
 }
 
 function exitPreview() {
   _previewPerms = null;
+  try{ setTimeout(()=>goHome(),0); }catch(e){}
   const b = document.getElementById("preview-banner"); if (b) b.style.display = "none";
   applyPermissionsUI();
 }
@@ -2391,6 +2393,27 @@ function _teamTasksDone7(){ const t=new Date();t.setHours(0,0,0,0); const a=_ymd
 // Construction-days clock: starts when the property moves into Waiting Permits
 // (stamped in checklists.construction_start); older cards fall back to their Start Date.
 function _velStart(c){ return (c.checklists && c.checklists.construction_start) || c.start || null; }
+// What a property had spent as of a given date (null when no snapshot that old exists yet).
+function _spentAsOf(pid,dateStr){
+  const h=(window._snapHist||{})[pid]; if(!h||!h.length) return null;
+  let v=null; for(let i=0;i<h.length;i++){ if(h[i].d<=dateStr) v=h[i].v; else break; }
+  return v;
+}
+function _spentNow(c){ const v=parseFloat(String(c.spent||"").replace(/[^0-9.\-]/g,"")); return isNaN(v)?null:v; }
+// Average $/day across a set of properties for any window. Returns null when there is
+// not enough snapshot history yet (the caller falls back to whole-project velocity).
+function _dollarsDayRange(cards,fromStr,toStr){
+  let sum=0, has=false;
+  (cards||[]).forEach(c=>{
+    const a=_spentAsOf(c.id,fromStr);
+    let b=_spentAsOf(c.id,toStr); if(b==null) b=_spentNow(c);
+    if(a==null||b==null) return;
+    sum+=Math.max(0,b-a); has=true;
+  });
+  if(!has) return null;
+  const days=Math.max(1,Math.round((new Date(toStr)-new Date(fromStr))/86400000));
+  return Math.round(sum/days);
+}
 // Daily spend snapshots — power the "last 7 days" $ pace. Runs once per app load.
 async function _snapshotSpentDaily(){
   try{
@@ -2403,6 +2426,11 @@ async function _snapshotSpentDaily(){
     const r=await supabase.from("pm_spent_snapshots").select("property_id,snap_date,spent").lte("snap_date",cut).order("snap_date",{ascending:false});
     const m={}; (r.data||[]).forEach(s=>{ if(m[s.property_id]==null) m[s.property_id]=parseFloat(s.spent)||0; });
     window._snapCache=m;
+    // Full history, oldest first — lets any screen ask "what was spent as of <date>?" so
+    // $/day can be measured over 7 days, 30 days, 3 months, or any custom window.
+    const rH=await supabase.from("pm_spent_snapshots").select("property_id,snap_date,spent").order("snap_date",{ascending:true});
+    const hist={}; (rH.data||[]).forEach(s=>{ (hist[s.property_id]=hist[s.property_id]||[]).push({d:s.snap_date,v:parseFloat(s.spent)||0}); });
+    window._snapHist=hist;
     return true;
   }catch(e){ return true; }
 }
@@ -2603,6 +2631,7 @@ function renderPropertyBoard() {
             <div style="display:flex;align-items:flex-start;gap:4px;margin-bottom:4px">
               <div style="flex:1;font-size:11.5px;font-weight:500;color:#111;line-height:1.3">${c.addr}</div>
               ${c.driveUrl ? `<a href="${c.driveUrl}" target="_blank" onclick="event.stopPropagation()" title="Open Drive folder" style="font-size:12px;text-decoration:none;line-height:1;flex-shrink:0">📁</a>` : ''}
+              <span onclick="event.stopPropagation();toggleStarProp('${c.id}')" title="${(c.checklists&&c.checklists.ceo_star)?'On the CEO watch list — click to remove':'Star for the CEO to monitor'}" style="font-size:12px;line-height:1;cursor:pointer;flex-shrink:0;${(c.checklists&&c.checklists.ceo_star)?'':'opacity:0.28'}">${(c.checklists&&c.checklists.ceo_star)?'⭐':'☆'}</span>
             </div>
             <div style="margin-bottom:5px">
               ${activeSubPhases || '<div style="font-size:10px;color:#ccc">No sub phases set</div>'}
@@ -4520,7 +4549,7 @@ function welcomeHeader(user) {
 }
 
 function renderBruceHome() {
-  const user = currentUser();
+  const user = _effectiveUser();
   return `<div style="padding:20px 24px;max-width:100%">
     ${welcomeHeader(user)}
     ${sharedWidgets()}
@@ -4536,64 +4565,285 @@ function renderSeniorVAHome(user) {
   </div>`;
 }
 
+
+// ===================== ROLE-SPECIFIC HOME PAGES =====================
+// Every job role gets its own home screen. Everyone sees the three calendars and their
+// overdue tasks; on top of that each role sees the squares it actually acts on. Only
+// Bruce and the CEO see money (year-to-date financials).
+
+function _rhTile(label,val,color,sub,click){
+  const c=click?`onclick="${click}" `:"";
+  return `<div ${c}style="background:#111;border:1px solid #2a2a2a;border-radius:9px;padding:11px 13px;${click?'cursor:pointer;':''}">
+    <div style="font-size:9.5px;color:#666;text-transform:uppercase;letter-spacing:0.05em;line-height:1.35;margin-bottom:6px;min-height:25px">${label}</div>
+    <div style="font-size:21px;font-weight:600;color:${color||'#fff'};line-height:1">${val}</div>
+    ${sub?`<div style="font-size:9.5px;color:#4a4a4a;margin-top:4px">${sub}</div>`:''}
+  </div>`;
+}
+function _rhRow(tiles){ return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px;margin-bottom:11px">${tiles.join('')}</div>`; }
+function _rhHead(t,sub){ return `<div style="margin:16px 0 8px"><span style="font-size:12px;font-weight:600;color:#fff">${t}</span>${sub?`<span style="font-size:10px;color:#555;margin-left:8px">${sub}</span>`:''}</div>`; }
+function _rhCards(){ return (typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived); }
+function _rhPhase(ph,pm){ return _rhCards().filter(c=>c.phase===ph && (!pm||_sameAssignee(c.pm,pm))).length; }
+function _rhPct(v){ return (v==null||v==="--")?"—":(v+"%"); }
+function _rhMoney(v){ return (v==null)?"—":("$"+Number(v).toLocaleString()); }
+function _rhName(u){ return u?`${u.firstName||""} ${u.lastName||""}`.trim():""; }
+
+// 30-day performance for one person: $/day, task completion, reschedules, budget, timeline.
+function _rhMetrics30(name){
+  const today=new Date(); today.setHours(0,0,0,0);
+  const todayStr=_ymd(today), ago30=_ymd(new Date(today.getTime()-30*86400000));
+  const tasks=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>_taskHasAssignee(t,name));
+  const win=tasks.filter(t=>t.due_date && t.due_date>=ago30 && t.due_date<=todayStr);
+  const taskPct = win.length? Math.round(win.filter(t=>t.status==="done").length/win.length*100) : null;
+  const reschedPct = win.length? Math.round(win.filter(t=>(t.reschedule_count||0)>0).length/win.length*100) : null;
+  const mine=_rhCards().filter(c=>_sameAssignee(c.pm,name));
+  let dpd=_dollarsDayRange(mine,ago30,todayStr);
+  if(dpd==null){ try{ dpd=_computePMMetrics(name).dollarsPerDayYear; }catch(e){ dpd=null; } }
+  let bOn=0,bOff=0;
+  mine.forEach(c=>{
+    const b=parseFloat(String(c.budget||"").replace(/[^0-9.\-]/g,"")), sp=_spentNow(c);
+    if(isNaN(b)||b<=0||sp==null) return;
+    if(sp<=b) bOn++; else bOff++;
+  });
+  const budgetPct=(bOn+bOff)? Math.round(bOn/(bOn+bOff)*100) : null;
+  let tl={on:"--",over:"--"}; try{ tl=_computePMMetrics(name).timelinePct; }catch(e){}
+  return { dpd, taskPct, reschedPct, budgetPct, timelineOn:tl.on, timelineOver:tl.over };
+}
+// Shared performance strip — every role except the CEO/Director sees their own numbers.
+function _rhPerfStrip(name){
+  const m=_rhMetrics30(name);
+  return _rhHead("My performance","last 30 days · tracked to your name")+_rhRow([
+    _rhTile("Task completion %",_rhPct(m.taskPct),"#2ecc71"),
+    _rhTile("Tasks rescheduled %",_rhPct(m.reschedPct),(m.reschedPct!=null&&m.reschedPct>25)?"#e74c3c":"#f39c12"),
+  ]);
+}
+
+// ---- CEO star: properties Tommy is personally monitoring ----
+function _starredCards(){ return _rhCards().filter(c=>c.checklists && c.checklists.ceo_star); }
+async function toggleStarProp(id){
+  if(_blockIfReadOnly()) return;
+  const card=(typeof propCards!=='undefined'?propCards:[]).find(p=>p.id===id); if(!card) return;
+  const cl=Object.assign({},card.checklists||{});
+  cl.ceo_star=!cl.ceo_star;
+  const { error }=await supabase.from("pm_properties").update({ checklists:cl }).eq("id",id);
+  if(error){ alert("Couldn't update: "+(error.message||"")); return; }
+  card.checklists=cl;
+  _logAudit(cl.ceo_star?"starred":"unstarred","property",card.addr||"","CEO monitoring list");
+  if(typeof openProjectDashboard==='function') openProjectDashboard('board');
+}
+
+// Calendars scoped to a set of properties (used for the CEO's starred-only view).
+function _rhPropCalendars(cards,title){
+  const ids=new Set((cards||[]).map(c=>c.id));
+  const todayStr=_ymd(new Date());
+  const evs=(typeof _calEventsCache!=='undefined'?_calEventsCache:[]).filter(e=>ids.has(e.property_id) && e.event_date && e.event_date>=todayStr).sort((a,b)=>a.event_date<b.event_date?-1:1).slice(0,8);
+  const tks=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>ids.has(t.property_id) && t.status==="open" && t.due_date).sort((a,b)=>a.due_date<b.due_date?-1:1).slice(0,8);
+  const box=(t,rows,link)=>`<div style="background:#111;border:1px solid #2a2a2a;border-radius:10px;overflow:hidden">
+    <div style="padding:10px 14px;border-bottom:1px solid #2a2a2a;display:flex;justify-content:space-between;align-items:center">
+      <div style="font-size:12px;font-weight:500;color:#fff">${t}</div>
+      <div onclick="${link}" style="font-size:10px;color:#5dade2;cursor:pointer">View →</div></div>
+    <div style="padding:10px 14px">${rows}</div></div>`;
+  const evRows=evs.length? evs.map(e=>`<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:0.5px solid #1e1e1e"><div style="min-width:0"><div style="font-size:12px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(e.kind==="contractor"?("★ "+_contractorName(e.contractor_id)):(e.title||"Material"))}</div><div style="font-size:10px;color:#666">${_calEsc(_locLabel(e))}</div></div><div style="font-size:10px;color:#f0c674;white-space:nowrap">${_calEsc(e.event_date)}</div></div>`).join("") : `<div style="text-align:center;color:#555;font-size:12px;padding:14px 0">Nothing scheduled on your starred properties</div>`;
+  const tkRows=tks.length? tks.map(t=>`<div onclick="openTaskDetail('${t.id}')" style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:0.5px solid #1e1e1e;cursor:pointer"><div style="min-width:0"><div style="font-size:12px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(t.title)}</div><div style="font-size:10px;color:#666">${_calEsc(_locLabel(t))}</div></div><div style="font-size:10px;color:#5dade2;white-space:nowrap">${_calEsc(t.due_date)}</div></div>`).join("") : `<div style="text-align:center;color:#555;font-size:12px;padding:14px 0">No open tasks on your starred properties</div>`;
+  return _rhHead(title,`${cards.length} propert${cards.length===1?'y':'ies'} starred · star a card on the Property Dashboard to watch it`)+
+    `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:6px">
+      ${box("🏗 Construction Calendar — starred",evRows,"openProjectDashboard('construction')")}
+      ${box("🗒 Tasks on starred properties",tkRows,"openProjectDashboard('taskcal')")}
+    </div>`;
+}
+
+// ---- CEO (Tommy) ----
+function renderCEOHome(user){
+  const money=_moneyRank().filter(x=>x.v>0).length;   // positive money position = we need to raise private money
+  return `<div style="padding:20px 24px;max-width:100%">
+    ${welcomeHeader(user)}
+    ${sharedWidgets()}
+    ${_rhHead("Company snapshot","live from the property dashboard")}
+    ${_rhRow([
+      _rhTile("Upcoming takedowns",_rhPhase("Upcoming Takedowns"),"#E24B4A","properties","openDirectorCEODashboard('tommy')"),
+      _rhTile("Upcoming closings",_upcomingClosings().length,"#7F77DD","buying + selling","openDirectorCEODashboard('tommy')"),
+      _rhTile("Need private money raised",money,"#E67E22","money position in the positive","openDirectorCEODashboard('tommy')"),
+      _rhTile("Projects closed this year",countClosedThisYear(),"#2ecc71","year to date"),
+    ])}
+    ${finTable(false)}
+    ${_rhPropCalendars(_starredCards(),"⭐ Properties I'm monitoring")}
+  </div>`;
+}
+
+// ---- Project Manager ----
+function renderPMHome(user){
+  const name=_rhName(user);
+  const m=_rhMetrics30(name);
+  const ph=(p)=>_rhPhase(p,name);
+  return `<div style="padding:20px 24px;max-width:100%">
+    ${welcomeHeader(user)}
+    ${sharedWidgets()}
+    ${_rhHead("My performance","last 30 days")}
+    ${_rhRow([
+      _rhTile("Avg $ completed / day",_rhMoney(m.dpd),"#4A1D6E"),
+      _rhTile("Projects on timeline %",_rhPct(m.timelineOn),"#2ecc71"),
+      _rhTile("Task completion %",_rhPct(m.taskPct),"#5dade2"),
+      _rhTile("Projects on budget %",_rhPct(m.budgetPct),"#0F7B54"),
+      _rhTile("Tasks rescheduled %",_rhPct(m.reschedPct),"#f39c12"),
+    ])}
+    ${_rhHead("My projects by stage","click a number to open the property dashboard")}
+    ${_rhRow([
+      _rhTile("Pre Construction",ph("Pre Construction"),"#378ADD","","openProjectDashboard('board')"),
+      _rhTile("Waiting on permits",ph("Waiting Permits"),"#D4537E","","openProjectDashboard('board')"),
+      _rhTile("Active construction",ph("Framing, MEPS, Insulation")+ph("Drywall / Exterior Work"),"#639922","framing → drywall","openProjectDashboard('board')"),
+      _rhTile("Finishes / Pre-list / Punch out",ph("Finishes")+ph("Pre List / Punchout Process"),"#D85A30","","openProjectDashboard('board')"),
+      _rhTile("On the market",ph("Listed on the Market")+ph("Listed on the Market / Final Inspections"),"#7A3FA8","","openProjectDashboard('board')"),
+      _rhTile("In contract",ph("In Contract"),"#185FA5","","openProjectDashboard('board')"),
+      _rhTile("End of project / bonuses",ph("RTR In Process")+ph("RTR Completed (Pending Closing)")+ph("Closed"),"#27500A","RTR + closed","openProjectDashboard('board')"),
+    ])}
+  </div>`;
+}
+
+// ---- Senior Virtual Administrative Assistant ----
+function renderSrVAHome(user){
+  const name=_rhName(user);
+  return `<div style="padding:20px 24px;max-width:100%">
+    ${welcomeHeader(user)}
+    ${sharedWidgets()}
+    ${_rhHead("My desk")}
+    ${_rhRow([
+      _rhTile("Big projects","—","#5dade2","being built out"),
+      _rhTile("Little projects","—","#5dade2","being built out"),
+      _rhTile("Missing charges","—","#e74c3c","to be wired to invoicing"),
+      _rhTile("Projects needing closed out",_rhPhase("RTR Completed (Pending Closing)")+_rhPhase("Closed"),"#f39c12","accounts payable pass"),
+    ])}
+    ${_rhTaskCadence(name)}
+    ${_rhPerfStrip(name)}
+  </div>`;
+}
+
+// Daily / weekly / monthly / quarterly grouping of a person's open tasks.
+function _rhTaskCadence(name){
+  const tasks=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status==="open" && _taskHasAssignee(t,name));
+  const g=(re)=>tasks.filter(t=>re.test(String(t.category||"")+" "+String(t.title||""))).length;
+  return _rhHead("My task cadence","tagged daily / weekly / monthly / quarterly")+_rhRow([
+    _rhTile("Daily tasks",g(/daily/i),"#fff","","openProjectDashboard('taskcal')"),
+    _rhTile("Weekly tasks",g(/weekly/i),"#5dade2","","openProjectDashboard('taskcal')"),
+    _rhTile("Monthly tasks",g(/monthly/i),"#f39c12","","openProjectDashboard('taskcal')"),
+    _rhTile("Quarterly tasks",g(/quarter/i),"#2ecc71","","openProjectDashboard('taskcal')"),
+  ]);
+}
+
+// ---- Senior Administrative Assistant (Marlo, in person) + Administrative Assistant ----
+function renderAdminHome(user){
+  const name=_rhName(user);
+  const today=new Date(); const day=today.getDay();
+  const toFri=((5-day)+7)%7; const fri=_ymd(new Date(today.getTime()+toFri*86400000));
+  const openTasks=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status==="open" && _taskHasAssignee(t,name));
+  const followUps=openTasks.filter(t=>t.due_date && t.due_date<=_ymd(new Date(Date.now()+2*86400000))).length;
+  return `<div style="padding:20px 24px;max-width:100%">
+    ${welcomeHeader(user)}
+    ${sharedWidgets()}
+    ${_rhHead("My desk",`invoice list finalizes Mondays · pays Friday ${fri}`)}
+    ${_rhRow([
+      _rhTile("Invoices due this Friday","—","#e74c3c","invoice tracker coming"),
+      _rhTile("Upcoming takedowns",_rhPhase("Upcoming Takedowns"),"#E24B4A","","openAdminDashboard('main')"),
+      _rhTile("Request to remedy (RTR)",_rhPhase("RTR In Process")+_rhPhase("RTR Completed (Pending Closing)"),"#BA7517","","openAdminDashboard('main')"),
+      _rhTile("Projects needing closed out",_rhPhase("RTR Completed (Pending Closing)"),"#f39c12",""),
+      _rhTile("Follow-ups due",followUps,"#5dade2","next 48 hours","openProjectDashboard('taskcal')"),
+    ])}
+    ${_rhPerfStrip(name)}
+  </div>`;
+}
+
+// ---- Architect (Jenn) ----
+function renderArchitectHome(user){
+  const name=_rhName(user);
+  const cards=_rhCards();
+  const inSub=(re)=>cards.filter(c=>(c.subPhases||[]).some(sp=>re.test(sp.name||"") && !sp.completed)).length;
+  return `<div style="padding:20px 24px;max-width:100%">
+    ${welcomeHeader(user)}
+    ${sharedWidgets()}
+    ${_rhHead("Design & permits")}
+    ${_rhRow([
+      _rhTile("Properties in drawings",inSub(/drawing/i),"#7F77DD","","openArchitectDashboard()"),
+      _rhTile("Permits — drawings phase",inSub(/permit.*(drawing|submit|application)/i),"#D4537E","","openArchitectDashboard()"),
+      _rhTile("Permits — inspections",inSub(/inspection/i),"#E67E22","rough + final","openArchitectDashboard()"),
+      _rhTile("Properties in Pre Construction",_rhPhase("Pre Construction"),"#378ADD","","openProjectDashboard('board')"),
+      _rhTile("Upcoming takedowns",_rhPhase("Upcoming Takedowns"),"#E24B4A",""),
+    ])}
+    ${_rhPerfStrip(name)}
+  </div>`;
+}
+
+// ---- Start of Project / End of Project assistants ----
+function renderProjectAssistantHome(user,which){
+  const name=_rhName(user);
+  const cards=_rhCards();
+  const needsFTA=cards.filter(c=>c.phase==="Vacant / On Standby" && !(c.subPhases||[]).some(sp=>sp.name==="First Time Access Checklist" && sp.completed)).length;
+  const start=[
+    _rhTile("Upcoming takedowns",_rhPhase("Upcoming Takedowns"),"#E24B4A","","openStartOfProjectDashboard()"),
+    _rhTile("Occupied / Closed",_rhPhase("Occupied / Closed"),"#888780","we own it, still occupied"),
+    _rhTile("Vacant / On Standby",_rhPhase("Vacant / On Standby"),"#EF9F27","","openStartOfProjectDashboard()"),
+    _rhTile("First Time Access open",needsFTA,"#e74c3c","checklists to complete","openStartOfProjectDashboard()"),
+  ];
+  const end=[
+    _rhTile("Pre-list / Punch out",_rhPhase("Pre List / Punchout Process"),"#D85A30","","openEndOfProjectDashboard()"),
+    _rhTile("Rental handoff",_rhPhase("Rental Handoff Process"),"#12987A","","openEndOfProjectDashboard()"),
+    _rhTile("On the market",_rhPhase("Listed on the Market")+_rhPhase("Listed on the Market / Final Inspections"),"#7A3FA8","on-market checklist every 2 weeks"),
+    _rhTile("RTR in process",_rhPhase("RTR In Process"),"#BA7517","","openEndOfProjectDashboard()"),
+  ];
+  return `<div style="padding:20px 24px;max-width:100%">
+    ${welcomeHeader(user)}
+    ${sharedWidgets()}
+    ${_rhHead(which==='start'?"Start of project":"End of project")}
+    ${_rhRow(which==='start'?start:end)}
+    ${_rhPerfStrip(name)}
+  </div>`;
+}
+
+// ---- Virtual Administrative Assistant (Patience) ----
+function renderVAHome(user){
+  const name=_rhName(user);
+  return `<div style="padding:20px 24px;max-width:100%">
+    ${welcomeHeader(user)}
+    ${sharedWidgets()}
+    ${_rhHead("My desk")}
+    ${_rhRow([
+      _rhTile("Upcoming takedowns",_rhPhase("Upcoming Takedowns"),"#E24B4A","","openVAAdminDashboard('main')"),
+      _rhTile("Vacant / On Standby",_rhPhase("Vacant / On Standby"),"#EF9F27","utilities + lockboxes","openVAAdminDashboard('main')"),
+      _rhTile("Trackers",4,"#5dade2","W-9 · window · mowing · checklist","openVAAdminDashboard('trackers')"),
+    ])}
+    ${_rhTaskCadence(name)}
+    ${_rhPerfStrip(name)}
+  </div>`;
+}
+
+// Preview support: when Bruce previews another user, home renders as THAT person.
+function _effectiveUser(){
+  const u=currentUser();
+  if(!_previewPerms) return u;
+  const parts=String(_previewPerms.name||"").trim().split(/\s+/);
+  return Object.assign({},u||{},{
+    firstName:parts[0]||"", lastName:parts.slice(1).join(" "),
+    role:_previewPerms.role, email:_previewPerms.email,
+    isSuperAdmin:_previewPerms.isSuperAdmin, accessLevel:_previewPerms.accessLevel
+  });
+}
+
 function renderGenericHome(user) {
+  user = user || _effectiveUser();
   if (isBruce(user)) return renderBruceHome();
-  if (user.role === "Senior Virtual Administrative Assistant") return renderSeniorVAHome(user);
-  // Project Managers get a personalized home showing their tasks + board summary
-  if (user.role === "Project Manager") return renderPMHome(user);
+  const r = user.role || "";
+  if (r === "CEO") return renderCEOHome(user);
+  if (r === "Project Manager" || r === "PM Assistant") return renderPMHome(user);
+  if (r === "Senior Virtual Administrative Assistant") return renderSrVAHome(user);
+  if (r === "Virtual Administrative Assistant") return renderVAHome(user);
+  if (r === "Senior Administrative Assistant" || r === "Administrative Assistant" || r === "Administrative Manager") return renderAdminHome(user);
+  if (r === "Architect") return renderArchitectHome(user);
+  if (r === "Start of Project Assistant") return renderProjectAssistantHome(user,'start');
+  if (r === "End of Project Assistant") return renderProjectAssistantHome(user,'end');
+  if (r === "Project Director") return renderBruceHome();
   return `<div style="padding:20px 24px;max-width:100%">
     ${welcomeHeader(user)}
     ${sharedWidgets()}
     ${roleWidget(user.role)}
   </div>`;
 }
-
-function renderPMHome(user) {
-  // Match to a PM key by email
-  const pmKey = Object.keys(PM_DATA).find(k => PM_DATA[k].email === user.email) || null;
-  const pmName = pmKey || user.firstName;
-
-  const today = new Date(); today.setHours(0,0,0,0);
-  const cutoff14 = new Date(today); cutoff14.setDate(today.getDate()+14);
-  function within14(ds) { if(!ds) return false; const d=new Date(ds);d.setHours(0,0,0,0);return d>=today&&d<=cutoff14; }
-  function isOver(ds) { if(!ds) return false; const d=new Date(ds);d.setHours(0,0,0,0);return d<today; }
-
-  const myProps = propCards.filter(c => c.pm === pmName);
-  let allTasks = [];
-  let upcoming14Count = 0;
-  myProps.forEach(card => {
-    (card.subPhases||[]).forEach(sp => {
-      if(sp.due) { allTasks.push({addr:card.addr,task:sp.name,due:sp.due,overdue:isOver(sp.due)}); if(within14(sp.due)) upcoming14Count++; }
-    });
-    if(card.end) { allTasks.push({addr:card.addr,task:'Completion',due:card.end,overdue:isOver(card.end)}); if(within14(card.end)) upcoming14Count++; }
-  });
-  allTasks.sort((a,b)=>new Date(a.due)-new Date(b.due));
-  const top10 = allTasks.slice(0,10);
-
-  const taskRows = top10.length === 0
-    ? `<div style="text-align:center;color:#555;font-size:12px;padding:16px 0">No upcoming tasks — will connect to task manager</div>`
-    : top10.map(t=>`
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:0.5px solid #1e1e1e">
-        <div><div style="font-size:12px;color:#fff;font-weight:500">${t.task}</div><div style="font-size:11px;color:#666">${t.addr}</div></div>
-        <div style="font-size:11px;font-weight:600;color:${t.overdue?'#e74c3c':'#E24B4A'};text-align:right">${t.overdue?'⚠ Overdue':'Due'}<br><span style="font-weight:400;color:#555">${t.due}</span></div>
-      </div>`).join('');
-
-  return `<div style="padding:20px 24px;max-width:100%">
-    ${welcomeHeader(user)}
-    <div style="background:#111;border:1px solid #2a2a2a;border-radius:10px;overflow:hidden;margin-bottom:14px">
-      <div style="padding:10px 16px;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;justify-content:space-between">
-        <div style="font-size:12px;font-weight:500;color:#fff">📋 Upcoming Due Tasks</div>
-        <div style="display:flex;align-items:center;gap:8px">
-          <span style="font-size:10px;background:#1a2744;color:#5dade2;padding:2px 8px;border-radius:99px">${upcoming14Count} due in 14 days</span>
-          <span style="font-size:10px;color:#444;background:#1a1a1a;padding:2px 7px;border-radius:4px">Task portal + Project Dashboard · Top 10</span>
-        </div>
-      </div>
-      <div style="padding:8px 16px">${taskRows}</div>
-    </div>
-    ${sharedWidgets()}
-  </div>`;
-}
-
 
 // ===================== PM ASSISTANT DASHBOARD =====================
 // The person tabs (Alex, Gabe, …) are driven by JOB ROLE: anyone whose role is a
@@ -5501,7 +5751,7 @@ function openTVDashboard() {
 
 // ===================== HOME BUTTON =====================
 function goHome() {
-  const u = currentUser();
+  const u = _effectiveUser();
   if (!u) return;
   document.getElementById("dash-body").innerHTML = renderGenericHome(u);
   document.querySelectorAll(".dd").forEach(x => x.classList.remove("open"));
