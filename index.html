@@ -3593,42 +3593,184 @@ function _tdhRun(){
   </div>`;
 }
 // ===== $ Completed / Day Housing: construction velocity per property, permitted vs non =====
+// ===================== $ COMPLETED / DAY HOUSING =====================
+// A place to actually play with the numbers: pick any date range, any PM, any properties,
+// split by permit status AND rehab type, and sort. Ranges are measured from the daily
+// spend snapshots, so "what did this house do while he was on vacation" is a real question
+// you can answer. Falls back to whole-project velocity where history doesn't exist yet.
+function _ddState(){
+  window._ddS = window._ddS || { range:'all', from:'', to:'', pm:'', type:'', sort:'rate_desc', sel:{} };
+  return window._ddS;
+}
+function _ddSet(k,v){ const st=_ddState(); st[k]=v; if(k==='range'&&v!=='custom'){ st.from=''; st.to=''; } openDollarsDayHousing(); }
+function _ddToggleProp(id){ const st=_ddState(); st.sel[id]=!st.sel[id]; openDollarsDayHousing(); }
+function _ddClearSel(){ _ddState().sel={}; openDollarsDayHousing(); }
+function _ddCustom(){ const st=_ddState(); st.range='custom'; st.from=(document.getElementById('dd-from')||{}).value||''; st.to=(document.getElementById('dd-to')||{}).value||''; openDollarsDayHousing(); }
+function _ddWindow(){
+  const st=_ddState(); const today=new Date(); today.setHours(0,0,0,0);
+  const back=(n)=>_ymd(new Date(today.getTime()-n*86400000));
+  if(st.range==='custom' && st.from && st.to) return {from:st.from, to:st.to, label:st.from+' → '+st.to};
+  if(st.range==='7')   return {from:back(7),   to:_ymd(today), label:'last 7 days'};
+  if(st.range==='30')  return {from:back(30),  to:_ymd(today), label:'last 30 days'};
+  if(st.range==='90')  return {from:back(90),  to:_ymd(today), label:'last 3 months'};
+  if(st.range==='180') return {from:back(180), to:_ymd(today), label:'last 6 months'};
+  if(st.range==='ytd') return {from:_ymd(new Date(today.getFullYear(),0,1)), to:_ymd(today), label:'year to date'};
+  return {from:null, to:_ymd(today), label:'whole project'};
+}
 function openDollarsDayHousing(){
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
+  const st=_ddState(); const win=_ddWindow();
   const today=new Date(); today.setHours(0,0,0,0);
-  const rows=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived).map(c=>{
-    const v=parseFloat(String(c.spent||"").replace(/[^0-9.\-]/g,""));
-    const vs=_velStart(c); if(isNaN(v)||v<=0||!vs) return null;
-    const sd=new Date(vs); if(isNaN(sd)) return null;
-    const days=Math.max(1,Math.round((today-sd)/86400000));
-    return { addr:c.addr||'', pm:c.pm||'—', permitted:(c.checklists&&c.checklists.permitted)==='yes', start:vs, days, spent:v, rate:Math.round(v/days) };
-  }).filter(Boolean).sort((a,b)=>b.rate-a.rate);
+  const cards=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived);
+  const selIds=Object.keys(st.sel).filter(k=>st.sel[k]);
+
+  const rows=cards.map(c=>{
+    const permitted=(c.checklists&&c.checklists.permitted)==='yes';
+    const type=c.type||'—';
+    const vs=_velStart(c);
+    let days=null, spent=null, rate=null, basis='';
+    if(win.from){
+      // Range mode: spend recorded inside the window ÷ days in the window.
+      const a=_spentAsOf(c.id,win.from); let bq=_spentAsOf(c.id,win.to); if(bq==null) bq=_spentNow(c);
+      if(a!=null && bq!=null){
+        spent=Math.max(0,bq-a);
+        days=Math.max(1,Math.round((new Date(win.to)-new Date(win.from))/86400000));
+        rate=Math.round(spent/days); basis='range';
+      }
+    }
+    if(rate==null){
+      const v=_spentNow(c);
+      if(v!=null && v>0 && vs){ const sd=new Date(vs); if(!isNaN(sd)){ days=Math.max(1,Math.round((today-sd)/86400000)); spent=v; rate=Math.round(v/days); basis='project'; } }
+    }
+    if(rate==null) return null;
+    return { id:c.id, addr:c.addr||'', pm:c.pm||'—', permitted, type, start:vs||'—', days, spent, rate, basis };
+  }).filter(Boolean)
+    .filter(r=>!st.pm || r.pm===st.pm)
+    .filter(r=>!st.type || r.type===st.type)
+    .filter(r=>!selIds.length || selIds.indexOf(r.id)>=0);
+
+  const sorters={ rate_desc:(a,b)=>b.rate-a.rate, rate_asc:(a,b)=>a.rate-b.rate, spent_desc:(a,b)=>b.spent-a.spent, addr:(a,b)=>String(a.addr).localeCompare(String(b.addr)), pm:(a,b)=>String(a.pm).localeCompare(String(b.pm))||b.rate-a.rate };
+  rows.sort(sorters[st.sort]||sorters.rate_desc);
+
+  const money=(n)=>'$'+Math.round(n).toLocaleString();
+  const wavg=(list)=>{ const S=list.reduce((a,r)=>a+r.spent,0), D=list.reduce((a,r)=>a+r.days,0); return D?money(S/D):'—'; };
+
   const tbl=(list,title,color)=>{
-    const S=list.reduce((a,r)=>a+r.spent,0), D=list.reduce((a,r)=>a+r.days,0);
-    const trs=list.length?list.map(r=>`<tr style="border-top:0.5px solid #eef0f6"><td style="padding:8px 10px;font-weight:600;color:#111">${_calEsc(r.addr)}</td><td style="padding:8px 10px">${_calEsc(r.pm)}</td><td style="padding:8px 10px;text-align:center">${_calEsc(r.start)}</td><td style="padding:8px 10px;text-align:center">${r.days}</td><td style="padding:8px 10px;text-align:right">$${r.spent.toLocaleString()}</td><td style="padding:8px 10px;text-align:right;font-weight:700;color:${color}">$${r.rate.toLocaleString()}</td></tr>`).join("")
-      :`<tr><td colspan="6" style="padding:14px 10px;color:#bbb">No properties with spend + a construction start date yet.</td></tr>`;
-    const avg=D?('$'+Math.round(S/D).toLocaleString()):'—';
+    const trs=list.length?list.map(r=>`<tr style="border-top:0.5px solid #eef0f6">
+      <td style="padding:8px 10px"><label style="display:flex;align-items:center;gap:7px;cursor:pointer"><input type="checkbox" ${st.sel[r.id]?'checked':''} onchange="_ddToggleProp('${r.id}')" style="width:14px;height:14px;cursor:pointer"/><span onclick="event.preventDefault();openPropDetail('${r.id}')" style="font-weight:600;color:#185FA5;cursor:pointer">${_calEsc(r.addr)}</span></label></td>
+      <td style="padding:8px 10px">${_calEsc(r.pm)}</td>
+      <td style="padding:8px 10px;font-size:11.5px;color:#666">${_calEsc(r.type)}</td>
+      <td style="padding:8px 10px;text-align:center;font-size:11.5px">${_calEsc(r.start)}</td>
+      <td style="padding:8px 10px;text-align:center">${r.days}${r.basis==='project'?'<div style="font-size:9px;color:#bbb">whole project</div>':''}</td>
+      <td style="padding:8px 10px;text-align:right">${money(r.spent)}</td>
+      <td style="padding:8px 10px;text-align:right;font-weight:700;color:${color}">${money(r.rate)}</td></tr>`).join("")
+      :`<tr><td colspan="7" style="padding:14px 10px;color:#bbb">Nothing matches these filters.</td></tr>`;
     return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:auto;margin-bottom:16px">
-      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:0.5px solid #e0e4ec;flex-wrap:wrap;gap:6px"><div style="font-size:13px;font-weight:700;color:#111">${title} <span style="color:#999;font-weight:400">(${list.length})</span></div><div style="font-size:12px;color:#555">Group avg (dollar-weighted): <b style="color:${color}">${avg}/day</b></div></div>
-      <table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="background:#122A4A;color:#fff"><th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px 10px;text-align:left">PM</th><th style="padding:9px 10px">Constr. start</th><th style="padding:9px 10px">Days</th><th style="padding:9px 10px;text-align:right">Spent</th><th style="padding:9px 10px;text-align:right">$ / day</th></tr></thead><tbody>${trs}</tbody></table></div>`;
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:0.5px solid #e0e4ec;flex-wrap:wrap;gap:6px"><div style="font-size:13px;font-weight:700;color:#111">${title} <span style="color:#999;font-weight:400">(${list.length})</span></div><div style="font-size:12px;color:#555">Group average: <b style="color:${color}">${wavg(list)}/day</b></div></div>
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px"><thead><tr style="background:#122A4A;color:#fff"><th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px 10px;text-align:left">PM</th><th style="padding:9px 10px;text-align:left">Rehab type</th><th style="padding:9px 10px">Constr. start</th><th style="padding:9px 10px">Days</th><th style="padding:9px 10px;text-align:right">Spent</th><th style="padding:9px 10px;text-align:right">$ / day</th></tr></thead><tbody>${trs}</tbody></table></div>`;
   };
+
+  // Running totals: each rehab type within permitted / non-permitted, then the overall line.
+  const byType=(list,color,heading)=>{
+    const types=[...new Set(list.map(r=>r.type))].sort();
+    const cells=types.map(t=>{ const g=list.filter(r=>r.type===t); return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:9px;padding:10px 12px"><div style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.04em;min-height:24px">${_calEsc(t)}</div><div style="font-size:18px;font-weight:700;color:${color};margin-top:4px">${wavg(g)}<span style="font-size:10px;color:#aaa;font-weight:400">/day</span></div><div style="font-size:10px;color:#aaa">${g.length} propert${g.length===1?'y':'ies'}</div></div>`; }).join('');
+    return `<div style="margin-bottom:8px"><div style="font-size:12px;font-weight:700;color:#111;margin-bottom:7px">${heading} <span style="font-weight:400;color:#999">— overall ${wavg(list)}/day across ${list.length}</span></div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px;margin-bottom:16px">${cells||'<div style="font-size:11.5px;color:#bbb">No data.</div>'}</div></div>`;
+  };
+
+  const pms=[...new Set(cards.map(c=>c.pm).filter(Boolean))].sort();
+  const types=[...new Set(cards.map(c=>c.type).filter(Boolean))].sort();
+  const btn=(v,l)=>`<span onclick="_ddSet('range','${v}')" style="display:inline-block;padding:6px 12px;margin:0 6px 6px 0;border-radius:99px;font-size:11.5px;cursor:pointer;border:0.5px solid ${st.range===v?'#185FA5':'#dde2ec'};background:${st.range===v?'#E6F1FB':'#fff'};color:${st.range===v?'#185FA5':'#555'};font-weight:${st.range===v?600:400}">${l}</span>`;
+  const perm=rows.filter(r=>r.permitted), non=rows.filter(r=>!r.permitted);
+
   document.getElementById("dash-body").innerHTML=`
    <div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content">
-    <div style="padding:20px;max-width:1000px;margin:0 auto">
+    <div style="padding:20px;max-width:1120px;margin:0 auto">
       <div style="font-size:16px;font-weight:600;color:#111">💵 $ Completed / Day Housing</div>
-      <div style="font-size:12px;color:#888;margin-bottom:14px">Construction velocity per property: rehab spent ÷ construction days. The clock starts when the property moves into Waiting Permits (older cards fall back to their Start Date). Split by permit status.</div>
-      ${tbl(rows.filter(r=>r.permitted),'Permitted jobs','#7A3FA8')}
-      ${tbl(rows.filter(r=>!r.permitted),'Non-permitted jobs','#0B7285')}
+      <div style="font-size:12px;color:#888;margin-bottom:12px">Construction velocity — rehab spend ÷ days. Pick a period, a PM, a rehab type, or tick individual properties to compare them head to head. Showing <b>${_calEsc(win.label)}</b>.</div>
+      <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:12px 15px;margin-bottom:16px">
+        <div style="font-size:10.5px;color:#888;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">Period</div>
+        <div>${btn('7','Last 7 days')}${btn('30','Last 30 days')}${btn('90','Last 3 months')}${btn('180','Last 6 months')}${btn('ytd','Year to date')}${btn('all','Whole project')}${btn('custom','Custom…')}</div>
+        ${st.range==='custom'?`<div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap"><input type="date" id="dd-from" value="${st.from}" style="padding:6px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12px"/><span style="color:#999;font-size:12px">to</span><input type="date" id="dd-to" value="${st.to}" style="padding:6px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12px"/><button onclick="_ddCustom()" style="padding:6px 14px;background:#111;color:#fff;border:none;border-radius:7px;font-size:11.5px;cursor:pointer">Apply</button></div>`:''}
+        <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:12px;align-items:center">
+          <label style="font-size:11.5px;color:#555">Project manager
+            <select onchange="_ddSet('pm',this.value)" style="margin-left:6px;padding:6px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12px"><option value="">All PMs</option>${pms.map(n=>`<option ${st.pm===n?'selected':''}>${_calEsc(n)}</option>`).join('')}</select></label>
+          <label style="font-size:11.5px;color:#555">Rehab type
+            <select onchange="_ddSet('type',this.value)" style="margin-left:6px;padding:6px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12px"><option value="">All types</option>${types.map(n=>`<option ${st.type===n?'selected':''}>${_calEsc(n)}</option>`).join('')}</select></label>
+          <label style="font-size:11.5px;color:#555">Sort
+            <select onchange="_ddSet('sort',this.value)" style="margin-left:6px;padding:6px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12px">
+              <option value="rate_desc" ${st.sort==='rate_desc'?'selected':''}>$ / day — highest first</option>
+              <option value="rate_asc" ${st.sort==='rate_asc'?'selected':''}>$ / day — lowest first</option>
+              <option value="spent_desc" ${st.sort==='spent_desc'?'selected':''}>Total spent</option>
+              <option value="addr" ${st.sort==='addr'?'selected':''}>Property A–Z</option>
+              <option value="pm" ${st.sort==='pm'?'selected':''}>Project manager</option>
+            </select></label>
+          ${selIds.length?`<span style="font-size:11.5px;color:#185FA5">Comparing ${selIds.length} selected — <span onclick="_ddClearSel()" style="cursor:pointer;text-decoration:underline">clear</span></span>`:'<span style="font-size:11px;color:#aaa">Tick properties to compare just those.</span>'}
+        </div>
+      </div>
+      ${byType(perm,'#7A3FA8','🏛 Permitted jobs — average by rehab type')}
+      ${byType(non,'#0B7285','🔨 Non-permitted jobs — average by rehab type')}
+      ${tbl(perm,'Permitted jobs','#7A3FA8')}
+      ${tbl(non,'Non-permitted jobs','#0B7285')}
+      <div style="font-size:11px;color:#aaa;margin-top:-6px">Rows marked "whole project" don't have daily spend history covering that period yet, so they fall back to spend ÷ days since construction started. History began building this weekend and deepens every day.</div>
     </div></div></div>`;
 }
 // ===== Weekly Meetings (Reporting → Weekly Meetings) — Monday 8am templates =====
 // The Project Team Meeting auto-prefills from live data (budgets, spend, $/day, missing
 // dates, permits) so it's ~half done before anyone opens it; PMs fill in the rest.
-function _wmWeekKey(){ const d=new Date(); d.setHours(0,0,0,0); const day=d.getDay(); const add=(day===1)?0:(((8-day)%7)||7); return _ymd(new Date(d.getTime()+add*86400000)); }
+// Which Monday's meeting are we filling in? The report for a given Monday stays on
+// screen through the week and only rolls over to the NEXT Monday at Thursday 12:00 PM,
+// so there's time to finish notes after the meeting before a fresh page opens.
+function _wmWeekKey(){
+  const now=new Date();
+  const d=new Date(now); d.setHours(0,0,0,0);
+  const day=d.getDay();                                  // 0 Sun … 6 Sat
+  const rolled = (day>4) || (day===0) || (day===4 && now.getHours()>=12);   // Thu noon onward, Fri, Sat, Sun
+  const back=(day===0?6:day-1);                          // days since this week's Monday
+  const thisMon=new Date(d.getTime()-back*86400000);
+  return _ymd(rolled ? new Date(thisMon.getTime()+7*86400000) : thisMon);
+}
+function _wmMonday(dateStr){ const d=new Date(dateStr+"T00:00:00"); const day=d.getDay(); const back=(day===0?6:day-1); return _ymd(new Date(d.getTime()-back*86400000)); }
+function _wmPrevWeek(wk){ return _ymd(new Date(new Date(wk+"T00:00:00").getTime()-7*86400000)); }
+function _wmLabel(wk){ try{ return new Date(wk+"T00:00:00").toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric",year:"numeric"}); }catch(e){ return wk; } }
+// Archive browser: year -> month -> that Monday. Only weeks with saved notes appear.
+function _wmArchive(kind, current){
+  const d=window._wmData||{};
+  const weeks=Object.keys(d).filter(k=>/^\d{4}-\d{2}-\d{2}$/.test(k) && d[k] && d[k][kind] && Object.keys(d[k][kind]).length).sort().reverse();
+  if(!weeks.length) return '';
+  const yr=window._wmArcYear||null, mo=window._wmArcMonth||null;
+  const years=[...new Set(weeks.map(w=>w.slice(0,4)))];
+  const pill=(label,on,click)=>`<span onclick="${click}" style="display:inline-block;padding:4px 10px;margin:0 5px 5px 0;border-radius:99px;font-size:11.5px;cursor:pointer;border:0.5px solid ${on?'#185FA5':'#dde2ec'};background:${on?'#E6F1FB':'#fff'};color:${on?'#185FA5':'#555'};font-weight:${on?600:400}">${label}</span>`;
+  let html=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:12px 16px;margin-bottom:16px">
+    <div style="font-size:12px;font-weight:700;color:#111;margin-bottom:6px">🗂 Past meetings</div>
+    <div>${years.map(y=>pill(y, yr===y, `window._wmArcYear='${y}';window._wmArcMonth=null;openWeeklyMeeting('${kind}','${current}')`)).join('')}</div>`;
+  if(yr){
+    const months=[...new Set(weeks.filter(w=>w.startsWith(yr)).map(w=>w.slice(5,7)))];
+    const mn=(m)=>new Date(yr+'-'+m+'-01T00:00:00').toLocaleDateString(undefined,{month:'long'});
+    html+=`<div style="margin-top:4px">${months.map(m=>pill(mn(m), mo===m, `window._wmArcMonth='${m}';openWeeklyMeeting('${kind}','${current}')`)).join('')}</div>`;
+    if(mo){
+      const list=weeks.filter(w=>w.startsWith(yr+'-'+mo));
+      html+=`<div style="margin-top:4px">${list.map(w=>pill('Mon '+w.slice(5).replace('-','/'), w===current, `openWeeklyMeeting('${kind}','${w}')`)).join('')}</div>`;
+    }
+  }
+  html+=`</div>`;
+  return html;
+}
+// Schedule straight from the meeting: opens the normal Add-task / Add-event form with
+// the property already chosen, so the room can assign work while it's being discussed.
+function _wmAddTask(pid){
+  if(typeof openAddTask!=='function') return;
+  openAddTask(_ymd(new Date()));
+  setTimeout(()=>{ const el=document.getElementById('task-prop'); if(el){ el.value=pid; if(typeof _taskPropChange==='function') _taskPropChange(); } },60);
+}
+function _wmAddEvent(pid){
+  if(typeof openAddCalEvent!=='function') return;
+  openAddCalEvent(_ymd(new Date()));
+  setTimeout(()=>{ const el=document.getElementById('cal-prop'); if(el){ el.value=pid; if(typeof _calAddrToggle==='function') _calAddrToggle('cal'); } },60);
+}
 async function _pdnToggle2(pm,i){ const l=(((window._pdnData||{})[pm]||{}).precon)||[]; if(l[i]){ l[i].done=!l[i].done; await _pdnSave(); openWeeklyMeeting('team'); } }
 async function _wmLoad(){ try{ const r=await supabase.from("pm_settings").select("data").eq("key","meeting_notes").maybeSingle(); window._wmData=(r.data&&r.data.data)||{}; }catch(e){ window._wmData={}; } }
-async function _wmSaveNote(kind,pid){ const el=document.getElementById('wm-'+pid); if(!el) return; const d=window._wmData=window._wmData||{}; const wk=_wmWeekKey(); d[wk]=d[wk]||{}; d[wk][kind]=d[wk][kind]||{}; d[wk][kind][pid]=el.value; try{ await supabase.from("pm_settings").upsert({key:'meeting_notes',data:d},{onConflict:'key'}); }catch(e){} const ok=document.getElementById('wm-ok-'+pid); if(ok){ ok.style.display='inline'; setTimeout(()=>{ok.style.display='none';},1500); } }
+async function _wmSaveNote(kind,pid,week){ const el=document.getElementById('wm-'+pid); if(!el) return; const d=window._wmData=window._wmData||{}; const wk=week||_wmWeekKey(); d[wk]=d[wk]||{}; d[wk][kind]=d[wk][kind]||{}; d[wk][kind][pid]=el.value; try{ await supabase.from("pm_settings").upsert({key:'meeting_notes',data:d},{onConflict:'key'}); }catch(e){} const ok=document.getElementById('wm-ok-'+pid); if(ok){ ok.style.display='inline'; setTimeout(()=>{ok.style.display='none';},1500); } }
 async function _pdnAdd2(pm,key,elId){ const el=document.getElementById(elId); if(!el||!el.value.trim()) return; const d=window._pdnData=window._pdnData||{}; d[pm]=d[pm]||{}; d[pm][key]=d[pm][key]||[]; d[pm][key].push({t:el.value.trim(),done:false,at:_ymd(new Date())}); await _pdnSave(); openWeeklyMeeting('team'); }
 function openEndOfDayReports(){
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
@@ -3646,20 +3788,30 @@ function openDailyReports(){
     <div style="font-size:12.5px;color:#666;margin-top:8px;line-height:1.7;background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:16px 18px">End-of-day reports are coming here and to the field app: each PM answers a short automatic checklist (what got done today, contractors on site, blockers, tomorrow's plan, photos taken) plus their own notes. Those daily answers will roll up automatically into Monday's Project Team Meeting so the meeting doc is mostly written before the meeting starts. Tell me the exact questions you want on the daily form and I'll wire it up.</div>
   </div></div></div>`;
 }
-function openWeeklyMeeting(kind){
+function openWeeklyMeeting(kind, week){
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
   if(window._wmData===undefined||window._wmData===null){ if(window._wmData===undefined){ window._wmData=null; Promise.all([_wmLoad(), (window._pdnData===undefined?( (window._pdnData=null), _pdnLoad()):Promise.resolve())]).then(()=>openWeeklyMeeting(kind)); document.getElementById("dash-body").innerHTML='<div style="padding:40px;text-align:center;color:#999">Loading meeting…</div>'; return; } }
   const titles={team:'🤝 Project Team Meeting',kickoff:'🚀 Kickoff Meeting',company:'🏢 Full Company Meeting',ceo:'👔 Director / CEO Meeting'};
-  const wk=_wmWeekKey();
+  const liveWk=_wmWeekKey();
+  const wk = week || liveWk;
+  const isPast = wk!==liveWk;
   const notes=(((window._wmData||{})[wk]||{})[kind])||{};
+  const prevNotes=(((window._wmData||{})[_wmPrevWeek(wk)]||{})[kind])||{};
   const money=(v)=>{const n=parseFloat(String(v||"").replace(/[^0-9.\-]/g,""));return isNaN(n)?null:n;};
   const fmt=(n)=>n==null?'—':('$'+Math.round(n).toLocaleString());
-  const ta=(pid,ph)=>`<div style="margin-top:8px"><textarea id="wm-${pid}" placeholder="${ph}" style="width:100%;min-height:64px;padding:9px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:12.5px;color:#222;resize:vertical;font-family:inherit">${_calEsc(notes[pid]||'')}</textarea><div style="display:flex;align-items:center;gap:8px;margin-top:4px"><button onclick="_wmSaveNote('${kind}','${pid}')" style="padding:6px 14px;background:#111;color:#fff;border:none;border-radius:6px;font-size:11.5px;cursor:pointer">Save</button><span id="wm-ok-${pid}" style="display:none;font-size:11px;color:#1D9E75">Saved ✓</span></div></div>`;
+  const ta=(pid,ph)=>{
+    const last=prevNotes[pid];
+    const lastBox = last ? `<div style="margin-top:6px;background:#F7F8FB;border-left:3px solid #cdd7e6;border-radius:0 6px 6px 0;padding:7px 10px"><div style="font-size:9.5px;color:#999;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:2px">Last week</div><div style="font-size:11.5px;color:#555;white-space:pre-wrap">${_calEsc(last)}</div></div>` : '';
+    return `<div style="margin-top:8px">${lastBox}<textarea id="wm-${pid}" placeholder="${ph}" style="width:100%;min-height:64px;margin-top:6px;padding:9px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:12.5px;color:#222;resize:vertical;font-family:inherit">${_calEsc(notes[pid]||'')}</textarea><div style="display:flex;align-items:center;gap:8px;margin-top:4px"><button onclick="_wmSaveNote('${kind}','${pid}','${wk}')" style="padding:6px 14px;background:#111;color:#fff;border:none;border-radius:6px;font-size:11.5px;cursor:pointer">Save</button><span id="wm-ok-${pid}" style="display:none;font-size:11px;color:#1D9E75">Saved ✓</span></div></div>`;
+  };
   let body='';
   if(kind==='team'){
     const cons=["Pre Construction","Waiting Permits","Framing, MEPS, Insulation","Drywall / Exterior Work","Finishes","Pre List / Punchout Process","Listed on the Market / Final Inspections"];
-    const cards=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && cons.includes(c.phase));
+    // Ordered by house number so the room walks the list 1 → 9; deliberately NOT grouped by
+    // PM, so while one property is discussed the other PMs can keep typing and texting.
+    const _num=(a)=>{ const m=String(a||'').match(/\d+/); return m?parseInt(m[0],10):999999; };
+    const cards=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && cons.includes(c.phase)).sort((a,b)=>_num(a.addr)-_num(b.addr)||String(a.addr||'').localeCompare(String(b.addr||'')));
     const needDates=cards.filter(c=>!c.start||!c.end);
     const nd=needDates.length?needDates.map(c=>`<div style="display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:0.5px solid #f4e9c8;font-size:12.5px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span><span style="color:#8a6d1a">missing ${(!c.start&&!c.end)?'start & finish':(!c.start?'start':'finish')} date · ${_calEsc(c.pm||'no PM')}</span></div>`).join(''):'<div style="font-size:12.5px;color:#1D9E75">✅ Every construction property has its start & finish dates set.</div>';
     const blocks=cards.map(c=>{
@@ -3679,6 +3831,11 @@ function openWeeklyMeeting(kind){
           ${cell('Budgeted',fmt(b))}${cell('Spent',fmt(s))}${cell('Leftover',fmt(left),left!=null&&left<0?'#B42318':'#0F7B54')}${cell('$ / day',rate!=null?('$'+rate.toLocaleString()):'—','#4A1D6E')}${cell('Start',c.start||'⚠️ set')}${cell('Projected end',c.end||'⚠️ set')}${cell('Days accumulated',acc!=null?acc:'—')}
         </div>
         ${perm?'<div style="margin-top:7px;font-size:11px;color:#72243E;background:#FBEAF0;border-radius:6px;padding:5px 9px;display:inline-block">IF PERMITS — fill in: days since drawings/engineer back · days since last touch with GC</div>':''}
+        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+          <button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:11.5px;color:#185FA5;cursor:pointer;font-weight:600">＋ Add task</button>
+          <button onclick="_wmAddEvent('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:11.5px;color:#639922;cursor:pointer;font-weight:600">＋ Schedule contractor</button>
+          <button onclick="openPropDetail('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #e6e8ee;border-radius:7px;font-size:11.5px;color:#777;cursor:pointer">Open card</button>
+        </div>
         ${ta(c.id,'Money analysis (on/off budget & why) · lag-time items (windows, permits…) · wins this week · estimated timeline to finish · follow-ups & priorities')}
       </div>`;
     }).join('');
@@ -3704,8 +3861,9 @@ function openWeeklyMeeting(kind){
     body=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:14px 16px">${ta('__agenda',agendas[kind]||'Agenda…')}</div>`;
   }
   document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div style="padding:20px;max-width:1000px;margin:0 auto">
-    <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:4px"><div style="font-size:17px;font-weight:700;color:#111">${titles[kind]||'Weekly Meeting'}</div><div style="font-size:12px;color:#888">Week of ${_calEsc(wk)} · Monday 8:00 AM</div></div>
-    <div style="font-size:11.5px;color:#999;margin-bottom:14px">Auto-prefilled from live data — type into the boxes and Save. Notes are shared with everyone for this week's meeting.</div>
+    <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:4px"><div style="font-size:17px;font-weight:700;color:#111">${titles[kind]||'Weekly Meeting'}</div><div style="font-size:12px;color:#888">Week of ${_calEsc(_wmLabel(wk))} · Monday 8:00 AM${isPast?' · archived':''}</div></div>
+    <div style="font-size:11.5px;color:#999;margin-bottom:14px">Auto-prefilled from live data — type into the boxes and Save. Notes are shared with everyone for this week's meeting.${isPast?' <b style="color:#8a6d1a">You are looking back at a past week.</b>':''}</div>
+    ${_wmArchive(kind, wk)}
     ${body}
   </div></div></div>`;
 }
@@ -3832,11 +3990,43 @@ function _computePMMetrics(name){
   const _daysYTD=Math.max(1,Math.round((today-_ys)/86400000));
   const _spentAll=mine.reduce((a,c)=>{const v=parseFloat(String(c.spent||"").replace(/[^0-9.\-]/g,""));return a+(isNaN(v)?0:v);},0);
   const dollarsYTD= _spentAll? Math.round(_spentAll/_daysYTD) : null;
+  // $/day over whatever period the Team Overview is currently set to (defaults to YTD).
+  let dollarsRange=null;
+  try{
+    const w=(typeof _tovWindow==='function')?_tovWindow():null;
+    if(w && w.from){ dollarsRange=_dollarsDayRange(mine,w.from,w.to); }
+    else if(w && w.key==='ytd'){ dollarsRange=dollarsYTD; }
+  }catch(e){}
+  if(dollarsRange==null) dollarsRange=dollarsYTD;
   // Rescheduled % over the last 7 days.
   const ago7=_ymd(new Date(today.getTime()-7*86400000));
   const t7=tasks.filter(t=>t.due_date && t.due_date>=ago7 && t.due_date<=todayStr);
   const resched7= t7.length? Math.round(t7.filter(t=>(t.reschedule_count||0)>0).length/t7.length*100) : "--";
-  return { avgDailyWork:perDay, dollarsPerDayYear:dollarsDay, dollarsPerDay7:dollars7, dollarsPerDayYTD:dollarsYTD, reschedulePct7:resched7, budgetPct:{on:"--",over:"--"}, timelinePct:{on:onTime,over:overTime}, flipsCompleted:flips, rentalHandoffs:handoffs, taskCompletionPct:taskPct, reschedulePct:reschedPct };
+  return { avgDailyWork:perDay, dollarsPerDayYear:dollarsDay, dollarsPerDay7:dollars7, dollarsPerDayYTD:dollarsYTD, dollarsPerDayRange:dollarsRange, reschedulePct7:resched7, budgetPct:{on:"--",over:"--"}, timelinePct:{on:onTime,over:overTime}, flipsCompleted:flips, rentalHandoffs:handoffs, taskCompletionPct:taskPct, reschedulePct:reschedPct };
+}
+// Team Overview period picker — the $/day figure on every PM card follows this.
+function _tovWindow(){
+  const st=window._tovS=window._tovS||{key:'ytd',from:'',to:''};
+  const t=new Date(); t.setHours(0,0,0,0);
+  const back=(n)=>_ymd(new Date(t.getTime()-n*86400000));
+  if(st.key==='custom' && st.from && st.to) return {key:'custom',from:st.from,to:st.to,label:st.from+' → '+st.to};
+  if(st.key==='7')   return {key:'7',from:back(7),to:_ymd(t),label:'Last 7 days'};
+  if(st.key==='30')  return {key:'30',from:back(30),to:_ymd(t),label:'Last 30 days'};
+  if(st.key==='90')  return {key:'90',from:back(90),to:_ymd(t),label:'Last 3 months'};
+  if(st.key==='180') return {key:'180',from:back(180),to:_ymd(t),label:'Last 6 months'};
+  if(st.key==='all') return {key:'all',from:null,to:_ymd(t),label:'Whole project'};
+  return {key:'ytd',from:_ymd(new Date(t.getFullYear(),0,1)),to:_ymd(t),label:'Year to date'};
+}
+function _tovSet(k){ window._tovS=window._tovS||{}; window._tovS.key=k; if(k!=='custom'){window._tovS.from='';window._tovS.to='';} openPMDashboard(); }
+function _tovCustom(){ const st=window._tovS=window._tovS||{}; st.key='custom'; st.from=(document.getElementById('tov-from')||{}).value||''; st.to=(document.getElementById('tov-to')||{}).value||''; openPMDashboard(); }
+function _tovPicker(){
+  const st=window._tovS=window._tovS||{key:'ytd'};
+  const b=(v,l)=>`<span onclick="_tovSet('${v}')" style="display:inline-block;padding:5px 11px;margin:0 6px 6px 0;border-radius:99px;font-size:11px;cursor:pointer;border:1px solid ${st.key===v?'#5dade2':'#2e4070'};background:${st.key===v?'#1a2744':'transparent'};color:${st.key===v?'#5dade2':'#8da4c8'}">${l}</span>`;
+  return `<div style="margin-bottom:14px">
+    <div style="font-size:10px;color:#556;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">$ / day period</div>
+    ${b('7','Last 7 days')}${b('30','Last 30 days')}${b('90','Last 3 months')}${b('180','Last 6 months')}${b('ytd','Year to date')}${b('all','Whole project')}${b('custom','Custom…')}
+    ${st.key==='custom'?`<div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap"><input type="date" id="tov-from" value="${st.from||''}" style="padding:5px 8px;border:1px solid #2e4070;background:#111;color:#ddd;border-radius:6px;font-size:11.5px"/><span style="color:#556;font-size:11px">to</span><input type="date" id="tov-to" value="${st.to||''}" style="padding:5px 8px;border:1px solid #2e4070;background:#111;color:#ddd;border-radius:6px;font-size:11.5px"/><button onclick="_tovCustom()" style="padding:5px 12px;background:#5dade2;color:#06182b;border:none;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer">Apply</button></div>`:''}
+  </div>`;
 }
 function pmCard(name, d, liveName) {
   const colors = { Bruce: "blue", Andrew: "green", Isaiah: "purple" };
@@ -3856,8 +4046,8 @@ function pmCard(name, d, liveName) {
       <div style="padding:14px 16px;display:flex;flex-direction:column;gap:10px">
         <div class="pm-stat-card ${c}" style="margin:0">
           <div class="pm-stat-label">Avg. $ of Work Completed / Day</div>
-          <div class="pm-stat-value">${d.dollarsPerDayYTD!=null?('$'+d.dollarsPerDayYTD.toLocaleString()):'—'}</div>
-          <div class="pm-stat-sub">Year to date</div>
+          <div class="pm-stat-value">${d.dollarsPerDayRange!=null?('$'+d.dollarsPerDayRange.toLocaleString()):'—'}</div>
+          <div class="pm-stat-sub">${(typeof _tovWindow==='function')?_tovWindow().label:'Year to date'}</div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div class="pm-stat-card green" style="margin:0">
@@ -3933,7 +4123,7 @@ function openPMDashboard() {
     const b=document.getElementById("pm-dash-body"); if(!b) return;
     const cards=_pmList.length ? _pmList.map(_mkPmCard).join("")
       : (pmCard("Bruce",_computePMMetrics("Bruce"),resolvePMName("Bruce"))+pmCard("Andrew",_computePMMetrics("Andrew"),resolvePMName("Andrew"))+pmCard("Isaiah",_computePMMetrics("Isaiah"),resolvePMName("Isaiah")));
-    b.innerHTML = `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:24px">${cards}</div><div class="pm-note" style="margin-top:20px">📌 Metrics reflect live task &amp; property data. Budget figures appear once cost data is entered.</div>`;
+    b.innerHTML = _tovPicker() + `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:24px">${cards}</div><div class="pm-note" style="margin-top:20px">📌 Metrics reflect live task &amp; property data. The $/day figure follows the period you pick above; other stats are all-time.</div>`;
   });
 
   openModal("pm-dash-modal");
@@ -5356,6 +5546,44 @@ function _upcomingClosings(){
   });
   return out.sort((a,b)=>a.d<b.d?-1:1);
 }
+// ---- Priority Qs: the shared question box from each Monday meeting lands here for Tommy.
+// Every week keeps its own opened / resolved state so nothing quietly disappears.
+function _pqAll(){
+  const d=window._wmData||{};
+  return Object.keys(d).filter(w=>/^\d{4}-\d{2}-\d{2}$/.test(w))
+    .map(w=>({ week:w, text:((d[w]&&d[w].team&&d[w].team.__pq)||"").trim(), state:((d[w]&&d[w].team&&d[w].team.__pq_state)||"new") }))
+    .filter(x=>x.text)
+    .sort((a,b)=>a.week<b.week?1:-1);
+}
+function _pqOpen(){ return _pqAll().filter(x=>x.state!=="resolved"); }
+async function _pqSet(week,state){
+  if(_blockIfReadOnly()) return;
+  const d=window._wmData=window._wmData||{};
+  d[week]=d[week]||{}; d[week].team=d[week].team||{};
+  d[week].team.__pq_state=state;
+  try{ await supabase.from("pm_settings").upsert({key:'meeting_notes',data:d},{onConflict:'key'}); }catch(e){}
+  _pDrill('pq','tommy');
+}
+function _pqPanel(){
+  const rows=_pqAll();
+  if(!rows.length) return `<div style="color:#bbb;font-size:13px;padding:20px 0">No priority questions have been raised in a meeting yet.</div>`;
+  const badge=(st)=>({new:['NEW','#B8860B','#FFF7E0'],opened:['OPENED','#185FA5','#E6F1FB'],resolved:['RESOLVED','#0F7B54','#E1F5EE']})[st]||['NEW','#B8860B','#FFF7E0'];
+  return `<div style="display:flex;flex-direction:column;gap:10px;max-width:820px">${rows.map(r=>{
+    const bd=badge(r.state);
+    return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid ${bd[1]};border-radius:10px;padding:12px 15px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:6px">
+        <div style="font-size:12.5px;font-weight:700;color:#111">Week of ${_calEsc(_wmLabel(r.week))}</div>
+        <span style="font-size:9.5px;font-weight:700;letter-spacing:0.05em;color:${bd[1]};background:${bd[2]};border-radius:99px;padding:3px 9px">${bd[0]}</span>
+      </div>
+      <div style="font-size:12.5px;color:#333;white-space:pre-wrap;line-height:1.6">${_calEsc(r.text)}</div>
+      ${isReadOnly()?'':`<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+        ${r.state==='new'?`<button onclick="_pqSet('${r.week}','opened')" style="padding:6px 12px;border:0.5px solid #cdd7e6;background:#fff;color:#185FA5;border-radius:7px;font-size:11.5px;cursor:pointer;font-weight:600">Mark opened</button>`:''}
+        ${r.state!=='resolved'?`<button onclick="_pqSet('${r.week}','resolved')" style="padding:6px 12px;border:none;background:#0F7B54;color:#fff;border-radius:7px;font-size:11.5px;cursor:pointer;font-weight:600">✓ Resolved</button>`:`<button onclick="_pqSet('${r.week}','opened')" style="padding:6px 12px;border:0.5px solid #cdd7e6;background:#fff;color:#777;border-radius:7px;font-size:11.5px;cursor:pointer">Reopen</button>`}
+        <button onclick="openWeeklyMeeting('team','${r.week}')" style="padding:6px 12px;border:0.5px solid #e6e8ee;background:#fff;color:#777;border-radius:7px;font-size:11.5px;cursor:pointer">Open that meeting</button>
+      </div>`}
+    </div>`;
+  }).join('')}</div>`;
+}
 function _ceoBoxes(name){
   const first=(name||"").trim().split(" ")[0];
   if(first!=="Bruce" && first!=="Tommy") return "";
@@ -5369,6 +5597,7 @@ function _ceoBoxes(name){
       apprBox,
       _dirBox("Upcoming Closings", _upcomingClosings().length, "buying + selling, labeled", "#7F77DD", "_pDrill('closings','tommy')"),
       _dirBox("Total Money Position", _moneyRank().length, "Top 5 nearest positive", "#0B7285", "_pDrill('money','tommy')"),
+      _dirBox("Priority Qs from meetings", _pqOpen().length, "unopened + unresolved", "#B8860B", "_pDrill('pq','tommy')"),
     ];
   }
   return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;margin-bottom:16px">${boxes.join("")}</div>`;
@@ -5394,6 +5623,9 @@ function _pDrill(kind, back){
       <div><div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#8a93a3;margin-bottom:8px">Top 5 — closest to positive</div><div style="display:flex;flex-direction:column;gap:8px">${top.map((x,i)=>row(x,i)).join("")||'<div style="color:#bbb;font-size:12px">No money data yet</div>'}</div></div>
       <div><div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#8a93a3;margin-bottom:8px">Closer → furthest</div><div style="display:flex;flex-direction:column;gap:8px">${rest.map(x=>row(x,null)).join("")||'<div style="color:#bbb;font-size:12px">—</div>'}</div></div>
     </div>`;
+  } else if(kind==='pq'){
+    if(window._wmData===undefined){ window._wmData=null; _wmLoad().then(()=>_pDrill('pq',back)); html=head("Priority Qs from meetings")+'<div style="color:#999;font-size:13px">Loading…</div>'; el.innerHTML=html; return; }
+    html=head("Priority Qs from meetings")+'<div style="font-size:12px;color:#888;margin:-8px 0 12px">Questions and decisions the team flagged for you in the Monday meeting. Mark each one opened as you pick it up, then resolved once it is answered.</div>'+_pqPanel();
   } else if(kind==='takedowns'){
     const rows=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && c.phase==="Upcoming Takedowns").map(_dirPropRow).join("");
     html=head("Upcoming Takedowns")+list(rows);
@@ -5750,7 +5982,20 @@ function _vaTrackers(){
     <td style="padding:7px">${txt('mowinfo',c.id,'pay','Check / card',90)}</td>
     <td style="text-align:center;padding:7px">${chk('mow',c.id,(d.mow||{})[c.id])}</td>
     <td style="text-align:center;padding:7px">${fchk('mowinfo',c.id,'removed')}</td></tr>`;
-  const mowrows=active.length?active.map(mowRow).join(""):'<tr><td colspan="9" style="padding:16px;color:#bbb;text-align:center">No active properties.</td></tr>';
+  // A property that just closed is no longer ours — Marlo has to text the mower to take it
+  // off the route. It stays flagged here until she ticks "removed after".
+  const offRoute=closed.filter(c=>!_trkOn('mowinfo',c.id,'removed'));
+  const offRow=(c)=>`<tr data-trk="${nm(c)}" style="border-top:0.5px solid #eef0f6;background:#FFF7E0">
+    <td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${nm(c)}</span><div style="font-size:10px;color:#8a6d1a;font-weight:600">✉️ TEXT THE MOWER — take this one off the route (${_calEsc(c.phase||'')})</div></td>
+    <td style="padding:7px">${txt('mowinfo',c.id,'who','Who is mowing',130)}</td>
+    <td style="padding:7px">${txt('mowinfo',c.id,'freq','',110)}</td>
+    <td style="padding:7px">${txt('mowinfo',c.id,'cost','',70)}</td>
+    <td style="padding:7px">${txt('mowinfo',c.id,'phone','Contact #',110)}</td>
+    <td style="padding:7px;font-size:11.5px;color:#555">${_calEsc(c.pm||'—')}</td>
+    <td style="padding:7px">${txt('mowinfo',c.id,'pay','',90)}</td>
+    <td style="text-align:center;padding:7px;font-size:11px;color:#8a6d1a;font-weight:600">CLOSED</td>
+    <td style="text-align:center;padding:7px">${fchk('mowinfo',c.id,'removed')}</td></tr>`;
+  const mowrows=(offRoute.map(offRow).join("")) + (active.length?active.map(mowRow).join(""):(offRoute.length?'':'<tr><td colspan="9" style="padding:16px;color:#bbb;text-align:center">No active properties.</td></tr>'));
 
   // ---------- Window tracker — four dated stages + what's being replaced + notes ----------
   const winRow=(c)=>`<tr data-trk="${nm(c)}" style="border-top:0.5px solid #eef0f6">
@@ -5771,7 +6016,7 @@ function _vaTrackers(){
   // ---------- Outstanding counts ----------
   const winDone=(c)=>_trkOn('win',c.id,'measured')&&_trkOn('win',c.id,'ordered')&&_trkOn('win',c.id,'arrived')&&_trkOn('win',c.id,'installed');
   const w9out=cons.filter(c=>!(d.w9||{})[c.id]).length;
-  const mowout=active.filter(c=>!(d.mow||{})[c.id]).length;
+  const mowout=active.filter(c=>!(d.mow||{})[c.id]).length + closed.filter(c=>!_trkOn('mowinfo',c.id,'removed')).length;
   const winout=active.filter(c=>!winDone(c)).length;
   const clout=active.filter(c=>{const subs=c.subPhases||[];const f=subs.find(s=>s.name==="First Time Access Checklist");return !(f&&f.completed);}).length;
 
@@ -5789,7 +6034,8 @@ function _vaTrackers(){
   const li=(txt)=>`<div style="font-size:11.5px;color:#333;padding:4px 0;border-bottom:0.5px solid #f1f3f7">• ${txt}</div>`;
   const sum=(title,color,items)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 14px"><div style="font-size:12.5px;font-weight:700;color:${color};margin-bottom:4px">${title}</div>${items.length?items.slice(0,6).map(li).join('')+(items.length>6?`<div style="font-size:10.5px;color:#999;padding-top:4px">+ ${items.length-6} more — click the tile</div>`:''):'<div style="font-size:11px;color:#1D9E75;padding:4px 0">All caught up ✅</div>'}</div>`;
   const w9i=cons.filter(c=>!(d.w9||{})[c.id]).map(c=>_calEsc(c.name||''));
-  const mi=active.filter(c=>!(d.mow||{})[c.id]).map(c=>nm(c));
+  const mi=closed.filter(c=>!_trkOn('mowinfo',c.id,'removed')).map(c=>'<b style="color:#8a6d1a">TEXT MOWER — remove from route:</b> '+nm(c))
+    .concat(active.filter(c=>!(d.mow||{})[c.id]).map(c=>nm(c)+' — needs adding to the route'));
   const wi=active.filter(c=>!winDone(c)).map(c=>nm(c)+' — needs '+[!_trkOn('win',c.id,'measured')?'measure':null,!_trkOn('win',c.id,'ordered')?'order':null,!_trkOn('win',c.id,'arrived')?'arrival':null,!_trkOn('win',c.id,'installed')?'install':null].filter(Boolean).join(', '));
   const ci=active.filter(c=>{const subs=c.subPhases||[];const f=subs.find(s=>s.name==="First Time Access Checklist");return !(f&&f.completed);}).map(c=>nm(c)+' — First Time Access open');
   return shell(`<div style="font-size:11.5px;color:#888;margin:-6px 0 10px">What's outstanding right now — click a tile to open the full tracker.</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">${sum('🧾 W-9s needed','#7A3FA8',w9i)}${sum('🪟 Windows','#185FA5',wi)}${sum('🌱 Mowing','#3B6D11',mi)}${sum('✅ Checklists','#0B7285',ci)}</div>`);
