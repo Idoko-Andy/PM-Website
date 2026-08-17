@@ -3407,16 +3407,16 @@ function _pmBoardDrill(pmName,key){
   const ids=new Set(cards.map(c=>c.id));
   const up=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status==='open' && t.property_id && ids.has(t.property_id) && t.due_date).sort((a,b)=>a.due_date<b.due_date?-1:1).slice(0,20);
   const upRows=up.length?up.map(t=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:8px 12px;margin-bottom:6px;display:flex;justify-content:space-between;gap:8px"><div style="min-width:0"><div style="font-size:11.5px;color:#111;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(t.title)}</div><div style="font-size:10px;color:#999">${_calEsc(_locLabel(t)||'')}</div></div><div style="font-size:10.5px;color:#185FA5;white-space:nowrap">${_calEsc(t.due_date)}</div></div>`).join(""):'<div style="color:#bbb;font-size:12px;padding:16px 0">No upcoming tasks in this group.</div>';
-  // Pre Construction's third column is a Comments & Notes board (feedback / ideas, check-off-able).
-  let thirdHead='Upcoming, by date', thirdBody=upRows;
-  if(key==='precon'){
-    if(window._pdnData===undefined){ window._pdnData=null; _pdnLoad().then(()=>_pmBoardDrill(pmName,key)); }
-    const list=(((window._pdnData||{})[pmName]||{})[key])||[];
-    const pmQ=pmName.replace(/'/g,"");
-    const items=list.map((n,i)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:8px 10px;margin-bottom:6px;display:flex;gap:8px;align-items:flex-start"><span onclick="_pdnToggle('${pmQ}','${key}',${i})" style="cursor:pointer;font-size:15px;line-height:1.2">${n.done?'✅':'⬜'}</span><div style="flex:1;font-size:11.5px;color:${n.done?'#aaa':'#333'};${n.done?'text-decoration:line-through;':''}">${_calEsc(n.t)}<div style="font-size:9.5px;color:#bbb">${_calEsc(n.at||'')}</div></div><span onclick="_pdnDel('${pmQ}','${key}',${i})" style="cursor:pointer;color:#c0392b;font-size:12px">✕</span></div>`).join('')||'<div style="color:#bbb;font-size:12px;padding:8px 0">No notes yet.</div>';
-    thirdHead='Comments & Notes';
-    thirdBody=`<div style="display:flex;gap:6px;margin-bottom:8px"><input id="pdn-new" placeholder="Feedback, ideas, follow-ups…" style="flex:1;min-width:0;padding:7px 9px;border:0.5px solid #ddd;border-radius:6px;font-size:12px"/><button onclick="_pdnAdd('${pmQ}','${key}')" style="padding:7px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer">Add</button></div>${items}`;
-  }
+  window._pdnCurPM=pmName;
+  // Every board tab gets a Comments & Notes board (feedback / ideas, check-off-able),
+  // with that group's upcoming dates underneath it.
+  if(window._pdnData===undefined){ window._pdnData=null; _pdnLoad().then(()=>_pmBoardDrill(pmName,key)); }
+  const _pdnList=(((window._pdnData||{})[pmName]||{})[key])||[];
+  const pmQ=pmName.replace(/'/g,"");
+  const items=_pdnList.map((n,i)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:8px 10px;margin-bottom:6px;display:flex;gap:8px;align-items:flex-start"><span onclick="_pdnToggle('${pmQ}','${key}',${i})" style="cursor:pointer;font-size:15px;line-height:1.2">${n.done?'✅':'⬜'}</span><div style="flex:1;font-size:11.5px;color:${n.done?'#aaa':'#333'};${n.done?'text-decoration:line-through;':''}">${_calEsc(n.t)}<div style="font-size:9.5px;color:#bbb">${_calEsc(n.at||'')}</div></div><span onclick="_pdnDel('${pmQ}','${key}',${i})" style="cursor:pointer;color:#c0392b;font-size:12px">✕</span></div>`).join('')||'<div style="color:#bbb;font-size:12px;padding:8px 0">No notes yet.</div>';
+  const thirdHead='Comments & Notes';
+  const thirdBody=`${isReadOnly()?'':`<div style="display:flex;gap:6px;margin-bottom:8px"><input id="pdn-new" placeholder="Feedback, ideas, follow-ups…" style="flex:1;min-width:0;padding:7px 9px;border:0.5px solid #ddd;border-radius:6px;font-size:12px"/><button onclick="_pdnAdd('${pmQ}','${key}')" style="padding:7px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer">Add</button></div>`}${items}
+    <div style="font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin:16px 0 8px">Upcoming, by date</div>${upRows}`;
   el.innerHTML=`<div style="padding:20px">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px"><button onclick="_pmBoardBack('${pmName.replace(/'/g,"")}')" style="font-size:12px;padding:6px 12px;border:0.5px solid #cdd7e6;border-radius:6px;background:#fff;color:#185FA5;cursor:pointer">‹ Back</button><div style="font-size:15px;font-weight:600;color:#111">${g.title} — ${_calEsc(resolvePMName(pmName))}</div></div>
     <div style="display:grid;grid-template-columns:1.2fr 1.2fr 1fr;gap:16px;align-items:start">
@@ -3424,7 +3424,43 @@ function _pmBoardDrill(pmName,key){
       <div><div style="font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Needs completed</div>${needs}</div>
       <div><div style="font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">${thirdHead}</div>${thirdBody}</div>
     </div>
+    ${_pdnAllPMs(key, g.title)}
   </div>`;
+}
+// Directors and the CEO see every PM's comments for this board, on one page, and can add
+// to any of them without hopping between tabs.
+function _pdnAllPMs(key, title){
+  const u=(typeof _effectiveUser==='function')?_effectiveUser():currentUser();
+  const isDir = !!(u && (isBruce(u) || u.role==='CEO' || u.role==='Project Director' || u.isSuperAdmin));
+  if(!isDir) return '';
+  const pms=[...new Set((typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived).map(c=>c.pm).filter(Boolean))].sort();
+  if(!pms.length) return '';
+  const d=window._pdnData||{};
+  const cards=pms.map(pm=>{
+    const list=((d[pm]||{})[key])||[];
+    const pmQ=pm.replace(/'/g,"");
+    const elId='pdnall-'+key.replace(/[^a-z0-9]/gi,'')+'-'+pm.replace(/[^a-z0-9]/gi,'');
+    const rows=list.map((n,i)=>`<div style="display:flex;gap:7px;align-items:flex-start;padding:5px 0;border-bottom:0.5px solid #f1f3f7"><span onclick="_pdnToggleAll('${pmQ}','${key}',${i})" style="font-size:13px;cursor:pointer">${n.done?'✅':'⬜'}</span><div style="flex:1;font-size:11.5px;color:${n.done?'#aaa':'#333'};${n.done?'text-decoration:line-through;':''}">${_calEsc(n.t)} <span style="color:#bbb;font-size:9.5px">${_calEsc(n.at||'')}</span></div></div>`).join('')||'<div style="font-size:11px;color:#bbb;padding:4px 0">No comments yet.</div>';
+    return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 14px">
+      <div style="font-size:12.5px;font-weight:700;color:#111;margin-bottom:4px">${_calEsc(resolvePMName(pm)||pm)}</div>${rows}
+      ${isReadOnly()?'':`<div style="display:flex;gap:6px;margin-top:8px"><input id="${elId}" placeholder="Add a comment…" style="flex:1;min-width:0;padding:6px 9px;border:0.5px solid #ddd;border-radius:6px;font-size:11.5px"/><button onclick="_pdnAddAll('${pmQ}','${key}','${elId}')" style="padding:6px 11px;background:#111;color:#fff;border:none;border-radius:6px;font-size:11.5px;cursor:pointer">Add</button></div>`}
+    </div>`;
+  }).join('');
+  return `<div style="margin-top:20px"><div style="font-size:13px;font-weight:700;color:#111;margin-bottom:8px">💬 ${_calEsc(title)} comments — all PMs</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">${cards}</div></div>`;
+}
+async function _pdnToggleAll(pm,key,i){
+  if(_blockIfReadOnly()) return;
+  const l=(((window._pdnData||{})[pm]||{})[key])||[];
+  if(l[i]){ l[i].done=!l[i].done; await _pdnSave(); _pmBoardDrill(window._pdnCurPM||pm,key); }
+}
+async function _pdnAddAll(pm,key,elId){
+  if(_blockIfReadOnly()) return;
+  const el=document.getElementById(elId); if(!el||!el.value.trim()) return;
+  const d=window._pdnData=window._pdnData||{};
+  d[pm]=d[pm]||{}; d[pm][key]=d[pm][key]||[];
+  d[pm][key].push({t:el.value.trim(),done:false,at:_ymd(new Date())});
+  await _pdnSave(); _pmBoardDrill(window._pdnCurPM||pm,key);
 }
 function _pmBoardBack(pmName){ const el=document.getElementById('pd-content'); if(el) el.innerHTML=pmTabContent(pmName); }
 // ---- Drill-in Comments & Notes (persisted in pm_settings key 'pm_drill_notes') ----
@@ -3857,8 +3893,38 @@ function openWeeklyMeeting(kind, week){
       <div style="font-size:13px;font-weight:700;color:#111;margin:18px 0 8px">💬 Pre Construction comments — all PMs</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">${pmNotes||'<div style="color:#bbb;font-size:12px">No PMs with construction properties.</div>'}</div>`;
   } else {
-    const agendas={kickoff:'Kickoff agenda — new properties starting, first-time access status, who owns what this week…',company:'Full company agenda — wins, numbers, announcements, cross-team needs…',ceo:'Director / CEO agenda — money position, approvals pending, escalations, strategy…'};
-    body=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:14px 16px">${ta('__agenda',agendas[kind]||'Agenda…')}</div>`;
+    if(kind==='kickoff'){
+      // Mirrors the Kick-Off Meeting template: comps → target finishes → walkthrough →
+      // scope → budget → timeline → PM. One block per property about to start.
+      const startPhases=["Upcoming Takedowns","Occupied / Closed","Vacant / On Standby","Pre Construction"];
+      const _n=(a)=>{ const m=String(a||'').match(/\d+/); return m?parseInt(m[0],10):999999; };
+      const starting=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && startPhases.includes(c.phase))
+        .sort((a,b)=>_n(a.addr)-_n(b.addr));
+      const fld=(pid,key,label,ph,rows)=>`<div style="margin-bottom:9px"><div style="font-size:10.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:3px">${label}</div>${ta(pid+'::'+key,ph)}</div>`;
+      const comp=(pid,i)=>`<div style="background:#F7F8FB;border-radius:8px;padding:9px 11px;margin-bottom:7px"><div style="font-size:11px;font-weight:700;color:#185FA5;margin-bottom:3px">Comp #${i}</div>${ta(pid+'::comp'+i,'Address · sale price · finish grade (A–F)')}</div>`;
+      const blocks=starting.length? starting.map(c=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:14px 16px;margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:10px">
+          <span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-size:14.5px;font-weight:700;color:#185FA5">${_calEsc(c.addr||'')}</span>
+          <span style="font-size:11px;color:#666">${_calEsc(c.phase||'')} · ${_calEsc(c.type||'—')} · PM: ${_calEsc(c.pm||'—')}${(c.checklists&&c.checklists.permitted)==='yes'?' · 🏛 Permitted':''}</span>
+        </div>
+        <div style="font-size:11.5px;color:#8a6d1a;background:#FFF7E0;border-radius:7px;padding:7px 10px;margin-bottom:10px">Run the room in this order: comps &amp; target price → target finishes → picture / walkthrough review → line-by-line scope (15–20 min, incl. kitchen design &amp; permit drawings) → line-by-line budget vs the ACQ budget → timeline → who is the PM.</div>
+        ${comp(c.id,1)}${comp(c.id,2)}${comp(c.id,3)}
+        ${fld(c.id,'target','Final target listing price & final target finishes','e.g. list at $XXX,XXX · finish grade B+ …')}
+        ${fld(c.id,'walk','Walkthrough review notes','General notes for the scope review — what stays (shower surround, cabinets…), and any disconnect between the ACQ team and the project team.')}
+        ${fld(c.id,'scope','Scope review','Line-by-line scope of work. 15–20 minutes. Include kitchen design review and permit drawing review if applicable.')}
+        ${fld(c.id,'budget','Budget review','Line by line. Once the budget is SET there is no altering. Compare to the ACQ budget — if there is a large variation, pull the ACQ team into the meeting now.')}
+        ${fld(c.id,'timeline','Timeline review','How many weeks / months to complete? Estimated final completion date?')}
+        ${fld(c.id,'pm','Project manager running the job','Who is the PM, and what did they commit to?')}
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
+          <button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:11.5px;color:#185FA5;cursor:pointer;font-weight:600">＋ Add task</button>
+          <button onclick="_wmAddEvent('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:11.5px;color:#639922;cursor:pointer;font-weight:600">＋ Schedule contractor</button>
+        </div>
+      </div>`).join('') : '<div style="color:#bbb;font-size:13px;padding:20px 0">No properties are waiting to start right now.</div>';
+      body=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:13px 16px;margin-bottom:14px;font-size:12.5px;color:#444;line-height:1.7">Before work starts on a project you hold a formal <b>kick-off meeting</b>. Every property below is queued to start — work through each one top to bottom. Answers save as you go and stay with that week.</div>${blocks}`;
+    } else {
+      const agendas={company:'Full company agenda — wins, numbers, announcements, cross-team needs…',ceo:'Director / CEO agenda — money position, approvals pending, escalations, strategy…'};
+      body=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:14px 16px">${ta('__agenda',agendas[kind]||'Agenda…')}</div>`;
+    }
   }
   document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div style="padding:20px;max-width:1000px;margin:0 auto">
     <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:4px"><div style="font-size:17px;font-weight:700;color:#111">${titles[kind]||'Weekly Meeting'}</div><div style="font-size:12px;color:#888">Week of ${_calEsc(_wmLabel(wk))} · Monday 8:00 AM${isPast?' · archived':''}</div></div>
