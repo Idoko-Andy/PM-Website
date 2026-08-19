@@ -3471,11 +3471,11 @@ async function _pdnAddAll(pm,key,elId){
 }
 function _pmBoardBack(pmName){ const el=document.getElementById('pd-content'); if(el) el.innerHTML=pmTabContent(pmName); }
 // ---- Drill-in Comments & Notes (persisted in pm_settings key 'pm_drill_notes') ----
-async function _pdnLoad(){ try{ const r=await supabase.from("pm_settings").select("data").eq("key","pm_drill_notes").maybeSingle(); window._pdnData=(r.data&&r.data.data)||{}; }catch(e){ window._pdnData={}; } }
-async function _pdnSave(){ try{ await supabase.from("pm_settings").upsert({ key:'pm_drill_notes', data:window._pdnData||{} },{ onConflict:'key' }); }catch(e){} }
+async function _pdnLoad(){ try{ const r=await supabase.from("pm_settings").select("data").eq("key","pm_drill_notes").maybeSingle(); if(r.error){ window._pdnLoadOk=false; window._pdnData={}; return; } window._pdnLoadOk=true; window._pdnData=(r.data&&r.data.data)||{}; }catch(e){ window._pdnLoadOk=false; window._pdnData={}; } }
+async function _pdnSave(){ if(window._pdnLoadOk===false){ alert("These comments could not be loaded a moment ago, so saving now would overwrite them all with a blank list. This save was stopped - refresh the page and try again."); return false; } const _err=await _pmSettingsWrite('pm_drill_notes', window._pdnData||{}); if(_err){ alert("YOUR COMMENT WAS NOT SAVED - "+_err); return false; } return true; }
 async function _pdnAdd(pm,key){ const el=document.getElementById('pdn-new'); if(!el||!el.value.trim()) return; const d=window._pdnData=window._pdnData||{}; d[pm]=d[pm]||{}; d[pm][key]=d[pm][key]||[]; d[pm][key].push({t:el.value.trim(),done:false,at:_ymd(new Date())}); await _pdnSave(); _pmBoardDrill(pm,key); }
-async function _pdnToggle(pm,key,i){ const l=(((window._pdnData||{})[pm]||{})[key])||[]; if(l[i]){ l[i].done=!l[i].done; await _pdnSave(); _pmBoardDrill(pm,key); } }
-async function _pdnDel(pm,key,i){ const l=(((window._pdnData||{})[pm]||{})[key])||[]; l.splice(i,1); await _pdnSave(); _pmBoardDrill(pm,key); }
+async function _pdnToggle(pm,key,i){ if(_blockIfReadOnly()) return; const l=(((window._pdnData||{})[pm]||{})[key])||[]; if(l[i]){ l[i].done=!l[i].done; await _pdnSave(); _pmBoardDrill(pm,key); } }
+async function _pdnDel(pm,key,i){ if(_blockIfReadOnly()) return; const l=(((window._pdnData||{})[pm]||{})[key])||[]; l.splice(i,1); await _pdnSave(); _pmBoardDrill(pm,key); }
 
 function pmStatRow(label, val, color) {
   return `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:0.5px solid #f4f5f7;font-size:12px">
@@ -3812,8 +3812,21 @@ function _wmAddEvent(pid){
   setTimeout(()=>{ const el=document.getElementById('cal-prop'); if(el){ el.value=pid; if(typeof _calAddrToggle==='function') _calAddrToggle('cal'); } },60);
 }
 async function _pdnToggle2(pm,i){ const l=(((window._pdnData||{})[pm]||{}).precon)||[]; if(l[i]){ l[i].done=!l[i].done; await _pdnSave(); openWeeklyMeeting('team'); } }
-async function _wmLoad(){ try{ const r=await supabase.from("pm_settings").select("data").eq("key","meeting_notes").maybeSingle(); window._wmData=(r.data&&r.data.data)||{}; }catch(e){ window._wmData={}; } }
-async function _wmSaveNote(kind,pid,week){ const el=document.getElementById('wm-'+pid); if(!el) return; const d=window._wmData=window._wmData||{}; const wk=week||_wmWeekKey(); d[wk]=d[wk]||{}; d[wk][kind]=d[wk][kind]||{}; d[wk][kind][pid]=el.value; try{ await supabase.from("pm_settings").upsert({key:'meeting_notes',data:d},{onConflict:'key'}); }catch(e){} const ok=document.getElementById('wm-ok-'+pid); if(ok){ ok.style.display='inline'; setTimeout(()=>{ok.style.display='none';},1500); } }
+// Every pm_settings write goes through here. Supabase returns {error} rather than
+// throwing, so the old `try{ await upsert }catch(e){}` pattern swallowed EVERY
+// failure and the caller then showed a green "Saved ✓". Returns null on success,
+// a human-readable reason on failure.
+async function _pmSettingsWrite(key, data){
+  try{
+    const { error } = await supabase.from("pm_settings").upsert({ key:key, data:(data||{}) }, { onConflict:'key' });
+    if(!error) return null;
+    const m = error.message || "";
+    if(/row-level security|permission|policy/i.test(m)) return "your account does not have permission to save this yet - tell Bruce";
+    return m || "unknown error";
+  }catch(e){ return (e && e.message) || "network error"; }
+}
+async function _wmLoad(){ try{ const r=await supabase.from("pm_settings").select("data").eq("key","meeting_notes").maybeSingle(); if(r.error){ window._wmLoadOk=false; window._wmData={}; return; } window._wmLoadOk=true; window._wmData=(r.data&&r.data.data)||{}; }catch(e){ window._wmLoadOk=false; window._wmData={}; } }
+async function _wmSaveNote(kind,pid,week){ if(_blockIfReadOnly()) return; const el=document.getElementById('wm-'+pid); if(!el) return; if(window._wmLoadOk===false){ alert("These meeting notes could not be loaded a moment ago. Saving now would overwrite the real record with a blank one, so this save was stopped. Refresh the page and try again."); return; } const d=window._wmData=window._wmData||{}; const wk=week||_wmWeekKey(); d[wk]=d[wk]||{}; d[wk][kind]=d[wk][kind]||{}; d[wk][kind][pid]=el.value; const _err=await _pmSettingsWrite('meeting_notes',d); if(_err){ alert("YOUR NOTE WAS NOT SAVED - "+_err+"\n\nCopy your text somewhere safe before you leave this page."); return; } const ok=document.getElementById('wm-ok-'+pid); if(ok){ ok.style.display='inline'; setTimeout(()=>{ok.style.display='none';},1500); } }
 async function _pdnAdd2(pm,key,elId){ const el=document.getElementById(elId); if(!el||!el.value.trim()) return; const d=window._pdnData=window._pdnData||{}; d[pm]=d[pm]||{}; d[pm][key]=d[pm][key]||[]; d[pm][key].push({t:el.value.trim(),done:false,at:_ymd(new Date())}); await _pdnSave(); openWeeklyMeeting('team'); }
 function openEndOfDayReports(){
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
@@ -5989,14 +6002,16 @@ function _vaPersonView(vaName){
   return _personDashView(vaName,'Virtual Administrative Assistant')+g;
 }
 // ---- Trackers (W-9 / Mowing / Checklists) — persisted in pm_settings key 'trackers'. ----
-async function _trkLoad(){ window._trkLoaded=true; try{ const r=await supabase.from("pm_settings").select("data").eq("key","trackers").maybeSingle(); window._trkData=(r.data&&r.data.data)||{}; }catch(e){ window._trkData={}; } }
-async function _trkSave(){ try{ await supabase.from("pm_settings").upsert({ key:'trackers', data:(window._trkData||{}) }, { onConflict:'key' }); }catch(e){} }
+async function _trkLoad(){ window._trkLoaded=true; try{ const r=await supabase.from("pm_settings").select("data").eq("key","trackers").maybeSingle(); if(r.error){ window._trkLoadOk=false; window._trkData={}; return; } window._trkLoadOk=true; window._trkData=(r.data&&r.data.data)||{}; }catch(e){ window._trkLoadOk=false; window._trkData={}; } }
+async function _trkSave(){ if(window._trkLoadOk===false){ alert("The trackers could not be loaded a moment ago, so saving now would wipe them. This save was stopped - refresh the page and try again."); return false; } const _err=await _pmSettingsWrite('trackers', window._trkData||{}); if(_err){ alert("THIS TRACKER CHANGE WAS NOT SAVED - "+_err); return false; } return true; }
 async function _trkToggle(kind,id){ if(_blockIfReadOnly()) return; const d=window._trkData||{}; d[kind]=d[kind]||{}; d[kind][id]=!d[kind][id]; window._trkData=d; await _trkSave(); (window._trkRerender||function(){openVAAdminDashboard('trackers');})(); }
 // Generic field setter for the richer trackers (window / mowing / W-9 detail rows).
 async function _trkSet(kind,id,field,val,rerender){
   if(_blockIfReadOnly()) return;
   const d=window._trkData||{}; d[kind]=d[kind]||{}; d[kind][id]=Object.assign({},d[kind][id]||{});
-  d[kind][id][field]=val; window._trkData=d; await _trkSave();
+  d[kind][id][field]=val; window._trkData=d;
+  const _saved=await _trkSave();
+  if(!_saved) return;
   const ok=document.getElementById('trk-ok'); if(ok){ ok.style.display='inline'; setTimeout(()=>{ok.style.display='none';},1200); }
   if(rerender) (window._trkRerender||function(){openVAAdminDashboard('trackers');})();
 }
