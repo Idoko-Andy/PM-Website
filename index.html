@@ -5647,7 +5647,9 @@ async function _pqSet(week,state){
   const d=window._wmData=window._wmData||{};
   d[week]=d[week]||{}; d[week].team=d[week].team||{};
   d[week].team.__pq_state=state;
-  try{ await supabase.from("pm_settings").upsert({key:'meeting_notes',data:d},{onConflict:'key'}); }catch(e){}
+  if(window._wmLoadOk===false){ alert("The meeting notes could not be loaded a moment ago. Changing the status now would overwrite them with a blank record, so this was stopped. Refresh the page and try again."); return; }
+  const _err=await _pmSettingsWrite('meeting_notes',d);
+  if(_err){ alert("THAT STATUS CHANGE WAS NOT SAVED - "+_err); return; }
   _pDrill('pq','tommy');
 }
 function _pqPanel(){
