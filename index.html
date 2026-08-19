@@ -2651,9 +2651,9 @@ function renderPropertyBoard() {
             </div>
           </div>`;
         }).join('')}
-        <button onclick="openPropModal(null,'${ph.name.replace(/'/g,"\\'")}')" style="width:100%;padding:5px;font-size:11px;color:#aaa;background:transparent;border:0.5px dashed #e0e4ec;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:3px;margin-top:3px">
+        ${isReadOnly()?'':`<button onclick="addPropToPhase('${ph.name.replace(/'/g,"\\'")}')" style="width:100%;padding:5px;font-size:11px;color:#aaa;background:transparent;border:0.5px dashed #e0e4ec;border-radius:6px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:3px;margin-top:3px">
           + Add
-        </button>
+        </button>`}
       </div>
     </div>`;
   }).join('');
@@ -2994,7 +2994,10 @@ function addPropToPhase(phase){
 }
 function openPropModal(mode, id) {
   const c = id ? propCards.find(x => x.id === id) : null;
-  propEditingId = id || null;
+  // Only ever edit a property we actually found. If an id was passed that does not
+  // match a real card, treat this as a brand-new property rather than an update
+  // against a row that does not exist.
+  propEditingId = c ? c.id : null;
 
   if (mode === 'companycam') {
     document.getElementById("prop-modal-title").textContent = "Add CompanyCam Link — " + (c ? c.addr : '');
@@ -3147,6 +3150,10 @@ function openPropModal(mode, id) {
       driveUrl: (document.getElementById("pm-drive") ? document.getElementById("pm-drive").value.trim() : (c ? c.driveUrl || '' : '')),
       isRental: (document.getElementById("pm-rental") ? document.getElementById("pm-rental").value === "yes" : (c ? c.isRental : false)),
       closingDate: (document.getElementById("pm-closing") ? (document.getElementById("pm-closing").value || "") : (c ? c.closingDate || "" : "")),
+      // Carried through untouched - this modal has no inputs for them, and leaving
+      // them out makes _propCardToRow null them out on save.
+      vacancyDate: c ? c.vacancyDate || "" : "",
+      closingDateSell: c ? c.closingDateSell || "" : "",
       companyCam: c ? c.companyCam || '' : '',
       subPhases: c ? (c.subPhases || []) : []
     };
