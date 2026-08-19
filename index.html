@@ -1954,8 +1954,12 @@ async function savePropertyToSupabase(id, data) {
   try{ const _s=await supabase.auth.getSession(); if(!_s.data.session){ alert("Your login session has expired — refresh the page and log back in, then try again."); return false; } }catch(e){}
   const _friendly=(m)=>/row-level security/i.test(m||"") ? "Your login session looks expired or lacks permission — refresh the page and log back in, then try again." : (m||"unknown error");
   if (id) {
-    const { error } = await supabase.from("pm_properties").update(_propCardToRow(data)).eq("id", id);
+    const { data: _rows, error } = await supabase.from("pm_properties").update(_propCardToRow(data)).eq("id", id).select("id");
     if (error) { alert("Failed to save property: " + _friendly(error.message)); return false; }
+    // A zero-row UPDATE comes back with error null - that is how a row hidden by
+    // row-level security looks. Without this check we would report success and the
+    // change would quietly disappear on the next reload.
+    if (!_rows || !_rows.length) { alert("Nothing was saved. Either this property no longer exists, or your account does not have permission to change it. Refresh the page and try again."); return false; }
   } else {
     const { error } = await supabase.from("pm_properties").insert(_propCardToRow(data));
     if (error) { alert("Failed to create property: " + _friendly(error.message)); return false; }
@@ -2006,8 +2010,9 @@ async function updatePropertyPhaseInSupabase(id, newPhase) {
     if(!_fta.completed){ _fta.start=_today; _fta.due=_due; }
     patch.sub_phases = _subs;
   }
-  const { error } = await supabase.from("pm_properties").update(patch).eq("id", id);
+  const { data: _rows2, error } = await supabase.from("pm_properties").update(patch).eq("id", id).select("id");
   if (error) { alert("Failed to update phase: " + (error.message || "unknown error")); return false; }
+  if (!_rows2 || !_rows2.length) { alert("That move was not saved. Either the property no longer exists, or your account does not have permission to move it. Refresh the page and try again."); return false; }
   _logAudit("moved","property", _pc?_pc.addr:"", "Moved to “"+newPhase+"”");
   await loadPropertiesFromSupabase();
   return true;
@@ -3828,6 +3833,30 @@ async function _pmSettingsWrite(key, data){
 async function _wmLoad(){ try{ const r=await supabase.from("pm_settings").select("data").eq("key","meeting_notes").maybeSingle(); if(r.error){ window._wmLoadOk=false; window._wmData={}; return; } window._wmLoadOk=true; window._wmData=(r.data&&r.data.data)||{}; }catch(e){ window._wmLoadOk=false; window._wmData={}; } }
 async function _wmSaveNote(kind,pid,week){ if(_blockIfReadOnly()) return; const el=document.getElementById('wm-'+pid); if(!el) return; if(window._wmLoadOk===false){ alert("These meeting notes could not be loaded a moment ago. Saving now would overwrite the real record with a blank one, so this save was stopped. Refresh the page and try again."); return; } const d=window._wmData=window._wmData||{}; const wk=week||_wmWeekKey(); d[wk]=d[wk]||{}; d[wk][kind]=d[wk][kind]||{}; d[wk][kind][pid]=el.value; const _err=await _pmSettingsWrite('meeting_notes',d); if(_err){ alert("YOUR NOTE WAS NOT SAVED - "+_err+"\n\nCopy your text somewhere safe before you leave this page."); return; } const ok=document.getElementById('wm-ok-'+pid); if(ok){ ok.style.display='inline'; setTimeout(()=>{ok.style.display='none';},1500); } }
 async function _pdnAdd2(pm,key,elId){ const el=document.getElementById(elId); if(!el||!el.value.trim()) return; const d=window._pdnData=window._pdnData||{}; d[pm]=d[pm]||{}; d[pm][key]=d[pm][key]||[]; d[pm][key].push({t:el.value.trim(),done:false,at:_ymd(new Date())}); await _pdnSave(); openWeeklyMeeting('team'); }
+// Backlog #95 (Start-of-Project dashboard) was never built, but six tiles on the
+// Start of Project and End of Project home screens were already wired to
+// openStartOfProjectDashboard() / openEndOfProjectDashboard(). Neither existed, so
+// those tiles rendered as clickable and threw a ReferenceError on every click.
+// Until the full dashboards land, show each role the properties it actually owns.
+function _sepBoard(title, subtitle, phases){
+  document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
+  document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
+  const cards=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && phases.indexOf(c.phase)>=0)
+    .sort((a,b)=>phases.indexOf(a.phase)-phases.indexOf(b.phase)||String(a.addr).localeCompare(String(b.addr)));
+  const rows=cards.length ? cards.map(c=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 15px;border-bottom:0.5px solid #f4f5f7">
+      <div style="min-width:0"><div style="font-size:13px;color:#111;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_calEsc(c.addr)}</div>
+      <div style="font-size:11px;color:#aaa">${_calEsc(c.phase)} &middot; ${_calEsc(c.pm||'no PM assigned')}</div></div>
+      <div style="font-size:11px;color:#aaa;flex-shrink:0">${_calEsc(c.end||'')}</div>
+    </div>`).join('') : '<div style="padding:26px;text-align:center;color:#bbb;font-size:12.5px">Nothing sitting in these stages right now.</div>';
+  document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div style="padding:24px;max-width:820px;margin:0 auto">
+    <div style="font-size:16px;font-weight:600;color:#111">${title}</div>
+    <div style="font-size:12.5px;color:#666;margin-top:6px;margin-bottom:14px">${subtitle}</div>
+    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">${rows}</div>
+    <div style="font-size:11px;color:#bbb;margin-top:12px">Counts here match the tiles on your home screen.</div>
+  </div></div></div>`;
+}
+function openStartOfProjectDashboard(){ _sepBoard('\ud83d\udea6 Start of Project','Takedowns coming up, houses we own that have gone vacant, and first-time-access work still open.',["Upcoming Takedowns","Occupied / Closed","Vacant / On Standby"]); }
+function openEndOfProjectDashboard(){ _sepBoard('\ud83c\udfc1 End of Project','Punch-out, rental handoff and rent-to-retail work still in flight.',["Pre List / Punchout Process","Rental Handoff Process","RTR In Process","RTR Completed (Pending Closing)"]); }
 function openEndOfDayReports(){
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
@@ -8476,4 +8505,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-19 pqset-silent-save-fix -->
+<!-- build: 2026-08-19c dead-tiles + zero-row-update -->
