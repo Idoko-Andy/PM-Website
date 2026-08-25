@@ -2960,13 +2960,10 @@ function openPropDetail(id) {
             <div style="font-size:17px;font-weight:500;color:${progColor}">${c.spent||'—'}</div>
             <div style="font-size:11px;color:#aaa;margin-top:2px">${pct}% of budget used</div>
           </div>
-          <div style="background:#f4f5f7;border-radius:8px;padding:12px 14px;border:1.5px solid #e6f1fb">
-            <div style="font-size:10px;color:#aaa;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;display:flex;align-items:center;gap:5px">
-              Project timing
-            </div>
-            ${(()=>{ const fa=(c.subPhases||[]).find(s=>s.name==='First Time Access Checklist'&&s.completed&&s.completedAt); if(!fa) return ''; const st=new Date(fa.completedAt); const en=c.closedDate?new Date(c.closedDate):new Date(); const d=Math.max(0,Math.floor((en-st)/86400000)); return `<div style="margin-top:6px;font-size:11px;font-weight:600;color:#0B5A46;background:#E1F5EA;border-radius:5px;padding:3px 8px;display:inline-block">📆 ${d} day${d===1?'':'s'} accumulated${c.closedDate?' · closed':''}</div>`; })()}
-            ${(()=>{ const v=parseFloat(String(c.spent||"").replace(/[^0-9.\-]/g,"")); const vs=(typeof _velStart==='function')?_velStart(c):null; if(isNaN(v)||v<=0||!vs) return ''; const sd=new Date(vs); if(isNaN(sd)) return ''; const t=new Date(); t.setHours(0,0,0,0); const d=Math.max(1,Math.round((t-sd)/86400000)); return `<div style="margin-top:4px;font-size:11px;font-weight:600;color:#4A1D6E;background:#F3E8FB;border-radius:5px;padding:3px 8px;display:inline-block">💵 $${Math.round(v/d).toLocaleString()} / day completed · ${d} construction day${d===1?'':'s'}</div>`; })()}
+          <div style="background:#f4f5f7;border-radius:8px;padding:10px 12px;border:1.5px solid #e6f1fb">
+            ${_accumBox(c)}
             ${(c.checklists&&c.checklists.trackerUrl)?`<a href="${c.checklists.trackerUrl}" target="_blank" style="font-size:11px;color:#185FA5;margin-top:2px;display:inline-block;text-decoration:none;font-weight:600">📊 Open Project Tracker ↗</a>`:`<div style="font-size:11px;color:#aaa;margin-top:2px">Links to live tracker</div>`}
+          </div>
           </div>
         </div>
         ${(()=>{ const ci=PROP_PHASES.findIndex(p=>p.name==="Pre Construction"); const pi=PROP_PHASES.findIndex(p=>p.name===c.phase); if(ci>=0&&pi>=ci&&(!c.start||!c.end)) return `<div style="background:#FFF7E0;border:1px solid #EAD9A8;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:12.5px;color:#6b5310"><b>⚠️ Set this project's Start &amp; Finish dates.</b> ${(!c.start&&!c.end)?'Both are':(!c.start?'The start date is':'The finish date is')} missing — the $/day tracker and On-Timeline scoring need them. Set them in Property Info or in Monday's Project Team Meeting.</div>`; return ''; })()}
@@ -5693,6 +5690,57 @@ function pmAssistantTabContent(name){
     </div>
     <div style="font-size:11px;color:#aaa;margin-top:10px">Click a task to mark it done. New tasks assigned to ${_calEsc(name)} show up here automatically.</div>
   </div>`;
+}
+// Days Accumulated, split into the three stretches the team actually tracks.
+//   1. Takedown  - the day we close on the purchase until the property leaves Pre
+//                  Construction. This is the stretch that covers waiting on the house
+//                  to go vacant, pre-construction, and demo / cleanout.
+//   2. Build     - the construction clock starting until the property is finished and
+//                  listed on the market.
+//   3. On market - listed until it closes and sells.
+// Each boundary is a date the system already stamps: closing_date when we buy,
+// checklists.construction_start when it leaves Pre Construction, checklists.timeline_done
+// when it reaches Listed / Rental Handoff, and closed_date when it sells. A stretch that
+// has not begun reads "not started"; one still running counts to today and is marked live.
+function _accumSegments(c){
+  const today=_ymd(new Date());
+  const cl=(c && c.checklists) || {};
+  const bought = c.closingDate || null;
+  const cStart = cl.construction_start || null;
+  const listed = cl.timeline_done || null;
+  const sold   = c.closedDate || null;
+  const days=(a,b)=> a ? Math.max(0, Math.round((_dParse(b||today)-_dParse(a))/86400000)) : null;
+  return [
+    { label:"Takedown \u2192 pre-con done", from:bought, to:cStart, n:days(bought,cStart), live:!!(bought&&!cStart),
+      note:c.vacancyDate?("vacant "+c.vacancyDate):"" },
+    { label:"Construction \u2192 listed",    from:cStart, to:listed, n:days(cStart,listed), live:!!(cStart&&!listed), note:"" },
+    { label:"Listed \u2192 sold",            from:listed, to:sold,   n:days(listed,sold),   live:!!(listed&&!sold),   note:"" }
+  ];
+}
+function _accumBox(c){
+  const segs=_accumSegments(c);
+  const row=(x)=>{
+    const val = (x.n==null)
+      ? '<span style="font-size:11px;color:#c4c8d0">not started</span>'
+      : `<span style="font-weight:600;color:${x.live?"#B8860B":"#111"}">${x.n}<span style="font-size:9px;font-weight:400;color:#aaa"> d</span></span>`;
+    const range = (x.n==null) ? "" : (x.from + (x.to ? (" \u2192 " + x.to) : " \u2192 today"));
+    return `<div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px;padding:4px 0;border-bottom:0.5px solid #e8eaef">
+      <div style="min-width:0">
+        <div style="font-size:10.5px;color:#555;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_calEsc(x.label)}${x.live?' <span style="font-size:8.5px;color:#B8860B;font-weight:700">LIVE</span>':""}</div>
+        ${range?`<div style="font-size:9px;color:#b6bbc4">${_calEsc(range)}</div>`:""}
+        ${x.note?`<div style="font-size:9px;color:#b6bbc4">${_calEsc(x.note)}</div>`:""}
+      </div>
+      <div style="font-size:14px;flex-shrink:0;white-space:nowrap">${val}</div>
+    </div>`;
+  };
+  const started=segs.filter(x=>x.n!=null);
+  const total=started.reduce((a,x)=>a+x.n,0);
+  return `<div style="font-size:10px;color:#aaa;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:3px">Days Accumulated</div>
+    ${segs.map(row).join("")}
+    <div style="display:flex;justify-content:space-between;align-items:baseline;padding-top:5px">
+      <span style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.04em">Total</span>
+      <span style="font-size:15px;font-weight:700;color:#111">${started.length?total:"\u2014"}${started.length?'<span style="font-size:9px;font-weight:400;color:#aaa"> d</span>':""}</span>
+    </div>`;
 }
 function _propCardMini(c){
   const p=phInfo(c.phase); const pmColor=PROP_PM_COLORS[c.pm]||'#ccc';
@@ -8669,4 +8717,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-25c vacancy-date-owned-by-slack -->
+<!-- build: 2026-08-25d days-accumulated-3-stage -->
