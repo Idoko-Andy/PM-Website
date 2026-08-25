@@ -2742,8 +2742,11 @@ function renderPropertyBoard() {
             <div style="background:#f4f5f7;border-radius:3px;height:4px;margin-bottom:5px;overflow:hidden">
               <div style="height:100%;width:${Math.min(pct,100)}%;background:${progC};border-radius:3px"></div>
             </div>
-            <div style="display:flex;align-items:center;justify-content:flex-end">
-              ${c.end ? `<div style="font-size:10px;color:#aaa">${c.end}</div>` : ''}
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:4px">
+              ${bNum>0
+                ? `<div style="font-size:10px;font-weight:600;color:${(bNum-sNum)<0?'#E24B4A':'#2E7D32'};white-space:nowrap">${(bNum-sNum)<0?'-':''}$${Math.abs(Math.round(bNum-sNum)).toLocaleString()}<span style="font-size:9px;color:#aaa;font-weight:400;margin-left:3px">${(bNum-sNum)<0?'over':'left'}</span></div>`
+                : `<div style="font-size:10px;color:#ccc;white-space:nowrap">no budget set</div>`}
+              ${c.end ? `<div style="font-size:10px;color:#aaa;white-space:nowrap">${c.end}</div>` : ''}
             </div>
             <div style="margin-top:5px;display:flex;align-items:center;gap:3px">
               <div style="width:12px;height:12px;border-radius:50%;background:${pmColor};color:#fff;font-size:7px;font-weight:500;display:flex;align-items:center;justify-content:center;flex-shrink:0">${c.pm?c.pm[0]:''}</div>
@@ -5853,7 +5856,8 @@ function _ceoBoxes(name){
   if(first!=="Bruce" && first!=="Tommy") return "";
   const back = first==="Tommy" ? "tommy" : "bruce";
   const apprBox=_dirBox("Pre Construction — Approvals", _apprPending().length, "48-hr sign-off timers", "#E67E22", "_pDrill('appr','"+back+"')");
-  let boxes=[apprBox];
+  const _cpBox=_dirBox("Company Projects", (window._cpData===undefined||window._cpData===null)?"\u2013":_cpOpen().length, "not tied to a property", "#534AB7", "_pDrill('projects','"+back+"')");
+  let boxes=[apprBox,_cpBox];
   if(first==="Tommy"){
     const td=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && c.phase==="Upcoming Takedowns").length;
     boxes=[
@@ -5861,9 +5865,132 @@ function _ceoBoxes(name){
       apprBox,
       _dirBox("Upcoming Closings", _upcomingClosings().length, "buying + selling, labeled", "#7F77DD", "_pDrill('closings','tommy')"),
       _dirBox("Priority Qs from meetings", _pqOpen().length, "unopened + unresolved", "#B8860B", "_pDrill('pq','tommy')"),
+      _cpBox,
     ];
   }
   return `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;margin-bottom:16px">${boxes.join("")}</div>`;
+}
+// ===================== COMPANY PROJECTS (Director / CEO) =====================
+// Company-level work for the Friday Director / CEO meeting: initiatives that belong
+// to the business rather than to any one property. Lives in pm_company_projects,
+// deliberately separate from the property pipeline.
+async function _cpLoad(){
+  try{
+    const r=await supabase.from("pm_company_projects")
+      .select("id,title,owner,status,target_date,next_step,notes,archived,updated_at,updated_by")
+      .eq("archived",false).order("display_order",{ascending:true}).order("created_at",{ascending:true});
+    if(r.error){ window._cpLoadOk=false; window._cpData=[]; return; }
+    window._cpLoadOk=true; window._cpData=r.data||[];
+  }catch(e){ window._cpLoadOk=false; window._cpData=[]; }
+}
+function _cpAll(){ return (window._cpData||[]); }
+function _cpOpen(){ return _cpAll().filter(x=>x.status!=='done'); }
+function _cpStatusStyle(st){
+  return ({ active:['ACTIVE','#0F7B54','#E1F5EE'], blocked:['BLOCKED','#B42318','#FCEBEB'], done:['DONE','#555','#EEE'] })[st] || ['ACTIVE','#0F7B54','#E1F5EE'];
+}
+async function _cpReload(){ await _cpLoad(); _pDrill('projects','tommy'); }
+async function _cpAdd(){
+  if(_blockIfReadOnly()) return;
+  const t=(document.getElementById('cp-new-title').value||'').trim();
+  if(!t){ alert("Give the project a name."); return; }
+  const row={ title:t,
+    owner:(document.getElementById('cp-new-owner').value||'').trim(),
+    target_date:(document.getElementById('cp-new-target').value||null),
+    next_step:(document.getElementById('cp-new-next').value||'').trim(),
+    created_by:_mMyName(), updated_by:_mMyName() };
+  const { data, error }=await supabase.from("pm_company_projects").insert(row).select("id");
+  if(error){ alert("That project was not saved: "+(error.message||"")); return; }
+  if(!data||!data.length){ alert("Nothing was saved - your account may not have permission to add projects."); return; }
+  if(typeof _logAudit==="function") _logAudit("created","project",t,"Company project added");
+  await _cpReload();
+}
+async function _cpSet(id, patch, label){
+  if(_blockIfReadOnly()) return;
+  patch.updated_at=new Date().toISOString(); patch.updated_by=_mMyName();
+  const { data, error }=await supabase.from("pm_company_projects").update(patch).eq("id",id).select("id");
+  if(error){ alert("That change was not saved: "+(error.message||"")); return; }
+  if(!data||!data.length){ alert("Nothing was saved. The project may have been removed, or you do not have permission to change it."); return; }
+  if(typeof _logAudit==="function") _logAudit("updated","project",label||"",("Company project: "+(label||"")));
+  await _cpReload();
+}
+async function _cpDelete(id){
+  if(_blockIfReadOnly()) return;
+  const pr=_cpAll().find(x=>x.id===id); const nm=pr?pr.title:"this project";
+  if(!confirm('Remove "'+nm+'" from the projects board?\n\nThis cannot be undone.')) return;
+  const { data, error }=await supabase.from("pm_company_projects").delete().eq("id",id).select("id");
+  if(error){ alert("That project was not removed: "+(error.message||"")); return; }
+  if(!data||!data.length){ alert("Nothing was removed - you may not have permission."); return; }
+  if(typeof _logAudit==="function") _logAudit("deleted","project",nm,"Company project removed");
+  await _cpReload();
+}
+function _cpEdit(id){
+  const pr=_cpAll().find(x=>x.id===id); if(!pr) return;
+  const el=document.getElementById('cp-row-'+id); if(!el) return;
+  el.innerHTML=`
+    <div style="display:grid;grid-template-columns:1fr 150px 150px;gap:8px;margin-bottom:8px">
+      <input id="cp-e-title-${pr.id}" value="${_calEsc(pr.title||'')}" style="padding:7px 9px;border:0.5px solid #ccc;border-radius:6px;font-size:13px"/>
+      <input id="cp-e-owner-${pr.id}" value="${_calEsc(pr.owner||'')}" placeholder="Owner" style="padding:7px 9px;border:0.5px solid #ccc;border-radius:6px;font-size:13px"/>
+      <input id="cp-e-target-${pr.id}" type="date" value="${_calEsc(pr.target_date||'')}" style="padding:7px 9px;border:0.5px solid #ccc;border-radius:6px;font-size:13px"/>
+    </div>
+    <input id="cp-e-next-${pr.id}" value="${_calEsc(pr.next_step||'')}" placeholder="Next step" style="width:100%;padding:7px 9px;border:0.5px solid #ccc;border-radius:6px;font-size:13px;margin-bottom:8px"/>
+    <textarea id="cp-e-notes-${pr.id}" rows="2" placeholder="Notes" style="width:100%;padding:7px 9px;border:0.5px solid #ccc;border-radius:6px;font-size:13px;margin-bottom:8px">${_calEsc(pr.notes||'')}</textarea>
+    <div style="display:flex;gap:8px">
+      <button onclick="_cpSaveEdit('${pr.id}')" style="padding:7px 14px;border:none;border-radius:6px;background:#111;color:#fff;font-size:12px;font-weight:600;cursor:pointer">Save</button>
+      <button onclick="_pDrill('projects','tommy')" style="padding:7px 14px;border:0.5px solid #ccc;border-radius:6px;background:#fff;color:#333;font-size:12px;cursor:pointer">Cancel</button>
+    </div>`;
+}
+async function _cpSaveEdit(id){
+  const g=(k)=>{ const e=document.getElementById(k); return e?e.value:''; };
+  const t=(g('cp-e-title-'+id)||'').trim();
+  if(!t){ alert("Give the project a name."); return; }
+  await _cpSet(id,{ title:t, owner:(g('cp-e-owner-'+id)||'').trim(),
+    target_date:g('cp-e-target-'+id)||null, next_step:(g('cp-e-next-'+id)||'').trim(),
+    notes:(g('cp-e-notes-'+id)||'').trim() }, t);
+}
+function _cpPanel(){
+  const ro=isReadOnly();
+  const today=_ymd(new Date());
+  const order={active:0,blocked:1,done:2};
+  const rows=_cpAll().slice().sort((a,b)=>(order[a.status]||0)-(order[b.status]||0)
+      || String(a.target_date||'9999').localeCompare(String(b.target_date||'9999')));
+  const addForm = ro ? '' : `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 14px;margin-bottom:14px">
+      <div style="font-size:12px;font-weight:600;color:#111;margin-bottom:8px">Add a project</div>
+      <div style="display:grid;grid-template-columns:1fr 150px 150px;gap:8px;margin-bottom:8px">
+        <input id="cp-new-title" placeholder="What is the project?" style="padding:7px 9px;border:0.5px solid #ccc;border-radius:6px;font-size:13px"/>
+        <input id="cp-new-owner" placeholder="Who owns it" style="padding:7px 9px;border:0.5px solid #ccc;border-radius:6px;font-size:13px"/>
+        <input id="cp-new-target" type="date" style="padding:7px 9px;border:0.5px solid #ccc;border-radius:6px;font-size:13px"/>
+      </div>
+      <div style="display:flex;gap:8px">
+        <input id="cp-new-next" placeholder="Next step (optional)" style="flex:1;padding:7px 9px;border:0.5px solid #ccc;border-radius:6px;font-size:13px"/>
+        <button onclick="_cpAdd()" style="padding:7px 16px;border:none;border-radius:6px;background:#111;color:#fff;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap">Add project</button>
+      </div>
+    </div>`;
+  if(!rows.length) return addForm+`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:26px;text-align:center;color:#bbb;font-size:13px">No company projects on the board yet.</div>`;
+  const body=rows.map(pr=>{
+    const st=_cpStatusStyle(pr.status);
+    const overdue = pr.target_date && pr.status!=='done' && pr.target_date<today;
+    const done = pr.status==='done';
+    return `<div id="cp-row-${pr.id}" style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid ${st[1]};border-radius:10px;padding:11px 14px;margin-bottom:9px">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap">
+        <div style="font-size:13.5px;font-weight:600;color:${done?'#9aa0a6':'#111'};${done?'text-decoration:line-through':''};min-width:0">${_calEsc(pr.title||'')}</div>
+        <span style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:99px;background:${st[2]};color:${st[1]};flex-shrink:0">${st[0]}</span>
+      </div>
+      <div style="font-size:11.5px;color:#888;margin-top:3px">
+        ${pr.owner?('Owner: '+_calEsc(pr.owner)):'<span style="color:#c4c8d0">No owner set</span>'}
+        ${pr.target_date?(' &middot; <span style="color:'+(overdue?'#B42318':'#888')+';font-weight:'+(overdue?'700':'400')+'">Target '+_calEsc(pr.target_date)+(overdue?' (overdue)':'')+'</span>'):''}
+      </div>
+      ${pr.next_step?`<div style="font-size:12px;color:#444;margin-top:5px"><span style="color:#aaa">Next:</span> ${_calEsc(pr.next_step)}</div>`:''}
+      ${pr.notes?`<div style="font-size:11.5px;color:#666;margin-top:5px;white-space:pre-wrap">${_calEsc(pr.notes)}</div>`:''}
+      ${ro?'':`<div style="display:flex;gap:6px;margin-top:9px;flex-wrap:wrap">
+        ${pr.status!=='active'?`<button onclick="_cpSet('${pr.id}',{status:'active'},'${_calEsc(pr.title).replace(/'/g,"\\'")}')" style="padding:4px 10px;border:0.5px solid #9ad9c3;border-radius:6px;background:#fff;color:#0F7B54;font-size:11px;cursor:pointer">Active</button>`:''}
+        ${pr.status!=='blocked'?`<button onclick="_cpSet('${pr.id}',{status:'blocked'},'${_calEsc(pr.title).replace(/'/g,"\\'")}')" style="padding:4px 10px;border:0.5px solid #f0a9a9;border-radius:6px;background:#fff;color:#B42318;font-size:11px;cursor:pointer">Blocked</button>`:''}
+        ${pr.status!=='done'?`<button onclick="_cpSet('${pr.id}',{status:'done'},'${_calEsc(pr.title).replace(/'/g,"\\'")}')" style="padding:4px 10px;border:0.5px solid #ccc;border-radius:6px;background:#fff;color:#333;font-size:11px;cursor:pointer">Done</button>`:''}
+        <button onclick="_cpEdit('${pr.id}')" style="padding:4px 10px;border:0.5px solid #ccc;border-radius:6px;background:#fff;color:#333;font-size:11px;cursor:pointer">Edit</button>
+        <button onclick="_cpDelete('${pr.id}')" style="padding:4px 10px;border:0.5px solid #f0c2bb;border-radius:6px;background:#fff;color:#B42318;font-size:11px;cursor:pointer">Remove</button>
+      </div>`}
+    </div>`;
+  }).join('');
+  return addForm+body;
 }
 function _pDrill(kind, back){
   const el=document.getElementById('pd-content'); if(!el) return;
@@ -5877,6 +6004,10 @@ function _pDrill(kind, back){
         <div style="text-align:right"><div style="font-size:12px;font-weight:700;color:${col}">${late?('OVERDUE '+Math.abs(a.hrsLeft)+'h'):(a.hrsLeft+'h left')}</div><div style="font-size:10px;color:#aaa">48-hr window</div></div>
       </div>`; }).join("");
     html=head("Pre Construction — Approvals Needed")+list(rows);
+  } else if(kind==='projects'){
+    if(window._cpData===undefined){ window._cpData=null; _cpLoad().then(()=>_pDrill('projects',back)); el.innerHTML=head("Company Projects")+'<div style="color:#999;font-size:13px">Loading\u2026</div>'; return; }
+    if(window._cpLoadOk===false){ el.innerHTML=head("Company Projects")+'<div style="background:#FCEBEB;border:1px solid #f0a9a9;border-radius:10px;padding:12px 14px;font-size:12.5px;color:#791F1F">These projects could not be loaded, so nothing is shown rather than an empty board that looks like everything is finished. Refresh the page and try again.</div>'; return; }
+    html=head("Company Projects")+'<div style="font-size:12px;color:#888;margin:-8px 0 12px">Company work for the Friday Director / CEO meeting \u2014 initiatives that belong to the business, not to any one property.</div>'+_cpPanel();
   } else if(kind==='pq'){
     if(window._wmData===undefined){ window._wmData=null; _wmLoad().then(()=>_pDrill('pq',back)); html=head("Priority Qs from meetings")+'<div style="color:#999;font-size:13px">Loading…</div>'; el.innerHTML=html; return; }
     html=head("Priority Qs from meetings")+'<div style="font-size:12px;color:#888;margin:-8px 0 12px">Questions and decisions the team flagged for you in the Monday meeting. Mark each one opened as you pick it up, then resolved once it is answered.</div>'+_pqPanel();
@@ -8755,4 +8886,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-25e automations-refresh -->
+<!-- build: 2026-08-25g leftover + company-projects -->
