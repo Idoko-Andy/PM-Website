@@ -2016,8 +2016,15 @@ async function savePropInfo(id){
     closingDate:c.closingDate||'', vacancyDate:c.vacancyDate||'', closingDateSell:c.closingDateSell||'',
     notes:c.notes||'', subPhases:c.subPhases||[]
   };
+  // The phase must not be written as a plain field - updatePropertyPhaseInSupabase is
+  // what seeds the First Time Access checklist, sets the vacancy date and stamps the
+  // construction clock. Save everything else, then move the phase properly.
+  const _newPhase = data.phase;
+  const _phaseChanged = _newPhase && _newPhase !== c.phase;
+  if (_phaseChanged) data.phase = c.phase;
   const ok=await savePropertyToSupabase(id, data);
   if(!ok) return;
+  if (_phaseChanged) { const moved = await updatePropertyPhaseInSupabase(id, _newPhase); if(!moved) return; }
   openPropDetail(id);
 }
 
@@ -2034,8 +2041,19 @@ async function savePropertyToSupabase(id, data) {
     // change would quietly disappear on the next reload.
     if (!_rows || !_rows.length) { alert("Nothing was saved. Either this property no longer exists, or your account does not have permission to change it. Refresh the page and try again."); return false; }
   } else {
-    const { error } = await supabase.from("pm_properties").insert(_propCardToRow(data));
+    const { data: _ins, error } = await supabase.from("pm_properties").insert(_propCardToRow(data)).select("id");
     if (error) { alert("Failed to create property: " + _friendly(error.message)); return false; }
+    // A brand-new property has to go through the phase rules too, or one created
+    // directly into Vacant / On Standby is born with no First Time Access checklist
+    // and no vacancy date, and nothing ever chases it.
+    const _newId = _ins && _ins[0] && _ins[0].id;
+    if (_newId && data.phase) {
+      _logAudit("created","property", data.addr||"", "Added a new property");
+      await loadPropertiesFromSupabase();
+      await updatePropertyPhaseInSupabase(_newId, data.phase);
+      await loadPropertiesFromSupabase();
+      return true;
+    }
   }
   _logAudit(id?"updated":"created","property", data.addr||"", id?"Edited property details":"Added a new property");
   await loadPropertiesFromSupabase();
@@ -2082,6 +2100,19 @@ async function updatePropertyPhaseInSupabase(id, newPhase) {
     if(!_fta){ _fta={name:"First Time Access Checklist"}; _subs.unshift(_fta); }
     if(!_fta.completed){ _fta.start=_today; _fta.due=_due; }
     patch.sub_phases = _subs;
+    // Vacant / On Standby means vacant and ready, so it must carry a vacancy date.
+    // Nothing set this before - the only writer was a manual field almost nobody used.
+    if (!(_pc && _pc.vacancyDate)) patch.vacancy_date = _today;
+  }
+  // Occupied / Closed means we own it but a tenant is still in it: no vacancy date,
+  // and no First Time Access checklist. Moving a property back here left both behind.
+  if (newPhase === "Occupied / Closed") {
+    patch.vacancy_date = null;
+    const _subsO = Array.isArray(_pc && _pc.subPhases) ? _pc.subPhases.map(s=>({...s})) : [];
+    const _fta0 = _subsO.find(s=>s.name==="First Time Access Checklist");
+    // Keep a completed checklist as the historical record; only pull back one that
+    // was seeded and is still open, so the house stops being chased for access.
+    if (_fta0 && !_fta0.completed) patch.sub_phases = _subsO.filter(s=>s.name!=="First Time Access Checklist");
   }
   const { data: _rows2, error } = await supabase.from("pm_properties").update(patch).eq("id", id).select("id");
   if (error) { alert("Failed to update phase: " + (error.message || "unknown error")); return false; }
@@ -3278,9 +3309,14 @@ function pmTabContent(name) {
   const cutoff5 = addBizDays(today, 5);
   const cutoff14 = new Date(today); cutoff14.setDate(today.getDate()+14);
 
-  function isOver(ds) { if(!ds) return false; const d=new Date(ds);d.setHours(0,0,0,0);return d<today; }
-  function within5(ds) { if(!ds) return false; const d=new Date(ds);d.setHours(0,0,0,0);return d>=today&&d<=cutoff5; }
-  function within14(ds) { if(!ds) return false; const d=new Date(ds);d.setHours(0,0,0,0);return d>=today&&d<=cutoff14; }
+  // These used new Date("YYYY-MM-DD") (UTC midnight) then setHours() (local midnight),
+  // which in Eastern time drags the date back a day - so something due TODAY drew as
+  // overdue and the 3-day access window was really 2. Compare the plain YYYY-MM-DD
+  // strings instead: same ordering, no timezone in the middle of it.
+  const _todayS = _ymd(today), _cut5S = _ymd(cutoff5), _cut14S = _ymd(cutoff14);
+  function isOver(ds) { if(!ds) return false; return ds < _todayS; }
+  function within5(ds) { if(!ds) return false; return ds >= _todayS && ds <= _cut5S; }
+  function within14(ds) { if(!ds) return false; return ds >= _todayS && ds <= _cut14S; }
   const isApprovalStep = (nm)=>_isPureApproval(nm);
 
   // Build boards from THIS PM's properties only
@@ -4115,9 +4151,15 @@ function _computePMMetrics(name){
   const todayStr=_ymd(today);
   const cards=(typeof propCards!=='undefined'?propCards:[]);
   const mine=cards.filter(c=>_sameAssignee(c.pm,name));
-  const isDone=(ph)=>/complete|closed|archiv/i.test(ph||"");
-  const flips=mine.filter(c=>isDone(c.phase) && !c.rental).length;
-  const handoffs=mine.filter(c=>c.rental && (isDone(c.phase) || /rental handoff/i.test(c.phase||""))).length;
+  // Match the finished phases exactly. A loose /closed/i also caught
+  // "Occupied / Closed" (a house we own that still has a tenant in it) and
+  // "RTR Completed (Pending Closing)", scoring both as finished flips.
+  const _FINISHED=["Closed","Completed"];
+  const isDone=(ph)=>_FINISHED.includes(ph||"") || /archiv/i.test(ph||"");
+  // The card field is isRental, not rental. `c.rental` was always undefined, so
+  // every rental counted as a flip and Rental Hand Offs always read 0.
+  const flips=mine.filter(c=>isDone(c.phase) && !c.isRental).length;
+  const handoffs=mine.filter(c=>c.isRental && (isDone(c.phase) || /rental handoff|^RTR /i.test(c.phase||""))).length;
   const tasks=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>_taskHasAssignee(t,name));
   const total=tasks.length;
   const done=tasks.filter(t=>t.status==="done").length;
@@ -4128,9 +4170,13 @@ function _computePMMetrics(name){
   // finish date agreed in the team meeting (card End Date). On time = the property reached
   // Rental Handoff / Listed on the Market on or before that finish date.
   const _donePh=["Rental Handoff Process","Listed on the Market","In Contract","RTR In Process","RTR Completed (Pending Closing)","Closed"];
+  // A property cannot be late before work can legally start. Waiting on a seller to
+  // close, or on a tenant to move out, must never score against the manager.
+  const _PRE_WORK=["Upcoming Takedowns","Occupied / Closed","Vacant / On Standby","Pre Construction"];
   let _tlOn=0,_tlOff=0;
   mine.forEach(c=>{
-    if(!c.end) return;
+    if(!c.end || c.archived) return;
+    if(_PRE_WORK.includes(c.phase) && !(c.checklists && c.checklists.construction_start)) return;
     const td=(c.checklists&&c.checklists.timeline_done)||null;
     if(td){ if(td<=c.end) _tlOn++; else _tlOff++; }
     else if(_donePh.includes(c.phase)){ _tlOn++; }        // finished before stamping existed — count on time
@@ -5154,7 +5200,7 @@ function renderProjectAssistantHome(user,which){
   const needsFTA=cards.filter(c=>c.phase==="Vacant / On Standby" && !(c.subPhases||[]).some(sp=>sp.name==="First Time Access Checklist" && sp.completed)).length;
   const start=[
     _rhTile("Upcoming takedowns",_rhPhase("Upcoming Takedowns"),"#E24B4A","","openStartOfProjectDashboard()"),
-    _rhTile("Occupied / Closed",_rhPhase("Occupied / Closed"),"#888780","we own it, still occupied"),
+    _rhTile("Occupied / Closed",_rhPhase("Occupied / Closed"),"#888780","we own it, still occupied","openStartOfProjectDashboard()"),
     _rhTile("Vacant / On Standby",_rhPhase("Vacant / On Standby"),"#EF9F27","","openStartOfProjectDashboard()"),
     _rhTile("First Time Access open",needsFTA,"#e74c3c","checklists to complete","openStartOfProjectDashboard()"),
   ];
@@ -5394,7 +5440,6 @@ const STAGE_CHECKLISTS = {
     { key:"vos_util_electric", label:"Utilities — Electric",       approve:false },
     { key:"vos_util_water",    label:"Utilities — Water",          approve:false },
     { key:"vos_util_gas",      label:"Utilities — Gas",            approve:false },
-    { key:"vos_starter",       label:"First Time Access Checklist", approve:false },
   ],
 };
 function _checklistFor(phase){ return STAGE_CHECKLISTS[phase] || []; }
@@ -5445,7 +5490,10 @@ function takedownRemindersPanel(cards){
   const today=new Date(); today.setHours(0,0,0,0);
   const rows=(cards||[]).slice().sort((a,b2)=>((a.closingDate||'9999')<(b2.closingDate||'9999')?-1:1)).map(c=>{
     const cd=c.closingDate||null;
-    let daysTo=null; if(cd){ const d=new Date(cd); d.setHours(0,0,0,0); daysTo=Math.round((d-today)/86400000); }
+    // _dParse builds the date from its parts, so there is no UTC-to-local slip.
+    let daysTo=null; if(cd){ daysTo=Math.round((_dParse(cd)-_dParse(_ymd(today)))/86400000); }
+    // Once Marlo has confirmed the purchase closed there is nothing left to chase.
+    if(c.purchaseConfirmed) daysTo=null;
     const flag = (daysTo!=null && daysTo<=2 && daysTo>=0)
       ? `<div style="margin-top:6px;font-size:11px;font-weight:700;color:#B42318;background:#FCEBEB;border-radius:6px;padding:4px 9px;display:inline-block">🔔 Follow up with Marlo — closing ${daysTo===0?'TODAY':daysTo===1?'tomorrow':'in '+daysTo+' days'}</div>`
       : (daysTo!=null && daysTo<0 ? `<div style="margin-top:6px;font-size:11px;font-weight:700;color:#72243E;background:#FBEAF0;border-radius:6px;padding:4px 9px;display:inline-block">⚠️ Closing date passed — confirm with Marlo / reschedule</div>` : '');
@@ -5939,7 +5987,7 @@ function _dirCollect(){
 function renderDirectorHome(){
   if(typeof _tasksCache==='undefined'||!_tasksCache.length){ Promise.all([(typeof loadTasks==='function')?loadTasks():Promise.resolve(),(typeof loadPropertiesFromSupabase==='function')?loadPropertiesFromSupabase():Promise.resolve()]).then(()=>{const el=document.getElementById('pd-content'); if(el) el.innerHTML=renderDirectorHome();}); }
   const d=_dirCollect();
-  const phases=["Upcoming Takedowns","Vacant / On Standby","Pre Construction","Framing, MEPS, Insulation","Drywall / Exterior Work","Finishes","Waiting Permits","Listed on the Market","In Contract","Occupied / Closed","Closed"];
+  const phases=["Upcoming Takedowns","Occupied / Closed","Vacant / On Standby","Pre Construction","Waiting Permits","Framing, MEPS, Insulation","Drywall / Exterior Work","Finishes","Listed on the Market","In Contract","Closed"];
   const money=[
     _dirBox("Purchase closings due", d.buyDue.length, "Confirm we own it", "#185FA5", "_dirDrill('buyDue')"),
     _dirBox("Sale closings due", d.sellDue.length, "Approve → Closed", "#B42318", "_dirDrill('sellDue')"),
@@ -6185,7 +6233,9 @@ function _vaTrackers(){
   const w9out=cons.filter(c=>!(d.w9||{})[c.id]).length;
   const mowout=active.filter(c=>!(d.mow||{})[c.id]).length + closed.filter(c=>!_trkOn('mowinfo',c.id,'removed')).length;
   const winout=active.filter(c=>!winDone(c)).length;
-  const clout=active.filter(c=>{const subs=c.subPhases||[];const f=subs.find(s=>s.name==="First Time Access Checklist");return !(f&&f.completed);}).length;
+  // Only a vacant, ready house can have first-time access done. Counting every
+  // active property made this disagree with the "First Time Access open" tile.
+  const clout=active.filter(c=>c.phase==="Vacant / On Standby").filter(c=>{const subs=c.subPhases||[];const f=subs.find(s=>s.name==="First Time Access Checklist");return !(f&&f.completed);}).length;
 
   const view=window._trkView||'summary';
   const tile=(key,icon,title,n,color)=>`<div onclick="window._trkView='${key}';(window._trkRerender||function(){openVAAdminDashboard('trackers');})()" style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${color};border-radius:10px;padding:13px 15px;cursor:pointer"><div style="display:flex;justify-content:space-between"><div style="font-size:12.5px;font-weight:600;color:#111">${icon} ${title}</div><span style="color:#ccc">›</span></div><div style="font-size:24px;font-weight:600;color:${color};margin-top:5px">${n}</div><div style="font-size:10px;color:#999">outstanding</div></div>`;
@@ -8626,4 +8676,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-25a forgot-password + money-position-removed + field-app-edit-delete -->
+<!-- build: 2026-08-25b early-phase-fixes -->
