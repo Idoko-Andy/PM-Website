@@ -498,8 +498,23 @@ body.mobile-on .overlay{z-index:6000 !important;}
     <div class="form-row"><label>Email</label><input type="email" id="login-email" placeholder="you@example.com" autocomplete="username" /></div>
     <div class="form-row"><label>Password</label><input type="password" id="login-pass" placeholder="Your password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doPasswordSignIn()" /></div>
     <button class="btn-full" id="login-submit-btn" onclick="doPasswordSignIn()">Sign in with email</button>
+    <div style="text-align:center;margin-top:10px"><a onclick="doForgotPassword()" style="font-size:12px;color:#7aa7d8;cursor:pointer;text-decoration:underline">Forgot password?</a></div>
     <p style="font-size:11px;color:#666;margin-top:14px;text-align:center;line-height:1.5">Team members with a company Google account can use the Google button above. Outside collaborators sign in with the email &amp; password they created (use <b>Create account</b> first if you haven't).<br/>New accounts start in <i>pending</i> status and require admin approval.</p>
     <div class="form-switch" style="text-align:center;margin-top:10px">Don't have an account? <a onclick="switchModal('signin-modal','register-modal')">Create account</a></div>
+  </div>
+</div>
+
+<!-- ===== SET NEW PASSWORD MODAL (opened by the emailed reset link) ===== -->
+<div class="overlay" id="newpass-modal">
+  <div class="modal">
+    <h2>Set a new password</h2>
+    <p class="sub">Choose a new password for your Legacy Homes account.</p>
+    <div class="error-msg" id="newpass-error"></div>
+    <div class="success-msg" id="newpass-success"></div>
+    <div class="form-row"><label>New password</label><input type="password" id="np-pass" placeholder="At least 8 characters" autocomplete="new-password" /></div>
+    <div class="form-row"><label>Confirm new password</label><input type="password" id="np-pass2" placeholder="Type it again" autocomplete="new-password" onkeydown="if(event.key==='Enter')doSetNewPassword()" /></div>
+    <button class="btn-full" id="np-submit-btn" onclick="doSetNewPassword()">Save new password</button>
+    <div style="text-align:center;margin-top:10px"><a onclick="_cancelPasswordRecovery()" style="font-size:12px;color:#888;cursor:pointer;text-decoration:underline">Cancel and go back to sign in</a></div>
   </div>
 </div>
 
@@ -836,6 +851,11 @@ async function init() {
 // to this browser tab). Re-initing on refresh was bouncing users back to the home page.
 let _lastAuthUid = undefined;
 supabase.auth.onAuthStateChange((event, session) => {
+  // A reset link signs the person in behind the scenes. Let init() run and drop
+  // them on the dashboard and they never get to set the password, so hold the
+  // normal startup back and put the new-password box in front of them instead.
+  if (event === "PASSWORD_RECOVERY") { window._inPasswordRecovery = true; openModal("newpass-modal"); return; }
+  if (window._inPasswordRecovery) return;
   const uid = (session && session.user) ? session.user.id : null;
   if (uid !== _lastAuthUid) { _lastAuthUid = uid; init(); }
 });
@@ -975,6 +995,61 @@ async function doPasswordSignIn() {
   }
   closeModal("signin-modal");
   // onAuthStateChange -> init() takes over (and enforces the approval gate).
+}
+
+// ===================== FORGOT / RESET PASSWORD =====================
+// Supabase emails a recovery link. Following it returns the person here with a
+// recovery session, onAuthStateChange fires PASSWORD_RECOVERY, and the
+// new-password box opens. Sending is deliberately quiet about whether the
+// address exists, so this cannot be used to discover who has an account.
+
+async function doForgotPassword() {
+  const err = document.getElementById("signin-error");
+  const ok  = document.getElementById("signin-success");
+  if (err) err.style.display = "none";
+  if (ok)  ok.style.display  = "none";
+  const email = (document.getElementById("login-email").value || "").trim().toLowerCase();
+  if (!email) { showErr(err, "Type your email address in the box above first, then click Forgot password."); return; }
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { showErr(err, "That doesn't look like a valid email address."); return; }
+  const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin + window.location.pathname });
+  if (error) { showErr(err, "Couldn't send the reset email: " + (error.message || "please try again in a minute.")); return; }
+  if (ok) { ok.textContent = "Check your email — we've sent a link to reset your password. It expires in about an hour. If nothing arrives, look in spam."; ok.style.display = "block"; }
+}
+
+// Someone who opens a stale link must not be trapped behind a modal with no exit.
+async function _cancelPasswordRecovery() {
+  window._inPasswordRecovery = false;
+  try { await supabase.auth.signOut(); } catch (e) {}
+  if (history.replaceState) history.replaceState(null, "", window.location.pathname);
+  closeModal("newpass-modal");
+  _lastAuthUid = null;
+  init();
+}
+
+async function doSetNewPassword() {
+  const err = document.getElementById("newpass-error");
+  const ok  = document.getElementById("newpass-success");
+  if (err) err.style.display = "none";
+  if (ok)  ok.style.display  = "none";
+  const p1 = document.getElementById("np-pass").value  || "";
+  const p2 = document.getElementById("np-pass2").value || "";
+  if (p1.length < 8)  { showErr(err, "Use at least 8 characters."); return; }
+  if (p1 !== p2)      { showErr(err, "Those two passwords don't match."); return; }
+  const btn = document.getElementById("np-submit-btn");
+  if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
+  const { error } = await supabase.auth.updateUser({ password: p1 });
+  if (btn) { btn.disabled = false; btn.textContent = "Save new password"; }
+  if (error) {
+    const m = (error.message || "").toLowerCase();
+    if (m.includes("expired") || m.includes("invalid")) showErr(err, "That reset link has expired. Close this, click Forgot password again and use the newest email.");
+    else showErr(err, error.message || "Couldn't save the new password.");
+    return;
+  }
+  if (ok) { ok.textContent = "Password saved. Signing you in…"; ok.style.display = "block"; }
+  // Release the hold and let normal startup take over with the new credentials.
+  window._inPasswordRecovery = false;
+  if (history.replaceState) history.replaceState(null, "", window.location.pathname);
+  setTimeout(() => { closeModal("newpass-modal"); _lastAuthUid = null; init(); }, 900);
 }
 
 // ===================== REGISTER =====================
@@ -1858,7 +1933,6 @@ function _propRowToCard(r) {
     phase:      r.phase || "",
     type:       r.type || "",
     pm:         r.pm || "",
-    position:   r.position || "",
     budget:     r.budget || "",
     spent:      r.spent || "",
     start:      r.start_date || "",
@@ -1886,7 +1960,6 @@ function _propCardToRow(p) {
     phase:       p.phase || "",
     type:        p.type || "",
     pm:          p.pm || "",
-    position:    p.position || "",
     budget:      p.budget || "",
     spent:       p.spent || "",
     start_date:  p.start || "",
@@ -1905,7 +1978,7 @@ function _propCardToRow(p) {
 async function loadPropertiesFromSupabase() {
   const { data, error } = await supabase
     .from("pm_properties")
-    .select("id,addr,phase,type,pm,position,budget,spent,start_date,end_date,company_cam,drive_url,notes,sub_phases,checklist_market_last,checklists,is_rental,closing_date,vacancy_date,closing_date_sell,closed_date,archived,close_approved,purchase_confirmed")
+    .select("id,addr,phase,type,pm,budget,spent,start_date,end_date,company_cam,drive_url,notes,sub_phases,checklist_market_last,checklists,is_rental,closing_date,vacancy_date,closing_date_sell,closed_date,archived,close_approved,purchase_confirmed")
     .order("created_at", { ascending: true });
   if (error) {
     console.error("loadPropertiesFromSupabase failed:", error);
@@ -1937,7 +2010,7 @@ async function savePropInfo(id){
   const g=(k,d)=>{ const el=document.getElementById(k); return el?el.value:d; };
   const data={
     addr:c.addr, phase:g('pi-phase',c.phase), pm:g('pi-pm',c.pm), type:g('pi-type',c.type),
-    position:c.position, budget:c.budget, spent:c.spent,
+    budget:c.budget, spent:c.spent,
     start:g('pi-start',c.start), end:g('pi-end',c.end),
     companyCam:c.companyCam||'', driveUrl:c.driveUrl||'', isRental:!!c.isRental,
     closingDate:c.closingDate||'', vacancyDate:c.vacancyDate||'', closingDateSell:c.closingDateSell||'',
@@ -2645,8 +2718,7 @@ function renderPropertyBoard() {
             <div style="background:#f4f5f7;border-radius:3px;height:4px;margin-bottom:5px;overflow:hidden">
               <div style="height:100%;width:${Math.min(pct,100)}%;background:${progC};border-radius:3px"></div>
             </div>
-            <div style="display:flex;align-items:center;justify-content:space-between">
-              <div style="font-size:10px;color:#185FA5;font-weight:500">${c.position||'—'}<span style="font-size:9px;color:#aaa;font-weight:400;margin-left:3px">position</span></div>
+            <div style="display:flex;align-items:center;justify-content:flex-end">
               ${c.end ? `<div style="font-size:10px;color:#aaa">${c.end}</div>` : ''}
             </div>
             <div style="margin-top:5px;display:flex;align-items:center;gap:3px">
@@ -2866,10 +2938,8 @@ function openPropDetail(id) {
           </div>
           <div style="background:#f4f5f7;border-radius:8px;padding:12px 14px;border:1.5px solid #e6f1fb">
             <div style="font-size:10px;color:#aaa;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px;display:flex;align-items:center;gap:5px">
-              Total Money Position
-              <span style="font-size:9px;background:#E6F1FB;color:#185FA5;padding:1px 5px;border-radius:4px">Google Sheet</span>
+              Project timing
             </div>
-            <div style="font-size:17px;font-weight:500;color:#185FA5">${c.position||'—'}</div>
             ${(()=>{ const fa=(c.subPhases||[]).find(s=>s.name==='First Time Access Checklist'&&s.completed&&s.completedAt); if(!fa) return ''; const st=new Date(fa.completedAt); const en=c.closedDate?new Date(c.closedDate):new Date(); const d=Math.max(0,Math.floor((en-st)/86400000)); return `<div style="margin-top:6px;font-size:11px;font-weight:600;color:#0B5A46;background:#E1F5EA;border-radius:5px;padding:3px 8px;display:inline-block">📆 ${d} day${d===1?'':'s'} accumulated${c.closedDate?' · closed':''}</div>`; })()}
             ${(()=>{ const v=parseFloat(String(c.spent||"").replace(/[^0-9.\-]/g,"")); const vs=(typeof _velStart==='function')?_velStart(c):null; if(isNaN(v)||v<=0||!vs) return ''; const sd=new Date(vs); if(isNaN(sd)) return ''; const t=new Date(); t.setHours(0,0,0,0); const d=Math.max(1,Math.round((t-sd)/86400000)); return `<div style="margin-top:4px;font-size:11px;font-weight:600;color:#4A1D6E;background:#F3E8FB;border-radius:5px;padding:3px 8px;display:inline-block">💵 $${Math.round(v/d).toLocaleString()} / day completed · ${d} construction day${d===1?'':'s'}</div>`; })()}
             ${(c.checklists&&c.checklists.trackerUrl)?`<a href="${c.checklists.trackerUrl}" target="_blank" style="font-size:11px;color:#185FA5;margin-top:2px;display:inline-block;text-decoration:none;font-weight:600">📊 Open Project Tracker ↗</a>`:`<div style="font-size:11px;color:#aaa;margin-top:2px">Links to live tracker</div>`}
@@ -3112,10 +3182,6 @@ function openPropModal(mode, id) {
         <input id="pm-spent" type="text" value="${c.spent}" placeholder="$00,000" style="width:100%;padding:7px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:13px;color:#111;background:#fff;outline:none" />
       </div>`:''}
     </div>
-    <div style="margin-bottom:12px">
-      <label style="display:block;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Total Money Position <span style="font-size:9px;background:#E6F1FB;color:#185FA5;padding:1px 5px;border-radius:4px;margin-left:4px">Google Sheet</span></label>
-      <input id="pm-position" type="text" value="${c?c.position:''}" placeholder="Will link to Google Sheet tracker" style="width:100%;padding:7px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:13px;color:#111;background:#fff;outline:none" />
-    </div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
       <div>
         <label style="display:block;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Start Date</label>
@@ -3148,7 +3214,6 @@ function openPropModal(mode, id) {
       type:     document.getElementById("pm-type").value,
       budget:   document.getElementById("pm-budget").value,
       spent:    (document.getElementById("pm-spent") ? document.getElementById("pm-spent").value : (c ? c.spent : "")),
-      position: document.getElementById("pm-position").value,
       start:    document.getElementById("pm-start").value,
       end:      document.getElementById("pm-end").value,
       notes:    document.getElementById("pm-notes").value,
@@ -3971,7 +4036,7 @@ function openWeeklyMeeting(kind, week){
       </div>`).join('') : '<div style="color:#bbb;font-size:13px;padding:20px 0">No properties are waiting to start right now.</div>';
       body=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:13px 16px;margin-bottom:14px;font-size:12.5px;color:#444;line-height:1.7">Before work starts on a project you hold a formal <b>kick-off meeting</b>. Every property below is queued to start — work through each one top to bottom. Answers save as you go and stay with that week.</div>${blocks}`;
     } else {
-      const agendas={company:'Full company agenda — wins, numbers, announcements, cross-team needs…',ceo:'Director / CEO agenda — money position, approvals pending, escalations, strategy…'};
+      const agendas={company:'Full company agenda — wins, numbers, announcements, cross-team needs…',ceo:'Director / CEO agenda — approvals pending, escalations, strategy…'};
       body=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:14px 16px">${ta('__agenda',agendas[kind]||'Agenda…')}</div>`;
     }
   }
@@ -4967,7 +5032,6 @@ function _rhPropCalendars(cards,title){
 
 // ---- CEO (Tommy) ----
 function renderCEOHome(user){
-  const money=_moneyRank().filter(x=>x.v>0).length;   // positive money position = we need to raise private money
   return `<div style="padding:20px 24px;max-width:100%">
     ${welcomeHeader(user)}
     ${sharedWidgets()}
@@ -4975,7 +5039,6 @@ function renderCEOHome(user){
     ${_rhRow([
       _rhTile("Upcoming takedowns",_rhPhase("Upcoming Takedowns"),"#E24B4A","properties","openDirectorCEODashboard('tommy')"),
       _rhTile("Upcoming closings",_upcomingClosings().length,"#7F77DD","buying + selling","openDirectorCEODashboard('tommy')"),
-      _rhTile("Need private money raised",money,"#E67E22","money position in the positive","openDirectorCEODashboard('tommy')"),
       _rhTile("Projects closed this year",countClosedThisYear(),"#2ecc71","year to date"),
     ])}
     ${finTable(false)}
@@ -5648,11 +5711,6 @@ function _apprPending(){
   }));
   return out.sort((a,b)=>a.hrsLeft-b.hrsLeft);
 }
-function _moneyRank(){
-  return (typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived)
-    .map(c=>({c, v:parseFloat(String(c.position||"").replace(/[^0-9.\-]/g,""))}))
-    .filter(x=>!isNaN(x.v)).sort((a,b)=>b.v-a.v);
-}
 function _upcomingClosings(){
   const today=_ymd(new Date()); const out=[];
   (typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived).forEach(c=>{
@@ -5713,7 +5771,6 @@ function _ceoBoxes(name){
       _dirBox("Upcoming Takedowns", td, "properties", "#E24B4A", "_pDrill('takedowns','tommy')"),
       apprBox,
       _dirBox("Upcoming Closings", _upcomingClosings().length, "buying + selling, labeled", "#7F77DD", "_pDrill('closings','tommy')"),
-      _dirBox("Total Money Position", _moneyRank().length, "Top 5 nearest positive", "#0B7285", "_pDrill('money','tommy')"),
       _dirBox("Priority Qs from meetings", _pqOpen().length, "unopened + unresolved", "#B8860B", "_pDrill('pq','tommy')"),
     ];
   }
@@ -5731,15 +5788,6 @@ function _pDrill(kind, back){
         <div style="text-align:right"><div style="font-size:12px;font-weight:700;color:${col}">${late?('OVERDUE '+Math.abs(a.hrsLeft)+'h'):(a.hrsLeft+'h left')}</div><div style="font-size:10px;color:#aaa">48-hr window</div></div>
       </div>`; }).join("");
     html=head("Pre Construction — Approvals Needed")+list(rows);
-  } else if(kind==='money'){
-    const m=_moneyRank(); const top=m.slice(0,5); const rest=m.slice(5);
-    const row=(x,i)=>`<div onclick="openPropDetail('${x.c.id}')" style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid ${x.v>=0?'#2E7D32':'#B42318'};border-radius:8px;padding:9px 12px;cursor:pointer;display:flex;justify-content:space-between;align-items:center">
-      <div style="font-size:12px;font-weight:600;color:#111">${i!=null?('<span style="color:#aaa;margin-right:6px">'+(i+1)+'.</span>'):''}${_calEsc(x.c.addr||'')}</div>
-      <div style="font-size:12px;font-weight:700;color:${x.v>=0?'#2E7D32':'#B42318'}">${x.v<0?'-':''}$${Math.abs(x.v).toLocaleString()}</div></div>`;
-    html=head("Money Position — closest to positive")+`<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:900px">
-      <div><div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#8a93a3;margin-bottom:8px">Top 5 — closest to positive</div><div style="display:flex;flex-direction:column;gap:8px">${top.map((x,i)=>row(x,i)).join("")||'<div style="color:#bbb;font-size:12px">No money data yet</div>'}</div></div>
-      <div><div style="font-size:11px;font-weight:700;text-transform:uppercase;color:#8a93a3;margin-bottom:8px">Closer → furthest</div><div style="display:flex;flex-direction:column;gap:8px">${rest.map(x=>row(x,null)).join("")||'<div style="color:#bbb;font-size:12px">—</div>'}</div></div>
-    </div>`;
   } else if(kind==='pq'){
     if(window._wmData===undefined){ window._wmData=null; _wmLoad().then(()=>_pDrill('pq',back)); html=head("Priority Qs from meetings")+'<div style="color:#999;font-size:13px">Loading…</div>'; el.innerHTML=html; return; }
     html=head("Priority Qs from meetings")+'<div style="font-size:12px;color:#888;margin:-8px 0 12px">Questions and decisions the team flagged for you in the Monday meeting. Mark each one opened as you pick it up, then resolved once it is answered.</div>'+_pqPanel();
@@ -7800,7 +7848,7 @@ function setAuditFilter(f){ _auditFilter=f; renderEditHistory(); }
 // ===================== AUTOMATIONS (what runs automatically / by a click) =====================
 const _AUTOMATIONS = [
   {cat:"💰 Financial", items:[
-    {name:"Project financials sync", desc:"Pulls Spent, Final Budget, Acquisitions and Total Money Position from each property's Google Drive project tracker onto the cards.", trigger:"Automatic — every Wednesday & Saturday, 6am", status:"active"},
+    {name:"Project financials sync", desc:"Pulls Spent, Final Budget and Acquisitions from each property's Google Drive project tracker onto the cards.", trigger:"Automatic — every Wednesday & Saturday, 6am", status:"active"},
   ]},
   {cat:"🔁 Workflow", items:[
     {name:"Automated phase advancement", desc:"When a stage's required subphases are completed (and approved where needed), the property auto-moves to the next phase and the assigned PM is flagged.", trigger:"Automatic — on subphase completion", status:"active"},
@@ -8197,7 +8245,11 @@ function _mTaskDetail(id){
         ${t.refer_to?_mInfoRow("Refer questions to",_calEsc(t.refer_to)):''}
       </div>
       ${t.notes?`<div style="margin-top:10px"><div style="font-size:11px;color:#888;font-weight:600">NOTES</div><div style="font-size:13px;color:#444;white-space:pre-wrap;margin-top:2px">${_calEsc(t.notes)}</div></div>`:''}
-      ${ro?'':`<button onclick="_mToggleTaskStay('${t.id}')" style="width:100%;margin-top:14px;padding:12px;border:none;border-radius:9px;font-size:15px;font-weight:600;cursor:pointer;background:${done?'#fff':'#12987A'};color:${done?'#333':'#fff'};${done?'border:1px solid #ccc':''}">${done?'↩ Reopen task':'✓ Mark done'}</button>`}
+      ${ro?'':`<button onclick="_mToggleTaskStay('${t.id}')" style="width:100%;margin-top:14px;padding:12px;border:none;border-radius:9px;font-size:15px;font-weight:600;cursor:pointer;background:${done?'#fff':'#12987A'};color:${done?'#333':'#fff'};${done?'border:1px solid #ccc':''}">${done?'↩ Reopen task':'✓ Mark done'}</button>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button onclick="_mEditTask('${t.id}')" style="flex:1;padding:11px;border:1px solid #ccc;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer;background:#fff;color:#333">✎ Edit</button>
+        <button onclick="_mDeleteTask('${t.id}')" style="flex:1;padding:11px;border:1px solid #f0c2bb;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer;background:#fff;color:#B42318">🗑 Delete</button>
+      </div>`}
     </div>
     <div class="m-card">
       <div style="font-size:14px;font-weight:700;color:#111;margin-bottom:8px">💬 Comments</div>
@@ -8205,6 +8257,76 @@ function _mTaskDetail(id){
       ${ro?'':`<textarea id="m-comment-input" rows="3" class="m-input" placeholder="Add a comment — why it wasn't done, what's next…"></textarea>
       <button class="m-btn" onclick="addTaskComment('${t.id}','m-comment-input','mobile')">Add comment</button>`}
     </div>`;
+}
+
+// ---- Edit / delete an existing task (field app) ----
+// Mirrors _mAddFormTask but pre-filled, and writes an UPDATE rather than an INSERT.
+// Repeat options are deliberately absent: editing one task must not silently
+// generate a series.
+function _mEditTask(id){
+  if(_blockIfReadOnly()) return;
+  const t=(typeof _tasksCache!=="undefined"?_tasksCache:[]).find(x=>x.id===id);
+  if(!t){ alert("That task could not be found. Pull down to refresh and try again."); return; }
+  const who=(taskAssignees(t)[0])||"";
+  const whoOpts=`<option value="">— Unassigned —</option>`+teamMembers().map(n=>`<option value="${_calEsc(n)}" ${n===who?"selected":""}>${_calEsc(n)}</option>`).join("");
+  const body=document.getElementById("m-body"); if(!body) return;
+  body.innerHTML=_mFormWrap("Edit task",`
+    <div class="m-label">Task</div><input id="me-title" class="m-input" value="${_calEsc(t.title||"")}"/>
+    <div class="m-label" style="margin-top:12px">Header / category</div><input id="me-cat" class="m-input" value="${_calEsc(t.category||"")}" placeholder="Optional"/>
+    <div class="m-label" style="margin-top:12px">Assign to</div><select id="me-who" class="m-select">${whoOpts}</select>
+    <div class="m-label" style="margin-top:12px">Property / address</div>${_mAddrPicker("me")}
+    <div style="display:flex;gap:10px">
+      <div style="flex:1"><div class="m-label" style="margin-top:12px">Start</div><input id="me-start" type="date" class="m-input" value="${_calEsc(t.start_date||"")}"/></div>
+      <div style="flex:1"><div class="m-label" style="margin-top:12px">Due</div><input id="me-due" type="date" class="m-input" value="${_calEsc(t.due_date||"")}"/></div>
+    </div>
+    <div class="m-label" style="margin-top:12px">Notes</div><textarea id="me-notes" class="m-input" rows="2">${_calEsc(t.notes||"")}</textarea>
+    <button class="m-btn" onclick="_mSubmitTaskEdit('${t.id}')">Save changes</button>
+    <button class="m-btn m-btn-lite" onclick="_mOpenTask('${t.id}')">Cancel</button>
+  `);
+  // Pre-select the property this task is already attached to.
+  const sel=document.getElementById("me-prop");
+  if(sel){
+    if(t.property_id) sel.value=t.property_id;
+    else if(t.location){ sel.value="__other"; const a=document.getElementById("me-addr"); if(a) a.value=t.location; }
+    _mAddrToggle("me");
+  }
+  body.scrollTop=0;
+}
+async function _mSubmitTaskEdit(id){
+  if(_blockIfReadOnly()) return;
+  const title=(document.getElementById("me-title").value||"").trim();
+  if(!title){ alert("Enter a task."); return; }
+  const due=document.getElementById("me-due").value||null;
+  const start=document.getElementById("me-start").value||null;
+  if(start && due && start>due){ alert("Start date can't be after the due date."); return; }
+  const who=document.getElementById("me-who").value||null;
+  const _pl=_mResolveAddr("me");
+  const patch={
+    title,
+    category:(document.getElementById("me-cat").value||"").trim()||null,
+    assignee:who, assignees:who?[who]:[],
+    due_date:due, start_date:start,
+    property_id:_pl.property_id, location:_pl.location,
+    notes:(document.getElementById("me-notes").value||"").trim()||null
+  };
+  const { data:_rows, error }=await supabase.from("pm_tasks").update(patch).eq("id",id).select("id");
+  if(error){ alert("Couldn't save the changes: "+(error.message||"")); return; }
+  // A zero-row update means the task is gone or RLS hid it - never report that as saved.
+  if(!_rows||!_rows.length){ alert("Nothing was saved. That task no longer exists, or you don't have permission to change it."); return; }
+  if(_pl.saveAddr && _pl.location) await _saveAddressForReuse(_pl.location);
+  if(typeof _logAudit==="function") _logAudit("updated","task",title,"Edited from the field app");
+  await loadTasks(); _mOpenTask(id);
+}
+async function _mDeleteTask(id){
+  if(_blockIfReadOnly()) return;
+  const t=(typeof _tasksCache!=="undefined"?_tasksCache:[]).find(x=>x.id===id);
+  const nm=t?(t.title||"this task"):"this task";
+  if(!confirm('Delete "'+nm+'"?\n\nThis removes it for everyone and cannot be undone.')) return;
+  const { data:_rows, error }=await supabase.from("pm_tasks").delete().eq("id",id).select("id");
+  if(error){ alert("Couldn't delete the task: "+(error.message||"")); return; }
+  if(!_rows||!_rows.length){ alert("Nothing was deleted. That task is already gone, or you don't have permission to remove it."); return; }
+  if(typeof _logAudit==="function") _logAudit("deleted","task",nm,"Deleted from the field app");
+  await loadTasks(); _mGo("day");
 }
 
 // ---- Build tab (construction by property) ----
@@ -8287,7 +8409,6 @@ function _mPropDetail(id){
         ${_mInfoRow("Acq. Budget",_calEsc(_mMoney(acq)))}
         ${_mInfoRow("Final Budget",_calEsc(_mMoney(p.budget)))}
         ${_mInfoRow("Spent to Date",_calEsc(_mMoney(p.spent)))}
-        ${_mInfoRow("Money Position",_calEsc(_mMoney(p.position)))}
       </div>
     </div>
     ${links.length?`<div class="m-card">${links.join("")}</div>`:""}`;
@@ -8505,4 +8626,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-19c dead-tiles + zero-row-update -->
+<!-- build: 2026-08-25a forgot-password + money-position-removed + field-app-edit-delete -->
