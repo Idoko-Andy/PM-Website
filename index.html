@@ -2100,20 +2100,13 @@ async function updatePropertyPhaseInSupabase(id, newPhase) {
     if(!_fta){ _fta={name:"First Time Access Checklist"}; _subs.unshift(_fta); }
     if(!_fta.completed){ _fta.start=_today; _fta.due=_due; }
     patch.sub_phases = _subs;
-    // Vacant / On Standby means vacant and ready, so it must carry a vacancy date.
-    // Nothing set this before - the only writer was a manual field almost nobody used.
-    if (!(_pc && _pc.vacancyDate)) patch.vacancy_date = _today;
   }
-  // Occupied / Closed means we own it but a tenant is still in it: no vacancy date,
-  // and no First Time Access checklist. Moving a property back here left both behind.
-  if (newPhase === "Occupied / Closed") {
-    patch.vacancy_date = null;
-    const _subsO = Array.isArray(_pc && _pc.subPhases) ? _pc.subPhases.map(s=>({...s})) : [];
-    const _fta0 = _subsO.find(s=>s.name==="First Time Access Checklist");
-    // Keep a completed checklist as the historical record; only pull back one that
-    // was seeded and is still open, so the house stops being chased for access.
-    if (_fta0 && !_fta0.completed) patch.sub_phases = _subsO.filter(s=>s.name!=="First Time Access Checklist");
-  }
+  // NOTE: vacancy_date is deliberately NOT written here. It is owned by the Slack
+  // sync, which reads #vacancy-updates and #company-closings and works out when a
+  // house is coming vacant from what Sammy, her VA and Legacy Alerts post there.
+  // A phase move must never stamp or clear it - that would overwrite the real
+  // answer with a guess. Occupied / Closed can legitimately carry a future
+  // move-out date, which is exactly how the team uses it.
   const { data: _rows2, error } = await supabase.from("pm_properties").update(patch).eq("id", id).select("id");
   if (error) { alert("Failed to update phase: " + (error.message || "unknown error")); return false; }
   if (!_rows2 || !_rows2.length) { alert("That move was not saved. Either the property no longer exists, or your account does not have permission to move it. Refresh the page and try again."); return false; }
@@ -8676,4 +8669,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-25b early-phase-fixes -->
+<!-- build: 2026-08-25c vacancy-date-owned-by-slack -->
