@@ -7938,25 +7938,40 @@ async function loadAuditLog(){
 function setAuditFilter(f){ _auditFilter=f; renderEditHistory(); }
 // ===================== AUTOMATIONS (what runs automatically / by a click) =====================
 const _AUTOMATIONS = [
-  {cat:"💰 Financial", items:[
-    {name:"Project financials sync", desc:"Pulls Spent, Final Budget and Acquisitions from each property's Google Drive project tracker onto the cards.", trigger:"Automatic — every Wednesday & Saturday, 6am", status:"active"},
+  {cat:"\ud83d\udce1 Slack \u2192 property cards", items:[
+    {name:"Vacancy updates sync", desc:"Reads #vacancy-updates and works out when each house is coming vacant from what Sammy, her VA and Legacy Alerts post \u2014 \"occupied until 8/31\", \"expected vacant\", \"vacant, set up a lockbox\". Writes the vacancy date onto the property card. Nothing else in the system sets that date.", trigger:"Automatic \u2014 5\u00d7 a day", status:"active"},
+    {name:"Company closings sync", desc:"Reads #company-closings for takedowns and sales, and keeps the buying and selling closing dates on the cards in step.", trigger:"Automatic \u2014 5\u00d7 a day", status:"active"},
+    {name:"Slack material orders \u2192 Marlo", desc:"Pulls material orders posted in #material-lists onto Marlo's Admin dashboard.", trigger:"Automatic \u2014 hourly, 8am\u20137pm", status:"active"},
   ]},
-  {cat:"🔁 Workflow", items:[
-    {name:"Automated phase advancement", desc:"When a stage's required subphases are completed (and approved where needed), the property auto-moves to the next phase and the assigned PM is flagged.", trigger:"Automatic — on subphase completion", status:"active"},
-    {name:"Auto-scheduled subphase dates", desc:"Completing a subphase automatically starts the next one's clock (SOW Creation due +7 days, then 48 hours each).", trigger:"Automatic — on subphase completion", status:"active"},
+  {cat:"\ud83d\udd14 Deadline alerts", items:[
+    {name:"Scope creation alerts", desc:"Checks scope of work, budget and drawing deadlines at five days out, twenty-four hours out, and past due. Scope and budget go to the property's PM; drawings and permits also go to Jenn; anything waiting on sign-off goes to Tommy, Bruce and the PM.", trigger:"Automatic \u2014 10am, 3pm, 5pm", status:"active"},
+    {name:"Window tracker alerts", desc:"Posts a 48-hour warning before each window measure and each install.", trigger:"Automatic \u2014 daily, 8am", status:"pending"},
+    {name:"Mowing route 48h", desc:"When a house goes vacant, raises a 48-hour task to add it to the mowing route. When it closes, pins it to the top flagged to text the mower and take it off.", trigger:"Automatic \u2014 daily, 9am", status:"active"},
   ]},
-  {cat:"🏁 Closings & Archive", items:[
-    {name:"Closing-date approval flag", desc:"When a property's closing date arrives, a flashing Approve-Close button appears; approving records the close and moves it to Closed.", trigger:"Automatic — on closing date", status:"active"},
-    {name:"Closed → Completed archive", desc:"A property that sits in Closed for 4+ weeks auto-files into the Completed archive (year/month history).", trigger:"Automatic — on load", status:"active"},
+  {cat:"\ud83d\udcb0 Financial", items:[
+    {name:"Project financials sync", desc:"Pulls Spent, Final Budget and Acquisitions from each property's Google Drive project tracker onto the cards.", trigger:"Automatic \u2014 every Wednesday & Saturday, 6am", status:"active"},
+    {name:"Daily spend snapshot", desc:"Records what each property has spent, once a day. This is what makes the $/day figure work over a chosen date range rather than only across the whole project.", trigger:"Automatic \u2014 daily", status:"active"},
   ]},
-  {cat:"✉️ Notifications", items:[
-    {name:"PM & closing emails", desc:"Emails the assigned PM when a property auto-advances, and Marlo + Patience when a property closes (utilities removal).", trigger:"Automatic — on advance / close", status:"pending"},
+  {cat:"\ud83d\udd01 Workflow", items:[
+    {name:"Automated phase advancement", desc:"When a stage's required subphases are completed (and approved where needed), the property auto-moves to the next phase and the assigned PM is flagged.", trigger:"Automatic \u2014 on subphase completion", status:"active"},
+    {name:"Auto-scheduled subphase dates", desc:"Completing a subphase automatically starts the next one's clock (SOW Creation due +7 days, then 48 hours each).", trigger:"Automatic \u2014 on subphase completion", status:"active"},
+    {name:"Property trackers sync", desc:"Keeps the window, mowing and W-9 trackers lined up with the current property list, so a new house appears and a closed one drops off.", trigger:"Automatic \u2014 daily, 5am", status:"active"},
   ]},
-  {cat:"🔗 Integrations", items:[
-    {name:"CompanyCam link backfill", desc:"Each Sunday, finds properties still missing a CompanyCam link and links them by matching the job-site address in CompanyCam (skips ones without a project yet, e.g. early takedowns).", trigger:"Automatic — Sundays", status:"active"},
-    {name:"Drive folder auto-link on create", desc:"New property cards automatically find and link their Google Drive folder by job-site address.", trigger:"Automatic — on property creation", status:"planned"},
-    {name:"CompanyCam auto-link on create", desc:"Auto-links the CompanyCam folder by address, retrying within 48 hours if not found yet.", trigger:"Automatic — on creation + 48h retry", status:"planned"},
-    {name:"Slack material orders → Marlo", desc:"Pulls material orders posted in the Slack #material-lists channel onto Marlo's Admin dashboard automatically.", trigger:"Automatic — daily (Slack #material-lists)", status:"active"},
+  {cat:"\ud83c\udfc1 Closings & Archive", items:[
+    {name:"Closing-date approval flag", desc:"When a property's closing date arrives, a flashing Approve-Close button appears; approving records the close and moves it to Closed.", trigger:"Automatic \u2014 on closing date", status:"active"},
+    {name:"Closed \u2192 Completed archive", desc:"A property that sits in Closed for 4+ weeks auto-files into the Completed archive (year/month history).", trigger:"Automatic \u2014 on load", status:"active"},
+  ]},
+  {cat:"\ud83c\udfd8\ufe0f On the market", items:[
+    {name:"Listing detection", desc:"Checks whether a property has gone live for sale and moves the card itself, Whole Tail / Flips included.", trigger:"Automatic \u2014 Wed, Fri & Sun, 11am", status:"active"},
+    {name:"On-market checklist check", desc:"Checks listed properties against CompanyCam and posts a reminder when a checklist is more than two weeks old.", trigger:"Automatic \u2014 Mon, Wed & Fri, 10am", status:"active"},
+  ]},
+  {cat:"\ud83d\udd17 Integrations", items:[
+    {name:"CompanyCam link backfill", desc:"Each Sunday, finds properties still missing a CompanyCam link and links them by matching the job-site address in CompanyCam (skips ones without a project yet, e.g. early takedowns).", trigger:"Automatic \u2014 Sundays", status:"active"},
+    {name:"Drive folder auto-link on create", desc:"New property cards automatically find and link their Google Drive folder by job-site address.", trigger:"Automatic \u2014 on property creation", status:"planned"},
+    {name:"CompanyCam auto-link on create", desc:"Auto-links the CompanyCam folder by address, retrying within 48 hours if not found yet.", trigger:"Automatic \u2014 on creation + 48h retry", status:"planned"},
+  ]},
+  {cat:"\u2709\ufe0f Notifications", items:[
+    {name:"PM & closing emails", desc:"Emails the assigned PM when a property auto-advances, and Marlo + Patience when a property closes (utilities removal).", trigger:"Automatic \u2014 on advance / close", status:"pending"},
   ]},
 ];
 function _autoStatus(s){ return ({active:{t:"Active",c:"#0F7B54",bg:"#E1F5EE"},pending:{t:"Pending setup",c:"#B7791F",bg:"#FBEFDD"},planned:{t:"Planned",c:"#555",bg:"#EEF0F4"}})[s]||{t:s,c:"#555",bg:"#f4f5f7"}; }
@@ -8620,9 +8635,31 @@ async function _mSubmitEvent(){
 }
 // ============================ end Mobile app =================================
 
-function openAutomations(){
+// The Slack syncs run from a scheduled task outside the site. If that stops, the
+// cards quietly go stale and nothing on screen says so - it went unnoticed for nine
+// days once. The vacancy sync stamps a cursor each run, so show how fresh it is.
+async function _syncFreshness(){
+  try{
+    const r=await supabase.from("pm_settings").select("updated_at").eq("key","vacancy_sync_cursor").maybeSingle();
+    if(r.error||!r.data||!r.data.updated_at) return null;
+    const hrs=(Date.now()-new Date(r.data.updated_at).getTime())/3600000;
+    return { hrs, when:new Date(r.data.updated_at).toLocaleString() };
+  }catch(e){ return null; }
+}
+function _syncBanner(f){
+  if(!f) return '';
+  const stale = f.hrs > 24;
+  const age = f.hrs < 48 ? (Math.round(f.hrs)+" hours") : (Math.round(f.hrs/24)+" days");
+  if(!stale) return `<div style="background:#E1F5EE;border:1px solid #9ad9c3;border-radius:10px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#0B5A46">\u2705 Slack syncs are running \u2014 vacancy updates last synced ${_calEsc(age)} ago.</div>`;
+  return `<div style="background:#FCEBEB;border:1px solid #f0a9a9;border-radius:10px;padding:11px 14px;margin-bottom:16px;font-size:12.5px;color:#791F1F">
+    <b>\u26a0\ufe0f The Slack syncs have not run in ${_calEsc(age)}.</b>
+    <div style="margin-top:4px;font-size:12px;line-height:1.5">Vacancy dates and closing dates stop updating when this happens, so property cards drift out of step with what the team is posting in Slack. These run from a scheduled task on Bruce's machine \u2014 if it has been off or Claude has not been running, that is why. Last successful sync: ${_calEsc(f.when)}.</div>
+  </div>`;
+}
+async function openAutomations(){
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
+  const _fresh = await _syncFreshness();
   const sections=_AUTOMATIONS.map(sec=>`
     <div style="margin-bottom:18px">
       <div style="font-size:13px;font-weight:600;color:#111;margin-bottom:8px">${sec.cat}</div>
@@ -8640,6 +8677,7 @@ function openAutomations(){
       <div style="max-width:860px;margin:0 auto">
         <div style="font-size:18px;font-weight:600;color:#111;margin-bottom:4px">⚙️ Automations</div>
         <div style="font-size:12px;color:#888;margin-bottom:16px">Everything the system does automatically or at the click of a button, by category. This list grows as we build more.</div>
+        ${_syncBanner(_fresh)}
         ${sections}
       </div>
     </div>`;
@@ -8717,4 +8755,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-25d days-accumulated-3-stage -->
+<!-- build: 2026-08-25e automations-refresh -->
