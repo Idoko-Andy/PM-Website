@@ -8105,11 +8105,14 @@ async function saveTask(){
 async function _logAudit(action, area, label, detail){
   try{
     const u=_myProfile;
-    await supabase.from("pm_audit_log").insert({
+    const { error } = await supabase.from("pm_audit_log").insert({
       actor_name: u ? (`${u.firstName} ${u.lastName}`).trim() : null,
       actor_email: u ? u.email : null,
       action: action, area: area, label: label||null, detail: detail||null
     });
+    // Still fire-and-forget - logging must never block the action that caused it - but a
+    // rejected write now leaves a trace instead of disappearing entirely.
+    if(error) console.warn("Edit History entry was not recorded:", error.message||error);
   }catch(e){ /* never throw */ }
 }
 let _auditCache=[];
@@ -8117,8 +8120,21 @@ let _auditFilter="all";
 async function loadAuditLog(){
   const { data, error } = await supabase.from("pm_audit_log")
     .select("actor_name,actor_email,action,area,label,detail,created_at")
-    .order("created_at",{ascending:false}).limit(300);
+    .order("created_at",{ascending:false}).limit(1000);
+  // A failed load used to leave an empty list that reads as "nobody changed anything".
+  window._auditLoadOk = !error;
   _auditCache = error ? [] : (data||[]);
+}
+// One line saying how far back this screen actually reaches, so an empty stretch is
+// never mistaken for a quiet week.
+function _auditCoverage(){
+  if(window._auditLoadOk===false) return '<span style="color:#B42318">The history could not be loaded just now \u2014 refresh the page. This is not an empty history.</span>';
+  if(!_auditCache.length) return "No activity recorded yet.";
+  const oldest=_auditCache[_auditCache.length-1].created_at;
+  const d=new Date(oldest);
+  const day=isNaN(d)?"":d.toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"});
+  const capped=_auditCache.length>=1000;
+  return _auditCache.length+" change"+(_auditCache.length===1?"":"s")+", back to "+day+(capped?" (the most recent 1,000 \u2014 older entries are kept but not shown here)":"")+".";
 }
 function setAuditFilter(f){ _auditFilter=f; renderEditHistory(); }
 // ===================== AUTOMATIONS (what runs automatically / by a click) =====================
@@ -8915,7 +8931,8 @@ function renderEditHistory(){
     `<div style="background:#f4f5f7;min-height:500px;padding:24px">
       <div style="max-width:860px;margin:0 auto">
         <div style="font-size:18px;font-weight:500;color:#111;margin-bottom:4px">📜 Edit History</div>
-        <div style="font-size:12px;color:#888;margin-bottom:16px">Who changed what, across the dashboard. Most recent first.</div>
+        <div style="font-size:12px;color:#888;margin-bottom:4px">Who changed what, across the dashboard. Most recent first.</div>
+        <div style="font-size:11.5px;color:#aaa;margin-bottom:16px">${_auditCoverage()}</div>
         <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">${chips}</div>
         <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden">
           ${rows||`<div style="padding:28px;text-align:center;color:#bbb;font-size:13px">No activity recorded yet. Changes people make will show up here.</div>`}
@@ -8940,4 +8957,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-27a dollars-per-day-ranges + comments + approvals -->
+<!-- build: 2026-08-27b edit-history-coverage -->
