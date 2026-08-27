@@ -2352,8 +2352,12 @@ async function saveSubPhaseSchedule(id){
     if(scheduled){
       const payload={ title:name, category:name, assignee:card.pm||null, assignees:card.pm?[card.pm]:[], start_date:start, due_date:due, property_id:id, notes:"Auto-created from "+(card.addr||"property")+" subphase schedule" };
       if(taskId){
-        const { error } = await supabase.from("pm_tasks").update(payload).eq("id",taskId);
-        if(error){ // task may have been deleted; insert a fresh one
+        // If somebody deleted the mirrored task, this update simply matches no rows and
+        // returns NO error - so the "insert a fresh one" branch below could never fire and
+        // the task stayed gone for good. Ask for the changed row back and treat zero rows
+        // exactly like a failure.
+        const { data:_upd, error } = await supabase.from("pm_tasks").update(payload).eq("id",taskId).select("id");
+        if(error || !_upd || !_upd.length){ // task was deleted, or the update was refused - make a fresh one
           const ins=await supabase.from("pm_tasks").insert(payload).select("id").single();
           if(!ins.error) taskId=ins.data.id;
         }
@@ -2380,7 +2384,23 @@ async function saveSubPhaseSchedule(id){
   return true;
 }
 // Only these people can approve a completed subphase (which unlocks phase progression).
-function canApprove(u){ return !!(u && (u.isSuperAdmin || ["CEO","Project Director"].indexOf(u.role)>=0 || ["Marlo","Marlow"].indexOf((u.firstName||"").trim())>=0)); }
+function _argEsc(v){
+  return String(v==null?"":v)
+    .replace(/\\/g,"\\\\")
+    .replace(/'/g,"\\'")
+    .replace(/&/g,"&amp;")
+    .replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;");
+}
+function canApprove(u){
+  u = u || currentUser();
+  // Read-only means read-only. Without this an account marked read-only could still
+  // approve a close, confirm a purchase and sign off subphases - the one place the
+  // read-only rule was never applied.
+  if (isReadOnly(u)) return false;
+  return !!(u && (u.isSuperAdmin || ["CEO","Project Director"].indexOf(u.role)>=0 || ["Marlo","Marlow"].indexOf((u.firstName||"").trim())>=0));
+}
 function _ymdPlus(days){ return _ymd(new Date(Date.now()+days*86400000)); }
 // When a subphase finishes (trigger event), start the next subphase's clock.
 function _applyChain(subs, name, event, card){
@@ -2505,17 +2525,39 @@ function _spentAsOf(pid,dateStr){
 function _spentNow(c){ const v=parseFloat(String(c.spent||"").replace(/[^0-9.\-]/g,"")); return isNaN(v)?null:v; }
 // Average $/day across a set of properties for any window. Returns null when there is
 // not enough snapshot history yet (the caller falls back to whole-project velocity).
-function _dollarsDayRange(cards,fromStr,toStr){
+// The earliest daily snapshot we hold for any of these properties.
+function _snapEarliest(cards){
+  const h=window._snapHist||{}; let e=null;
+  (cards||[]).forEach(c=>{ const a=h[c.id]; if(a&&a.length){ const d=a[0].d; if(!e||d<e) e=d; } });
+  return e;
+}
+// $/day across a window, CLAMPED to the history we actually hold.
+// Snapshots only began on 16 Aug, so asking for 30 days, 3 months or year to date found
+// no snapshot at the start of the window, returned null, and let the caller quietly
+// substitute a whole-project or year-to-date figure. Every one of those periods then
+// showed the same number and the picker looked broken. Now the window shrinks to the
+// history we have and says that it did, so the figure is real and honest.
+// Returns { rate, from, to, days, short, requestedFrom }.
+function _dollarsDayWindow(cards, fromStr, toStr){
+  const earliest=_snapEarliest(cards);
+  if(!earliest) return null;
+  let from=fromStr, short=false;
+  if(!from || from<earliest){ short=!!(fromStr && fromStr<earliest); from=earliest; }
+  if(from>=toStr) return null;
   let sum=0, has=false;
   (cards||[]).forEach(c=>{
-    const a=_spentAsOf(c.id,fromStr);
+    const a=_spentAsOf(c.id,from);
     let b=_spentAsOf(c.id,toStr); if(b==null) b=_spentNow(c);
     if(a==null||b==null) return;
     sum+=Math.max(0,b-a); has=true;
   });
   if(!has) return null;
-  const days=Math.max(1,Math.round((new Date(toStr)-new Date(fromStr))/86400000));
-  return Math.round(sum/days);
+  const days=Math.max(1,Math.round((_dParse(toStr)-_dParse(from))/86400000));
+  return { rate:Math.round(sum/days), from, to:toStr, days, short, requestedFrom:fromStr||null };
+}
+function _dollarsDayRange(cards,fromStr,toStr){
+  const w=_dollarsDayWindow(cards,fromStr,toStr);
+  return w?w.rate:null;
 }
 // Daily spend snapshots — power the "last 7 days" $ pace. Runs once per app load.
 async function _snapshotSpentDaily(){
@@ -3492,7 +3534,7 @@ function _pmGroupCards(pmName,key){
 }
 function _pmBoardTile(pmName,key,title,color){
   const n=_pmGroupCards(pmName,key).length;
-  return `<div onclick="_pmBoardDrill('${pmName.replace(/'/g,"")}','${key}')" style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${color};border-radius:10px;padding:14px 16px;cursor:pointer" onmouseover="this.style.boxShadow='0 4px 14px rgba(0,0,0,0.08)'" onmouseout="this.style.boxShadow='none'">
+  return `<div onclick="_pmBoardDrill('${_argEsc(pmName)}','${_argEsc(key)}')" style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${color};border-radius:10px;padding:14px 16px;cursor:pointer" onmouseover="this.style.boxShadow='0 4px 14px rgba(0,0,0,0.08)'" onmouseout="this.style.boxShadow='none'">
     <div style="display:flex;align-items:center;justify-content:space-between"><div style="font-size:12.5px;font-weight:600;color:#111">${title}</div><span style="color:#ccc">›</span></div>
     <div style="font-size:26px;font-weight:600;color:${color};margin-top:6px">${n}</div>
     <div style="font-size:10.5px;color:#999">propert${n===1?'y':'ies'}</div>
@@ -3518,13 +3560,13 @@ function _pmBoardDrill(pmName,key){
   // with that group's upcoming dates underneath it.
   if(window._pdnData===undefined){ window._pdnData=null; _pdnLoad().then(()=>_pmBoardDrill(pmName,key)); }
   const _pdnList=(((window._pdnData||{})[pmName]||{})[key])||[];
-  const pmQ=pmName.replace(/'/g,"");
+  const pmQ=_argEsc(pmName);
   const items=_pdnList.map((n,i)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:8px 10px;margin-bottom:6px;display:flex;gap:8px;align-items:flex-start"><span onclick="_pdnToggle('${pmQ}','${key}',${i})" style="cursor:pointer;font-size:15px;line-height:1.2">${n.done?'✅':'⬜'}</span><div style="flex:1;font-size:11.5px;color:${n.done?'#aaa':'#333'};${n.done?'text-decoration:line-through;':''}">${_calEsc(n.t)}<div style="font-size:9.5px;color:#bbb">${_calEsc(n.at||'')}</div></div><span onclick="_pdnDel('${pmQ}','${key}',${i})" style="cursor:pointer;color:#c0392b;font-size:12px">✕</span></div>`).join('')||'<div style="color:#bbb;font-size:12px;padding:8px 0">No notes yet.</div>';
   const thirdHead='Comments & Notes';
   const thirdBody=`${isReadOnly()?'':`<div style="display:flex;gap:6px;margin-bottom:8px"><input id="pdn-new" placeholder="Feedback, ideas, follow-ups…" style="flex:1;min-width:0;padding:7px 9px;border:0.5px solid #ddd;border-radius:6px;font-size:12px"/><button onclick="_pdnAdd('${pmQ}','${key}')" style="padding:7px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer">Add</button></div>`}${items}
     <div style="font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin:16px 0 8px">Upcoming, by date</div>${upRows}`;
   el.innerHTML=`<div style="padding:20px">
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px"><button onclick="_pmBoardBack('${pmName.replace(/'/g,"")}')" style="font-size:12px;padding:6px 12px;border:0.5px solid #cdd7e6;border-radius:6px;background:#fff;color:#185FA5;cursor:pointer">‹ Back</button><div style="font-size:15px;font-weight:600;color:#111">${g.title} — ${_calEsc(resolvePMName(pmName))}</div></div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px"><button onclick="_pmBoardBack('${_argEsc(pmName)}')" style="font-size:12px;padding:6px 12px;border:0.5px solid #cdd7e6;border-radius:6px;background:#fff;color:#185FA5;cursor:pointer">‹ Back</button><div style="font-size:15px;font-weight:600;color:#111">${g.title} — ${_calEsc(resolvePMName(pmName))}</div></div>
     <div style="display:grid;grid-template-columns:1.2fr 1.2fr 1fr;gap:16px;align-items:start">
       <div><div style="font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Properties</div><div style="display:flex;flex-direction:column;gap:8px">${rows}</div></div>
       <div><div style="font-size:11px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Needs completed</div>${needs}</div>
@@ -3544,7 +3586,7 @@ function _pdnAllPMs(key, title){
   const d=window._pdnData||{};
   const cards=pms.map(pm=>{
     const list=((d[pm]||{})[key])||[];
-    const pmQ=pm.replace(/'/g,"");
+    const pmQ=_argEsc(pm);
     const elId='pdnall-'+key.replace(/[^a-z0-9]/gi,'')+'-'+pm.replace(/[^a-z0-9]/gi,'');
     const rows=list.map((n,i)=>`<div style="display:flex;gap:7px;align-items:flex-start;padding:5px 0;border-bottom:0.5px solid #f1f3f7"><span onclick="_pdnToggleAll('${pmQ}','${key}',${i})" style="font-size:13px;cursor:pointer">${n.done?'✅':'⬜'}</span><div style="flex:1;font-size:11.5px;color:${n.done?'#aaa':'#333'};${n.done?'text-decoration:line-through;':''}">${_calEsc(n.t)} <span style="color:#bbb;font-size:9.5px">${_calEsc(n.at||'')}</span></div></div>`).join('')||'<div style="font-size:11px;color:#bbb;padding:4px 0">No comments yet.</div>';
     return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 14px">
@@ -3773,13 +3815,11 @@ function openDollarsDayHousing(){
     const vs=_velStart(c);
     let days=null, spent=null, rate=null, basis='';
     if(win.from){
-      // Range mode: spend recorded inside the window ÷ days in the window.
-      const a=_spentAsOf(c.id,win.from); let bq=_spentAsOf(c.id,win.to); if(bq==null) bq=_spentNow(c);
-      if(a!=null && bq!=null){
-        spent=Math.max(0,bq-a);
-        days=Math.max(1,Math.round((new Date(win.to)-new Date(win.from))/86400000));
-        rate=Math.round(spent/days); basis='range';
-      }
+      // Range mode, clamped to the snapshots we hold. Previously a window starting before
+      // the first snapshot produced nothing and fell through to whole-project pace, so
+      // 30 days / 3 months / 6 months / year to date all read identically.
+      const w=_dollarsDayWindow([c],win.from,win.to);
+      if(w){ days=w.days; spent=w.rate*w.days; rate=w.rate; basis=w.short?'partial':'range'; }
     }
     if(rate==null){
       const v=_spentNow(c);
@@ -4023,10 +4063,10 @@ function openWeeklyMeeting(kind, week){
     const pdn=window._pdnData||{};
     const pmNotes=pms.map(pm=>{
       const list=(((pdn[pm]||{}).precon)||[]);
-      const items=list.map((n,i)=>`<div style="display:flex;gap:7px;align-items:flex-start;padding:5px 0;border-bottom:0.5px solid #f1f3f7"><span onclick="_pdnToggle2('${pm.replace(/'/g,"")}',${i})" style="font-size:13px;cursor:pointer">${n.done?'✅':'⬜'}</span><div style="flex:1;font-size:11.5px;color:${n.done?'#aaa':'#333'};${n.done?'text-decoration:line-through;':''}">${_calEsc(n.t)} <span style="color:#bbb;font-size:9.5px">${_calEsc(n.at||'')}</span></div></div>`).join('')||'<div style="font-size:11px;color:#bbb;padding:4px 0">No comments yet.</div>';
+      const items=list.map((n,i)=>`<div style="display:flex;gap:7px;align-items:flex-start;padding:5px 0;border-bottom:0.5px solid #f1f3f7"><span onclick="_pdnToggle2('${_argEsc(pm)}',${i})" style="font-size:13px;cursor:pointer">${n.done?'✅':'⬜'}</span><div style="flex:1;font-size:11.5px;color:${n.done?'#aaa':'#333'};${n.done?'text-decoration:line-through;':''}">${_calEsc(n.t)} <span style="color:#bbb;font-size:9.5px">${_calEsc(n.at||'')}</span></div></div>`).join('')||'<div style="font-size:11px;color:#bbb;padding:4px 0">No comments yet.</div>';
       const elId='pdn-mtg-'+pm.replace(/[^a-z0-9]/gi,'');
       return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 14px"><div style="font-size:12.5px;font-weight:700;color:#111;margin-bottom:4px">${_calEsc(pm)} — Pre Construction comments</div>${items}
-        ${isReadOnly()?'':`<div style="display:flex;gap:6px;margin-top:8px"><input id="${elId}" placeholder="Add a comment…" style="flex:1;min-width:0;padding:6px 9px;border:0.5px solid #ddd;border-radius:6px;font-size:11.5px"/><button onclick="_pdnAdd2('${pm.replace(/'/g,"")}','precon','${elId}')" style="padding:6px 11px;background:#111;color:#fff;border:none;border-radius:6px;font-size:11.5px;cursor:pointer">Add</button></div>`}
+        ${isReadOnly()?'':`<div style="display:flex;gap:6px;margin-top:8px"><input id="${elId}" placeholder="Add a comment…" style="flex:1;min-width:0;padding:6px 9px;border:0.5px solid #ddd;border-radius:6px;font-size:11.5px"/><button onclick="_pdnAdd2('${_argEsc(pm)}','precon','${elId}')" style="padding:6px 11px;background:#111;color:#fff;border:none;border-radius:6px;font-size:11.5px;cursor:pointer">Add</button></div>`}
       </div>`;
     }).join('');
     body=`
@@ -4193,16 +4233,13 @@ function _computePMMetrics(name){
   });
   const dollarsDay= _vDays? Math.round(_vSpent/_vDays) : null;
   // Last-7-days $ pace from daily spend snapshots (history builds as the app runs each day).
-  let dollars7=null;
+  // This read a separate cache and divided by 7 no matter how much history existed, so
+  // a PM card's seven-day figure disagreed with the same property on the $/day Housing
+  // tab. Both now run through _dollarsDayWindow.
+  let dollars7=null, dollars7Short=false, dollars7Days=null;
   try{
-    const snaps=(window._snapCache||{});
-    let dS=0, has=false;
-    mine.forEach(c=>{
-      const cur=parseFloat(String(c.spent||"").replace(/[^0-9.\-]/g,"")); if(isNaN(cur)) return;
-      const old=snaps[c.id]; if(old==null) return;
-      dS += Math.max(0, cur-old); has=true;
-    });
-    if(has) dollars7=Math.round(dS/7);
+    const w7=_dollarsDayWindow(mine, _ymd(new Date(today.getTime()-7*86400000)), todayStr);
+    if(w7){ dollars7=w7.rate; dollars7Short=w7.short; dollars7Days=w7.days; }
   }catch(e){}
   // Year-to-date pace (Project Team Overview): all spend ÷ days elapsed this year.
   const _ys=new Date(today.getFullYear(),0,1);
@@ -4210,18 +4247,20 @@ function _computePMMetrics(name){
   const _spentAll=mine.reduce((a,c)=>{const v=parseFloat(String(c.spent||"").replace(/[^0-9.\-]/g,""));return a+(isNaN(v)?0:v);},0);
   const dollarsYTD= _spentAll? Math.round(_spentAll/_daysYTD) : null;
   // $/day over whatever period the Team Overview is currently set to (defaults to YTD).
-  let dollarsRange=null;
+  let dollarsRange=null, rangeShort=false, rangeDays=null;
   try{
     const w=(typeof _tovWindow==='function')?_tovWindow():null;
-    if(w && w.from){ dollarsRange=_dollarsDayRange(mine,w.from,w.to); }
+    if(w && w.from){ const r=_dollarsDayWindow(mine,w.from,w.to); if(r){ dollarsRange=r.rate; rangeShort=r.short; rangeDays=r.days; } }
     else if(w && w.key==='ytd'){ dollarsRange=dollarsYTD; }
   }catch(e){}
-  if(dollarsRange==null) dollarsRange=dollarsYTD;
+  // Only fall back to year-to-date when there is genuinely no snapshot history at all,
+  // not merely because the requested window reaches further back than our records.
+  if(dollarsRange==null){ dollarsRange=dollarsYTD; rangeShort=false; }
   // Rescheduled % over the last 7 days.
   const ago7=_ymd(new Date(today.getTime()-7*86400000));
   const t7=tasks.filter(t=>t.due_date && t.due_date>=ago7 && t.due_date<=todayStr);
   const resched7= t7.length? Math.round(t7.filter(t=>(t.reschedule_count||0)>0).length/t7.length*100) : "--";
-  return { avgDailyWork:perDay, dollarsPerDayYear:dollarsDay, dollarsPerDay7:dollars7, dollarsPerDayYTD:dollarsYTD, dollarsPerDayRange:dollarsRange, reschedulePct7:resched7, budgetPct:{on:"--",over:"--"}, timelinePct:{on:onTime,over:overTime}, flipsCompleted:flips, rentalHandoffs:handoffs, taskCompletionPct:taskPct, reschedulePct:reschedPct };
+  return { avgDailyWork:perDay, dollarsPerDayYear:dollarsDay, dollarsPerDay7:dollars7, dollarsPerDay7Short:dollars7Short, dollarsPerDay7Days:dollars7Days, dollarsPerDayYTD:dollarsYTD, dollarsPerDayRange:dollarsRange, dollarsPerDayRangeShort:rangeShort, dollarsPerDayRangeDays:rangeDays, reschedulePct7:resched7, budgetPct:{on:"--",over:"--"}, timelinePct:{on:onTime,over:overTime}, flipsCompleted:flips, rentalHandoffs:handoffs, taskCompletionPct:taskPct, reschedulePct:reschedPct };
 }
 // Team Overview period picker — the $/day figure on every PM card follows this.
 function _tovWindow(){
@@ -5720,6 +5759,20 @@ function _accumSegments(c){
     { label:"Listed \u2192 sold",            from:listed, to:sold,   n:days(listed,sold),   live:!!(listed&&!sold),   note:"" }
   ];
 }
+// $/day for the property card. Spend to date over construction days, the same basis
+// the $/day Housing tab uses for its "whole project" setting.
+function _velDayLine(c){
+  const v=(typeof _spentNow==='function')?_spentNow(c):null;
+  const vs=(typeof _velStart==='function')?_velStart(c):null;
+  if(v==null || v<=0 || !vs) return "";
+  const sd=_dParse(vs); if(isNaN(sd)) return "";
+  const d=Math.max(1, Math.round((_dParse(_ymd(new Date()))-sd)/86400000));
+  return `<div style="display:flex;justify-content:space-between;align-items:baseline;padding-top:7px;margin-top:3px;border-top:1px solid #dfe3ea">
+      <span style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.04em">$ / day</span>
+      <span style="font-size:15px;font-weight:700;color:#185FA5">$${Math.round(v/d).toLocaleString()}</span>
+    </div>
+    <div style="font-size:9px;color:#b6bbc4;text-align:right;margin-top:1px">over ${d} construction day${d===1?"":"s"}</div>`;
+}
 function _accumBox(c){
   const segs=_accumSegments(c);
   const row=(x)=>{
@@ -5743,7 +5796,8 @@ function _accumBox(c){
     <div style="display:flex;justify-content:space-between;align-items:baseline;padding-top:5px">
       <span style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:0.04em">Total</span>
       <span style="font-size:15px;font-weight:700;color:#111">${started.length?total:"\u2014"}${started.length?'<span style="font-size:9px;font-weight:400;color:#aaa"> d</span>':""}</span>
-    </div>`;
+    </div>
+    ${_velDayLine(c)}`;
 }
 function _propCardMini(c){
   const p=phInfo(c.phase); const pmColor=PROP_PM_COLORS[c.pm]||'#ccc';
@@ -6172,8 +6226,8 @@ function renderDirectorHome(){
     _dirBox("Closings to sign", d.buyDue.length+d.sellDue.length, "Buy + sell flags", "#B42318", "_dirDrill('buyDue')"),
   ].join("");
   const pms=(typeof PM_MANAGERS!=='undefined'?PM_MANAGERS:[]);
-  const pmBoxes=pms.map(nm=>{ const m=(typeof _computePMMetrics==='function')?_computePMMetrics(nm):{}; const props=d.cards.filter(c=>_sameAssignee(c.pm,nm)).length; const pct=(m&&m.taskCompletionPct!=null&&m.taskCompletionPct!=='--')?m.taskCompletionPct+'%':'—'; return _dirBox(nm, props, "Tasks done: "+pct, "#122A4A", "_dirDrill('pm','"+nm.replace(/'/g,"")+"')"); }).join("");
-  const phaseBoxes=phases.map(ph=>{ const p=(typeof phInfo==='function')?phInfo(ph):{dot:'#888'}; const n=d.cards.filter(c=>c.phase===ph).length; return _dirBox(ph, n, "properties", p.dot||'#888', "_dirDrill('phase','"+ph.replace(/'/g,"")+"')"); }).join("");
+  const pmBoxes=pms.map(nm=>{ const m=(typeof _computePMMetrics==='function')?_computePMMetrics(nm):{}; const props=d.cards.filter(c=>_sameAssignee(c.pm,nm)).length; const pct=(m&&m.taskCompletionPct!=null&&m.taskCompletionPct!=='--')?m.taskCompletionPct+'%':'—'; return _dirBox(nm, props, "Tasks done: "+pct, "#122A4A", "_dirDrill('pm','"+_argEsc(nm)+"')"); }).join("");
+  const phaseBoxes=phases.map(ph=>{ const p=(typeof phInfo==='function')?phInfo(ph):{dot:'#888'}; const n=d.cards.filter(c=>c.phase===ph).length; return _dirBox(ph, n, "properties", p.dot||'#888', "_dirDrill('phase','"+_argEsc(ph)+"')"); }).join("");
   const grid=(inner)=>`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px">${inner}</div>`;
   return `<div style="padding:20px">
     <div style="font-size:16px;font-weight:600;color:#111;margin-bottom:2px">Director / CEO Overview</div>
@@ -8076,7 +8130,7 @@ const _AUTOMATIONS = [
   ]},
   {cat:"\ud83d\udd14 Deadline alerts", items:[
     {name:"Scope creation alerts", desc:"Checks scope of work, budget and drawing deadlines at five days out, twenty-four hours out, and past due. Scope and budget go to the property's PM; drawings and permits also go to Jenn; anything waiting on sign-off goes to Tommy, Bruce and the PM.", trigger:"Automatic \u2014 10am, 3pm, 5pm", status:"active"},
-    {name:"Window tracker alerts", desc:"Posts a 48-hour warning before each window measure and each install.", trigger:"Automatic \u2014 daily, 8am", status:"pending"},
+    {name:"Window tracker alerts", desc:"Posts a 48-hour warning into #window-tracker before each window measure and each install.", trigger:"Automatic \u2014 daily, 8am", status:"active"},
     {name:"Mowing route 48h", desc:"When a house goes vacant, raises a 48-hour task to add it to the mowing route. When it closes, pins it to the top flagged to text the mower and take it off.", trigger:"Automatic \u2014 daily, 9am", status:"active"},
   ]},
   {cat:"\ud83d\udcb0 Financial", items:[
@@ -8886,4 +8940,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-25g leftover + company-projects -->
+<!-- build: 2026-08-27a dollars-per-day-ranges + comments + approvals -->
