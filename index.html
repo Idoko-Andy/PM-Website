@@ -6305,12 +6305,14 @@ function openSeniorVADashboard() {
 }
 function openVAAdminDashboard(activeTab) {
   activeTab = activeTab || 'main';
+  // The old standalone Utilities tab is gone - the Utility Tracker under Trackers
+  // replaced it. Old links (dashboard tiles, bookmarks) redirect there.
+  if (activeTab === 'utilities') { activeTab = 'trackers'; window._trkView='util'; if(['e','w','g','m'].indexOf(window._utilTab)<0) window._utilTab='e'; }
   const va=(getUsers().find(u=>u.status==="approved"&&u.role==="Virtual Administrative Assistant")||{firstName:"Patience"});
   const vaName=(va.firstName||"Patience");
   const tabs=[
     {id:'main',label:'Main Dashboard',icon:'📊'},
     {id:'va',label:vaName,icon:'👤'},
-    {id:'utilities',label:'Utilities',icon:'⚡'},
     {id:'trackers',label:'Trackers',icon:'📋'},
     {id:'property',label:'Property Dashboard',icon:'🏗'},
     {id:'construction',label:'Construction Calendar',icon:'📅'},
@@ -6329,7 +6331,7 @@ function openVAAdminDashboard(activeTab) {
   _execShell('openVAAdminDashboard', tabs, activeTab, content);
   if(activeTab==='trackers' && !window._trkLoaded){ Promise.all([_trkLoad(), loadContractorsFromSupabase()]).then(()=>openVAAdminDashboard('trackers')); }
 }
-async function _utilToggle(id,key){ await toggleChecklistItem(id,key); openVAAdminDashboard('utilities'); }
+async function _utilToggle(id,key){ await toggleChecklistItem(id,key); openVAAdminDashboard('trackers'); }
 // Utilities dashboard (Patience): electric/water/gas status per active property.
 function _utilitiesDashboard(){
   const phases=["Vacant / On Standby","Pre Construction","Waiting Permits","Framing, MEPS, Insulation","Drywall / Exterior Work","Finishes","Pre List / Punchout Process","Listed on the Market"];
@@ -6419,6 +6421,16 @@ const UTILS = [
   { k:'ug', key:'g', icon:'🔥', label:'Gas / Propane', color:'#B42318' }
 ];
 const UTIL_STATUS = ["Confirmed","Needs attention","Not set up","Not applicable"];
+// The retired Utilities tab recorded on/off as property checklist ticks. Read those
+// as the fallback so every box Patience already ticked still shows here.
+const UTIL_LEGACY_KEY = { ue:'vos_util_electric', uw:'vos_util_water', ug:'vos_util_gas' };
+function _utilIsOn(kind, c){
+  const v = _trkVal(kind, c.id, 'on');
+  if (v) return v;
+  const k = UTIL_LEGACY_KEY[kind]; if (!k) return '';
+  const st = ((c.checklists||{})[k]) || {};
+  return st.done ? 'Yes' : '';
+}
 
 function _utilArr(bucket,pid,sub){
   const d=window._trkData||{}; const b=d[bucket]||{};
@@ -6480,13 +6492,13 @@ function _utilTabTo(t){ window._trkView='util'; window._utilTab=t; if(t!=='h') w
 // A property is "outstanding" when any utility has no provider recorded, or is
 // recorded as off. That is what the VA chases every week.
 function _utilOutstanding(c){
-  return UTILS.some(u=>{ const prov=_trkVal(u.k,c.id,'prov'); const on=_trkVal(u.k,c.id,'on'); return !prov || on==='No'; });
+  return UTILS.some(u=>{ const prov=_trkVal(u.k,c.id,'prov'); return !prov || _utilIsOn(u.k,c)==='No'; });
 }
 function _utilGaps(c){
   const out=[];
-  UTILS.forEach(u=>{ const prov=_trkVal(u.k,c.id,'prov'); const on=_trkVal(u.k,c.id,'on');
+  UTILS.forEach(u=>{ const prov=_trkVal(u.k,c.id,'prov');
     if(!prov) out.push(u.label+' provider missing');
-    else if(on==='No') out.push(u.label+' is off'); });
+    else if(_utilIsOn(u.k,c)==='No') out.push(u.label+' is off'); });
   return out;
 }
 
@@ -6505,6 +6517,7 @@ function _vaTrackers(){
   // ---------- Utility tracker (mirrors the Utility Tracker workbook) ----------
   const usel=(kind,id,field,opts,w)=>ro?(_trkVal(kind,id,field)||'—'):`<select onchange="_trkSet('${kind}','${id}','${field}',this.value,true)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:${w||90}px"><option value=""></option>${opts.map(o=>`<option ${_trkVal(kind,id,field)===o?'selected':''}>${_calEsc(o)}</option>`).join('')}</select>`;
   const uta=(kind,id,field,ph,w)=>ro?`<div style="max-width:260px;white-space:pre-wrap">${_calEsc(_trkVal(kind,id,field))||'—'}</div>`:`<textarea placeholder="${ph||''}" onchange="_trkSet('${kind}','${id}','${field}',this.value,false)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:${w||220}px;min-height:44px;resize:vertical;font-family:inherit">${_calEsc(_trkVal(kind,id,field))}</textarea>`;
+  const uOnSel=(u,c)=>{ const cur=_utilIsOn(u.k,c); return ro?(cur||'—'):`<select onchange="_trkSet('${u.k}','${c.id}','on',this.value,true)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:72px"><option value=""></option>${["Yes","No"].map(o=>`<option ${cur===o?'selected':''}>${o}</option>`).join('')}</select>`; };
   const uHead=(u)=>`<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px;text-align:left">Account #</th><th style="padding:9px;text-align:left">${u.label} Provider</th><th style="padding:9px;text-align:left">Contact info</th>${u.key==='g'?'<th style="padding:9px">Gas or propane</th>':''}<th style="padding:9px">Is it on?</th><th style="padding:9px;text-align:left">Notes / latest updates</th><th style="padding:9px;text-align:left">Scheduled dates / site visits</th><th style="padding:9px">Due on (xx)</th><th style="padding:9px">Last payment</th><th style="padding:9px">Amount</th><th style="padding:9px">Charge</th><th style="padding:9px;text-align:left">Confirmation #</th>${u.key==='g'?'<th style="padding:9px">Tank last filled</th>':''}<th style="padding:9px">In receipt tracker</th><th style="padding:9px">History</th>`;
   const uRow=(u)=>(c)=>`<tr data-trk="${nm(c)+' '+_calEsc(_trkVal(u.k,c.id,'prov'))+' '+_calEsc(_trkVal(u.k,c.id,'acct'))}" style="border-top:0.5px solid #eef0f6;vertical-align:top">
     <td style="padding:7px 10px;min-width:170px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${nm(c)}</span></td>
@@ -6512,7 +6525,7 @@ function _vaTrackers(){
     <td style="padding:7px">${txt(u.k,c.id,'prov','Provider',140)}</td>
     <td style="padding:7px">${txt(u.k,c.id,'contact','Phone / point of contact',150)}</td>
     ${u.key==='g'?`<td style="padding:7px;text-align:center">${usel(u.k,c.id,'gp',["Gas","Propane"],95)}</td>`:''}
-    <td style="padding:7px;text-align:center">${usel(u.k,c.id,'on',["Yes","No"],72)}</td>
+    <td style="padding:7px;text-align:center">${uOnSel(u,c)}</td>
     <td style="padding:7px">${uta(u.k,c.id,'notes','Called on 00/00/26 …',230)}</td>
     <td style="padding:7px">${uta(u.k,c.id,'sched','Turn-on dates, inspections, meter installs…',200)}</td>
     <td style="padding:7px;text-align:center">${txt(u.k,c.id,'due','e.g. 15th',72)}</td>
@@ -6629,7 +6642,7 @@ function _vaTrackers(){
       const logs=_utilArr('ulog',pid);
       const logBody=logs.length?logs.map((r,i)=>`<tr style="border-top:0.5px solid #eef0f6"><td style="padding:7px 10px;white-space:nowrap">${_calEsc(r.d||'')}</td><td style="padding:7px">${_calEsc(r.u||'')}</td><td style="padding:7px;white-space:pre-wrap">${_calEsc(r.txt||'')}</td><td style="padding:7px;font-size:11.5px;color:#999">${_calEsc(r.by||'')}</td><td style="padding:7px;text-align:center">${ro?'':`<span onclick="_utilLogDel('${pid}',${i})" style="cursor:pointer;color:#B42318">✕</span>`}</td></tr>`).join(''):'<tr><td colspan="5" style="padding:14px;color:#bbb;text-align:center">Nothing logged yet.</td></tr>';
       const logAdd=ro?'':`<tr style="background:#F7F8FB;border-top:0.5px solid #e0e4ec"><td style="padding:7px 10px"><input type="date" id="ul-d" value="${_ymd(new Date())}" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td style="padding:7px"><select id="ul-u" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"><option value="">— Utility —</option><option>Electric</option><option>Water</option><option>Gas / Propane</option><option>Trash</option><option>Other</option></select></td><td style="padding:7px"><textarea id="ul-t" placeholder="Called on … to start service. Rep said …" style="width:100%;min-width:320px;min-height:44px;padding:5px 7px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;font-family:inherit;resize:vertical"></textarea></td><td colspan="2" style="padding:7px;text-align:center"><button onclick="_utilLogAdd('${pid}')" style="padding:5px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">+ Add entry</button></td></tr>`;
-      const provCard=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 15px;margin-bottom:16px"><div style="font-size:13.5px;font-weight:700;color:#111;margin-bottom:8px">🏷 Utility provider information</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px">${UTILS.map(u=>`<div style="border:0.5px solid #eef0f6;border-radius:8px;padding:10px 12px"><div style="font-size:12.5px;font-weight:600;color:${u.color};margin-bottom:5px">${u.icon} ${u.label}</div><div style="font-size:12.5px;color:#444;line-height:1.7"><b>Provider:</b> ${_calEsc(_trkVal(u.k,pid,'prov'))||'<span style="color:#ccc">not set</span>'}<br/><b>Account #:</b> ${_calEsc(_trkVal(u.k,pid,'acct'))||'<span style="color:#ccc">not set</span>'}<br/><b>Contact:</b> ${_calEsc(_trkVal(u.k,pid,'contact'))||'<span style="color:#ccc">not set</span>'}<br/><b>Service on:</b> ${_calEsc(_trkVal(u.k,pid,'on'))||'<span style="color:#ccc">unknown</span>'}<br/><b>Due each month:</b> ${_calEsc(_trkVal(u.k,pid,'due'))||'<span style="color:#ccc">—</span>'}<br/><b>Next/last payment:</b> ${_calEsc(_trkVal(u.k,pid,'last'))||'<span style="color:#ccc">—</span>'}</div></div>`).join('')}</div><div style="font-size:12px;color:#999;margin-top:8px">Edit these on the Electric / Water / Gas sheets.</div></div>`;
+      const provCard=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 15px;margin-bottom:16px"><div style="font-size:13.5px;font-weight:700;color:#111;margin-bottom:8px">🏷 Utility provider information</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px">${UTILS.map(u=>`<div style="border:0.5px solid #eef0f6;border-radius:8px;padding:10px 12px"><div style="font-size:12.5px;font-weight:600;color:${u.color};margin-bottom:5px">${u.icon} ${u.label}</div><div style="font-size:12.5px;color:#444;line-height:1.7"><b>Provider:</b> ${_calEsc(_trkVal(u.k,pid,'prov'))||'<span style="color:#ccc">not set</span>'}<br/><b>Account #:</b> ${_calEsc(_trkVal(u.k,pid,'acct'))||'<span style="color:#ccc">not set</span>'}<br/><b>Contact:</b> ${_calEsc(_trkVal(u.k,pid,'contact'))||'<span style="color:#ccc">not set</span>'}<br/><b>Service on:</b> ${_calEsc(_utilIsOn(u.k,c))||'<span style="color:#ccc">unknown</span>'}<br/><b>Due each month:</b> ${_calEsc(_trkVal(u.k,pid,'due'))||'<span style="color:#ccc">—</span>'}<br/><b>Next/last payment:</b> ${_calEsc(_trkVal(u.k,pid,'last'))||'<span style="color:#ccc">—</span>'}</div></div>`).join('')}</div><div style="font-size:12px;color:#999;margin-top:8px">Edit these on the Electric / Water / Gas sheets.</div></div>`;
       return shell(back+bar+`<div style="font-size:15px;font-weight:600;color:#111;margin-bottom:10px">📜 ${nm(c)}</div>`+provCard+UTILS.map(payTable).join('')+_trkTable('📞 Utility notes &amp; activity','#0B7285','<th style="padding:9px 10px;text-align:left">Date</th><th style="padding:9px;text-align:left">Utility</th><th style="padding:9px;text-align:left">What happened</th><th style="padding:9px;text-align:left">Logged by</th><th style="padding:9px"></th>',logBody+logAdd));
     }
     if(ut==='m') return shell(back+bar+_trkSearchBox('Search a property…')+_trkTable('📋 Utility Info Master Sheet','#122A4A','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px;text-align:left">Electric provider</th><th style="padding:9px;text-align:left">Gas provider</th><th style="padding:9px;text-align:left">Water provider</th><th style="padding:9px;text-align:left">Comments</th><th style="padding:9px">Status</th><th style="padding:9px">History</th>',umRows));
@@ -9122,4 +9135,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-28a tracker-text-color-fix -->
+<!-- build: 2026-08-28b utilities-tab-retired -->
