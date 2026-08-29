@@ -3983,6 +3983,58 @@ function _wmArchive(kind, current){
 }
 // Schedule straight from the meeting: opens the normal Add-task / Add-event form with
 // the property already chosen, so the room can assign work while it's being discussed.
+// ---- Monday meeting: per-property deal fields --------------------------------
+// The meeting screen is driven live in a room, so a field must save without
+// re-rendering the page underneath someone who is mid-sentence in a notes box.
+// Each input writes its own column and flashes; nothing else moves.
+const _WM_COL_TO_CARD={ end_date:'end', jv_deal:'jvDeal', est_profit:'estProfit', goal_arv:'goalArv', listing_agent:'listingAgent' };
+async function _wmDeal(pid, col, val, el){
+  if(_blockIfReadOnly()) return;
+  if(!_WM_COL_TO_CARD[col]) return;
+  const patch={}; patch[col]=(col==='jv_deal') ? !!val : (val===''? (col==='end_date'?null:'') : val);
+  const { data, error } = await supabase.from("pm_properties").update(patch).eq("id",pid).select("id");
+  // A zero-row update comes back with error null - that is what a row hidden by
+  // row-level security looks like, so check that something actually changed.
+  if(error || !data || !data.length){ _wmFlash(el,false, error?(error.message||''):'nothing was saved — refresh and try again'); return; }
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
+  if(c) c[_WM_COL_TO_CARD[col]] = (col==='jv_deal') ? !!val : (val||'');
+  const labels={ end_date:'Finish date', jv_deal:'JV deal', est_profit:'Estimated profit', goal_arv:'Goal ARV', listing_agent:'Listing agent' };
+  _logAudit("updated","property", (c&&c.addr)||"", labels[col]+" set in the Monday meeting"+(col==='jv_deal'?(val?': yes':': no'):(val?(': '+val):' — cleared')));
+  _wmFlash(el,true);
+}
+function _wmFlash(el, ok, msg){
+  if(!el) { if(!ok) alert("Not saved: "+(msg||"")); return; }
+  const host=el.parentNode; if(!host) return;
+  let tag=host.querySelector('.wm-flash');
+  if(!tag){ tag=document.createElement('span'); tag.className='wm-flash'; tag.style.cssText='font-size:11px;margin-left:6px'; host.appendChild(tag); }
+  tag.textContent = ok ? 'Saved ✓' : ('Not saved — '+(msg||''));
+  tag.style.color = ok ? '#1D9E75' : '#B42318';
+  if(ok) setTimeout(()=>{ if(tag) tag.textContent=''; }, 2500);
+}
+// Who is listing it. Realtors on the team come from the job role, so assigning one
+// is what will feed their own dashboard; a one-off agent can just be typed in.
+function _wmAgentField(c){
+  if(isReadOnly()) return `<span style="font-size:13px;color:#111">${_calEsc(c.listingAgent||'')||'—'}</span>`;
+  const realtors=[...new Set((typeof getUsers==='function'?getUsers():[])
+    .filter(u=>u.status==="approved" && u.role==="Realtor")
+    .map(u=>((u.firstName||'')+' '+(u.lastName||'')).trim()).filter(Boolean))].sort();
+  const cur=c.listingAgent||'';
+  const known=!cur || realtors.indexOf(cur)>=0;
+  const selId='wm-ag-'+c.id, txtId='wm-agt-'+c.id;
+  const opts=['<option value="">— Not set —</option>']
+    .concat(realtors.map(r=>`<option ${cur===r?'selected':''}>${_calEsc(r)}</option>`))
+    .concat([`<option value="__other" ${known?'':'selected'}>Other agent…</option>`]).join('');
+  return `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+    <select id="${selId}" onchange="_wmAgentPick('${c.id}',this)" style="padding:5px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px;max-width:160px">${opts}</select>
+    <input id="${txtId}" value="${known?'':_calEsc(cur)}" placeholder="Agent name" onchange="_wmDeal('${c.id}','listing_agent',this.value,this)" style="display:${known?'none':'inline-block'};width:130px;padding:5px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px"/>
+  </div>`;
+}
+function _wmAgentPick(pid, sel){
+  const txt=document.getElementById('wm-agt-'+pid);
+  if(sel.value==='__other'){ if(txt){ txt.style.display='inline-block'; txt.focus(); } return; }
+  if(txt){ txt.style.display='none'; txt.value=''; }
+  _wmDeal(pid,'listing_agent',sel.value,sel);
+}
 function _wmAddTask(pid){
   if(typeof openAddTask!=='function') return;
   openAddTask(_ymd(new Date()));
@@ -4069,31 +4121,60 @@ function openWeeklyMeeting(kind, week){
   };
   let body='';
   if(kind==='team'){
-    const cons=["Pre Construction","Waiting Permits","Framing, MEPS, Insulation","Drywall / Exterior Work","Finishes","Pre List / Punchout Process","Listed on the Market / Final Inspections"];
+    // Pre Construction through Pre List / Punchout - once a house is on the market it
+    // leaves the Monday construction walk-through.
+    const cons=["Pre Construction","Waiting Permits","Framing, MEPS, Insulation","Drywall / Exterior Work","Finishes","Pre List / Punchout Process"];
     // Ordered by house number so the room walks the list 1 → 9; deliberately NOT grouped by
     // PM, so while one property is discussed the other PMs can keep typing and texting.
     const _num=(a)=>{ const m=String(a||'').match(/\d+/); return m?parseInt(m[0],10):999999; };
     const cards=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && cons.includes(c.phase)).sort((a,b)=>_num(a.addr)-_num(b.addr)||String(a.addr||'').localeCompare(String(b.addr||'')));
-    const needDates=cards.filter(c=>!c.start||!c.end);
-    const nd=needDates.length?needDates.map(c=>`<div style="display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:0.5px solid #f4e9c8;font-size:13.5px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span><span style="color:#8a6d1a">missing ${(!c.start&&!c.end)?'start & finish':(!c.start?'start':'finish')} date · ${_calEsc(c.pm||'no PM')}</span></div>`).join(''):'<div style="font-size:13.5px;color:#1D9E75">✅ Every construction property has its start & finish dates set.</div>';
     const blocks=cards.map(c=>{
       const b=money(c.budget), s=money(c.spent); const left=(b!=null&&s!=null)?b-s:null;
-      const vs=_velStart(c); let rate=null,days=null;
-      if(s&&vs){ const t=new Date();t.setHours(0,0,0,0); const sd=new Date(vs); if(!isNaN(sd)){ days=Math.max(1,Math.round((t-sd)/86400000)); rate=Math.round(s/days); } }
+      const cl=c.checklists||{};
+      const today=_ymd(new Date());
+      // Construction start is stamped automatically when the card leaves Pre Construction;
+      // timeline_done is stamped when it reaches Listed on the Market / Rental Handoff.
+      const cStart=cl.construction_start||c.start||null;
+      const listed=cl.timeline_done||null;
+      // Production $/day - what the build is spending per day from construction start
+      // to the day it hit the market. Still running counts to today and says so.
+      let rate=null, prodDays=null; const prodLive=!!(cStart&&!listed);
+      if(cStart){
+        prodDays=Math.max(1,Math.round((_dParse(listed||today)-_dParse(cStart))/86400000));
+        const sp=_spentNow(c); if(sp!=null) rate=Math.round(sp/prodDays);
+      }
+      // Total days accumulated - the whole clock, from the day it went vacant to the
+      // day it was listed or handed to rentals.
+      let accDays=null; const accLive=!!(c.vacancyDate&&!listed);
+      if(c.vacancyDate) accDays=Math.max(0,Math.round((_dParse(listed||today)-_dParse(c.vacancyDate))/86400000));
       const perm=(c.checklists&&c.checklists.permitted)==='yes';
-      const fa=(c.subPhases||[]).find(x=>x.name==='First Time Access Checklist'&&x.completed&&x.completedAt);
-      const acc=fa?Math.max(0,Math.floor((new Date()-new Date(fa.completedAt))/86400000)):null;
-      const cell=(l,v,color)=>`<div style="background:#f7f8fb;border-radius:7px;padding:7px 10px"><div style="font-size:10.5px;color:#999;text-transform:uppercase">${l}</div><div style="font-size:14px;font-weight:600;color:${color||'#111'}">${v}</div></div>`;
-      return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:14px 16px;margin-bottom:14px">
+      const cell=(l,v,color,note)=>`<div style="background:#f7f8fb;border-radius:7px;padding:7px 10px"><div style="font-size:10.5px;color:#999;text-transform:uppercase">${l}</div><div style="font-size:14px;font-weight:700;color:${color||'#111'}">${v}</div>${note?`<div style="font-size:10px;color:#aaa">${note}</div>`:''}</div>`;
+      const ro=isReadOnly();
+      const inp=(col,val,ph,w)=>ro?`<span style="font-size:13px;color:#111">${_calEsc(val)||'—'}</span>`:`<input value="${_calEsc(val)}" placeholder="${ph}" onchange="_wmDeal('${c.id}','${col}',this.value,this)" style="width:${w||110}px;padding:5px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px"/>`;
+      const dte=(col,val)=>ro?`<span style="font-size:13px;color:#111">${_calEsc(val)||'—'}</span>`:`<input type="date" value="${_calEsc(val)}" onchange="_wmDeal('${c.id}','${col}',this.value,this)" style="padding:5px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px"/>`;
+      const fld=(label,inner)=>`<div style="display:flex;flex-direction:column;gap:3px"><div style="font-size:10.5px;color:#999;text-transform:uppercase;letter-spacing:.04em">${label}</div>${inner}</div>`;
+      return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:14px 16px;margin-bottom:14px;color:#111">
         <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:8px">
-          <span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-size:15.5px;font-weight:700;color:#185FA5">${_calEsc(c.addr||'')}</span>
+          <span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-size:15.5px;font-weight:700;color:#185FA5">${_calEsc(c.addr||'')}${c.jvDeal?' <span style="font-size:11px;background:#EEEDFE;color:#3C3489;padding:1px 7px;border-radius:99px;vertical-align:middle">JV</span>':''}</span>
           <span style="font-size:12px;color:#666">${_calEsc(c.phase||'')} · PM: ${_calEsc(c.pm||'—')}${perm?' · 🏛 Permitted':''}</span>
         </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:7px">
-          ${cell('Budgeted',fmt(b))}${cell('Spent',fmt(s))}${cell('Leftover',fmt(left),left!=null&&left<0?'#B42318':'#0F7B54')}${cell('$ / day',rate!=null?('$'+rate.toLocaleString()):'—','#4A1D6E')}${cell('Start',c.start||'⚠️ set')}${cell('Projected end',c.end||'⚠️ set')}${cell('Days accumulated',acc!=null?acc:'—')}
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:7px">
+          ${cell('Budgeted',fmt(b))}
+          ${cell('Spent',fmt(s))}
+          ${cell('Leftover',fmt(left),left!=null&&left<0?'#B42318':'#0F7B54')}
+          ${cell('Production $ / day',rate!=null?('$'+rate.toLocaleString()):'—','#4A1D6E',prodDays!=null?(prodDays+' construction days'+(prodLive?' · LIVE':'')):'set a start date')}
+          ${cell('Total days accum.',accDays!=null?accDays:'—','#B7791F',accDays!=null?('vacant '+c.vacancyDate+(accLive?' → today · LIVE':' → listed')):'no vacancy date')}
         </div>
-        ${perm?'<div style="margin-top:7px;font-size:12px;color:#72243E;background:#FBEAF0;border-radius:6px;padding:5px 9px;display:inline-block">IF PERMITS — fill in: days since drawings/engineer back · days since last touch with GC</div>':''}
-        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+        <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:11px;padding-top:11px;border-top:0.5px solid #eef0f6">
+          ${fld('Start date',`<span style="font-size:13px;color:${cStart?'#111':'#B7791F'}">${_calEsc(cStart||'set when it goes vacant')}</span>`)}
+          ${fld('Finish date',dte('end_date',c.end||''))}
+          ${fld('Est. profit',inp('est_profit',c.estProfit||'','$0'))}
+          ${fld('Goal ARV',inp('goal_arv',c.goalArv||'','$0'))}
+          ${fld('Listing on the market',_wmAgentField(c))}
+          ${fld('JV deal',ro?(c.jvDeal?'Yes':'No'):`<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" ${c.jvDeal?'checked':''} onchange="_wmDeal('${c.id}','jv_deal',this.checked,this)" style="width:15px;height:15px;cursor:pointer"/> Yes</label>`)}
+        </div>
+        ${perm?'<div style="margin-top:9px;font-size:12px;color:#72243E;background:#FBEAF0;border-radius:6px;padding:5px 9px;display:inline-block">IF PERMITS — fill in: days since drawings/engineer back · days since last touch with GC</div>':''}
+        <div style="margin-top:9px;display:flex;gap:8px;flex-wrap:wrap">
           <button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">＋ Add task</button>
           <button onclick="_wmAddEvent('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#639922;cursor:pointer;font-weight:600">＋ Schedule contractor</button>
           <button onclick="openPropDetail('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #e6e8ee;border-radius:7px;font-size:12.5px;color:#777;cursor:pointer">Open card</button>
@@ -4113,7 +4194,6 @@ function openWeeklyMeeting(kind, week){
       </div>`;
     }).join('');
     body=`
-      <div style="background:#FFF7E0;border:0.5px solid #EAD9A8;border-radius:12px;padding:14px 16px;margin-bottom:16px"><div style="font-size:14px;font-weight:700;color:#6b5310;margin-bottom:6px">⚠️ Properties needing Start &amp; Finish dates (set in this meeting)</div>${nd}</div>
       <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:14px 16px;margin-bottom:16px"><div style="font-size:14px;font-weight:700;color:#111">🎯 Priority Q for Tommy</div>${ta('__pq','Questions and decisions that need Tommy this week…')}</div>
       ${blocks || '<div style="color:#bbb;font-size:14px;padding:20px 0">No construction properties right now.</div>'}
       <div style="font-size:14px;font-weight:700;color:#111;margin:18px 0 8px">💬 Pre Construction comments — all PMs</div>
@@ -9488,4 +9568,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-29e deal-fields + realtor-role -->
+<!-- build: 2026-08-29f monday-meeting-rework -->
