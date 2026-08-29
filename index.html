@@ -282,6 +282,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
       <div class="ddi" onclick="openTVDashboard()">📺 TV Dashboard</div>
+      <div class="ddi" onclick="openAdminDashboard('trackers')">📋 Trackers</div>
     </div>
   </div>
   <div class="ni has-dd" id="va-t">💻 VA Assistants ▾
@@ -298,6 +299,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
     <div class="dd" id="arch-d">
       <div class="ddl">Architect</div>
       <div class="ddi" onclick="openArchitectDashboard()">📐 Architect Dashboard</div>
+      <div class="ddi" onclick="openArchitectDashboard('permits')">📄 Permit Tracker</div>
       <div class="ddi" onclick="openPMAssistantDashboard()">🗂 PM Assistant Dashboard</div>
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
@@ -3085,6 +3087,15 @@ function openPropDetail(id) {
       </div>
     </div>`;
 
+  // A property card is normally opened from a board, which has already drawn the
+  // #pd-content shell. It can also be reached cold - a session restore after a
+  // refresh, or a link - and there was nothing to write into, so the page went
+  // blank with an error nobody saw. Draw the shell first when it is missing.
+  if(!document.getElementById("pd-content")){
+    const host=document.getElementById("dash-body");
+    if(!host) return;
+    host.innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"></div></div>`;
+  }
   document.getElementById("pd-content").innerHTML = `
     <div style="background:#fff;min-height:520px;border-radius:8px;overflow:hidden;margin-top:0">
       <div style="padding:10px 18px;border-bottom:0.5px solid #e0e4ec;display:flex;align-items:center;gap:8px;background:#fafafa">
@@ -6903,16 +6914,38 @@ function _upcomingClosings(){
   });
   return out.sort((a,b)=>a.d<b.d?-1:1);
 }
-// ---- Priority Qs: the shared question box from each Monday meeting lands here for Tommy.
-// Every week keeps its own opened / resolved state so nothing quietly disappears.
+// ---- Priority Qs: what the Monday meeting flagged for Tommy or Bruce.
+// These now come from the per-property questions raised in the meeting, which is
+// where the room actually asks them. The old single free-text box per week is
+// still read so nothing anybody typed before this change disappears - it just
+// cannot be added to any more.
 function _pqAll(){
+  const out=[];
+  (typeof _miOpen==='function'?_miAll('q'):[]).forEach(q=>{
+    const c=(typeof propCards!=='undefined'?propCards:[]).find(p=>p.id===q.pid);
+    out.push({ id:q.id, kind:'q', week:q.raised||'', pid:q.pid,
+               addr:c?(c.addr||''):'', who:q.who||'Either', by:q.by||'',
+               text:q.text||'', answer:q.answer||'',
+               state:q.answered?'resolved':(q.opened?'opened':'new') });
+  });
   const d=window._wmData||{};
-  return Object.keys(d).filter(w=>/^\d{4}-\d{2}-\d{2}$/.test(w))
-    .map(w=>({ week:w, text:((d[w]&&d[w].team&&d[w].team.__pq)||"").trim(), state:((d[w]&&d[w].team&&d[w].team.__pq_state)||"new") }))
-    .filter(x=>x.text)
-    .sort((a,b)=>a.week<b.week?1:-1);
+  Object.keys(d).filter(w=>/^\d{4}-\d{2}-\d{2}$/.test(w)).forEach(w=>{
+    const t=((d[w]&&d[w].team&&d[w].team.__pq)||"").trim();
+    if(!t) return;
+    out.push({ id:null, kind:'legacy', week:w, addr:'', who:'Tommy', by:'',
+               text:t, answer:'', state:((d[w]&&d[w].team&&d[w].team.__pq_state)||"new") });
+  });
+  return out.sort((a,b)=>String(a.week)<String(b.week)?1:-1);
 }
 function _pqOpen(){ return _pqAll().filter(x=>x.state!=="resolved"); }
+// Tommy picking one up is worth recording separately from answering it.
+async function _pqOpenIt(id){
+  if(_blockIfReadOnly()) return;
+  const d=window._miData||{}; const rec=(d.q||{})[id]; if(!rec) return;
+  rec.opened=_ymd(new Date()); window._miData=d;
+  if(await _miSave()) _pDrill('pq','tommy');
+}
+async function _pqAnswer(id){ await _miClose('q', id); _pDrill('pq','tommy'); }
 async function _pqSet(week,state){
   if(_blockIfReadOnly()) return;
   const d=window._wmData=window._wmData||{};
@@ -6931,13 +6964,16 @@ function _pqPanel(){
     const bd=badge(r.state);
     return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid ${bd[1]};border-radius:10px;padding:12px 15px">
       <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:6px">
-        <div style="font-size:13.5px;font-weight:700;color:#111">Week of ${_calEsc(_wmLabel(r.week))}</div>
+        <div style="font-size:13.5px;font-weight:700;color:#111">${r.kind==='q'?`${r.addr?(_calEsc(r.addr)+' &middot; '):''}needs ${_calEsc(r.who)}${r.by?(' &middot; asked by '+_calEsc(r.by)):''}${r.week?(' &middot; '+_calEsc(r.week)):''}`:('Week of '+_calEsc(_wmLabel(r.week)))}</div>
         <span style="font-size:10.5px;font-weight:700;letter-spacing:0.05em;color:${bd[1]};background:${bd[2]};border-radius:99px;padding:3px 9px">${bd[0]}</span>
       </div>
       <div style="font-size:13.5px;color:#333;white-space:pre-wrap;line-height:1.6">${_calEsc(r.text)}</div>
       ${isReadOnly()?'':`<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
-        ${r.state==='new'?`<button onclick="_pqSet('${r.week}','opened')" style="padding:6px 12px;border:0.5px solid #cdd7e6;background:#fff;color:#185FA5;border-radius:7px;font-size:12.5px;cursor:pointer;font-weight:600">Mark opened</button>`:''}
-        ${r.state!=='resolved'?`<button onclick="_pqSet('${r.week}','resolved')" style="padding:6px 12px;border:none;background:#0F7B54;color:#fff;border-radius:7px;font-size:12.5px;cursor:pointer;font-weight:600">✓ Resolved</button>`:`<button onclick="_pqSet('${r.week}','opened')" style="padding:6px 12px;border:0.5px solid #cdd7e6;background:#fff;color:#777;border-radius:7px;font-size:12.5px;cursor:pointer">Reopen</button>`}
+        ${r.kind==='q'
+          ? `${r.state==='new'?`<button onclick="_pqOpenIt('${r.id}')" style="padding:6px 12px;border:0.5px solid #cdd7e6;background:#fff;color:#185FA5;border-radius:7px;font-size:12.5px;cursor:pointer;font-weight:600">Mark opened</button>`:''}
+              <button onclick="_pqAnswer('${r.id}')" style="padding:6px 12px;border:${r.state==='resolved'?'0.5px solid #cdd7e6':'none'};background:${r.state==='resolved'?'#fff':'#0F7B54'};color:${r.state==='resolved'?'#777':'#fff'};border-radius:7px;font-size:12.5px;cursor:pointer;font-weight:600">${r.state==='resolved'?'Reopen':'✓ Answer it'}</button>`
+          : `${r.state==='new'?`<button onclick="_pqSet('${r.week}','opened')" style="padding:6px 12px;border:0.5px solid #cdd7e6;background:#fff;color:#185FA5;border-radius:7px;font-size:12.5px;cursor:pointer;font-weight:600">Mark opened</button>`:''}
+              ${r.state!=='resolved'?`<button onclick="_pqSet('${r.week}','resolved')" style="padding:6px 12px;border:none;background:#0F7B54;color:#fff;border-radius:7px;font-size:12.5px;cursor:pointer;font-weight:600">✓ Resolved</button>`:`<button onclick="_pqSet('${r.week}','opened')" style="padding:6px 12px;border:0.5px solid #cdd7e6;background:#fff;color:#777;border-radius:7px;font-size:12.5px;cursor:pointer">Reopen</button>`}`}
         <button onclick="openWeeklyMeeting('team','${r.week}')" style="padding:6px 12px;border:0.5px solid #e6e8ee;background:#fff;color:#777;border-radius:7px;font-size:12.5px;cursor:pointer">Open that meeting</button>
       </div>`}
     </div>`;
@@ -7102,7 +7138,8 @@ function _pDrill(kind, back){
     html=head("Company Projects")+'<div style="font-size:13px;color:#888;margin:-8px 0 12px">Company work for the Friday Director / CEO meeting \u2014 initiatives that belong to the business, not to any one property.</div>'+_cpPanel();
   } else if(kind==='pq'){
     if(window._wmData===undefined){ window._wmData=null; _wmLoad().then(()=>_pDrill('pq',back)); html=head("Priority Qs from meetings")+'<div style="color:#999;font-size:14px">Loading…</div>'; el.innerHTML=html; return; }
-    html=head("Priority Qs from meetings")+'<div style="font-size:13px;color:#888;margin:-8px 0 12px">Questions and decisions the team flagged for you in the Monday meeting. Mark each one opened as you pick it up, then resolved once it is answered.</div>'+_pqPanel();
+    if(window._miData===undefined){ window._miData={}; _miLoad().then(()=>_pDrill('pq','tommy')); }
+    html=head("Priority Qs from meetings")+'<div style="font-size:13px;color:#888;margin:-8px 0 12px">Questions the team raised on a property in the Monday meeting and flagged for you or Bruce. Mark one opened when you pick it up; answering it writes the answer back onto that property in the meeting, and it stops coming back every week.</div>'+_pqPanel();
   } else if(kind==='takedowns'){
     const rows=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && c.phase==="Upcoming Takedowns").map(_dirPropRow).join("");
     html=head("Upcoming Takedowns")+list(rows);
@@ -10921,6 +10958,9 @@ loadPMManagers();
 loadPMAssistants();
 // Load who is currently covering the Start / End of Project Assistant seats.
 _rhoLoad();
+// Load the meeting's carried-forward items (lag-time items and open questions) so
+// the counts on the Director / CEO home are right before anybody opens a meeting.
+_miLoad();
 // Pre-warm the Google sign-in button so it's ready when the user opens the modal.
 // _renderGoogleButton retries until GSI script is loaded.
 _renderGoogleButton();
@@ -10928,4 +10968,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-29p mowing-dropdowns -->
+<!-- build: 2026-08-29q tommy-q-relink -->
