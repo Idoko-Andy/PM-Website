@@ -4091,7 +4091,13 @@ function _wmCalc(c){
   const money=(v)=>{const n=parseFloat(String(v||"").replace(/[^0-9.\-]/g,""));return isNaN(n)?null:n;};
   const b=money(c.budget), sp=money(c.spent);
   const left=(b!=null&&sp!=null)?b-sp:null;
-  const cStart=cl.construction_start||c.start||null;
+  // Production $/day divides everything spent by the days the job has been running.
+  // construction_start is stamped the moment a card leaves Pre Construction, which can
+  // be long after money actually started going out - 8 Hide Away Hills was stamped the
+  // day it moved and read $59,049 a day off a single day. Take whichever anchor is
+  // EARLIER, so the rate is money over the days that money was being spent.
+  let cStart=cl.construction_start||c.start||null;
+  if(cl.construction_start && c.start && String(c.start)<String(cl.construction_start)) cStart=c.start;
   const listed=cl.timeline_done||null;
   let rate=null, prodDays=null; const prodLive=!!(cStart&&!listed);
   if(cStart){
@@ -4103,7 +4109,10 @@ function _wmCalc(c){
                   : (c.start ? {d:c.start,label:'project start'} : null));
   let accDays=null; const accLive=!!(accAnchor&&!listed);
   if(accAnchor) accDays=Math.max(0,Math.round((_dParse(listed||today)-_dParse(accAnchor.d))/86400000));
-  return {b:b,s:sp,left:left,cStart:cStart,listed:listed,rate:rate,prodDays:prodDays,prodLive:prodLive,
+  // A rate off two or three days is arithmetic, not information. Say so rather than
+  // letting a five-figure number sit there looking like a finding.
+  const prodThin=(prodDays!=null && prodDays<7);
+  return {b:b,s:sp,left:left,cStart:cStart,listed:listed,rate:rate,prodDays:prodDays,prodLive:prodLive,prodThin:prodThin,
           accAnchor:accAnchor,accDays:accDays,accLive:accLive};
 }
 function _wmFmt(n){ return n==null?'—':('$'+Math.round(n).toLocaleString()); }
@@ -4114,15 +4123,16 @@ function _wmRefreshMetrics(pid){
   const m=_wmCalc(c);
   const put=(id,val,note,color)=>{
     const el=document.getElementById(id); if(!el) return;
-    el.innerHTML=`<div style="font-size:10.5px;color:#999;text-transform:uppercase">${el.getAttribute('data-label')||''}</div>`+
-      `<div style="font-size:14px;font-weight:700;color:${color||'#111'}">${val}</div>`+
-      (note?`<div style="font-size:10px;color:#aaa">${note}</div>`:'');
+    el.innerHTML=`<div style="font-size:9.5px;color:#999;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap">${el.getAttribute('data-label')||''}</div>`+
+      `<div style="font-size:13px;font-weight:700;color:${color||'#111'}">${val}</div>`+
+      (note?`<div style="font-size:9.5px;color:#aaa">${note}</div>`:'');
   };
   put('wm-bud-'+pid,_wmFmt(m.b));
   put('wm-spent-'+pid,_wmFmt(m.s));
   put('wm-left-'+pid,_wmFmt(m.left),'',m.left!=null&&m.left<0?'#B42318':'#0F7B54');
   put('wm-prod-'+pid, m.rate!=null?('$'+m.rate.toLocaleString()):'—',
-      m.prodDays!=null?(m.prodDays+' construction days'+(m.prodLive?' · LIVE':'')):'set a start date','#4A1D6E');
+      m.prodDays!=null?(m.prodThin?(m.prodDays+' day'+(m.prodDays===1?'':'s')+' — too early to mean much'):(m.prodDays+' days'+(m.prodLive?' · LIVE':''))):'set a start date',
+      m.prodThin?'#999':'#4A1D6E');
   put('wm-acc-'+pid, m.accDays!=null?m.accDays:'—',
       m.accDays!=null?(m.accAnchor.label+' '+m.accAnchor.d+(m.accLive?' → today · LIVE':' → listed')):'no start date set','#B7791F');
 }
@@ -4352,6 +4362,26 @@ async function _wmSetMeta(wk, kind, key, obj){
   if(err){ alert("THAT WAS NOT SAVED — "+err); return false; }
   return true;
 }
+// Every property starts collapsed. The room walks the list one house at a time and
+// the old wall of 28 open cards meant scrolling past nine properties to reach the
+// tenth. Open state lives in memory so a re-render (saving a note, ticking a box)
+// does not slam the card you are working in shut.
+function _wmToggleOpen(pid, on){ (window._wmOpen=window._wmOpen||{})[pid]=!!on; }
+function _wmIsOpen(pid){ return !!((window._wmOpen||{})[pid]); }
+function _wmExpandAll(on){
+  document.querySelectorAll('details[data-wm-prop]').forEach(d=>{
+    d.open=!!on; _wmToggleOpen(d.getAttribute('data-wm-prop'), !!on);
+  });
+}
+// "Covered" is the room saying it has finished with this house this week. It ticks
+// the header, collapses the card and is remembered with the week, so if the meeting
+// gets interrupted you can see exactly where you got to.
+async function _wmCovered(wk, pid){
+  const m=Object.assign({}, _wmMeta(wk,'team','__covered'));
+  if(m[pid]) delete m[pid]; else m[pid]=true;
+  _wmToggleOpen(pid,false);
+  if(await _wmSetMeta(wk,'team','__covered',m)) openWeeklyMeeting('team', wk);
+}
 async function _wmTick(wk, itemKey, val){
   const m=Object.assign({}, _wmMeta(wk,'team','__done'));
   if(m[itemKey]===val) delete m[itemKey]; else m[itemKey]=val;
@@ -4553,7 +4583,9 @@ function _wmSummaryData(wk){
   const qs=_miOpen('q').sort((a,b)=>String(a.raised||'').localeCompare(String(b.raised||'')));
   const unassigned=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status!=="done" && taskAssignees(t).length===0)
     .sort((a,b)=>String(a.due_date||'9999').localeCompare(String(b.due_date||'9999')));
-  const fwd=_wmRange(wk,2);
+  // Tommy wants the week in front of him, not a fortnight. The meeting itself still
+  // walks two weeks; the summary he reads is just the week of.
+  const fwd=_wmRange(wk,1);
   const booked=[];
   cards.forEach(c=>{ _wmItems(c.id,fwd.from,fwd.to).forEach(it=>booked.push({c:c,it:it})); });
   booked.sort((a,b)=>String(a.it.date).localeCompare(String(b.it.date)));
@@ -4688,7 +4720,7 @@ function _wmSummaryHtml(wk){
     ${sec('Timeline moved this week', D.moved.length+' pushed', movedTbl)}
     ${sec('Over budget', D.over.length+' propert'+(D.over.length===1?'y':'ies'), overTbl)}
     ${sec('Lag-time items still open', D.lag.length+' open', lagList)}
-    ${sec('Booked for the next two weeks', D.booked.length+' items', bookTbl)}
+    ${sec('Booked this week', D.booked.length+' items &middot; '+D.booked.filter(x=>!((D.conf[x.it.key]||{}).c)).length+' not confirmed', bookTbl)}
     ${sec('Wins this week','', winList)}
   </div>
   <div class="foot"><span>Generated from the live property cards &middot; Legacy Homes PM Hub</span><span>${esc(_wmWhen(new Date().toISOString()))}</span></div>
@@ -4778,6 +4810,7 @@ function openWeeklyMeeting(kind, week){
     const fwdR=_wmRange(wk,2);          // this week and next week - not three
     const doneMap=_wmMeta(wk,'team','__done');
     const confMap=_wmMeta(wk,'team','__conf');
+    const coveredMap=_wmMeta(wk,'team','__covered');
     const closedRec=_wmMeta(wk,'team','__closed');
     const isClosed=!!closedRec.at;
     const roNow=isReadOnly()||isClosed||isPast;
@@ -4888,16 +4921,35 @@ function openWeeklyMeeting(kind, week){
           </div>
           ${checkedOn?`<div style="font-size:11px;color:#aaa;margin-top:5px">Last confirmed on pace ${_calEsc(checkedOn)}</div>`:''}`;
 
-      return `<div data-wm-prop="${c.id}" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:14px 16px;margin-bottom:14px;color:#111">
+      // The one-line header the room scans before deciding to open a card.
+      const openLag=_miFor('lag',c.id).length, openQ=_miFor('q',c.id).length;
+      const notConf=fwdItems.filter(it=>!((confMap[it.key]||{}).c)).length;
+      const isCov=!!coveredMap[c.id];
+      const chip=(txt,col,bg)=>`<span style="font-size:10.5px;font-weight:600;color:${col};background:${bg};padding:1px 7px;border-radius:99px;white-space:nowrap">${txt}</span>`;
+      const summaryChips=[
+        (left!=null?chip((left<0?'&minus;':'')+'$'+Math.abs(Math.round(left)).toLocaleString()+' left',left<0?'#B42318':'#0F7B54',left<0?'#FBEAE8':'#E6F4ED'):''),
+        (est?chip('est '+_calEsc(est),(drift!=null&&drift>0)?'#B7791F':'#555',(drift!=null&&drift>0)?'#FBF3E2':'#F1F2F6'):''),
+        (notConf?chip(notConf+' not confirmed','#B42318','#FBEAE8'):''),
+        (openLag?chip(openLag+' lag','#B7791F','#FBF3E2'):''),
+        (openQ?chip(openQ+' question'+(openQ===1?'':'s'),'#4A1D6E','#F3E8FB'):'')
+      ].filter(Boolean).join(' ');
+      return `<details data-wm-prop="${c.id}" ${_wmIsOpen(c.id)?'open':''} ontoggle="_wmToggleOpen('${c.id}',this.open)" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;margin-bottom:9px;color:#111;${isCov?'opacity:0.72;':''}">
+        <summary style="cursor:pointer;padding:11px 14px 11px 4px;outline:none">
+          <div style="display:inline-flex;width:calc(100% - 26px);vertical-align:middle;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+            <span style="font-size:15px;font-weight:700;color:#185FA5">${isCov?'<span style="color:#1D9E75">&#10003; </span>':''}${_calEsc(c.addr||'')}${c.jvDeal?' <span style="font-size:11px;background:#EEEDFE;color:#3C3489;padding:1px 7px;border-radius:99px;vertical-align:middle">JV</span>':''}</span>
+            <span style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">${summaryChips}<span style="font-size:11.5px;color:#888;margin-left:4px">${_calEsc(c.phase||'')} &middot; ${_calEsc(c.pm)||'no PM'}</span></span>
+          </div>
+        </summary>
+        <div style="padding:0 16px 14px">
         <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:8px">
-          <span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-size:15.5px;font-weight:700;color:#185FA5">${_calEsc(c.addr||'')}${c.jvDeal?' <span style="font-size:11px;background:#EEEDFE;color:#3C3489;padding:1px 7px;border-radius:99px;vertical-align:middle">JV</span>':''}</span>
+          <span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-size:13px;color:#185FA5">Open the property card &rsaquo;</span>
           <span style="font-size:12px;color:#666">${_calEsc(c.phase||'')} &middot; PM: ${_calEsc(c.pm)||'&mdash;'}${perm?' &middot; &#127963; Permitted':''}</span>
         </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:6px">
           ${cell('Budgeted',fmt(b),null,'','wm-bud-'+c.id)}
           ${cell('Spent',fmt(s),null,'','wm-spent-'+c.id)}
           ${cell('Leftover',fmt(left),left!=null&&left<0?'#B42318':'#0F7B54','','wm-left-'+c.id)}
-          ${cell('Production $ / day',rate!=null?('$'+rate.toLocaleString()):'&mdash;','#4A1D6E',prodDays!=null?(prodDays+' days'+(prodLive?' &middot; LIVE':'')):'set a start date','wm-prod-'+c.id)}
+          ${cell('Production $ / day',rate!=null?('$'+rate.toLocaleString()):'&mdash;',_m.prodThin?'#999':'#4A1D6E',prodDays!=null?(_m.prodThin?(prodDays+' day'+(prodDays===1?'':'s')+' &mdash; too early to mean much'):(prodDays+' days'+(prodLive?' &middot; LIVE':''))):'set a start date','wm-prod-'+c.id)}
           ${cell('Days accum.',accDays!=null?accDays:'&mdash;','#B7791F',accDays!=null?(accAnchor.label+' '+accAnchor.d+(accLive?' &rarr; today':' &rarr; listed')):'no start date','wm-acc-'+c.id)}
         </div>
         <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:11px;padding-top:11px;border-top:0.5px solid #eef0f6">
@@ -4932,7 +4984,11 @@ function openWeeklyMeeting(kind, week){
           <div><div style="font-size:12px;font-weight:700;color:#111;margin-bottom:4px">Wins this week</div>${ta2(c.id+'::wins','What went right on this property this week?')}</div>
           <div><div style="font-size:12px;font-weight:700;color:#111;margin-bottom:4px">Money analysis &mdash; on or off budget, and why</div>${ta2(c.id+'::money','On or off budget, and why?')}</div>
         </div>
-      </div>`;
+        ${roNow?'':`<div style="margin-top:12px;padding-top:11px;border-top:0.5px solid #eef0f6">
+          <button onclick="_wmCovered('${wk}','${c.id}')" style="padding:7px 15px;background:${isCov?'#fff':'#0F7B54'};border:${isCov?'0.5px solid #cdd7e6':'none'};border-radius:8px;font-size:13px;font-weight:600;color:${isCov?'#777':'#fff'};cursor:pointer">${isCov?'Reopen this one':'&#10003; Done with this one &mdash; close it up'}</button>
+        </div>`}
+        </div>
+      </details>`;
     }).join('');
 
     // Pre Construction comments across ALL PMs - directors see + add on one page.
@@ -4947,8 +5003,16 @@ function openWeeklyMeeting(kind, week){
       </div>`;
     }).join('');
 
+    const covN=cards.filter(c=>coveredMap[c.id]).length;
+    const walkBar=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:9px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <div style="font-size:13px;color:#555"><b>${covN} of ${cards.length}</b> covered &middot; every property starts closed &mdash; click one to open it</div>
+      <div style="display:flex;gap:7px">
+        <button onclick="_wmExpandAll(true)" style="padding:5px 12px;border:0.5px solid #cdd7e6;border-radius:7px;background:#fff;font-size:12.5px;color:#185FA5;cursor:pointer">Expand all</button>
+        <button onclick="_wmExpandAll(false)" style="padding:5px 12px;border:0.5px solid #e6e8ee;border-radius:7px;background:#fff;font-size:12.5px;color:#777;cursor:pointer">Collapse all</button>
+      </div></div>`;
     body=`
       ${_wmClosedBanner(wk, closedRec)}
+      ${cards.length?walkBar:''}
       ${blocks || '<div style="color:#bbb;font-size:14px;padding:20px 0">No construction properties right now.</div>'}
       ${_wmOpenQuestionsPanel(cards)}
       <div style="font-size:14px;font-weight:700;color:#111;margin:18px 0 8px">&#128172; Pre Construction comments &mdash; all PMs</div>
@@ -11251,4 +11315,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-29t permit-v2 -->
+<!-- build: 2026-08-29u collapsible-meeting -->
