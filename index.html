@@ -4059,6 +4059,55 @@ function _wmArchive(kind, current){
 // re-rendering the page underneath someone who is mid-sentence in a notes box.
 // Each input writes its own column and flashes; nothing else moves.
 const _WM_COL_TO_CARD={ end_date:'end', jv_deal:'jvDeal', est_profit:'estProfit', goal_arv:'goalArv', listing_agent:'listingAgent' };
+// Every figure on the Monday card, computed from today's date. Used both when the
+// screen is drawn and when it is refreshed in place, so the two can never drift.
+function _wmCalc(c){
+  const cl=c.checklists||{};
+  const today=_ymd(new Date());
+  const money=(v)=>{const n=parseFloat(String(v||"").replace(/[^0-9.\-]/g,""));return isNaN(n)?null:n;};
+  const b=money(c.budget), sp=money(c.spent);
+  const left=(b!=null&&sp!=null)?b-sp:null;
+  const cStart=cl.construction_start||c.start||null;
+  const listed=cl.timeline_done||null;
+  let rate=null, prodDays=null; const prodLive=!!(cStart&&!listed);
+  if(cStart){
+    prodDays=Math.max(1,Math.round((_dParse(listed||today)-_dParse(cStart))/86400000));
+    if(sp!=null) rate=Math.round(sp/prodDays);
+  }
+  const accAnchor = c.vacancyDate ? {d:c.vacancyDate,label:'vacant'}
+                  : (c.closingDate ? {d:c.closingDate,label:'closed'}
+                  : (c.start ? {d:c.start,label:'project start'} : null));
+  let accDays=null; const accLive=!!(accAnchor&&!listed);
+  if(accAnchor) accDays=Math.max(0,Math.round((_dParse(listed||today)-_dParse(accAnchor.d))/86400000));
+  return {b:b,s:sp,left:left,cStart:cStart,listed:listed,rate:rate,prodDays:prodDays,prodLive:prodLive,
+          accAnchor:accAnchor,accDays:accDays,accLive:accLive};
+}
+function _wmFmt(n){ return n==null?'—':('$'+Math.round(n).toLocaleString()); }
+// Redraw just the numbers on one card. Never re-renders the page: somebody is
+// usually mid-sentence in a notes box while this fires.
+function _wmRefreshMetrics(pid){
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return;
+  const m=_wmCalc(c);
+  const put=(id,val,note,color)=>{
+    const el=document.getElementById(id); if(!el) return;
+    el.innerHTML=`<div style="font-size:10.5px;color:#999;text-transform:uppercase">${el.getAttribute('data-label')||''}</div>`+
+      `<div style="font-size:14px;font-weight:700;color:${color||'#111'}">${val}</div>`+
+      (note?`<div style="font-size:10px;color:#aaa">${note}</div>`:'');
+  };
+  put('wm-bud-'+pid,_wmFmt(m.b));
+  put('wm-spent-'+pid,_wmFmt(m.s));
+  put('wm-left-'+pid,_wmFmt(m.left),'',m.left!=null&&m.left<0?'#B42318':'#0F7B54');
+  put('wm-prod-'+pid, m.rate!=null?('$'+m.rate.toLocaleString()):'—',
+      m.prodDays!=null?(m.prodDays+' construction days'+(m.prodLive?' · LIVE':'')):'set a start date','#4A1D6E');
+  put('wm-acc-'+pid, m.accDays!=null?m.accDays:'—',
+      m.accDays!=null?(m.accAnchor.label+' '+m.accAnchor.d+(m.accLive?' → today · LIVE':' → listed')):'no start date set','#B7791F');
+}
+// A meeting screen left open overnight would still be showing yesterday's day counts.
+// Recompute every card whenever the tab comes back into view.
+function _wmRefreshAllMetrics(){
+  document.querySelectorAll('[data-wm-prop]').forEach(el=>_wmRefreshMetrics(el.getAttribute('data-wm-prop')));
+}
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden) { try{ _wmRefreshAllMetrics(); }catch(e){} } });
 async function _wmDeal(pid, col, val, el){
   if(_blockIfReadOnly()) return;
   if(!_WM_COL_TO_CARD[col]) return;
@@ -4071,6 +4120,7 @@ async function _wmDeal(pid, col, val, el){
   if(c) c[_WM_COL_TO_CARD[col]] = (col==='jv_deal') ? !!val : (val||'');
   const labels={ end_date:'Finish date', jv_deal:'JV deal', est_profit:'Estimated profit', goal_arv:'Goal ARV', listing_agent:'Listing agent' };
   _logAudit("updated","property", (c&&c.addr)||"", labels[col]+" set in the Monday meeting"+(col==='jv_deal'?(val?': yes':': no'):(val?(': '+val):' — cleared')));
+  try{ _wmRefreshMetrics(pid); }catch(e){}
   _wmFlash(el,true);
 }
 function _wmFlash(el, ok, msg){
@@ -4200,47 +4250,38 @@ function openWeeklyMeeting(kind, week){
     const _num=(a)=>{ const m=String(a||'').match(/\d+/); return m?parseInt(m[0],10):999999; };
     const cards=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && cons.includes(c.phase)).sort((a,b)=>_num(a.addr)-_num(b.addr)||String(a.addr||'').localeCompare(String(b.addr||'')));
     const blocks=cards.map(c=>{
-      const b=money(c.budget), s=money(c.spent); const left=(b!=null&&s!=null)?b-s:null;
+      const _m=_wmCalc(c);
+      const b=_m.b, s=_m.s, left=_m.left;
       const cl=c.checklists||{};
       const today=_ymd(new Date());
       // Construction start is stamped automatically when the card leaves Pre Construction;
       // timeline_done is stamped when it reaches Listed on the Market / Rental Handoff.
-      const cStart=cl.construction_start||c.start||null;
-      const listed=cl.timeline_done||null;
-      // Production $/day - what the build is spending per day from construction start
-      // to the day it hit the market. Still running counts to today and says so.
-      let rate=null, prodDays=null; const prodLive=!!(cStart&&!listed);
-      if(cStart){
-        prodDays=Math.max(1,Math.round((_dParse(listed||today)-_dParse(cStart))/86400000));
-        const sp=_spentNow(c); if(sp!=null) rate=Math.round(sp/prodDays);
-      }
+      const cStart=_m.cStart, listed=_m.listed;
+      const rate=_m.rate, prodDays=_m.prodDays, prodLive=_m.prodLive;
       // Total days accumulated - the whole clock, ending the day it was listed or
       // handed to rentals. It should start the day the house went vacant, but only 4
       // of 27 construction properties have ever had a vacancy date recorded, so fall
       // back to the day we closed on it, then to the project start. The label always
       // says which anchor was used, so an approximation never reads as fact.
-      const accAnchor = c.vacancyDate ? {d:c.vacancyDate,label:'vacant'}
-                      : (c.closingDate ? {d:c.closingDate,label:'closed'}
-                      : (c.start ? {d:c.start,label:'project start'} : null));
-      let accDays=null; const accLive=!!(accAnchor&&!listed);
-      if(accAnchor) accDays=Math.max(0,Math.round((_dParse(listed||today)-_dParse(accAnchor.d))/86400000));
+      const accAnchor=_m.accAnchor, accDays=_m.accDays, accLive=_m.accLive;
       const perm=(c.checklists&&c.checklists.permitted)==='yes';
-      const cell=(l,v,color,note)=>`<div style="background:#f7f8fb;border-radius:7px;padding:7px 10px"><div style="font-size:10.5px;color:#999;text-transform:uppercase">${l}</div><div style="font-size:14px;font-weight:700;color:${color||'#111'}">${v}</div>${note?`<div style="font-size:10px;color:#aaa">${note}</div>`:''}</div>`;
+      // id + data-label let _wmRefreshMetrics redraw just this box later.
+      const cell=(l,v,color,note,id)=>`<div ${id?`id="${id}" data-label="${l}"`:''} style="background:#f7f8fb;border-radius:7px;padding:7px 10px"><div style="font-size:10.5px;color:#999;text-transform:uppercase">${l}</div><div style="font-size:14px;font-weight:700;color:${color||'#111'}">${v}</div>${note?`<div style="font-size:10px;color:#aaa">${note}</div>`:''}</div>`;
       const ro=isReadOnly();
       const inp=(col,val,ph,w)=>ro?`<span style="font-size:13px;color:#111">${_calEsc(val)||'—'}</span>`:`<input value="${_calEsc(val)}" placeholder="${ph}" onchange="_wmDeal('${c.id}','${col}',this.value,this)" style="width:${w||110}px;padding:5px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px"/>`;
       const dte=(col,val)=>ro?`<span style="font-size:13px;color:#111">${_calEsc(val)||'—'}</span>`:`<input type="date" value="${_calEsc(val)}" onchange="_wmDeal('${c.id}','${col}',this.value,this)" style="padding:5px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px"/>`;
       const fld=(label,inner)=>`<div style="display:flex;flex-direction:column;gap:3px"><div style="font-size:10.5px;color:#999;text-transform:uppercase;letter-spacing:.04em">${label}</div>${inner}</div>`;
-      return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:14px 16px;margin-bottom:14px;color:#111">
+      return `<div data-wm-prop="${c.id}" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:14px 16px;margin-bottom:14px;color:#111">
         <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:8px">
           <span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-size:15.5px;font-weight:700;color:#185FA5">${_calEsc(c.addr||'')}${c.jvDeal?' <span style="font-size:11px;background:#EEEDFE;color:#3C3489;padding:1px 7px;border-radius:99px;vertical-align:middle">JV</span>':''}</span>
           <span style="font-size:12px;color:#666">${_calEsc(c.phase||'')} · PM: ${_calEsc(c.pm||'—')}${perm?' · 🏛 Permitted':''}</span>
         </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:7px">
-          ${cell('Budgeted',fmt(b))}
-          ${cell('Spent',fmt(s))}
-          ${cell('Leftover',fmt(left),left!=null&&left<0?'#B42318':'#0F7B54')}
-          ${cell('Production $ / day',rate!=null?('$'+rate.toLocaleString()):'—','#4A1D6E',prodDays!=null?(prodDays+' construction days'+(prodLive?' · LIVE':'')):'set a start date')}
-          ${cell('Total days accum.',accDays!=null?accDays:'—','#B7791F',accDays!=null?(accAnchor.label+' '+accAnchor.d+(accLive?' → today · LIVE':' → listed')):'no start date set')}
+          ${cell('Budgeted',fmt(b),null,'','wm-bud-'+c.id)}
+          ${cell('Spent',fmt(s),null,'','wm-spent-'+c.id)}
+          ${cell('Leftover',fmt(left),left!=null&&left<0?'#B42318':'#0F7B54','','wm-left-'+c.id)}
+          ${cell('Production $ / day',rate!=null?('$'+rate.toLocaleString()):'—','#4A1D6E',prodDays!=null?(prodDays+' construction days'+(prodLive?' · LIVE':'')):'set a start date','wm-prod-'+c.id)}
+          ${cell('Total days accum.',accDays!=null?accDays:'—','#B7791F',accDays!=null?(accAnchor.label+' '+accAnchor.d+(accLive?' → today · LIVE':' → listed')):'no start date set','wm-acc-'+c.id)}
         </div>
         <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:11px;padding-top:11px;border-top:0.5px solid #eef0f6">
           ${fld('Start date',`<span style="font-size:13px;color:${cStart?'#111':'#B7791F'}">${_calEsc(cStart||'set when it goes vacant')}</span>`)}
@@ -9720,4 +9761,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-29i days-accum-fallback -->
+<!-- build: 2026-08-29j live-recalc -->
