@@ -3477,7 +3477,7 @@ function pmTabContent(name) {
   const _todayStr = _ymd(today);
   const _my7 = (_tasksCache||[]).filter(t=>_taskHasAssignee(t,name) && t.due_date && t.due_date>=_wkAgoStr && t.due_date<=_todayStr);
   const _done7 = _my7.filter(t=>t.status==="done").length;
-  const _pct7 = _my7.length ? Math.round(_done7/_my7.length*100) : null;
+  const _pct7 = _taskPctFor(_my7);
   const _pctColor = _pct7===null ? '#aaa' : (_pct7>=80?'#2ecc71':(_pct7>=50?'#f39c12':'#c0392b'));
   const _mx=_computePMMetrics(name);
 
@@ -3499,7 +3499,7 @@ function pmTabContent(name) {
         <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 20px;text-align:center;min-width:110px">
           <div style="font-size:11px;color:#999;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Task Completion</div>
           <div style="font-size:29px;font-weight:500;color:${_pctColor}">${_pct7===null?'—':_pct7+'%'}</div>
-          <div style="font-size:11px;color:#aaa;margin-top:2px">${_pct7===null?'No tasks last 7 days':_done7+' of '+_my7.length+' · last 7 days'}</div>
+          <div style="font-size:11px;color:#aaa;margin-top:2px">${_taskTallyLine(_my7,'last 7 days')}</div>
         </div>
         <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 20px;text-align:center;min-width:110px">
           <div style="font-size:11px;color:#999;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Avg $ Work / Day — Last 7 Days</div>
@@ -3759,7 +3759,8 @@ function _tdhStats(name, from, to){
   const done=inR.filter(x=>x.status==='done').length;
   const res=inR.filter(x=>(x.reschedule_count||0)>0).length;
   const days=Math.max(1,Math.round((new Date(to)-new Date(from))/86400000)+1);
-  return { total:inR.length, done, pct: inR.length?Math.round(done/inR.length*100):null, resPct: inR.length?Math.round(res/inR.length*100):null, perDay:(done/days).toFixed(2) };
+  const _t=_taskTally(inR);
+  return { total:inR.length, done, attempts:_t.attempts, onTime:_t.hits, pct:_t.pct, resPct: inR.length?Math.round(res/inR.length*100):null, perDay:(done/days).toFixed(2) };
 }
 function _tdhRun(){
   const fe=document.getElementById('tdh-from'), te=document.getElementById('tdh-to'), we=document.getElementById('tdh-who');
@@ -3783,7 +3784,7 @@ function _tdhRun(){
   _propRows.forEach(r=>{ const t=r.type||'—'; (_typeAvg[t]=_typeAvg[t]||[]).push(r.n); });
   const _propTbl=_propRows.map(r=>`<tr style="border-top:0.5px solid #eef0f6"><td style="padding:8px 10px;font-weight:600;color:#111">${_calEsc(r.addr)}</td><td style="padding:8px 10px">${_calEsc(r.type)}</td><td style="padding:8px 10px;text-align:center">${r.n}</td></tr>`).join('')||'<tr><td colspan="3" style="padding:14px 10px;color:#bbb">No property-linked tasks yet.</td></tr>';
   const _avgTbl=Object.entries(_typeAvg).map(([t,arr])=>`<tr style="border-top:0.5px solid #eef0f6"><td style="padding:8px 10px;color:#111">${_calEsc(t)}</td><td style="padding:8px 10px;text-align:center">${arr.length}</td><td style="padding:8px 10px;text-align:center;font-weight:600">${Math.round(arr.reduce((a,b)=>a+b,0)/arr.length)}</td></tr>`).join('')||'<tr><td colspan="3" style="padding:14px 10px;color:#bbb">—</td></tr>';
-  out.innerHTML=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13.5px;color:#111"><thead><tr style="background:#122A4A;color:#fff"><th style="padding:9px 10px;text-align:left">Person</th><th style="padding:9px 10px">Tasks due</th><th style="padding:9px 10px">Completed</th><th style="padding:9px 10px">Completion %</th><th style="padding:9px 10px">Rescheduled %</th><th style="padding:9px 10px">Done / day</th></tr></thead><tbody>${rows}</tbody></table></div><div style="font-size:12px;color:#999;margin-top:8px">$ of work per day lives in the 💵 $ / Day Housing tab.</div>
+  out.innerHTML=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13.5px;color:#111"><thead><tr style="background:#122A4A;color:#fff"><th style="padding:9px 10px;text-align:left">Person</th><th style="padding:9px 10px">Tasks due</th><th style="padding:9px 10px">Completed</th><th style="padding:9px 10px">On-time %</th><th style="padding:9px 10px">Rescheduled %</th><th style="padding:9px 10px">Done / day</th></tr></thead><tbody>${rows}</tbody></table></div><div style="font-size:12px;color:#999;margin-top:8px">On-time % counts attempts, not tasks: a reschedule is a missed date and buys another attempt, so a task rescheduled once then finished by the new date scores 1 of 2. $ of work per day lives in the 💵 $ / Day Housing tab.</div>
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px;align-items:start">
     <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:auto"><div style="padding:10px 14px;border-bottom:0.5px solid #e0e4ec;font-size:14px;font-weight:700;color:#B7791F">🔄 Reschedule Reasons (in range)</div><table style="width:100%;border-collapse:collapse;font-size:13.5px;color:#111"><thead><tr style="background:#122A4A;color:#fff"><th style="padding:9px 10px;text-align:left">Reason / keyword</th><th style="padding:9px 10px">Count</th></tr></thead><tbody>${_kwRows}</tbody></table></div>
     <div>
@@ -4212,7 +4213,7 @@ function _computePMMetrics(name){
   const tasks=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>_taskHasAssignee(t,name));
   const total=tasks.length;
   const done=tasks.filter(t=>t.status==="done").length;
-  const taskPct= total? Math.round(done/total*100) : "--";
+  const taskPct= total? _taskPctFor(tasks) : "--";
   const resched=tasks.filter(t=>(t.reschedule_count||0)>0).length;
   const reschedPct= total? Math.round(resched/total*100) : "--";
   // Project timeline (NOT tasks): construction start (auto-stamped leaving Pre Construction) →
@@ -5066,7 +5067,7 @@ function _rhMetrics30(name){
   const todayStr=_ymd(today), ago30=_ymd(new Date(today.getTime()-30*86400000));
   const tasks=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>_taskHasAssignee(t,name));
   const win=tasks.filter(t=>t.due_date && t.due_date>=ago30 && t.due_date<=todayStr);
-  const taskPct = win.length? Math.round(win.filter(t=>t.status==="done").length/win.length*100) : null;
+  const taskPct = _taskPctFor(win);
   const reschedPct = win.length? Math.round(win.filter(t=>(t.reschedule_count||0)>0).length/win.length*100) : null;
   const mine=_rhCards().filter(c=>_sameAssignee(c.pm,name));
   let dpd=_dollarsDayRange(mine,ago30,todayStr);
@@ -6229,8 +6230,7 @@ function _marloTab(){
   // days, how many are marked done", which is the honest reading of the number.
   const _d7=_ymd(new Date(today.getTime()-7*86400000));
   const _mine7=_tasksAll.filter(t=>_taskHasAssignee(t,_mName) && t.due_date && t.due_date>=_d7 && t.due_date<=todayStr);
-  const _done7=_mine7.filter(t=>t.status==='done').length;
-  const _pct7=_mine7.length?Math.round(_done7/_mine7.length*100):null;
+  const _pct7=_taskPctFor(_mine7);
   // 3. Her own tasks due inside 48 hours.
   const _in48=_ymd(new Date(today.getTime()+2*86400000));
   const _due48=_tasksAll.filter(t=>t.status!=='done' && _taskHasAssignee(t,_mName) && t.due_date && t.due_date>=todayStr && t.due_date<=_in48)
@@ -6243,7 +6243,7 @@ function _marloTab(){
   </div>`;
   const _mSquares=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;margin-bottom:18px">
     ${_mStat('🏘','Active projects', _amActive.length, `across ${_amPMs.size} project manager${_amPMs.size===1?'':'s'}`, '#185FA5')}
-    ${_mStat('✅','Task completion', _pct7==null?'—':(_pct7+'%'), _pct7==null?'no tasks due in the last 7 days':`${_done7} of ${_mine7.length} due in the last 7 days`, _pct7==null?'#888':(_pct7>=80?'#3B6D11':_pct7>=50?'#B7791F':'#B42318'))}
+    ${_mStat('✅','Task completion', _pct7==null?'—':(_pct7+'%'), _taskTallyLine(_mine7,'last 7 days'), _pct7==null?'#888':(_pct7>=80?'#3B6D11':_pct7>=50?'#B7791F':'#B42318'))}
     ${_mStat('⏰','Due in 48 hours', _due48.length, _overdue?`${_overdue} also overdue`:'her own tasks', _due48.length?'#D85A30':'#888')}
   </div>`;
   const wkEnd=new Date(today);wkEnd.setDate(today.getDate()+7);const wkEndStr=_ymd(wkEnd);
@@ -7962,7 +7962,7 @@ async function deleteCalEvent(id){
 // ===================== TASK SYSTEM + TASK CALENDAR =====================
 let _tasksCache = [];
 async function loadTasks(){
-  let { data, error } = await supabase.from("pm_tasks").select("id,title,assignee,assignees,due_date,due_time,start_date,category,refer_to,status,property_id,notes,comments,location,reschedule_count,last_rescheduled_at,reschedule_reasons").order("due_date",{ascending:true});
+  let { data, error } = await supabase.from("pm_tasks").select("id,title,assignee,assignees,due_date,due_time,start_date,category,refer_to,status,property_id,notes,comments,location,reschedule_count,last_rescheduled_at,reschedule_reasons,completed_at").order("due_date",{ascending:true});
   if(error){ // some columns may not exist yet on older DBs — fall back gracefully
     ({ data, error } = await supabase.from("pm_tasks").select("id,title,assignee,assignees,due_date,start_date,category,refer_to,status,property_id,notes").order("due_date",{ascending:true}));
   }
@@ -7985,6 +7985,48 @@ function _sameAssignee(a,b){
   // Only fall back to first-name match when one side is a single word (bare first name).
   if((a.indexOf(" ")<0 || b.indexOf(" ")<0) && af===bf) return true;
   return false;
+}
+// ---- Task completion scoring — ONE definition, used by every screen ----------
+// A task is scored in ATTEMPTS, not simply done / not done. Every reschedule is a
+// commitment that was missed, and it buys one more attempt. So a task rescheduled
+// once and then finished by the new date is one hit out of two attempts — 50%, not
+// 100%. Bruce's rule, in code:
+//
+//     attempts = reschedule_count + 1
+//     hits     = 1 when the task was finished on or before its CURRENT due date
+//
+// Finishing "on time" needs to know WHEN it was finished, so toggleTaskDone stamps
+// pm_tasks.completed_at. Tasks that were completed before that column existed carry
+// no stamp; they are credited as on time rather than punished for data they never
+// had the chance to record. Their reschedules still count against them, because
+// reschedule_count is real history.
+function _taskScore(t){
+  const attempts=(t.reschedule_count||0)+1;
+  let hits=0;
+  if(t.status==='done'){
+    const at=t.completed_at?String(t.completed_at).slice(0,10):null;
+    hits=(!at || !t.due_date || at<=t.due_date)?1:0;
+  }
+  return { attempts:attempts, hits:hits };
+}
+function _taskTally(tasks){
+  let attempts=0, hits=0, resched=0, done=0, late=0;
+  (tasks||[]).forEach(t=>{
+    const s=_taskScore(t);
+    attempts+=s.attempts; hits+=s.hits;
+    if((t.reschedule_count||0)>0) resched++;
+    if(t.status==='done'){ done++; if(!s.hits) late++; }
+  });
+  return { attempts:attempts, hits:hits, resched:resched, done:done, late:late,
+           pct: attempts?Math.round(hits/attempts*100):null };
+}
+function _taskPctFor(tasks){ return _taskTally(tasks).pct; }
+// "3 of 5 on time · 2 rescheduled" — the sentence under every percentage, so the
+// number can always be traced back to the tasks behind it.
+function _taskTallyLine(tasks, suffix){
+  const t=_taskTally(tasks);
+  if(!t.attempts) return suffix?('No tasks '+suffix):'No tasks';
+  return t.hits+' of '+t.attempts+' on time'+(t.resched?(' · '+t.resched+' rescheduled'):'')+(suffix?(' · '+suffix):'');
 }
 // Does task t belong to the person "name" (tolerant of first-name-only assignments)?
 function _taskHasAssignee(t,name){ return taskAssignees(t).some(a=>_sameAssignee(a,name)); }
@@ -8102,7 +8144,15 @@ async function toggleTaskDone(id){
   if(_blockIfReadOnly()) return;
   const t=_tasksCache.find(x=>x.id===id); if(!t) return;
   const newStatus=t.status==="done"?"open":"done";
-  const { error } = await supabase.from("pm_tasks").update({status:newStatus}).eq("id",id);
+  // completed_at is what makes "finished on time" answerable - without it a task
+  // finished three weeks late is indistinguishable from one finished early.
+  // Reopening clears it, so a reopened task is scored on its next real completion.
+  const _stamp = newStatus==="done" ? new Date().toISOString() : null;
+  let { error } = await supabase.from("pm_tasks").update({status:newStatus, completed_at:_stamp}).eq("id",id);
+  if(error && /completed_at/.test(error.message||"")){
+    // Column not added yet - still record the status so nobody is blocked.
+    ({ error } = await supabase.from("pm_tasks").update({status:newStatus}).eq("id",id));
+  }
   if(error){ alert("Failed to update task: "+(error.message||"")); return; }
   _logAudit(newStatus==="done"?"completed":"reopened","task", t.title, taskAssignees(t).length?("Assignee: "+taskAssignees(t).join(", ")):"");
   await loadTasks(); _taskRerender();
@@ -9229,4 +9279,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-29a marlo-admin-boards -->
+<!-- build: 2026-08-29b on-time-task-scoring -->
