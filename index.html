@@ -5087,7 +5087,15 @@ function _mktMeetingBody(wk, kind, notes, prevNotes, roNow){
     if(roNow) return lastBox+`<div style="font-size:13px;color:#333;white-space:pre-wrap;background:#F7F8FB;border-radius:7px;padding:8px 10px;min-height:30px;margin-top:4px">${_calEsc(V(pid,f))||'<span style="color:#bbb">Nothing written</span>'}</div>`;
     return lastBox+`<textarea id="${id(pid,f)}" placeholder="${ph||''}" style="width:100%;min-height:${minH||50}px;margin-top:4px;padding:8px 10px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px;color:#222;resize:vertical;font-family:inherit">${_calEsc(V(pid,f))}</textarea><div style="margin-top:2px"><span id="wm-ok-${pid}::${f}" style="display:none;font-size:11.5px;color:#1D9E75">Saved ✓</span></div>`;
   };
-  const fld=(label,inner,note)=>`<div style="display:flex;flex-direction:column;gap:3px"><div style="font-size:10.5px;color:#999;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap">${label}</div>${inner}${note?`<div style="font-size:10px;color:#bbb">${note}</div>`:''}</div>`;
+  const fld=(label,inner,note)=>`<div style="display:flex;flex-direction:column;gap:3px;min-width:0"><div style="font-size:10.5px;color:#999;text-transform:uppercase;letter-spacing:.04em;line-height:1.25">${label}</div>${inner}${note?`<div style="font-size:10px;color:#bbb;line-height:1.3">${note}</div>`:''}</div>`;
+  // A PM whose name is not in the team list must still show as the current answer,
+  // otherwise the box reads "unassigned" for a house that plainly has a PM.
+  const pmOpts=(c)=>{
+    const cur=V(c.id,'pm')||c.pm||'';
+    const names=[''].concat(teamMembers());
+    if(cur && names.indexOf(cur)<0) names.push(cur);
+    return names.map(n=>`<option ${cur===n?'selected':''}>${_calEsc(n)}</option>`).join('');
+  };
   const sec=(label,inner)=>`<div style="margin-top:10px"><div style="font-size:11.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em">${label}</div>${inner}</div>`;
   const metric=(l,v,color,note)=>`<div style="background:#f7f8fb;border-radius:6px;padding:5px 9px"><div style="font-size:9.5px;color:#999;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap">${l}</div><div style="font-size:13px;font-weight:700;color:${color||'#111'}">${v}</div>${note?`<div style="font-size:9.5px;color:#aaa">${note}</div>`:''}</div>`;
 
@@ -5109,13 +5117,13 @@ function _mktMeetingBody(wk, kind, notes, prevNotes, roNow){
       const margin=_mktMargin(V(c.id,'list_price'), c);
       return wrap(head(c)
         + grid(
-            fld('PM assigned', roNow?roShow(c.pm||''):`<select id="${id(c.id,'pm')}" style="${box};width:100%">${['']. concat(teamMembers()).map(n=>`<option ${((V(c.id,'pm')||c.pm)===n)?'selected':''}>${_calEsc(n)}</option>`).join('')}</select>`,'from the property card')
-          + fld('Listing done &amp; in CompanyCam', sel(c.id,'cc',['','Yes','No'],96))
+            fld('PM assigned', roNow?roShow(V(c.id,'pm')||c.pm||''):`<select id="${id(c.id,'pm')}" style="${box};width:100%">${pmOpts(c)}</select>`,'from the property card')
+          + fld('Listing done · in CompanyCam', sel(c.id,'cc',['','Yes','No'],96))
           + fld('Date listed', dt(c.id,'date_listed'), listed&&!V(c.id,'date_listed')?'from the card':'')
           + fld('List price', tx(c.id,'list_price','$0',110))
           + fld('Price drops', tx(c.id,'drops','none yet',110))
           + fld('DOM', `<span style="font-size:15px;font-weight:700;color:${dom!=null&&dom>60?'#B42318':'#111'}">${dom==null?'—':dom}</span>`, dom==null?'set the date listed':'days on market')
-          , 128)
+          , 150)
         + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-top:10px">
              ${metric('Showings total', roNow?(_calEsc(V(c.id,'sh_total'))||'—'):`<input id="${id(c.id,'sh_total')}" value="${_calEsc(V(c.id,'sh_total'))}" placeholder="0" style="${box};width:64px"/>`)}
              ${metric('Showings last 7 days', roNow?(_calEsc(V(c.id,'sh_7'))||'—'):`<input id="${id(c.id,'sh_7')}" value="${_calEsc(V(c.id,'sh_7'))}" placeholder="0" style="${box};width:64px"/>`)}
@@ -5141,7 +5149,7 @@ function _mktMeetingBody(wk, kind, notes, prevNotes, roNow){
       const late=remDue && !remDone && remDue < _ymd(new Date());
       return wrap(head(c, c.closingDateSell?(' · close '+_calEsc(c.closingDateSell)):'')
         + grid(
-            fld('PM assigned', roNow?roShow(c.pm||''):`<select id="${id(c.id,'pm')}" style="${box};width:100%">${[''].concat(teamMembers()).map(n=>`<option ${((V(c.id,'pm')||c.pm)===n)?'selected':''}>${_calEsc(n)}</option>`).join('')}</select>`)
+            fld('PM assigned', roNow?roShow(V(c.id,'pm')||c.pm||''):`<select id="${id(c.id,'pm')}" style="${box};width:100%">${pmOpts(c)}</select>`)
           + fld('In contract date', dt(c.id,'ic_date'))
           + fld('Contract price', tx(c.id,'contract_price','$0',110))
           + fld('Inspection date', dt(c.id,'insp_date'))
@@ -5231,6 +5239,297 @@ async function _miAddQuick(kind, pid){
     openWeeklyMeeting(window.__wmLastKind||'market', window.__wmLastWeek);
   }
 }
+// ===================== KICK-OFF MEETING =====================
+// Reworked 29 Aug 2026 to Bruce's spec. The three fixed comp boxes are gone -
+// comps are a list you add to, each one a Zillow link. Instead of one target
+// price there are three, because the room is genuinely deciding between three
+// different jobs: buy and list it as it stands, a quick cosmetic, or the full
+// rehab. And the PM chosen here is written straight onto the property card, so
+// nobody has to remember to go and do it afterwards.
+const KICK_PHASES=["Upcoming Takedowns","Occupied / Closed","Vacant / On Standby","Pre Construction"];
+const KICK_PRICES=[
+  ["price_bl",  "Buy and list",   "Sell it as it stands, no work"],
+  ["price_qc",  "Quick cosmetic", "Paint, floors, clean - the light touch"],
+  ["price_fr",  "Full rehab",     "The whole job"]
+];
+const KICK_NOTES=[
+  ["demo",     "Demo and clean out review notes",                  "What comes out, who does it, how long it takes."],
+  ["scope_bl", "Buy and list scope review notes",                  "If we listed it tomorrow as it stands - what would we have to do first, and what would we be leaving on the table?"],
+  ["budget",   "Budget review notes for buy and list and rehab",   "Line by line, both ways. Once the budget is SET there is no altering it. Compare against the ACQ budget - if there is a large variation, pull the ACQ team in now."],
+  ["scope_fr", "Scope review notes for actual rehab",              "Line-by-line scope of work. 15-20 minutes. Include the kitchen design review and the permit drawing review where they apply."],
+  ["timeline", "Timeline review",                                  "How many weeks or months? What is the estimated final completion date?"]
+];
+function _kickCards(){
+  const _n=(a)=>{ const m=String(a||'').match(/\d+/); return m?parseInt(m[0],10):999999; };
+  return (typeof propCards!=='undefined'?propCards:[])
+    .filter(c=>!c.archived && KICK_PHASES.includes(c.phase))
+    .sort((a,b)=>_n(a.addr)-_n(b.addr)||String(a.addr||'').localeCompare(String(b.addr||'')));
+}
+// How many comp boxes to draw: every comp that already has something in it, plus
+// one empty one, plus any extra the room has asked for with "Add a comp".
+function _kickCompN(notes, pid){
+  let last=0;
+  for(let i=1;i<=30;i++){ if((notes[pid+'::comp'+i]||'').trim()) last=i; }
+  const extra=((window._kickExtra||{})[pid])||0;
+  return Math.max(1, last+1+extra);
+}
+function _kickAddComp(pid, wk){
+  const e=window._kickExtra=window._kickExtra||{};
+  e[pid]=(e[pid]||0)+1;
+  openWeeklyMeeting('kickoff', wk||undefined);
+}
+function _kickZillow(pid, i){
+  const el=document.getElementById('wm-'+pid+'::comp'+i);
+  const v=((el&&el.value)||'').trim();
+  if(/^https?:\/\//i.test(v)){ window.open(v,'_blank'); return; }
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
+  const q=v || (c?c.addr:'') || '';
+  window.open('https://www.zillow.com/homes/'+encodeURIComponent(q)+'_rb/','_blank');
+}
+// Picking the PM here is the decision - so it lands on the property card too,
+// rather than being a note about a decision somebody still has to action.
+async function _kickSetPM(pid, name, el){
+  if(_blockIfReadOnly()) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return;
+  const prev=c.pm||'';
+  const { data, error } = await supabase.from("pm_properties").update({ pm:name||null }).eq("id",pid).select("id");
+  if(error || !data || !data.length){
+    alert("That project manager was NOT saved onto the property card"+(error&&error.message?(" - "+error.message):"")+".");
+    if(el) el.value=prev;
+    return;
+  }
+  c.pm=name||'';
+  _logAudit("updated","property", c.addr||"", "Project manager set to "+(name||"nobody")+" in the kickoff meeting"+(prev?(" (was "+prev+")"):""));
+  if(el){
+    const ok=el.parentNode&&el.parentNode.querySelector('.kick-pm-ok');
+    if(ok){ ok.style.display='inline'; setTimeout(()=>{ok.style.display='none';},1800); }
+  }
+}
+
+function _kickMeetingBody(wk, notes, prevNotes, roNow){
+  const cards=_kickCards();
+  const V=(pid,f)=>notes[pid+'::'+f]||'';
+  const P=(pid,f)=>prevNotes[pid+'::'+f]||'';
+  const id=(pid,f)=>'wm-'+pid+'::'+f;
+  const box='padding:6px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13.5px;color:#111;background:#fff';
+  const roShow=(v)=>`<span style="font-size:13.5px;color:${v?'#111':'#ccc'}">${_calEsc(v)||'—'}</span>`;
+  const tx=(pid,f,ph,w)=>roNow?roShow(V(pid,f)):`<input id="${id(pid,f)}" value="${_calEsc(V(pid,f))}" placeholder="${ph||''}" style="${box};width:${w||'100%'}"/>`;
+  const ta=(pid,f,ph,minH)=>{
+    const last=P(pid,f);
+    const lastBox=last?`<div style="margin-top:4px;background:#F7F8FB;border-left:3px solid #cdd7e6;border-radius:0 6px 6px 0;padding:6px 9px"><div style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:.05em">Last week</div><div style="font-size:12.5px;color:#555;white-space:pre-wrap">${_calEsc(last)}</div></div>`:'';
+    if(roNow) return lastBox+`<div style="font-size:13px;color:#333;white-space:pre-wrap;background:#F7F8FB;border-radius:7px;padding:8px 10px;min-height:30px;margin-top:4px">${_calEsc(V(pid,f))||'<span style="color:#bbb">Nothing written</span>'}</div>`;
+    return lastBox+`<textarea id="${id(pid,f)}" placeholder="${ph||''}" style="width:100%;min-height:${minH||58}px;margin-top:4px;padding:8px 10px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13.5px;color:#222;resize:vertical;font-family:inherit">${_calEsc(V(pid,f))}</textarea><div style="margin-top:2px"><span id="wm-ok-${pid}::${f}" style="display:none;font-size:11.5px;color:#1D9E75">Saved ✓</span></div>`;
+  };
+
+  const blocks=cards.map(c=>{
+    const nComps=_kickCompN(notes, c.id);
+    const filled=KICK_PRICES.filter(pr=>V(c.id,pr[0])).length;
+    const compsFilled=(()=>{ let n=0; for(let i=1;i<=30;i++) if((V(c.id,'comp'+i)||'').trim()) n++; return n; })();
+    const notesFilled=KICK_NOTES.filter(n=>V(c.id,n[0])).length;
+    const chip=(txt,col,bg)=>`<span style="font-size:10.5px;font-weight:600;color:${col};background:${bg};padding:1px 7px;border-radius:99px;white-space:nowrap">${txt}</span>`;
+    const chips=[
+      chip(compsFilled+' comp'+(compsFilled===1?'':'s'), compsFilled?'#0F7B54':'#888', compsFilled?'#E6F4ED':'#F1F2F6'),
+      chip(filled+'/3 prices', filled===3?'#0F7B54':'#B7791F', filled===3?'#E6F4ED':'#FBF3E2'),
+      chip(notesFilled+'/'+KICK_NOTES.length+' reviewed', notesFilled===KICK_NOTES.length?'#0F7B54':'#888', notesFilled===KICK_NOTES.length?'#E6F4ED':'#F1F2F6'),
+      (c.pm?chip('PM '+_calEsc(c.pm),'#185FA5','#E7EFF8'):chip('no PM yet','#B42318','#FBEAE8'))
+    ].join(' ');
+
+    const compRows=[];
+    for(let i=1;i<=nComps;i++){
+      const val=V(c.id,'comp'+i);
+      const isUrl=/^https?:\/\//i.test(val);
+      compRows.push(`<div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+        <div style="font-size:11px;color:#aaa;width:22px;flex-shrink:0">#${i}</div>
+        <div style="flex:1;min-width:0">${roNow
+          ? (isUrl?`<a href="${_calEsc(val)}" target="_blank" style="font-size:13px;color:#185FA5">${_calEsc(val)}</a>`:roShow(val))
+          : `<input id="${id(c.id,'comp'+i)}" value="${_calEsc(val)}" placeholder="Paste the Zillow link, or type: address · sold price · date · sq ft" style="${box};width:100%"/>`}</div>
+        <button onclick="_kickZillow('${c.id}',${i})" title="Open this comp on Zillow" style="padding:6px 11px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;white-space:nowrap;font-weight:600">Zillow ↗</button>
+      </div>`);
+    }
+
+    const priceCells=KICK_PRICES.map(pr=>`<div style="background:#f7f8fb;border-radius:8px;padding:8px 11px">
+        <div style="font-size:11px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em">${pr[1]}</div>
+        <div style="font-size:10.5px;color:#aaa;margin-bottom:4px">${pr[2]}</div>
+        ${roNow?`<div style="font-size:16px;font-weight:700;color:${V(c.id,pr[0])?'#111':'#ccc'}">${_calEsc(V(c.id,pr[0]))||'—'}</div>`
+               :`<input id="${id(c.id,pr[0])}" value="${_calEsc(V(c.id,pr[0]))}" placeholder="$0" style="${box};width:100%;font-size:15px;font-weight:700"/>`}
+      </div>`).join('');
+
+    const noteSecs=KICK_NOTES.map(n=>`<div style="margin-top:11px">
+        <div style="font-size:11.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em">${n[1]}</div>
+        ${ta(c.id,n[0],n[2])}
+      </div>`).join('');
+
+    const pmNames=(function(){ const l=[''].concat(teamMembers()); if(c.pm && l.indexOf(c.pm)<0) l.push(c.pm); return l; })();
+
+    return `<details data-wm-prop="${c.id}" ${_wmIsOpen(c.id)?'open':''} ontoggle="_wmToggleOpen('${c.id}',this.open)" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;margin-bottom:9px;color:#111">
+      <summary style="cursor:pointer;padding:11px 14px 11px 4px;outline:none">
+        <div style="display:inline-flex;width:calc(100% - 26px);vertical-align:middle;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <span style="font-size:15px;font-weight:700;color:#185FA5">${_calEsc(c.addr||'')}</span>
+          <span style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">${chips}<span style="font-size:11.5px;color:#888;margin-left:4px">${_calEsc(c.phase||'')}</span></span>
+        </div>
+      </summary>
+      <div style="padding:0 16px 14px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:8px">
+          <span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-size:13px;color:#185FA5">Open the property card ›</span>
+          <span style="font-size:12px;color:#666">${_calEsc(c.type||'no type set')}${(c.checklists&&c.checklists.permitted)==='yes'?' · 🏛 Permitted':''}${(c.checklists&&c.checklists.acqBudget)?(' · ACQ budget '+_calEsc(c.checklists.acqBudget)):''}</span>
+        </div>
+        <div style="font-size:12.5px;color:#8a6d1a;background:#FFF7E0;border-radius:7px;padding:7px 10px;margin-bottom:11px">Run the room in this order: comps → the three target prices → demo and clean out → buy-and-list scope → budget → rehab scope → timeline → who is running it.</div>
+
+        <div style="font-size:11.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">Comps</div>
+        ${compRows.join('')}
+        ${roNow?'':`<button onclick="_kickAddComp('${c.id}','${wk}')" style="padding:6px 13px;background:#fff;border:0.5px dashed #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">＋ Add a comp</button>`}
+
+        <div style="font-size:11.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em;margin:14px 0 6px">Target listing price — the three ways this could go</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:9px">${priceCells}</div>
+
+        ${noteSecs}
+
+        <div style="margin-top:13px;padding-top:11px;border-top:0.5px solid #eef0f6">
+          <div style="font-size:11.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em">Project manager running the job</div>
+          <div style="font-size:10.5px;color:#aaa;margin-bottom:5px">Choosing here assigns them on the property card straight away.</div>
+          <div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap">
+            ${roNow?roShow(c.pm||'')
+              :`<select onchange="_kickSetPM('${c.id}',this.value,this)" style="${box};min-width:210px;font-weight:600">${pmNames.map(n=>`<option ${c.pm===n?'selected':''}>${_calEsc(n)}</option>`).join('')}</select>
+                <span class="kick-pm-ok" style="display:none;font-size:12px;color:#1D9E75">Assigned on the property card ✓</span>`}
+          </div>
+          <div style="margin-top:7px">${ta(c.id,'pm_notes','What did they commit to?',44)}</div>
+        </div>
+
+        ${roNow?'':`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
+          <button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">＋ Add task</button>
+          <button onclick="_wmAddEvent('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#639922;cursor:pointer;font-weight:600">＋ Schedule contractor</button>
+          <button onclick="_miAddQuick('q','${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#B7791F;cursor:pointer;font-weight:600">＋ Question for Bruce / Tommy</button>
+        </div>`}
+      </div>
+    </details>`;
+  }).join('');
+
+  const closedRec=_wmMeta(wk,'kickoff','__closed');
+  const expandBar=cards.length?`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:9px">
+      <div style="font-size:12.5px;color:#888">${cards.length} propert${cards.length===1?'y':'ies'} queued to start</div>
+      <div style="display:flex;gap:6px">
+        <button onclick="_wmExpandAll(true)" style="padding:5px 11px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12px;color:#555;cursor:pointer">Expand all</button>
+        <button onclick="_wmExpandAll(false)" style="padding:5px 11px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12px;color:#555;cursor:pointer">Collapse all</button>
+      </div></div>`:'';
+
+  return `${_wmClosedBanner(wk, closedRec, 'kickoff')}
+    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:13px 16px;margin-bottom:14px;font-size:13.5px;color:#444;line-height:1.7">Before work starts on a project you hold a formal <b>kick-off meeting</b>. Every property below is queued to start. Click one open and work down it. <b style="color:#0F7B54">Everything saves itself as you type.</b></div>
+    ${expandBar}
+    ${blocks || '<div style="color:#bbb;font-size:14px;padding:20px 0">No properties are waiting to start right now.</div>'}
+    ${_wmOpenQuestionsPanel(cards)}
+    ${_wmCloseBar(wk, closedRec, isPastWeek(wk), 'kickoff')}`;
+}
+function isPastWeek(wk){ return wk!==_wmWeekKey(); }
+
+// ===================== FULL COMPANY MEETING =====================
+// Bruce, 29 Aug: nobody fills this one in. It is assembled from the meetings that
+// already happened this week - Monday's walk-through, the On the Market meeting and
+// the kick-offs - plus the live board. If a section here looks empty, the answer is
+// not to type into it: it is that the meeting it comes from has not been held yet.
+function _compFrom(wk, kind){ return (((window._wmData||{})[wk]||{})[kind])||{}; }
+function _compMeetingBody(wk){
+  const team=_compFrom(wk,'team'), mkt=_compFrom(wk,'market'), kick=_compFrom(wk,'kickoff');
+  const D=_wmSummaryData(wk);
+  const all=(typeof propCards!=='undefined'?propCards:[]);
+  const money=(v)=>{const n=parseFloat(String(v||'').replace(/[^0-9.\-]/g,''));return isNaN(n)?null:n;};
+  const leftover=(D.tb!=null&&D.ts!=null)?(D.tb-D.ts):null;
+  const closedOf=(k)=>{ const r=_wmMeta(wk,k,'__closed'); return r&&r.at?r:null; };
+  const openedOf=(k)=>{ const r=_wmMeta(wk,k,'__opened'); return r&&r.first?r:null; };
+
+  const kpi=(k,v,s,color)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:11px 13px">
+      <div style="font-size:10.5px;color:#999;text-transform:uppercase;letter-spacing:.05em">${k}</div>
+      <div style="font-size:21px;font-weight:700;color:${color||'#111'};margin-top:2px">${v}</div>
+      <div style="font-size:11px;color:#aaa">${s||''}</div></div>`;
+
+  const card=(title,sub,inner)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:13px 16px;margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap">
+        <div style="font-size:14px;font-weight:700;color:#111">${title}</div>
+        <div style="font-size:11.5px;color:#aaa">${sub||''}</div>
+      </div><div style="margin-top:8px">${inner}</div></div>`;
+  const none=(t)=>`<div style="font-size:12.5px;color:#bbb;padding:6px 0">${t}</div>`;
+  const line=(l,r)=>`<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px"><div style="min-width:0">${l}</div><div style="color:#888;white-space:nowrap;font-size:12px">${r||''}</div></div>`;
+  const addr=(c)=>`<span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span>`;
+
+  // --- where each source meeting stands ---
+  const src=[['team','Monday walk-through'],['market','On the Market'],['kickoff','Kick-offs']].map(x=>{
+    const c=closedOf(x[0]), o=openedOf(x[0]);
+    const st=c?['closed '+_wmWhen(c.at),'#0F7B54','#E6F4ED']
+             :(o?['open, not closed out','#B7791F','#FBF3E2']
+                :['not held yet','#B42318','#FBEAE8']);
+    return `<span style="font-size:11.5px;padding:3px 9px;border-radius:99px;font-weight:600;color:${st[1]};background:${st[2]};margin-right:6px">${x[1]}: ${st[0]}</span>`;
+  }).join('');
+
+  // --- construction: over budget, timelines pushed ---
+  const overRows=D.over.length?D.over.map(x=>line(addr(x.c)+' <span style="color:#B42318;font-weight:600">'+_wmMoneyShort(x.m.left)+' over</span>'+(x.note?'<div style="font-size:12px;color:#888;margin-top:1px">'+_calEsc(x.note)+'</div>':''), _calEsc(x.c.pm)||'no PM')).join(''):none('Nothing is over budget.');
+  const movedRows=D.moved.length?D.moved.map(x=>line(addr(x.c)+' — moved to <b>'+_calEsc(x.p.to||'')+'</b>'+(x.p.why?'<div style="font-size:12px;color:#888;margin-top:1px">'+_calEsc(x.p.why)+'</div>':''), _wmDateShort(x.p.at))).join(''):none('No finish date moved this week.');
+
+  // --- on the market ---
+  const act=_mktCards('active'), ctr=_mktCards('contract'), soon=_mktCards('soon');
+  const actRows=act.length?act.map(c=>{
+    const listed=mkt[c.id+'::date_listed']||((c.checklists||{}).timeline_done)||'';
+    const dom=_mktDom(listed);
+    const lp=mkt[c.id+'::list_price']||'';
+    const s7=mkt[c.id+'::sh_7']||'';
+    const fb=(mkt[c.id+'::feedback']||'').trim();
+    return line(addr(c)+(lp?' — <b>'+_calEsc(lp)+'</b>':'')+(fb?'<div style="font-size:12px;color:#888;margin-top:1px">'+_calEsc(fb.slice(0,160))+(fb.length>160?'…':'')+'</div>':''),
+                (dom!=null?dom+' DOM':'')+(s7?' · '+_calEsc(s7)+' showings/7d':''));
+  }).join(''):none('Nothing is on the market.');
+  const ctrRows=ctr.length?ctr.map(c=>{
+    const cp=mkt[c.id+'::contract_price']||'';
+    const cd=mkt[c.id+'::close_date']||c.closingDateSell||'';
+    const rem=(mkt[c.id+'::rem_done']==='Yes')?'remedies done':(mkt[c.id+'::rem_started']==='Yes'?'remedies started':'');
+    const lag=(mkt[c.id+'::lag']||'').trim();
+    return line(addr(c)+(cp?' — <b>'+_calEsc(cp)+'</b>':'')+(lag?'<div style="font-size:12px;color:#B7791F;margin-top:1px">'+_calEsc(lag.slice(0,160))+(lag.length>160?'…':'')+'</div>':''),
+                (cd?('closes '+_wmDateShort(cd)):'no close date')+(rem?' · '+rem:''));
+  }).join(''):none('Nothing is in contract.');
+  const soonRows=soon.length?soon.map(c=>{
+    const sp=mkt[c.id+'::sugg_price']||'', ld=mkt[c.id+'::list_date']||'';
+    return line(addr(c)+(sp?' — suggested <b>'+_calEsc(sp)+'</b>':''), ld?('list by '+_wmDateShort(ld)):'no target list date');
+  }).join(''):none('Nothing is queued to be listed.');
+
+  // --- kick-offs ---
+  const kickRows=_kickCards().length?_kickCards().map(c=>{
+    const prices=KICK_PRICES.map(pr=>kick[c.id+'::'+pr[0]]).filter(Boolean);
+    const nComps=(function(){ let n=0; for(let i=1;i<=30;i++) if((kick[c.id+'::comp'+i]||'').trim()) n++; return n; })();
+    return line(addr(c)+(prices.length?' — '+prices.map(x=>'<b>'+_calEsc(x)+'</b>').join(' / '):' <span style="color:#B42318">no target price yet</span>'),
+                (c.pm?('PM '+_calEsc(c.pm)):'no PM yet')+' · '+nComps+' comp'+(nComps===1?'':'s'));
+  }).join(''):none('Nothing is queued to start.');
+
+  // --- what needs a person ---
+  const qRows=D.qs.length?D.qs.map(x=>{ const c=all.find(p=>p.id===x.pid);
+    return line((c?addr(c)+' — ':'')+_calEsc(x.text), _miAgeLabel(x.raised)); }).join(''):none('Nothing is waiting on Bruce or Tommy.');
+  const lagRows=D.lag.length?D.lag.map(x=>{ const c=all.find(p=>p.id===x.pid);
+    return line((c?addr(c)+' — ':'')+_calEsc(x.text), _miAgeLabel(x.raised)); }).join(''):none('No lag-time items open.');
+  const unRows=D.unassigned.length?D.unassigned.slice(0,10).map(t=>line(_calEsc(t.title||''), t.due_date?('due '+_wmDateShort(t.due_date)):'no due date')).join('')
+    +(D.unassigned.length>10?`<div style="font-size:12px;color:#999;padding-top:5px">+ ${D.unassigned.length-10} more.</div>`:''):none('Every open task has somebody on it.');
+
+  const winRows=D.wins.length?D.wins.map(x=>line(addr(x.c)+' — '+_calEsc(x.t),'')).join(''):none('No wins written up in Monday’s meeting yet.');
+
+  return `<div style="background:#EEF4FB;border:0.5px solid #cfe0f2;border-radius:12px;padding:12px 15px;margin-bottom:14px">
+      <div style="font-size:13.5px;color:#1c3f66"><b>Nobody fills this one in.</b> Every line below is pulled from the meetings that already happened this week and from the live board. If a section is thin, the meeting it comes from has not been held yet.</div>
+      <div style="margin-top:8px">${src}</div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px">
+      ${kpi('Properties in construction', D.cards.length, 'vacant → pre-list')}
+      ${kpi('On the market', act.length, ctr.length+' in contract')}
+      ${kpi('Budgeted', _wmMoneyShort(D.tb||null), 'across construction')}
+      ${kpi('Spent', _wmMoneyShort(D.ts||null), D.tb?Math.round((D.ts/D.tb)*100)+'% of budget':'')}
+      ${kpi('Leftover', _wmMoneyShort(leftover), D.over.length+' over budget', leftover!=null&&leftover<0?'#B42318':'#0F7B54')}
+      ${kpi('Past committed finish', D.late.length, 'of '+D.cards.length, D.late.length?'#B7791F':'#111')}
+    </div>
+    ${card('⚡ Needs a person', D.qs.length+' question'+(D.qs.length===1?'':'s'), qRows)}
+    ${card('🏗 Over budget', D.over.length+' propert'+(D.over.length===1?'y':'ies'), overRows)}
+    ${card('📅 Timelines moved this week', D.moved.length+' pushed', movedRows)}
+    ${card('⏳ Lag-time items still open', D.lag.length+' open', lagRows)}
+    ${card('🏡 On the market', act.length+' listed', actRows)}
+    ${card('🤝 In contract', ctr.length+' under contract', ctrRows)}
+    ${card('⏳ Coming soon', soon.length+' about to list', soonRows)}
+    ${card('🚀 Kicking off', _kickCards().length+' queued to start', kickRows)}
+    ${card('🙋 Unassigned tasks', D.unassigned.length+' with nobody on them', unRows)}
+    ${card('🎉 Wins this week', '', winRows)}
+    <div style="font-size:12px;color:#999;margin-top:4px">Built ${_calEsc(_wmWhen(new Date().toISOString()))} from the live board and this week’s meeting notes.</div>`;
+}
+
 function openWeeklyMeeting(kind, week){
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
@@ -5486,35 +5785,13 @@ function openWeeklyMeeting(kind, week){
 
   } else {
     if(kind==='kickoff'){
-      // Mirrors the Kick-Off Meeting template: comps → target finishes → walkthrough →
-      // scope → budget → timeline → PM. One block per property about to start.
-      const startPhases=["Upcoming Takedowns","Occupied / Closed","Vacant / On Standby","Pre Construction"];
-      const _n=(a)=>{ const m=String(a||'').match(/\d+/); return m?parseInt(m[0],10):999999; };
-      const starting=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && startPhases.includes(c.phase))
-        .sort((a,b)=>_n(a.addr)-_n(b.addr));
-      const fld=(pid,key,label,ph,rows)=>`<div style="margin-bottom:9px"><div style="font-size:11.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:3px">${label}</div>${ta(pid+'::'+key,ph)}</div>`;
-      const comp=(pid,i)=>`<div style="background:#F7F8FB;border-radius:8px;padding:9px 11px;margin-bottom:7px"><div style="font-size:12px;font-weight:700;color:#185FA5;margin-bottom:3px">Comp #${i}</div>${ta(pid+'::comp'+i,'Address · sale price · finish grade (A–F)')}</div>`;
-      const blocks=starting.length? starting.map(c=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:14px 16px;margin-bottom:14px">
-        <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:10px">
-          <span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-size:15.5px;font-weight:700;color:#185FA5">${_calEsc(c.addr||'')}</span>
-          <span style="font-size:12px;color:#666">${_calEsc(c.phase||'')} · ${_calEsc(c.type||'—')} · PM: ${_calEsc(c.pm||'—')}${(c.checklists&&c.checklists.permitted)==='yes'?' · 🏛 Permitted':''}</span>
-        </div>
-        <div style="font-size:12.5px;color:#8a6d1a;background:#FFF7E0;border-radius:7px;padding:7px 10px;margin-bottom:10px">Run the room in this order: comps &amp; target price → target finishes → picture / walkthrough review → line-by-line scope (15–20 min, incl. kitchen design &amp; permit drawings) → line-by-line budget vs the ACQ budget → timeline → who is the PM.</div>
-        ${comp(c.id,1)}${comp(c.id,2)}${comp(c.id,3)}
-        ${fld(c.id,'target','Final target listing price & final target finishes','e.g. list at $XXX,XXX · finish grade B+ …')}
-        ${fld(c.id,'walk','Walkthrough review notes','General notes for the scope review — what stays (shower surround, cabinets…), and any disconnect between the ACQ team and the project team.')}
-        ${fld(c.id,'scope','Scope review','Line-by-line scope of work. 15–20 minutes. Include kitchen design review and permit drawing review if applicable.')}
-        ${fld(c.id,'budget','Budget review','Line by line. Once the budget is SET there is no altering. Compare to the ACQ budget — if there is a large variation, pull the ACQ team into the meeting now.')}
-        ${fld(c.id,'timeline','Timeline review','How many weeks / months to complete? Estimated final completion date?')}
-        ${fld(c.id,'pm','Project manager running the job','Who is the PM, and what did they commit to?')}
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px">
-          <button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">＋ Add task</button>
-          <button onclick="_wmAddEvent('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#639922;cursor:pointer;font-weight:600">＋ Schedule contractor</button>
-        </div>
-      </div>`).join('') : '<div style="color:#bbb;font-size:14px;padding:20px 0">No properties are waiting to start right now.</div>';
-      body=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:13px 16px;margin-bottom:14px;font-size:13.5px;color:#444;line-height:1.7">Before work starts on a project you hold a formal <b>kick-off meeting</b>. Every property below is queued to start — work through each one top to bottom. Answers save as you go and stay with that week.</div>${blocks}`;
+      const closedRec=_wmMeta(wk,'kickoff','__closed');
+      const roNow=isReadOnly()||!!closedRec.at||isPast;
+      body=_kickMeetingBody(wk, notes, prevNotes, roNow);
+    } else if(kind==='company'){
+      body=_compMeetingBody(wk);
     } else {
-      const agendas={company:'Full company agenda — wins, numbers, announcements, cross-team needs…',ceo:'Director / CEO agenda — approvals pending, escalations, strategy…'};
+      const agendas={ceo:'Director / CEO agenda — approvals pending, escalations, strategy…'};
       body=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:14px 16px">${ta('__agenda',agendas[kind]||'Agenda…')}</div>`;
     }
   }
@@ -12194,4 +12471,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-29z market-and-subtasks -->
+<!-- build: 2026-08-30a kickoff-and-company -->
