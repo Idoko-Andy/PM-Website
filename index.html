@@ -4242,9 +4242,10 @@ function openWeeklyMeeting(kind, week){
   };
   let body='';
   if(kind==='team'){
-    // Pre Construction through Pre List / Punchout - once a house is on the market it
-    // leaves the Monday construction walk-through.
-    const cons=["Pre Construction","Waiting Permits","Framing, MEPS, Insulation","Drywall / Exterior Work","Finishes","Pre List / Punchout Process"];
+    // Vacant / On Standby through Pre List / Punchout. Once a house is listed on the
+    // market - or handed to rentals - it leaves the Monday construction walk-through
+    // and picks up in the On the Market meeting instead.
+    const cons=["Vacant / On Standby","Pre Construction","Waiting Permits","Framing, MEPS, Insulation","Drywall / Exterior Work","Finishes","Pre List / Punchout Process"];
     // Ordered by house number so the room walks the list 1 → 9; deliberately NOT grouped by
     // PM, so while one property is discussed the other PMs can keep typing and texting.
     const _num=(a)=>{ const m=String(a||'').match(/\d+/); return m?parseInt(m[0],10):999999; };
@@ -6628,7 +6629,7 @@ function openAdminDashboard(activeTab) {
     default:             content=_adminMainDashboard();
   }
   _execShell('openAdminDashboard', tabs, activeTab, content);
-  if(activeTab==='trackers' && !window._trkLoaded){ Promise.all([_trkLoad(), loadContractorsFromSupabase()]).then(()=>openAdminDashboard('trackers')); }
+  if(activeTab==='trackers' && !window._trkLoaded){ Promise.all([_trkLoad(), loadContractorsFromSupabase()]).then(()=>_permitSeedIfEmpty()).then(()=>openAdminDashboard('trackers')); }
 }
 
 // ===== Director / CEO home: clickable drill-in boxes =====
@@ -6858,7 +6859,7 @@ function openVAAdminDashboard(activeTab) {
     default:             content=_vaMainDashboard(vaName);
   }
   _execShell('openVAAdminDashboard', tabs, activeTab, content);
-  if(activeTab==='trackers' && !window._trkLoaded){ Promise.all([_trkLoad(), loadContractorsFromSupabase()]).then(()=>openVAAdminDashboard('trackers')); }
+  if(activeTab==='trackers' && !window._trkLoaded){ Promise.all([_trkLoad(), loadContractorsFromSupabase()]).then(()=>_permitSeedIfEmpty()).then(()=>openVAAdminDashboard('trackers')); }
 }
 async function _utilToggle(id,key){ await toggleChecklistItem(id,key); openVAAdminDashboard('trackers'); }
 // Utilities dashboard (Patience): electric/water/gas status per active property.
@@ -7076,6 +7077,263 @@ function _utilSummaryCard(sum, utilOutList, nm){
   }
   return sum('⚡ Utilities','#B7791F', utilOutList.slice(0,20).map(c=>nm(c)+' — '+_calEsc(_utilGaps(c).join(', '))));
 }
+// ===================== PERMIT TRACKER =====================
+// Mirrors the company's Permit Tracking sheet. Unlike every other tracker this
+// one is NOT one row per property. A single house can carry five separate
+// permits - 1313 Lincoln has house, garage, driveway, sidewalk and fence - and
+// some permits sit on an address that has no property card at all (the Hanford
+// garages). So permits live in their own keyed list under _trkData.permits,
+// each with its own id, and link back to a property card only when the address
+// happens to match one.
+//
+// Deliberately absent: the "Login Info" row from the sheet. Portal usernames
+// and passwords are not stored in this app. Keep them in the password manager;
+// the portal link on each jurisdiction gets you there in one click.
+const PERMIT_STATUSES  = ["Under Review","Corrections Required","Issued","Closed"];
+const PERMIT_PRIORITIES= ["High","Medium","Low","Closed"];
+const PERMIT_JURIS_SEED= ["City of Columbus","Hilliard","City of Grandview Heights","Upper Arlington","City of Grove City","City of Bexley"];
+// Only these two ever get permit work assigned to them.
+const PERMIT_OWNERS    = ["Jennifer Tatum","Marlo"];
+const PERMIT_TASK_CATEGORY = "Permit";
+// A portal that has not been looked at in this many days goes amber.
+const PERMIT_STALE_DAYS = 7;
+
+// juris, address, number, submitted, priority, status, tv, checked, notes, examiner, email, received, comment, responded
+const PERMIT_SEED = [
+["City of Columbus","3388 Wicklow Rd","ALTR2623862","2026-06-17","High","Issued","Y","2026-08-20","Permit issued 8/12/26","Bryan Quijada","BYQuijada@columbus.gov","2026-07-22","Ceiling height in 3rd floor bathroom in question","2026-07-30"],
+["City of Columbus","427-439 Hanford Garage (441 Hanford)","ADDC2620736","2026-05-31","High","Corrections Required","N","2026-08-20","Examiner says plans portion is good to go; need Final Site compliance approved first. Site Engineering confirmed they received Julie's revisions, and will have their review completed by 8/12.","Brian Trinh","BLTrinh@columbus.gov","2026-07-06","A notice has been placed on the parcel due to interior work within the 7-unit townhouse performed without a permit. A determination was made that due to a Building Compliance Order placed on the parcel, no additional work can be approved without addressing the work performed without a permit. It does appear that a building application has been submitted under ALTM2542215, which will be required to be approved before the application, ADDC2620736 for the construction of a new 7-bay garage can be approved.","2026-07-07"],
+["City of Columbus","441 Hanford Final Site Compliance","26345-00386","2026-06-17","High","Corrections Required","N","2026-08-20","Corrections uploaded 8/14; portal says new due date for review is 8/24.","Georgia Papakirk","GEPapakirk@columbus.gov","2026-08-12","","2026-08-14"],
+["City of Columbus","437 (427 Hanford)","ALTM2542215","2025-11-17","High","Issued","N","2026-08-20","Permit issued 7/30/26","Bryan Quijada","BYQuijada@columbus.gov","2026-07-06","See comments for 441 Hanford","2026-07-07"],
+["City of Columbus","415 Hanford Garage","ALTR2531539","2026-05-18","Closed","Closed","","","","","","","",""],
+["City of Columbus","407-409 Hanford Garage","ALTR2531534","2025-08-27","Closed","Closed","","","","","","","",""],
+["City of Columbus","417-425 Hanford Garage","NEWM2544292","2025-12-24","Closed","Closed","","","","","","","",""],
+["City of Columbus","818-820 S 22nd St","ALTR2616036","2026-04-29","Low","Issued","N","2026-08-20","Insulation and fire-blocking inspection passed 7/13","","","","",""],
+["City of Columbus","999 Norway","ALTR2625228","2026-06-26","High","Issued","Y","2026-08-20","Framing inspection scheduled for 8/21","Nicholas Leonard","npleonard@columbus.gov","2026-07-17","Clarify if kitchen/living room wall is a support wall. Existing roof and hip rafters do not look structurally sound. Indicate rafters to be replaced or provide engineer's report stating they are structurally sufficient.","2026-07-27"],
+["City of Columbus","4561 Zeller Rd","ALTR2627250","2026-07-09","Medium","Issued","N","2026-08-20","Framing inspection passed 8/7/26","","","","",""],
+["City of Columbus","994-996 Livingston - Building Permit","ALTC2629789","2026-07-27","Medium","Under Review","N","2026-08-20","Comments sent 8/17; asking us to refer to 2 previous permits with existing conditions that vary from what we show","Jon Van Meter","JMVanMeter@columbus.gov","2026-08-17","",""],
+["City of Columbus","994-996 Livingston - Site Engineering","26345-00554","2026-08-10","Medium","Under Review","N","2026-08-20","Submitted just the site plan to Site Engineering for review; looks like due date is 8/25 on portal.","","","","",""],
+["Hilliard","5120 Bigelow Dr","RBLD-26-123","","High","Issued","N","2026-08-20","Permit issued 6/29/26; no new update","","","2026-06-12","Provide Engineering Documentation for beams sizing and sizing of window header","2026-06-26"],
+["City of Grandview Heights","1313 Lincoln Rd (House)","R-26-7","2026-03-04","High","Issued","N","2026-08-20","","","","","",""],
+["City of Grandview Heights","1313 Lincoln Rd (Garage)","R-26-17 / E-26-41","2026-03-04","High","Issued","N","2026-08-20","","","","","",""],
+["City of Grandview Heights","1313 Lincoln Rd (Driveway)","DRIV-26-1","2026-03-27","High","Issued","N","2026-08-20","Uploaded revised drawing 8/20 after Bruce met with Zoning Dept.","","","","",""],
+["City of Grandview Heights","1313 Lincoln Rd (Sidewalk)","SIDE-26-13","2026-06-24","High","Issued","N","2026-08-20","Zoning approval letter issued 7/16/26","","","2026-06-29","Indicate size and location of sidewalk replacement","2026-06-29"],
+["City of Grandview Heights","1313 Lincoln Rd (Privacy Fence)","FENC-26-45","2026-06-24","High","Issued","N","2026-08-20","Zoning approval letter issued 7/14/26","","","","",""],
+["Upper Arlington","1285 Kingsgate","26-110","2026-01-09","Low","Closed","N","2026-07-14","Final occupancy inspection passed 7/14/26","","","","",""],
+["Upper Arlington","2616 Bristol","26-1909","2026-05-12","Medium","Issued","Y","2026-08-20","Downspouts / drainage inspection partial pass 8/6/26","","","","",""],
+["City of Grove City","3610-3612 Grove City Rd","PR20260000492","2026-03-11","Low","Closed","N","2026-08-19","Final occupancy and final HVAC passed 8/17","","","","",""],
+["City of Bexley","2808 Powell","RBLD-26-97","2026-06-09","High","Under Review","Y","2026-08-20","Conditional approval issued 7/30; corrections required before the full permit can be issued. Revision drawings uploaded 8/3 for review. Robin confirmed 8/5 revisions have been received and were passed along to plan review. TBD on timing. Sent follow-up message 8/10 but haven't heard back. Sent another message 8/13. Bexley told Bruce on 8/13 they have until 9/3 to finish their review. Robin messaged in portal the review can take up to 4 weeks.","","","2026-07-30","","2026-08-03"]
+];
+const PERMIT_FIELDS=["juris","addr","number","submitted","priority","status","tv","checked","notes","examiner","email","received","comment","responded"];
+
+function _permitSlug(s){ return String(s||"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,54); }
+function _permitList(){
+  const p=(window._trkData||{}).permits||{};
+  return Object.keys(p).map(k=>Object.assign({id:k},p[k])).filter(r=>!r.archived);
+}
+// Seeds the sheet's rows the first time anyone opens the tracker. Ids are
+// derived from the permit number, so running this twice can never duplicate a
+// row - a second pass simply overwrites nothing and adds nothing.
+async function _permitSeedIfEmpty(){
+  const d=window._trkData||{};
+  if(d.permits_seeded) return false;
+  if(window._trkLoadOk===false) return false;
+  if(typeof isReadOnly==="function" && isReadOnly()) return false;
+  d.permits=d.permits||{};
+  let added=0;
+  PERMIT_SEED.forEach((row,i)=>{
+    const id="p-"+(_permitSlug(row[2])||_permitSlug(row[1])||("row"+i));
+    if(d.permits[id]) return;
+    const rec={ord:i};
+    PERMIT_FIELDS.forEach((f,j)=>{ if(row[j]) rec[f]=row[j]; });
+    d.permits[id]=rec; added++;
+  });
+  d.permits_seeded=true;
+  window._trkData=d;
+  await _trkSave();
+  return added>0;
+}
+function _permitJurisdictions(){
+  const seen=[];
+  PERMIT_JURIS_SEED.forEach(j=>seen.push(j));
+  _permitList().forEach(r=>{ const j=r.juris||"Other"; if(seen.indexOf(j)<0) seen.push(j); });
+  return seen;
+}
+function _permitDaysSince(ds){
+  if(!ds) return null;
+  try{ return Math.floor((Date.now()-Date.parse(ds+"T00:00:00Z"))/86400000); }catch(e){ return null; }
+}
+// What still needs a human. Anything Closed is finished and never counts.
+function _permitNeeds(r){
+  if((r.status||"")==="Closed") return null;
+  if((r.status||"")==="Corrections Required") return "corrections required";
+  if(r.received && !r.responded) return "comment from "+(r.examiner||"the examiner")+" on "+r.received+" not responded to";
+  if((r.status||"")==="Under Review"){
+    const dd=_permitDaysSince(r.checked);
+    if(dd===null) return "under review — portal never checked";
+    if(dd>PERMIT_STALE_DAYS) return "under review — portal not checked in "+dd+" days";
+    return null;
+  }
+  const d2=_permitDaysSince(r.checked);
+  if(d2!==null && d2>PERMIT_STALE_DAYS*3) return "portal not checked in "+d2+" days";
+  return null;
+}
+function _permitOutstanding(){ return _permitList().filter(r=>!!_permitNeeds(r)); }
+// Link a permit row to a property card when the address lines up, so the
+// address stays clickable through to the card the PMs already use.
+function _permitProp(r){
+  const all=(typeof propCards!=="undefined"?propCards:[]).filter(c=>!c.archived);
+  const a=_permitSlug(r.addr);
+  if(!a) return null;
+  let hit=all.find(c=>_permitSlug(c.addr)===a);
+  if(hit) return hit;
+  const num=(r.addr||"").trim().split(/\s+/)[0];
+  if(!num || !/^[0-9]/.test(num)) return null;
+  hit=all.find(c=>{
+    const ca=_permitSlug(c.addr);
+    return ca && (a.indexOf(ca)===0 || ca.indexOf(_permitSlug(num+" "+((r.addr||"").split(/\s+/)[1]||"")))===0);
+  });
+  return hit||null;
+}
+async function _permitAdd(){
+  if(_blockIfReadOnly()) return;
+  const g=(id)=>((document.getElementById(id)||{}).value||"").trim();
+  const juris=g("perm-new-juris"), addr=g("perm-new-addr"), num=g("perm-new-num");
+  if(!addr){ alert("Give the permit an address first."); return; }
+  const d=window._trkData||{}; d.permits=d.permits||{};
+  let id="p-"+(_permitSlug(num)||_permitSlug(addr));
+  if(d.permits[id]) id=id+"-"+Date.now().toString(36).slice(-4);
+  const ord=Math.max(0,...Object.keys(d.permits).map(k=>d.permits[k].ord||0))+1;
+  d.permits[id]={ord:ord,juris:juris||"Other",addr:addr,number:num,status:"Under Review",priority:"Medium",submitted:_ymd(new Date())};
+  window._trkData=d;
+  if(await _trkSave()) _permitRerender();
+}
+async function _permitRemove(id){
+  if(_blockIfReadOnly()) return;
+  const r=((window._trkData||{}).permits||{})[id]; if(!r) return;
+  if(!confirm("Take "+(r.addr||"this permit")+" off the permit tracker?\n\nIt is kept in the record, just hidden from the table.")) return;
+  await _trkSet("permits",id,"archived",true,false);
+  _permitRerender();
+}
+function _permitRerender(){
+  if(window._permitCtx==="architect" && typeof openArchitectDashboard==="function"){ openArchitectDashboard("permits"); return; }
+  (window._trkRerender||function(){ openVAAdminDashboard("trackers"); })();
+}
+// Permit work only ever lands on Jen or Marlo, so the assignee is pre-ticked
+// rather than left for someone to guess at.
+function _permitAddTask(id, who){
+  if(_blockIfReadOnly()) return;
+  const r=((window._trkData||{}).permits||{})[id]; if(!r) return;
+  const prop=_permitProp(r);
+  const need=_permitNeeds(r);
+  openAddTask(typeof _ymdPlus==="function"?_ymdPlus(2):"", {
+    title:(r.addr||"Permit")+" — "+(need||"permit follow-up"),
+    cat:PERMIT_TASK_CATEGORY,
+    assignees:[who||PERMIT_OWNERS[0]],
+    propId:prop?prop.id:"",
+    notes:"Permit "+(r.number||"")+" · "+(r.juris||"")+(r.examiner?("\nExaminer: "+r.examiner+(r.email?(" <"+r.email+">"):"")):"")+(r.comment?("\n\nLatest comment: "+r.comment):"")
+  });
+}
+function _permitStatusColor(s){
+  return s==="Issued"?"#1D9E75":s==="Corrections Required"?"#C0392B":s==="Under Review"?"#185FA5":"#999";
+}
+function _permitPriorityColor(p){
+  return p==="High"?"#C0392B":p==="Medium"?"#B7791F":p==="Low"?"#777":"#bbb";
+}
+// The table itself. Rendered on its own for the Architect's Permit Tracker tab,
+// and wrapped in the Trackers shell for Marlo.
+function _permitTrackerBody(){
+  const ro=isReadOnly();
+  const rows=_permitList();
+  const jl=_permitJurisdictions();
+  const sel=(id,field,opts,w,color)=>{
+    const cur=_trkVal("permits",id,field);
+    if(ro) return `<span style="color:${color?color(cur):"#111"};font-weight:600">${_calEsc(cur||"—")}</span>`;
+    return `<select onchange="_trkSet('permits','${id}','${field}',this.value,true)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:${w||120}px;color:${color?color(cur):"#111"};font-weight:600">${opts.map(o=>`<option ${cur===o?"selected":""}>${_calEsc(o)}</option>`).join("")}</select>`;
+  };
+  const dt=(id,field)=>ro?(_trkVal("permits",id,field)||"—"):`<input type="date" value="${_trkVal("permits",id,field)}" onchange="_trkSet('permits','${id}','${field}',this.value,true)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:126px"/>`;
+  const tx=(id,field,ph,w)=>ro?(_calEsc(_trkVal("permits",id,field))||"—"):`<input value="${_calEsc(_trkVal("permits",id,field))}" placeholder="${ph||""}" onchange="_trkSet('permits','${id}','${field}',this.value,false)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:${w||110}px"/>`;
+  const ta=(id,field,ph,w)=>ro?`<div style="max-width:${w||240}px;white-space:pre-wrap;font-size:12.5px">${_calEsc(_trkVal("permits",id,field))||"—"}</div>`:`<textarea placeholder="${ph||""}" onchange="_trkSet('permits','${id}','${field}',this.value,false)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:${w||240}px;min-height:46px;resize:vertical;font-family:inherit">${_calEsc(_trkVal("permits",id,field))}</textarea>`;
+
+  const head=`<th style="padding:9px 10px;text-align:left;min-width:190px">Address</th>
+    <th style="padding:9px;text-align:left">Permit / application #</th>
+    <th style="padding:9px">Submitted</th>
+    <th style="padding:9px">Priority</th>
+    <th style="padding:9px">Status</th>
+    <th style="padding:9px">TV house</th>
+    <th style="padding:9px">Portal checked</th>
+    <th style="padding:9px;text-align:left">Notes</th>
+    <th style="padding:9px;text-align:left">Examiner / inspector</th>
+    <th style="padding:9px">Comment in</th>
+    <th style="padding:9px;text-align:left">Latest comment</th>
+    <th style="padding:9px">Responded</th>
+    <th style="padding:9px">Task</th>`;
+
+  let body="";
+  jl.forEach(j=>{
+    const mine=rows.filter(r=>(r.juris||"Other")===j).sort((a,b)=>(a.ord||0)-(b.ord||0));
+    if(!mine.length) return;
+    const openN=mine.filter(r=>!!_permitNeeds(r)).length;
+    body+=`<tr style="background:#F2F4F9"><td colspan="13" style="padding:8px 10px;font-size:12.5px;font-weight:700;color:#122A4A;letter-spacing:0.04em;text-transform:uppercase">${_calEsc(j)}
+      <span style="font-weight:500;text-transform:none;letter-spacing:0;color:${openN?"#C0392B":"#1D9E75"};margin-left:8px">${openN?(openN+" need action"):"nothing outstanding"}</span></td></tr>`;
+    mine.forEach(r=>{
+      const need=_permitNeeds(r);
+      const prop=_permitProp(r);
+      const stale=_permitDaysSince(r.checked);
+      const addrCell=prop
+        ? `<span onclick="openPropDetail('${prop.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(r.addr||"")}</span>`
+        : `<span style="font-weight:600;color:#111">${_calEsc(r.addr||"")}</span>`;
+      body+=`<tr data-trk="${_calEsc((r.addr||"")+" "+(r.number||"")+" "+j+" "+(r.examiner||""))}" style="border-top:0.5px solid #eef0f6;${need?"background:#FFFBF7":""}">
+        <td style="padding:7px 10px;vertical-align:top">${addrCell}
+          ${prop?`<div style="font-size:11px;color:#999">${_calEsc(prop.phase||"")}</div>`:`<div style="font-size:11px;color:#bbb">no property card</div>`}
+          ${need?`<div style="font-size:11px;color:#C0392B;margin-top:3px">⚠️ ${_calEsc(need)}</div>`:""}
+          ${ro?"":`<div style="margin-top:4px"><span onclick="_permitRemove('${r.id}')" style="font-size:11px;color:#bbb;cursor:pointer">remove</span></div>`}</td>
+        <td style="padding:7px;vertical-align:top">${tx(r.id,"number","Permit #",140)}</td>
+        <td style="padding:7px;vertical-align:top;text-align:center">${dt(r.id,"submitted")}</td>
+        <td style="padding:7px;vertical-align:top;text-align:center">${sel(r.id,"priority",[""].concat(PERMIT_PRIORITIES),98,_permitPriorityColor)}</td>
+        <td style="padding:7px;vertical-align:top;text-align:center">${sel(r.id,"status",[""].concat(PERMIT_STATUSES),150,_permitStatusColor)}</td>
+        <td style="padding:7px;vertical-align:top;text-align:center">${sel(r.id,"tv",["","Y","N"],62)}</td>
+        <td style="padding:7px;vertical-align:top;text-align:center">${dt(r.id,"checked")}
+          ${stale!==null?`<div style="font-size:10.5px;color:${stale>PERMIT_STALE_DAYS?"#B7791F":"#bbb"};margin-top:2px">${stale===0?"today":(stale+" days ago")}</div>`:""}</td>
+        <td style="padding:7px;vertical-align:top">${ta(r.id,"notes","Notes",240)}</td>
+        <td style="padding:7px;vertical-align:top">${tx(r.id,"examiner","Name",130)}
+          <div style="margin-top:3px">${tx(r.id,"email","Email",170)}</div>
+          ${r.email?`<div style="margin-top:2px"><a href="mailto:${_calEsc(r.email)}" style="font-size:11px;color:#185FA5;text-decoration:none">✉️ email</a></div>`:""}</td>
+        <td style="padding:7px;vertical-align:top;text-align:center">${dt(r.id,"received")}</td>
+        <td style="padding:7px;vertical-align:top">${ta(r.id,"comment","Latest comment from the examiner",260)}</td>
+        <td style="padding:7px;vertical-align:top;text-align:center">${dt(r.id,"responded")}
+          ${(r.received&&!r.responded)?`<div style="font-size:10.5px;color:#C0392B;margin-top:2px">open</div>`:""}</td>
+        <td style="padding:7px;vertical-align:top;text-align:center">
+          ${ro?"—":`<div style="display:flex;flex-direction:column;gap:3px">${PERMIT_OWNERS.map(w=>`<span onclick="_permitAddTask('${r.id}','${_calEsc(w)}')" style="cursor:pointer;font-size:11px;color:#185FA5;white-space:nowrap">＋ ${_calEsc(w.split(" ")[0])}</span>`).join("")}</div>`}</td>
+      </tr>`;
+    });
+  });
+  if(!body) body='<tr><td colspan="13" style="padding:16px;color:#bbb;text-align:center">No permits yet — add the first one below.</td></tr>';
+
+  const addBar=ro?"":`<div style="background:#fff;border:0.5px dashed #d5d9e2;border-radius:10px;padding:11px 14px;margin-bottom:14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <span style="font-size:12.5px;color:#666">Add a permit:</span>
+    <input id="perm-new-addr" placeholder="Address" style="padding:6px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px;width:210px"/>
+    <input id="perm-new-num" placeholder="Permit / application #" style="padding:6px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px;width:180px"/>
+    <input id="perm-new-juris" list="perm-juris-list" placeholder="Jurisdiction" style="padding:6px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px;width:190px"/>
+    <datalist id="perm-juris-list">${_permitJurisdictions().map(j=>`<option value="${_calEsc(j)}"></option>`).join("")}</datalist>
+    <button onclick="_permitAdd()" style="padding:6px 13px;border:none;border-radius:7px;background:#122A4A;color:#fff;font-size:13px;font-weight:600;cursor:pointer">Add</button>
+  </div>`;
+
+  const out=_permitOutstanding();
+  const banner=`<div style="background:${out.length?"#FFF7E0":"#EAF7F1"};border:1px solid ${out.length?"#EAD9A8":"#BFE5D4"};border-radius:9px;padding:10px 14px;margin-bottom:14px;font-size:13px;color:${out.length?"#6b5310":"#0d6b4a"}">
+    ${out.length?`<b>${out.length} permit${out.length===1?"":"s"} need${out.length===1?"s":""} something.</b> They are highlighted in the table with the reason on the address.`:`<b>Nothing outstanding.</b> Every open permit has been checked recently and every examiner comment has been answered.`}
+    </div>`;
+
+  const foot=`<div style="font-size:12px;color:#999;margin-top:-8px">
+    Every box saves the moment you click out of it. Scroll the table sideways for the examiner and comment columns.
+    A permit turns amber when the portal has not been checked in ${PERMIT_STALE_DAYS} days or an examiner comment has gone unanswered.
+    <b>＋ Jennifer</b> and <b>＋ Marlo</b> raise a task on that permit, pre-filled and dated two business days out.
+    <br>Portal logins are deliberately not kept here — those belong in the password manager, not in the website.
+    </div>`;
+
+  return banner+addBar+_trkSearchBox("Search an address, permit #, city or examiner…")+
+    _trkTable("📄 Permit Tracker","#B03A8B",head,body)+foot;
+}
+
 function _vaTrackers(){
   const d=window._trkData||{}; const ro=isReadOnly();
   const chk=(kind,id,on)=> ro?(on?'✅':'⬜'):`<span onclick="_trkToggle('${kind}','${id}')" style="cursor:pointer;font-size:17px">${on?'✅':'⬜'}</span>`;
@@ -7190,9 +7448,10 @@ function _vaTrackers(){
   // active property made this disagree with the "First Time Access open" tile.
   const clout=active.filter(c=>c.phase==="Vacant / On Standby").filter(c=>{const subs=c.subPhases||[];const f=subs.find(s=>s.name==="First Time Access Checklist");return !(f&&f.completed);}).length;
 
+  const permitout=_permitOutstanding().length;
   const view=window._trkView||'summary';
   const tile=(key,icon,title,n,color)=>`<div onclick="window._trkView='${key}';(window._trkRerender||function(){openVAAdminDashboard('trackers');})()" style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${color};border-radius:10px;padding:13px 15px;cursor:pointer"><div style="display:flex;justify-content:space-between"><div style="font-size:13.5px;font-weight:600;color:#111">${icon} ${title}</div><span style="color:#ccc">›</span></div><div style="font-size:25px;font-weight:600;color:${color};margin-top:5px">${n}</div><div style="font-size:11px;color:#999">outstanding</div></div>`;
-  const tiles=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:16px">${tile('w9','🧾','W-9 Tracker',w9out,'#7A3FA8')}${tile('window','🪟','Window Tracker',winout,'#185FA5')}${tile('mow','🌱','Mowing Tracker',mowout,'#3B6D11')}${tile('checklist','✅','Checklist Tracker',clout,'#0B7285')}${tile('util','⚡','Utility Tracker',utilout,'#B7791F')}</div>`;
+  const tiles=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:16px">${tile('w9','🧾','W-9 Tracker',w9out,'#7A3FA8')}${tile('window','🪟','Window Tracker',winout,'#185FA5')}${tile('mow','🌱','Mowing Tracker',mowout,'#3B6D11')}${tile('checklist','✅','Checklist Tracker',clout,'#0B7285')}${tile('util','⚡','Utility Tracker',utilout,'#B7791F')}${tile('permit','📄','Permit Tracker',permitout,'#B03A8B')}</div>`;
   const back=`<div onclick="window._trkView='summary';(window._trkRerender||function(){openVAAdminDashboard('trackers');})()" style="display:inline-flex;align-items:center;gap:5px;font-size:13px;color:#185FA5;cursor:pointer;margin-bottom:10px">‹ Back to Trackers</div>`;
   const shell=(inner)=>`<div style="padding:20px;max-width:1120px;margin:0 auto"><div style="font-size:16px;font-weight:600;color:#111;margin-bottom:10px">📋 Trackers</div>${tiles}${inner}</div>`;
 
@@ -7225,6 +7484,7 @@ function _vaTrackers(){
     const rows=active.length?active.map(uRow(u)).join(''):uEmpty(u.key==='g'?16:14);
     return shell(back+bar+_trkSearchBox('Search a property, provider or account #…')+_trkTable(`${u.icon} ${u.label} Tracker`,u.color,uHead(u),rows)+`<div style="font-size:12px;color:#999;margin-top:-8px">Every box saves the moment you leave it. Scroll the table sideways for the payment columns, or click <b>📜 open</b> on a row for that property's full payment history and call log.</div>`);
   }
+  if(view==='permit') return shell(back+_permitTrackerBody());
   if(view==='checklist') return shell(back+_trkSearchBox('Search a property…')+_trkTable('✅ Checklist Tracker','#0B7285','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">First Time Access</th><th style="padding:9px">Punch Out</th>',clrows));
 
   const li=(txt)=>`<div style="font-size:12.5px;color:#333;padding:4px 0;border-bottom:0.5px solid #f1f3f7">• ${txt}</div>`;
@@ -7235,13 +7495,14 @@ function _vaTrackers(){
   const wi=active.filter(_winInQueue).map(c=>{const a=_winNextAction(c); return a?(nm(c)+' — '+a):null;}).filter(Boolean);
   const ci=active.filter(c=>c.phase==="Vacant / On Standby").filter(c=>{const subs=c.subPhases||[];const f=subs.find(s=>s.name==="First Time Access Checklist");return !(f&&f.completed);}).map(c=>nm(c)+' — First Time Access still to fill in')
     .concat(active.filter(c=>{const subs=c.subPhases||[];const po=subs.find(x=>/punch/i.test(x.name||'')); return !!(po && !po.completed && (po.start||po.due));}).map(c=>nm(c)+' — Punch Out scheduled, still to fill in'));
-  return shell(`<div style="font-size:12.5px;color:#888;margin:-6px 0 10px">What's outstanding right now — click a tile to open the full tracker.</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">${sum('🧾 W-9s needed','#7A3FA8',w9i)}${sum('🪟 Windows','#185FA5',wi)}${sum('🌱 Mowing','#3B6D11',mi)}${sum('✅ Checklists','#0B7285',ci)}${_utilSummaryCard(sum,utilOutList,nm)}</div>`);
+  return shell(`<div style="font-size:12.5px;color:#888;margin:-6px 0 10px">What's outstanding right now — click a tile to open the full tracker.</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">${sum('🧾 W-9s needed','#7A3FA8',w9i)}${sum('🪟 Windows','#185FA5',wi)}${sum('🌱 Mowing','#3B6D11',mi)}${sum('✅ Checklists','#0B7285',ci)}${_utilSummaryCard(sum,utilOutList,nm)}${sum('📄 Permits','#B03A8B',_permitOutstanding().map(r=>_calEsc(r.addr||'')+' — '+_calEsc(_permitNeeds(r)||'')))}</div>`);
 }
 function openArchitectDashboard(activeTab) {
   activeTab = activeTab || 'main';
   const tabs=[
     {id:'main',label:'Main Dashboard',icon:'📊'},
     {id:'jenn',label:'Jennifer Tatum',icon:'👤'},
+    {id:'permits',label:'Permit Tracker',icon:'📄'},
     {id:'property',label:'Property Dashboard',icon:'🏗'},
     {id:'construction',label:'Construction Calendar',icon:'📅'},
     {id:'taskcal',label:'Task Calendar',icon:'🗓'},
@@ -7249,12 +7510,19 @@ function openArchitectDashboard(activeTab) {
   let content;
   switch(activeTab){
     case 'jenn':         content=_personDashView('Jennifer Tatum','Architect'); break;
+    case 'permits':      window._permitCtx='architect'; content=`<div style="padding:20px;max-width:1240px;margin:0 auto"><div style="font-size:16px;font-weight:600;color:#111;margin-bottom:10px">📄 Permit Tracker</div>${_permitTrackerBody()}</div>`; break;
     case 'property':     content=renderPropertyBoard(); break;
     case 'construction': content=renderConstructionCalendar(); break;
     case 'taskcal':      content=renderTaskCalendar(); break;
     default:             content=renderMainDashboard();
   }
   _execShell('openArchitectDashboard', tabs, activeTab, content);
+  // The trackers blob holds the permit rows; load it on first open, then seed the
+  // sheet's rows if nobody has ever put one in.
+  if(activeTab==='permits'){
+    if(!window._trkLoaded){ _trkLoad().then(()=>_permitSeedIfEmpty()).then(()=>openArchitectDashboard('permits')); }
+    else if(!(window._trkData||{}).permits_seeded){ _permitSeedIfEmpty().then(a=>{ if(a) openArchitectDashboard('permits'); }); }
+  }
 }
 
 function openTVDashboard() {
@@ -7881,7 +8149,7 @@ function teamMembers(){
 }
 // Distinct task categories/headers in use (e.g. "Build Scope of Work"), plus a
 // couple of sensible seeds so the list is never empty on a fresh install.
-const _TASK_CATEGORY_SEEDS = ["Material Delivery","Build Scope of Work","Walkthrough","Punch List","Inspection","Follow Up"];
+const _TASK_CATEGORY_SEEDS = ["Material Delivery","Build Scope of Work","Walkthrough","Punch List","Inspection","Permit","Follow Up"];
 // Task headers that also drop a matching event onto the Construction Calendar.
 const _MATERIAL_TASK_CATEGORY = "Material Delivery";
 function _taskCategories(){
@@ -8720,7 +8988,7 @@ function _taskCatToggle(){
   const v=document.getElementById("task-cat").value;
   document.getElementById("task-cat-new-row").style.display = v==="__new"?"":"none";
 }
-function openAddTask(dateStr){
+function openAddTask(dateStr, pre){
   if(_blockIfReadOnly()) return;
   const props=(typeof propCards!=='undefined'?propCards:[]);
   const propOpts=props.map(p=>`<option value="${p.id}">${_calEsc(p.addr)}</option>`).join("");
@@ -8769,6 +9037,25 @@ function openAddTask(dateStr){
     <input type="hidden" id="task-edit-id" value="" />
     <button class="btn-full" onclick="saveTask()">Add task</button>`;
   openModal("task-modal");
+  // Optional prefill, used by the trackers so a task raised from a row arrives
+  // already pointed at the right property, header and person.
+  if(pre){
+    const set=(id,v)=>{ const e=document.getElementById(id); if(e && v) e.value=v; };
+    set("task-title",pre.title); set("task-notes",pre.notes);
+    if(pre.cat){
+      const sc=document.getElementById("task-cat");
+      if(sc){
+        let found=false;
+        Array.from(sc.options).forEach(o=>{ if(o.value===pre.cat||o.text===pre.cat) found=true; });
+        if(!found){ const o=document.createElement("option"); o.text=pre.cat; o.value=pre.cat; sc.insertBefore(o, sc.options[sc.options.length-1]); }
+        sc.value=pre.cat;
+      }
+    }
+    if(pre.propId){ const sp=document.getElementById("task-prop"); if(sp){ sp.value=pre.propId; if(typeof _taskPropChange==="function") _taskPropChange(); } }
+    if(pre.assignees && pre.assignees.length){
+      document.querySelectorAll(".task-asg-cb").forEach(cb=>{ if(pre.assignees.indexOf(cb.value)>=0) cb.checked=true; });
+    }
+  }
 }
 // ---- Task comments (a running log kept on the task forever) ----
 function _fmtCommentDate(iso){ try{ return new Date(iso).toLocaleString(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}); }catch(e){ return ""; } }
@@ -9837,4 +10124,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-29k calendar-full-days -->
+<!-- build: 2026-08-29l permit-tracker -->
