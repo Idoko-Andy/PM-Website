@@ -548,6 +548,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
         <option value="Virtual Administrative Assistant">Virtual Administrative Assistant</option>
         <option value="Start of Project Assistant">Start of Project Assistant</option>
         <option value="End of Project Assistant">End of Project Assistant</option>
+        <option value="Realtor">Realtor</option>
         <option value="Assistant / Intern">Assistant / Intern</option>
       </select>
     </div>
@@ -1207,6 +1208,7 @@ const ROLE_DEFAULTS = {
   "Start of Project Assistant":                ["dash_project","dash_pmassistant","sops_view"],
   "End of Project Assistant":                  ["dash_project","dash_pmassistant","sops_view"],
   "Architect":                                 ["dash_project","dash_design","dash_architect","sops_view"],
+  "Realtor":                                   ["dash_project","sops_view"],
   "Assistant / Intern":                        ["dash_project","sops_view"],
   "Other":                                     ["sops_view"],
 };
@@ -1371,7 +1373,7 @@ const BASE_ROLES = [
   "CEO","Project Director","Administrative Manager","Project Manager","PM Assistant",
   "Senior Administrative Assistant","Administrative Assistant",
   "Senior Virtual Administrative Assistant","Virtual Administrative Assistant",
-  "Start of Project Assistant","End of Project Assistant","Architect","Assistant / Intern","Other"
+  "Start of Project Assistant","End of Project Assistant","Architect","Realtor","Assistant / Intern","Other"
 ];
 let ROLE_LIST = BASE_ROLES.slice();
 
@@ -1954,7 +1956,11 @@ function _propRowToCard(r) {
     closedDate:  r.closed_date || "",
     archived:   !!r.archived,
     closeApproved: !!r.close_approved,
-    purchaseConfirmed: !!r.purchase_confirmed
+    purchaseConfirmed: !!r.purchase_confirmed,
+    jvDeal:      !!r.jv_deal,
+    estProfit:   r.est_profit || "",
+    goalArv:     r.goal_arv || "",
+    listingAgent:r.listing_agent || ""
   };
 }
 
@@ -1975,6 +1981,10 @@ function _propCardToRow(p) {
     vacancy_date: p.vacancyDate || null,
     closing_date_sell: p.closingDateSell || null,
     notes:       p.notes || "",
+    jv_deal:     !!p.jvDeal,
+    est_profit:  p.estProfit || "",
+    goal_arv:    p.goalArv || "",
+    listing_agent: p.listingAgent || "",
     sub_phases:  p.subPhases || []
   };
 }
@@ -1982,7 +1992,7 @@ function _propCardToRow(p) {
 async function loadPropertiesFromSupabase() {
   const { data, error } = await supabase
     .from("pm_properties")
-    .select("id,addr,phase,type,pm,budget,spent,start_date,end_date,company_cam,drive_url,notes,sub_phases,checklist_market_last,checklists,is_rental,closing_date,vacancy_date,closing_date_sell,closed_date,archived,close_approved,purchase_confirmed")
+    .select("id,addr,phase,type,pm,budget,spent,start_date,end_date,company_cam,drive_url,notes,sub_phases,checklist_market_last,checklists,is_rental,closing_date,vacancy_date,closing_date_sell,closed_date,archived,close_approved,purchase_confirmed,jv_deal,est_profit,goal_arv,listing_agent")
     .order("created_at", { ascending: true });
   if (error) {
     console.error("loadPropertiesFromSupabase failed:", error);
@@ -2023,6 +2033,7 @@ async function savePropInfo(id, fieldOnly){
     start:g('pi-start',c.start), end:g('pi-end',c.end),
     companyCam:c.companyCam||'', driveUrl:c.driveUrl||'', isRental:!!c.isRental,
     closingDate:c.closingDate||'', vacancyDate:c.vacancyDate||'', closingDateSell:c.closingDateSell||'',
+    jvDeal:!!c.jvDeal, estProfit:c.estProfit||'', goalArv:c.goalArv||'', listingAgent:c.listingAgent||'',
     notes:c.notes||'', subPhases:c.subPhases||[]
   };
   // The phase must not be written as a plain field - updatePropertyPhaseInSupabase is
@@ -3308,6 +3319,10 @@ function openPropModal(mode, id) {
       // them out makes _propCardToRow null them out on save.
       vacancyDate: c ? c.vacancyDate || "" : "",
       closingDateSell: c ? c.closingDateSell || "" : "",
+      jvDeal: c ? !!c.jvDeal : false,
+      estProfit: c ? c.estProfit || "" : "",
+      goalArv: c ? c.goalArv || "" : "",
+      listingAgent: c ? c.listingAgent || "" : "",
       companyCam: c ? c.companyCam || '' : '',
       subPhases: c ? (c.subPhases || []) : []
     };
@@ -9473,4 +9488,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-29d confirmations-everywhere -->
+<!-- build: 2026-08-29e deal-fields + realtor-role -->
