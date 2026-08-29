@@ -282,7 +282,6 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
       <div class="ddi" onclick="openTVDashboard()">📺 TV Dashboard</div>
-      <div class="ddi" onclick="openAdminDashboard('trackers')">📋 Trackers</div>
     </div>
   </div>
   <div class="ni has-dd" id="va-t">💻 VA Assistants ▾
@@ -8469,13 +8468,21 @@ function _vaTrackers(){
   const utilout=utilOutList.length;
 
   // ---------- W-9 tracker (mirrors the 2026 W-9 workbook + ties to the Contractor Directory) ----------
-  const w9rows=cons.length?cons.map(c=>`<tr data-trk="${nm(c)+' '+_calEsc(c.name||'')}" style="border-top:0.5px solid #eef0f6">
-    <td style="padding:7px 10px;font-weight:600;color:#111">${_calEsc(c.name||'')}</td>
+  // The ones we are still missing come first - that is the whole point of the list.
+  // Email and phone come from the Contractor Directory so there is one place to fix
+  // a wrong number, not two.
+  const _w9on=(c)=>!!(d.w9||{})[c.id];
+  const w9sorted=cons.slice().sort((a,b)=> (_w9on(a)-_w9on(b)) || ((!!a.red_flag)-(!!b.red_flag)) || String(a.name||'').localeCompare(String(b.name||'')));
+  const w9rows=cons.length?w9sorted.map(c=>`<tr data-trk="${nm(c)+' '+_calEsc(c.name||'')+' '+_calEsc(c.business_name||'')}" style="border-top:0.5px solid #eef0f6;${_w9on(c)?'':'background:#FFFBF7'}">
+    <td style="padding:7px 10px;font-weight:600;color:${c.red_flag?'#B42318':'#111'}">${c.red_flag?'🚩 ':''}${_calEsc(c.name||'')}
+      ${c.business_name?`<div style="font-size:11px;color:#999;font-weight:400">${_calEsc(c.business_name)}</div>`:''}
+      ${c.trade?`<div style="font-size:11px;color:#bbb;font-weight:400">${_calEsc(c.trade)}</div>`:''}</td>
     <td style="padding:7px">${txt('w9info',c.id,'w9name','Name on W-9',150)}</td>
-    <td style="text-align:center;padding:7px">${chk('w9',c.id,(d.w9||{})[c.id])}</td>
+    <td style="text-align:center;padding:7px">${chk('w9',c.id,(d.w9||{})[c.id])}${_w9on(c)?'':'<div style="font-size:10.5px;color:#B7791F;margin-top:2px">still needed</div>'}</td>
     <td style="padding:7px">${txt('w9info',c.id,'note','Notes / no W-9 needed',170)}</td>
-    <td style="padding:7px">${txt('w9info',c.id,'email','Email',140)}</td>
-    <td style="padding:7px">${txt('w9info',c.id,'phone','Phone',110)}</td></tr>`).join(""):'<tr><td colspan="6" style="padding:16px;color:#bbb;text-align:center">No contractors in the directory yet.</td></tr>';
+    <td style="padding:7px">${ro?(_calEsc(c.email)||'—'):`<input value="${_calEsc(c.email||'')}" placeholder="Email" onchange="setContractorField('${c.id}','email',this.value)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:150px"/>`}
+      <div style="font-size:10px;color:#bbb;margin-top:2px">from the directory</div></td>
+    <td style="padding:7px">${ro?(_calEsc(c.phone)||'—'):`<input value="${_calEsc(c.phone||'')}" placeholder="Phone" onchange="setContractorField('${c.id}','phone',this.value)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:120px"/>`}</td></tr>`).join(""):'<tr><td colspan="6" style="padding:16px;color:#bbb;text-align:center">No contractors in the directory yet. Add them under Tools → Contractor Directory.</td></tr>';
 
   // ---------- Mowing tracker (mirrors the Active Mowing Tracker sheet) ----------
   const mowWhoSel=(c)=>{
@@ -9271,7 +9278,11 @@ let _calEventsCache = [];
 function _calEsc(s){ return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
 async function loadContractorsFromSupabase(){
-  const { data, error } = await supabase.from("pm_contractors").select("id,name,phone,trade").order("name",{ascending:true});
+  let { data, error } = await supabase.from("pm_contractors")
+    .select("id,name,business_name,phone,email,trade,red_flag,notes").order("name",{ascending:true});
+  // The extra columns were added later. If this database has not had them applied
+  // yet, fall back rather than blanking the whole directory.
+  if(error){ ({ data, error } = await supabase.from("pm_contractors").select("id,name,phone,trade").order("name",{ascending:true})); }
   _contractorsCache = error ? [] : (data||[]);
 }
 async function loadCalendarEventsFromSupabase(){
@@ -9283,6 +9294,39 @@ async function loadCalendarEventsFromSupabase(){
     ({ data, error } = await supabase.from("pm_calendar_events").select("id,property_id,event_date,kind,title,contractor_id,notes,completed").order("event_date",{ascending:true}));
   }
   _calEventsCache = error ? [] : (data||[]);
+}
+// How many times we have actually put this contractor on a job. Derived from the
+// construction calendar rather than stored, so it can never drift out of date.
+function _contractorUses(id){
+  return (typeof _calEventsCache!=='undefined'?_calEventsCache:[]).filter(e=>e.contractor_id===id).length;
+}
+function _contractorLastUsed(id){
+  const ds=(typeof _calEventsCache!=='undefined'?_calEventsCache:[]).filter(e=>e.contractor_id===id).map(e=>e.event_date).filter(Boolean).sort();
+  return ds.length?ds[ds.length-1]:'';
+}
+function _contractorFlagged(id){ const c=(_contractorsCache||[]).find(x=>x.id===id); return !!(c&&c.red_flag); }
+// Red flag means do not hire. It is not a silent field: it shows on the row, on
+// every contractor dropdown, and it stops a booking unless somebody overrides it
+// on purpose.
+async function toggleContractorFlag(id){
+  if(_blockIfReadOnly()) return;
+  const c=(_contractorsCache||[]).find(x=>x.id===id); if(!c) return;
+  const now=!c.red_flag;
+  if(now && !confirm("Red-flag "+(c.name||"this contractor")+" as DO NOT HIRE?\n\nThey stay in the directory and their history is kept, but anyone booking them gets a warning first.")) return;
+  const { error } = await supabase.from("pm_contractors").update({red_flag:now}).eq("id",id);
+  if(error){ alert("Couldn't save that: "+(error.message||"")); return; }
+  _logAudit(now?"flagged":"updated","contractor", c.name||"", now?"RED FLAGGED — do not hire":"Red flag removed");
+  await loadContractorsFromSupabase();
+  renderContractorDirectory();
+}
+async function setContractorField(id, field, val){
+  if(_blockIfReadOnly()) return;
+  const c=(_contractorsCache||[]).find(x=>x.id===id); if(!c) return;
+  const patch={}; patch[field]=val;
+  const { error } = await supabase.from("pm_contractors").update(patch).eq("id",id);
+  if(error){ alert("Couldn't save that: "+(error.message||"")); return; }
+  c[field]=val;
+  _logAudit("updated","contractor", c.name||"", field.replace("_"," ")+" set to "+(val||"(blank)"));
 }
 function _contractorName(id){ const c=_contractorsCache.find(x=>x.id===id); return c?c.name:"Contractor"; }
 function _propAddr(id){ const p=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===id); return p?p.addr:""; }
@@ -9362,35 +9406,58 @@ function _tradeCell(c){
 }
 function renderContractorDirectory(){
   const ro = isReadOnly();
-  const rows = _contractorsCache.map(c=>
-    `<tr>
-      <td style="padding:10px 12px;border-bottom:0.5px solid #eee;font-weight:500;color:#111">${_calEsc(c.name)}</td>
-      <td style="padding:10px 12px;border-bottom:0.5px solid #eee">${c.phone?`<a href="tel:${_calEsc(c.phone)}" style="color:#185FA5;text-decoration:none">${_calEsc(c.phone)}</a>`:'<span style="color:#bbb">—</span>'}</td>
-      <td style="padding:10px 12px;border-bottom:0.5px solid #eee;color:#777">${ro?_calEsc(c.trade||"—"):_tradeCell(c)}</td>
-      ${ro?"":`<td style="padding:10px 12px;border-bottom:0.5px solid #eee;text-align:right"><span onclick="deleteContractor('${c.id}')" style="cursor:pointer;color:#c0392b;font-size:13px">Remove</span></td>`}
-    </tr>`).join("");
+  const inp=(c,field,ph,w)=>ro?`<span style="color:#333">${_calEsc(c[field])||'<span style="color:#bbb">—</span>'}</span>`
+    :`<input value="${_calEsc(c[field]||'')}" placeholder="${ph}" onchange="setContractorField('${c.id}','${field}',this.value)" style="width:${w||'100%'};padding:6px 8px;border:1px solid #e3e6ec;border-radius:6px;font-size:13px"/>`;
+  // Everyone we have flagged sinks to the bottom, so the people you can actually
+  // call are the ones you see first.
+  const list=(_contractorsCache||[]).slice().sort((a,b)=>
+    (!!a.red_flag)-(!!b.red_flag) || String(a.name||'').localeCompare(String(b.name||'')));
+  const rows = list.map(c=>{
+    const uses=_contractorUses(c.id);
+    const last=_contractorLastUsed(c.id);
+    return `<tr style="${c.red_flag?'background:#FDF3F2;':''}">
+      <td style="padding:9px 12px;border-bottom:0.5px solid #eee;font-weight:600;color:${c.red_flag?'#B42318':'#111'}">${c.red_flag?'🚩 ':''}${inp(c,'name','Person','100%')}</td>
+      <td style="padding:9px 12px;border-bottom:0.5px solid #eee">${inp(c,'business_name','Business')}</td>
+      <td style="padding:9px 12px;border-bottom:0.5px solid #eee">${inp(c,'phone','Phone')}${c.phone?`<div style="margin-top:2px"><a href="tel:${_calEsc(String(c.phone).replace(/[^0-9+]/g,''))}" style="font-size:11px;color:#185FA5;text-decoration:none">📞 call</a></div>`:''}</td>
+      <td style="padding:9px 12px;border-bottom:0.5px solid #eee">${inp(c,'email','Email')}${c.email?`<div style="margin-top:2px"><a href="mailto:${_calEsc(c.email)}" style="font-size:11px;color:#185FA5;text-decoration:none">✉️ email</a></div>`:''}</td>
+      <td style="padding:9px 12px;border-bottom:0.5px solid #eee;color:#777">${ro?_calEsc(c.trade||"—"):_tradeCell(c)}</td>
+      <td style="padding:9px 12px;border-bottom:0.5px solid #eee;text-align:center">
+        <div style="font-size:16px;font-weight:600;color:${uses?'#111':'#ccc'}">${uses}</div>
+        <div style="font-size:10.5px;color:#bbb">${last?('last '+_calEsc(last)):'never booked'}</div></td>
+      <td style="padding:9px 12px;border-bottom:0.5px solid #eee;text-align:center">
+        ${ro?(c.red_flag?'🚩':'—')
+           :`<span onclick="toggleContractorFlag('${c.id}')" title="${c.red_flag?'Remove the red flag':'Red-flag — do not hire'}" style="cursor:pointer;font-size:17px">${c.red_flag?'🚩':'⚐'}</span>`}</td>
+      ${ro?"":`<td style="padding:9px 12px;border-bottom:0.5px solid #eee;text-align:right"><span onclick="deleteContractor('${c.id}')" style="cursor:pointer;color:#c0392b;font-size:13px">Remove</span></td>`}
+    </tr>`;
+  }).join("");
+  const flagged=list.filter(c=>c.red_flag).length;
   const addForm = ro ? "" :
     `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:14px;margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
-      <div style="flex:2;min-width:150px"><label style="font-size:12px;color:#888;display:block;margin-bottom:4px">Name</label><input id="ct-name" placeholder="Company or person" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px"/></div>
+      <div style="flex:1.4;min-width:130px"><label style="font-size:12px;color:#888;display:block;margin-bottom:4px">Name</label><input id="ct-name" placeholder="Person" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px"/></div>
+      <div style="flex:1.4;min-width:130px"><label style="font-size:12px;color:#888;display:block;margin-bottom:4px">Business name</label><input id="ct-biz" placeholder="Company" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px"/></div>
       <div style="flex:1;min-width:120px"><label style="font-size:12px;color:#888;display:block;margin-bottom:4px">Phone</label><input id="ct-phone" placeholder="(614) 555-0100" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px"/></div>
-      <div style="flex:1;min-width:120px"><label style="font-size:12px;color:#888;display:block;margin-bottom:4px">Trade (optional)</label><input id="ct-trade" placeholder="Plumbing, HVAC…" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px"/></div>
+      <div style="flex:1.2;min-width:140px"><label style="font-size:12px;color:#888;display:block;margin-bottom:4px">Email</label><input id="ct-email" placeholder="name@company.com" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px"/></div>
+      <div style="flex:1;min-width:120px"><label style="font-size:12px;color:#888;display:block;margin-bottom:4px">Trade</label><input id="ct-trade" list="ct-trade-list" placeholder="Plumbing, HVAC…" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px"/><datalist id="ct-trade-list">${CONTRACTOR_TRADES.map(t=>`<option value="${_calEsc(t)}"></option>`).join('')}</datalist></div>
       <button onclick="saveContractor()" style="padding:9px 16px;background:#111;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer">+ Add</button>
     </div>`;
+  const th=(t,align)=>`<th style="text-align:${align||'left'};padding:9px 12px;font-size:12px;color:#999;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap">${t}</th>`;
   document.getElementById("dash-body").innerHTML =
     `<div style="background:#f4f5f7;min-height:500px;padding:24px">
-      <div style="max-width:820px;margin:0 auto">
+      <div style="max-width:1180px;margin:0 auto">
         <div style="font-size:19px;font-weight:500;color:#111;margin-bottom:4px">📇 Contractor Directory</div>
-        <div style="font-size:13px;color:#888;margin-bottom:18px">Names and phone numbers for every contractor we work with.</div>
+        <div style="font-size:13px;color:#888;margin-bottom:6px">One record per contractor. <b>Times used</b> counts their bookings on the construction calendar and updates itself. The same record feeds the W-9 tracker, the mowing tracker and every contractor dropdown — fix a number here and it is fixed everywhere.</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+          <span style="font-size:12px;background:#EEF3FA;color:#185FA5;padding:3px 10px;border-radius:99px">${list.length} contractor${list.length===1?'':'s'}</span>
+          ${flagged?`<span style="font-size:12px;background:#FBEAE8;color:#B42318;padding:3px 10px;border-radius:99px">🚩 ${flagged} red-flagged — do not hire</span>`:''}
+          <span style="font-size:12px;background:#F1F2F6;color:#777;padding:3px 10px;border-radius:99px">Need a category that is not here? Add it under Trade → ＋ Other…</span>
+        </div>
         ${addForm}
-        <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden">
-          <table style="width:100%;border-collapse:collapse;font-size:14px">
+        <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:auto">
+          <table style="width:100%;border-collapse:collapse;font-size:14px;color:#111">
             <thead><tr style="background:#fafbfc">
-              <th style="text-align:left;padding:9px 12px;font-size:12px;color:#999;text-transform:uppercase;letter-spacing:.04em">Name</th>
-              <th style="text-align:left;padding:9px 12px;font-size:12px;color:#999;text-transform:uppercase;letter-spacing:.04em">Phone</th>
-              <th style="text-align:left;padding:9px 12px;font-size:12px;color:#999;text-transform:uppercase;letter-spacing:.04em">Trade</th>
-              ${ro?"":"<th></th>"}
+              ${th('Name')}${th('Business name')}${th('Phone')}${th('Email')}${th('Trade')}${th('Times used','center')}${th('Red flag','center')}${ro?"":"<th></th>"}
             </tr></thead>
-            <tbody>${rows || `<tr><td colspan="4" style="padding:24px;text-align:center;color:#bbb;font-size:14px">No contractors yet.${ro?"":" Add your first one above."}</td></tr>`}</tbody>
+            <tbody>${rows || `<tr><td colspan="8" style="padding:24px;text-align:center;color:#bbb;font-size:14px">No contractors yet.${ro?"":" Add your first one above."}</td></tr>`}</tbody>
           </table>
         </div>
       </div>
@@ -9398,11 +9465,11 @@ function renderContractorDirectory(){
 }
 async function saveContractor(){
   if(_blockIfReadOnly()) return;
-  const name=(document.getElementById("ct-name").value||"").trim();
-  const phone=(document.getElementById("ct-phone").value||"").trim();
-  const trade=(document.getElementById("ct-trade").value||"").trim();
-  if(!name){ alert("Enter a contractor name."); return; }
-  const { error } = await supabase.from("pm_contractors").insert({name, phone, trade});
+  const g=(id)=>((document.getElementById(id)||{}).value||"").trim();
+  const name=g("ct-name"), phone=g("ct-phone"), trade=g("ct-trade");
+  const business_name=g("ct-biz"), email=g("ct-email");
+  if(!name && !business_name){ alert("Enter a name or a business name."); return; }
+  const { error } = await supabase.from("pm_contractors").insert({name:name||business_name, business_name, phone, email, trade});
   if(error){ alert("Failed to add contractor: "+(error.message||"unknown error")); return; }
   _logAudit("created","contractor", name, "Added to contractor directory");
   await loadContractorsFromSupabase();
@@ -9570,7 +9637,7 @@ function openAddCalEvent(dateStr){
   if(_blockIfReadOnly()) return;
   const props=(typeof propCards!=='undefined'?propCards:[]);
   const propOpts=props.map(p=>`<option value="${p.id}" ${_calState.prop===p.id?"selected":""}>${_calEsc(p.addr)}</option>`).join("");
-  const contractorOpts=_contractorsCache.map(c=>`<option value="${c.id}">${_calEsc(c.name)}</option>`).join("");
+  const contractorOpts=_contractorsCache.map(c=>`<option value="${c.id}">${c.red_flag?'\uD83D\uDEA9 DO NOT HIRE — ':''}${_calEsc(c.name)}${c.business_name?(' ('+_calEsc(c.business_name)+')'):''}</option>`).join("");
   const html=`
     <button class="modal-close" onclick="closeModal('calevent-modal')">✕</button>
     <h2>Add to construction calendar</h2>
@@ -9680,6 +9747,12 @@ async function saveCalEvent(){
       contractorId=ins.data.id;
       await loadContractorsFromSupabase();
     } else if(!contractorId){ showE("Pick a contractor (or add a new one)."); return; }
+    // A red flag means somebody decided we should not use them again. It does not
+    // block the booking outright - it makes you say yes on purpose.
+    if(contractorId && _contractorFlagged(contractorId)){
+      const _fc=(_contractorsCache||[]).find(x=>x.id===contractorId)||{};
+      if(!confirm("\uD83D\uDEA9 "+(_fc.name||"This contractor")+" is red-flagged as DO NOT HIRE"+(_fc.notes?("\n\nNote on file: "+_fc.notes):"")+"\n\nBook them anyway?")) return;
+    }
   }
   const _endV=((document.getElementById("cal-end")||{}).value||"");
   const end_date=(_endV && _endV>date)?_endV:null;
@@ -9711,7 +9784,7 @@ function openCalEventDetail(id){
   const ro=isReadOnly();
   const props=(typeof propCards!=='undefined'?propCards:[]);
   const propOpts=props.map(p=>`<option value="${p.id}" ${e.property_id===p.id?"selected":""}>${_calEsc(p.addr)}</option>`).join("");
-  const contractorOpts=_contractorsCache.map(c=>`<option value="${c.id}" ${e.contractor_id===c.id?"selected":""}>${_calEsc(c.name)}</option>`).join("");
+  const contractorOpts=_contractorsCache.map(c=>`<option value="${c.id}" ${e.contractor_id===c.id?"selected":""}>${c.red_flag?'\uD83D\uDEA9 DO NOT HIRE — ':''}${_calEsc(c.name)}${c.business_name?(' ('+_calEsc(c.business_name)+')'):''}</option>`).join("");
   // Build the Type dropdown with the current value preselected.
   const custom=_customCalTypes();
   const isCustom=(e.kind==="custom");
@@ -9872,6 +9945,12 @@ async function saveCalEventEdit(id){
       contractorId=ins.data.id;
       await loadContractorsFromSupabase();
     } else if(!contractorId){ showE("Pick a contractor (or add a new one)."); return; }
+    // A red flag means somebody decided we should not use them again. It does not
+    // block the booking outright - it makes you say yes on purpose.
+    if(contractorId && _contractorFlagged(contractorId)){
+      const _fc=(_contractorsCache||[]).find(x=>x.id===contractorId)||{};
+      if(!confirm("\uD83D\uDEA9 "+(_fc.name||"This contractor")+" is red-flagged as DO NOT HIRE"+(_fc.notes?("\n\nNote on file: "+_fc.notes):"")+"\n\nBook them anyway?")) return;
+    }
   }
   const { error } = await supabase.from("pm_calendar_events").update({ property_id:prop, location, event_date:date, kind, title, contractor_id:contractorId, notes }).eq("id",id);
   if(error){ showE("Failed to save: "+(error.message||"unknown error")); return; }
@@ -10219,7 +10298,7 @@ function openAddTask(dateStr, pre){
     </div>
     ${_taskPropField(null,null,"")}
     <div class="form-row"><label>Refer questions to (optional)</label><input type="text" id="task-refer" list="task-refer-list" placeholder="Type or pick a name" /><datalist id="task-refer-list">${referList}</datalist></div>
-    <div class="form-row"><label>Notes / comments (optional)</label><textarea id="task-notes" rows="2" placeholder="Details" style="width:100%"></textarea></div>
+    <div class="form-row"><label>Notes / comments (optional)</label><textarea id="task-notes" rows="6" placeholder="Everything the person needs to do this without asking a question — what, where, who to call, what done looks like." style="width:100%;min-height:130px;resize:vertical;line-height:1.5"></textarea></div>
     <input type="hidden" id="task-edit-id" value="" />
     <button class="btn-full" onclick="saveTask()">Add task</button>`;
   openModal("task-modal");
@@ -10312,7 +10391,7 @@ function openTaskDetail(id){
     ${ro?'':`<div style="margin:-2px 0 12px"><button type="button" onclick="rescheduleTask('${t.id}')" style="padding:7px 12px;background:#fff;color:#b8860b;border:1px solid #e0c069;border-radius:6px;font-size:13px;cursor:pointer">🔄 Reschedule…</button>${(t.reschedule_count||0)>0?`<span style="font-size:12px;color:#b8860b;margin-left:8px">Rescheduled ${t.reschedule_count}×${t.last_rescheduled_at?' · last '+_calEsc(_fmtCommentDate(t.last_rescheduled_at)):''}</span>`:''}</div>`}
     ${_taskPropField(t.property_id, t.location, dis)}
     <div class="form-row"><label>Refer questions to (optional)</label><input type="text" id="task-refer" list="task-refer-list" value="${_calEsc(t.refer_to||'')}" ${dis} /><datalist id="task-refer-list">${referList}</datalist></div>
-    <div class="form-row"><label>Notes <span style="font-weight:400;color:#999;font-size:12px">— task description / details</span></label><textarea id="task-notes" rows="2" ${dis} style="width:100%">${_calEsc(t.notes||'')}</textarea></div>
+    <div class="form-row"><label>Notes <span style="font-weight:400;color:#999;font-size:12px">— task description / details</span></label><textarea id="task-notes" rows="6" ${dis} style="width:100%;min-height:130px;resize:vertical;line-height:1.5">${_calEsc(t.notes||'')}</textarea></div>
     <div class="form-row"><label>💬 Comments <span style="font-weight:400;color:#999;font-size:12px">— a running log, kept forever</span></label>
       <div style="border:0.5px solid #333;border-radius:8px;padding:6px 10px;max-height:180px;overflow-y:auto;background:#161616">${_taskCommentsList(t,true)}</div>
       ${ro?'':`<textarea id="task-comment-input" rows="2" placeholder="Add a comment — why it wasn't done, what's next, etc." style="width:100%;margin-top:6px"></textarea>
@@ -11315,4 +11394,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-29u collapsible-meeting -->
+<!-- build: 2026-08-29v contractor-directory -->
