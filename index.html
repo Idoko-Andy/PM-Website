@@ -237,6 +237,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
     <input type="text" id="site-search" placeholder="Search..." onkeydown="if(event.key==='Enter')doSearch()" />
     <button class="brand-search-btn" onclick="doSearch()">🔍</button>
   </div>
+  <div id="confirm-box" onclick="openConfirmations()" title="Confirmations needed" style="display:none;margin-left:10px;height:34px;align-items:center;gap:5px;padding:0 11px;border:1px solid #7d2018;border-radius:6px;cursor:pointer;background:#B42318;color:#fff;flex-shrink:0;font-size:13px;font-weight:700" onmouseover="this.style.background='#8f1c13'" onmouseout="this.style.background='#B42318'">⚑ <span id="confirm-count">0</span></div>
   <div id="hist-box" onclick="openEditHistory()" title="Edit History" style="display:none;margin-left:10px;width:38px;height:34px;align-items:center;justify-content:center;border:1px solid #2a2a2a;border-radius:6px;cursor:pointer;background:#1a1a1a;flex-shrink:0;font-size:16px" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='#1a1a1a'">📜</div>
   <div id="auto-box" onclick="openAutomations()" title="Automations" style="display:none;margin-left:8px;width:38px;height:34px;align-items:center;justify-content:center;border:1px solid #2a2a2a;border-radius:6px;cursor:pointer;background:#1a1a1a;flex-shrink:0;font-size:16px" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='#1a1a1a'">⚙️</div>
   <div id="settings-box" onclick="openSettings()" title="Settings — workflow &amp; subphases" style="display:none;margin-left:8px;width:38px;height:34px;align-items:center;justify-content:center;border:1px solid #2a2a2a;border-radius:6px;cursor:pointer;background:#1a1a1a;flex-shrink:0;font-size:16px" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='#1a1a1a'">🎛️</div>
@@ -1267,6 +1268,7 @@ function applyPermissionsUI() {
   setMenu("rep-t",  hasPerm(u,"rep_all"));   // Reporting = single toggle
   setMenu("sop-t",  hasPerm(u,"sops_view")); // SOPs = single toggle (default on)
   const _hb=document.getElementById("hist-box"); if(_hb) _hb.style.display = hasPerm(u,"edit_history") ? "flex" : "none"; // Edit History box beside search
+  if(typeof _confirmNavRefresh==='function') _confirmNavRefresh();
   const _ab=document.getElementById("auto-box"); if(_ab) _ab.style.display = u ? "flex" : "none"; // Automations box (visible to any approved user)
   const _sb=document.getElementById("settings-box"); if(_sb) _sb.style.display = _canEditSettings(u) ? "flex" : "none"; // Settings box (super/full only)
   // Tools tab (tools-t) is always available — never hidden.
@@ -1989,6 +1991,7 @@ async function loadPropertiesFromSupabase() {
   }
   propCards = (data || []).map(_propRowToCard);
   await _maybeArchiveClosed();
+  if(typeof _confirmNavRefresh==='function') _confirmNavRefresh();
 }
 
 // A property that has sat in "Closed" for 4+ weeks auto-files into the Completed
@@ -2407,7 +2410,12 @@ function canApprove(u){
   // approve a close, confirm a purchase and sign off subphases - the one place the
   // read-only rule was never applied.
   if (isReadOnly(u)) return false;
-  return !!(u && (u.isSuperAdmin || ["CEO","Project Director"].indexOf(u.role)>=0 || ["Marlo","Marlow"].indexOf((u.firstName||"").trim())>=0));
+  // Marlo was matched on her first name, which breaks the moment her profile name
+  // changes - she is covered by her ROLE now. The VA roles were added on Bruce's
+  // instruction so Patience can confirm closings and vacancies herself.
+  const _APPROVER_ROLES=["CEO","Project Director","Administrative Manager","Senior Administrative Assistant",
+    "Senior Virtual Administrative Assistant","Virtual Administrative Assistant"];
+  return !!(u && (u.isSuperAdmin || _APPROVER_ROLES.indexOf(u.role)>=0 || ["Marlo","Marlow"].indexOf((u.firstName||"").trim())>=0));
 }
 function _ymdPlus(days){ return _ymd(new Date(Date.now()+days*86400000)); }
 // When a subphase finishes (trigger event), start the next subphase's clock.
@@ -2781,6 +2789,7 @@ function renderPropertyBoard() {
               <span style="font-size:11px;color:#bbb;text-transform:uppercase;letter-spacing:0.05em">Drag to move</span>
             </div>
             <div onclick="openPropDetail('${c.id}')" style="padding:8px 10px;cursor:pointer">
+            ${_confirmFlag(c)}
             <div style="display:flex;align-items:flex-start;gap:4px;margin-bottom:4px">
               <div style="flex:1;font-size:12.5px;font-weight:500;color:#111;line-height:1.3">${c.addr}</div>
               ${c.driveUrl ? `<a href="${c.driveUrl}" target="_blank" onclick="event.stopPropagation()" title="Open Drive folder" style="font-size:13px;text-decoration:none;line-height:1;flex-shrink:0">📁</a>` : ''}
@@ -5211,6 +5220,7 @@ function renderAdminHome(user){
   const followUps=openTasks.filter(t=>t.due_date && t.due_date<=_ymd(new Date(Date.now()+2*86400000))).length;
   return `<div style="padding:20px 24px;max-width:100%">
     ${welcomeHeader(user)}
+    ${_confirmPanel('Needs confirming')}
     ${sharedWidgets()}
     ${_rhHead("My desk",`invoice list finalizes Mondays · pays Friday ${fri}`)}
     ${_rhRow([
@@ -6205,6 +6215,7 @@ function _adminMainDashboard(){
   const tiles=_AM_TILES.map(t=>_amTile(t[0],t[1],t[2],t[3],t[4]));
   const band=(label,rows)=>`<div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin:0 0 8px">${label}</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-bottom:20px">${rows}</div>`;
   return `<div style="padding:20px;max-width:1100px;margin:0 auto">
+    ${_confirmPanel('Needs confirming')}
     <div style="font-size:16px;font-weight:600;color:#111;margin-bottom:3px">Administrative Overview</div>
     <div style="font-size:13px;color:#888;margin-bottom:8px">Every board the project managers and the start / end-of-project assistants work from, across all properties. Click any square to see its properties grouped by PM.</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px">
@@ -6286,6 +6297,8 @@ function _marloTab(){
       </div>
     </div>
 
+    ${_confirmPanel('Needs confirming')}
+
     <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden;border-top:3px solid #E24B4A;margin-bottom:14px">
       <div style="padding:9px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between">
         <div style="font-size:14px;font-weight:600;color:#111">📋 Her Tasks — Next 48 Hours</div>
@@ -6338,6 +6351,102 @@ function _dirBox(title, count, sub, color, onclick){
     <div style="font-size:11.5px;color:#999;margin-top:2px">${sub}</div>
   </div>`;
 }
+// ---- Confirmations awaiting a human -----------------------------------------
+// Three things the system can see are due but cannot decide on its own: a purchase
+// closing that has passed, a sale closing that has passed, and a house that was
+// supposed to go vacant. Each needs a person to say "yes that happened".
+function _confirmItems(){
+  const today=_ymd(new Date());
+  const cards=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived);
+  const ago=(d)=>Math.max(0,Math.round((_dParse(today)-_dParse(d))/86400000));
+  const buy=cards.filter(c=>c.closingDate && c.closingDate<=today && !c.purchaseConfirmed && c.phase!=='Closed')
+    .map(c=>({c:c,kind:'buy',date:c.closingDate,days:ago(c.closingDate)}));
+  const sell=cards.filter(c=>c.closingDateSell && c.closingDateSell<=today && !c.closeApproved && c.phase!=='Closed')
+    .map(c=>({c:c,kind:'sell',date:c.closingDateSell,days:ago(c.closingDateSell)}));
+  // Only a house still sitting in Occupied / Closed needs its vacancy confirmed -
+  // once it has moved on, the question has already been answered.
+  const vac=cards.filter(c=>c.vacancyDate && c.vacancyDate<=today && c.phase==='Occupied / Closed')
+    .map(c=>({c:c,kind:'vac',date:c.vacancyDate,days:ago(c.vacancyDate)}));
+  const all=buy.concat(sell,vac).sort((a,b)=>b.days-a.days);
+  return { buy:buy, sell:sell, vac:vac, all:all, total:all.length };
+}
+const _CONFIRM_META={
+  buy:  { icon:'🏠', label:'Purchase closing', color:'#185FA5', bg:'#E6F1FB', verb:'did we close on it?',  btn:'Confirm we own it',  fn:'confirmPurchase' },
+  sell: { icon:'💰', label:'Sale closing',     color:'#B42318', bg:'#FCEBEB', verb:'did the sale close?',  btn:'Confirm it sold',    fn:'approveClose' },
+  vac:  { icon:'🔑', label:'Vacancy date',     color:'#B7791F', bg:'#FAEEDA', verb:'is it empty yet?',     btn:'Confirm it is vacant',fn:'confirmVacancy' },
+};
+// Anyone can be shown the list; only an approver gets the buttons.
+function _confirmRow(it){
+  const m=_CONFIRM_META[it.kind];
+  const can=(typeof canApprove==='function')?canApprove():false;
+  const late=it.days>0?`<span style="font-size:11.5px;color:#B42318;font-weight:600">${it.days} day${it.days===1?'':'s'} ago</span>`:'<span style="font-size:11.5px;color:#B7791F;font-weight:600">today</span>';
+  return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:0.5px solid #f1f3f7">
+    <div style="min-width:0">
+      <div style="font-size:13.5px;font-weight:600;color:#111"><span onclick="openPropDetail('${it.c.id}')" style="cursor:pointer;color:#185FA5">${_calEsc(it.c.addr||'')}</span></div>
+      <div style="font-size:12px;color:#888">${m.icon} ${m.label} ${_calEsc(it.date)} · ${m.verb} · ${late}</div>
+    </div>
+    ${can
+      ? `<button onclick="${m.fn}('${it.c.id}')" style="flex-shrink:0;padding:7px 13px;font-size:12.5px;font-weight:700;border-radius:6px;cursor:pointer;background:${m.color};color:#fff;border:none">⚑ ${m.btn}</button>`
+      : `<span style="flex-shrink:0;font-size:11.5px;color:#999">Bruce, Marlo or Tommy to confirm</span>`}
+  </div>`;
+}
+// The banner. Returns nothing at all when there is nothing to confirm - an empty
+// red box every day is how people learn to stop reading red boxes.
+function _confirmPanel(title){
+  const d=_confirmItems();
+  if(!d.total) return '';
+  return `<div style="background:#fff;border:1px solid #f0c0bb;border-top:3px solid #B42318;border-radius:10px;padding:12px 15px;margin-bottom:16px;color:#111">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px">
+      <div style="font-size:14.5px;font-weight:700;color:#B42318">⚑ ${title||'Needs confirming'}</div>
+      <span style="font-size:11.5px;background:#FCEBEB;color:#B42318;padding:2px 9px;border-radius:99px;font-weight:600">${d.total}</span>
+    </div>
+    <div style="font-size:12px;color:#888;margin-bottom:4px">Dates that have passed and nobody has said yes or no to yet. If one did not happen, open the property and move its date instead.</div>
+    ${d.all.map(_confirmRow).join('')}
+  </div>`;
+}
+// Confirm a house actually went vacant. This is the phase move, so it runs through
+// updatePropertyPhaseInSupabase and seeds the First Time Access checklist. It never
+// touches vacancy_date - that belongs to the Slack sync.
+async function confirmVacancy(id){
+  if(!canApprove()){ alert("Only Bruce, Marlo, Tommy or the VA team can confirm a vacancy."); return; }
+  const c=propCards.find(x=>x.id===id); if(!c) return;
+  if(!confirm('Confirm "'+(c.addr||"this property")+'" is now VACANT?\n\nThis moves it to Vacant / On Standby and starts the First Time Access checklist.\n\nIf the tenant has not moved out, cancel and update the vacancy date on the property card instead.')) return;
+  const moved=await updatePropertyPhaseInSupabase(id,'Vacant / On Standby');
+  if(!moved) return;
+  _logAudit("confirmed","property", c.addr||"", "Confirmed vacant — moved to Vacant / On Standby");
+  await loadPropertiesFromSupabase();
+  _confirmNavRefresh();
+  if(typeof _refreshCurrentView==='function') _refreshCurrentView(); else openProjectDashboard('trello');
+}
+// Standing counter in the brand bar for the roles who can act on these.
+function _confirmNavRefresh(){
+  const box=document.getElementById("confirm-box"); if(!box) return;
+  let n=0; try{ n=_confirmItems().total; }catch(e){ n=0; }
+  const can=(typeof canApprove==='function')?canApprove():false;
+  box.style.display=(can && n)?"flex":"none";
+  const cnt=document.getElementById("confirm-count"); if(cnt) cnt.textContent=n;
+  box.title=n+" waiting to be confirmed";
+}
+function openConfirmations(){
+  document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
+  document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
+  const d=_confirmItems();
+  document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div style="padding:24px;max-width:820px;margin:0 auto;color:#111">
+    <div style="font-size:17px;font-weight:600;color:#111;margin-bottom:4px">⚑ Confirmations</div>
+    <div style="font-size:13px;color:#888;margin-bottom:14px">Purchase closings, sale closings and vacancy dates that have passed and still need a yes or no.</div>
+    ${d.total?_confirmPanel('Waiting on you'):'<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:26px;text-align:center;color:#1D9E75;font-size:14px">Everything is confirmed ✅</div>'}
+  </div></div></div>`;
+}
+// A red flag on the board card itself, so it shows wherever the property appears.
+function _confirmFlag(c){
+  const today=_ymd(new Date());
+  const bits=[];
+  if(c.closingDate && c.closingDate<=today && !c.purchaseConfirmed && c.phase!=='Closed') bits.push('purchase');
+  if(c.closingDateSell && c.closingDateSell<=today && !c.closeApproved && c.phase!=='Closed') bits.push('sale');
+  if(c.vacancyDate && c.vacancyDate<=today && c.phase==='Occupied / Closed') bits.push('vacancy');
+  if(!bits.length) return '';
+  return `<div style="background:#FCEBEB;color:#B42318;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:99px;display:inline-block;margin-bottom:4px">⚑ Confirm ${bits.join(' + ')}</div>`;
+}
 function _dirGroup(label){ return `<div style="font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#8a93a3;margin:18px 4px 8px">${label}</div>`; }
 function _dirCollect(){
   const cards=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived);
@@ -6377,6 +6486,7 @@ function renderDirectorHome(){
   const phaseBoxes=phases.map(ph=>{ const p=(typeof phInfo==='function')?phInfo(ph):{dot:'#888'}; const n=d.cards.filter(c=>c.phase===ph).length; return _dirBox(ph, n, "properties", p.dot||'#888', "_dirDrill('phase','"+_argEsc(ph)+"')"); }).join("");
   const grid=(inner)=>`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px">${inner}</div>`;
   return `<div style="padding:20px">
+    ${_confirmPanel('Needs confirming')}
     <div style="font-size:17px;font-weight:600;color:#111;margin-bottom:2px">Director / CEO Overview</div>
     <div style="font-size:13px;color:#888">Click any box to drill in.</div>
     ${_dirGroup("Money &amp; Closings")}${grid(money)}
@@ -6488,7 +6598,8 @@ function _vaMainDashboard(vaName){
   const utilPending=cards.filter(c=>phases.includes(c.phase) && ["vos_util_electric","vos_util_water","vos_util_gas"].some(k=>!((c.checklists||{})[k]||{}).done)).length;
   const rtr=cards.filter(c=>["RTR In Process","RTR Completed (Pending Closing)","Closed"].includes(c.phase)).length;
   const box=(t,v,sub,color,fn)=>`<div onclick="${fn}" style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${color};border-radius:10px;padding:14px 16px;cursor:pointer"><div style="font-size:13.5px;font-weight:600;color:#111">${t}</div><div style="font-size:27px;font-weight:600;color:${color};margin-top:6px">${v}</div><div style="font-size:11.5px;color:#999">${sub}</div></div>`;
-  return `<div style="padding:20px;max-width:900px;margin:0 auto">
+  return `<div style="padding:20px;max-width:900px;margin:0 auto;color:#111">
+    ${_confirmPanel('Needs confirming')}
     <div style="font-size:17px;font-weight:600;color:#111;margin-bottom:12px">📊 VA Admin — Main</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">
       ${box('My Open Tasks', mine.length, 'assigned to '+_calEsc(vaName), '#185FA5', "openVAAdminDashboard('va')")}
@@ -9362,4 +9473,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-29c marlo-board-restructure -->
+<!-- build: 2026-08-29d confirmations-everywhere -->
