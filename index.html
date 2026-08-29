@@ -2001,6 +2001,7 @@ async function loadPropertiesFromSupabase() {
   }
   propCards = (data || []).map(_propRowToCard);
   await _maybeArchiveClosed();
+  if(typeof _maybeScheduleMarketChecklists==='function') await _maybeScheduleMarketChecklists();
   if(typeof _confirmNavRefresh==='function') _confirmNavRefresh();
 }
 
@@ -2103,7 +2104,7 @@ async function updatePropertyPhaseInSupabase(id, newPhase) {
     const _done=_fi.every(n=>{const s=_subs2.find(x=>x.name===n);return s&&s.completed;});
     if(!_done){
       patch.phase="Listed on the Market / Final Inspections";
-      _fi.forEach(n=>{ let s=_subs2.find(x=>x.name===n); if(!s){ s={name:n}; _subs2.push(s); } if(!s.completed){ if(!s.start) s.start=_ymd(new Date()); if(!s.due) s.due=_ymdPlus(3); } });
+      _fi.forEach(n=>{ let s=_subs2.find(x=>x.name===n); if(!s){ s={name:n}; _subs2.push(s); } if(!s.completed){ if(!s.start) s.start=_ymdToday(); if(!s.due) s.due=_ymdPlus(3); } });
       patch.sub_phases=_subs2;
     }
   }
@@ -2116,7 +2117,7 @@ async function updatePropertyPhaseInSupabase(id, newPhase) {
   // start = the day it moved in, due = 3 days (72h) later. Set automatically on every move
   // (unless the checklist is already completed).
   if (newPhase === "Vacant / On Standby") {
-    const _today = _ymd(new Date()), _due = _ymdPlus(3);
+    const _today = _ymdToday(), _due = _ymdPlus(3);
     const _subs = Array.isArray(_pc && _pc.subPhases) ? _pc.subPhases.map(s=>({...s})) : [];
     let _fta = _subs.find(s=>s.name==="First Time Access Checklist");
     if(!_fta){ _fta={name:"First Time Access Checklist"}; _subs.unshift(_fta); }
@@ -2428,7 +2429,77 @@ function canApprove(u){
     "Senior Virtual Administrative Assistant","Virtual Administrative Assistant"];
   return !!(u && (u.isSuperAdmin || _APPROVER_ROLES.indexOf(u.role)>=0 || ["Marlo","Marlow"].indexOf((u.firstName||"").trim())>=0));
 }
-function _ymdPlus(days){ return _ymd(new Date(Date.now()+days*86400000)); }
+// ---- Business days -----------------------------------------------------------
+// Legacy Homes does not work weekends and does not work federal holidays. Every
+// date the SYSTEM generates for itself lands on a working day. A date a person
+// types is left exactly as they typed it - if someone deliberately puts a job on
+// a Saturday that is their call, not ours to overrule.
+//
+// All of this is string in, string out, parsed as UTC. Mixing local Date maths
+// with YYYY-MM-DD strings is what put every takedown reminder a day early once
+// already; it does not happen again here.
+function _ymdU(d){ return d.toISOString().slice(0,10); }
+function _nthWeekdayU(y,mo,wd,n){
+  const first=new Date(Date.UTC(y,mo,1));
+  const shift=(wd-first.getUTCDay()+7)%7;
+  return _ymdU(new Date(Date.UTC(y,mo,1+shift+(n-1)*7)));
+}
+function _lastWeekdayU(y,mo,wd){
+  const last=new Date(Date.UTC(y,mo+1,0));
+  const back=(last.getUTCDay()-wd+7)%7;
+  return _ymdU(new Date(Date.UTC(y,mo,last.getUTCDate()-back)));
+}
+const _HOLIDAY_CACHE={};
+// The eleven US federal holidays, computed for whatever year is asked for, so the
+// list can never go stale. Fixed-date holidays use the federal observed rule:
+// falling on a Saturday it is observed the Friday before, on a Sunday the Monday after.
+function _federalHolidays(y){
+  if(_HOLIDAY_CACHE[y]) return _HOLIDAY_CACHE[y];
+  const S=new Set();
+  const fixed=(mo,day)=>{
+    const d=new Date(Date.UTC(y,mo,day)), wd=d.getUTCDay();
+    if(wd===6)      S.add(_ymdU(new Date(Date.UTC(y,mo,day-1))));
+    else if(wd===0) S.add(_ymdU(new Date(Date.UTC(y,mo,day+1))));
+    else            S.add(_ymdU(d));
+  };
+  fixed(0,1);                        // New Year's Day
+  S.add(_nthWeekdayU(y,0,1,3));      // Martin Luther King Jr Day - 3rd Monday Jan
+  S.add(_nthWeekdayU(y,1,1,3));      // Washington's Birthday - 3rd Monday Feb
+  S.add(_lastWeekdayU(y,4,1));       // Memorial Day - last Monday May
+  fixed(5,19);                       // Juneteenth
+  fixed(6,4);                        // Independence Day
+  S.add(_nthWeekdayU(y,8,1,1));      // Labor Day - 1st Monday Sep
+  S.add(_nthWeekdayU(y,9,1,2));      // Columbus Day - 2nd Monday Oct
+  fixed(10,11);                      // Veterans Day
+  S.add(_nthWeekdayU(y,10,4,4));     // Thanksgiving - 4th Thursday Nov
+  fixed(11,25);                      // Christmas Day
+  _HOLIDAY_CACHE[y]=S; return S;
+}
+function _isHolidayYMD(ds){ return !!ds && _federalHolidays(parseInt(ds.slice(0,4),10)).has(ds); }
+function _isBusinessDay(ds){
+  if(!ds) return false;
+  const wd=_dParse(ds).getUTCDay();
+  return wd!==0 && wd!==6 && !_isHolidayYMD(ds);
+}
+// Roll forward to the next working day. Already a working day? Unchanged.
+function _nextBusinessDay(ds){
+  if(!ds) return ds;
+  let d=ds, guard=0;
+  while(!_isBusinessDay(d) && guard++<40){ d=_ymdU(new Date(_dParse(d).getTime()+86400000)); }
+  return d;
+}
+// Why a date moved, for the one-line note next to it.
+function _nonWorkingReason(ds){
+  if(!ds || _isBusinessDay(ds)) return "";
+  const wd=_dParse(ds).getUTCDay();
+  if(wd===0) return "Sunday";
+  if(wd===6) return "Saturday";
+  return "a federal holiday";
+}
+// Auto-generated due dates count calendar days as before, then land on the next
+// working day. Counting business days instead would quietly stretch every SLA.
+function _ymdPlus(days){ return _nextBusinessDay(_ymd(new Date(Date.now()+days*86400000))); }
+function _ymdToday(){ return _nextBusinessDay(_ymd(new Date())); }
 // When a subphase finishes (trigger event), start the next subphase's clock.
 function _applyChain(subs, name, event, card){
   const ch=SUBPHASE_CHAIN[name]; if(!ch || ch.on!==event) return;
@@ -2438,7 +2509,7 @@ function _applyChain(subs, name, event, card){
     if(!st || !st.name) return;
     if(card && !_spApplies(st.name, card)) return; // skip steps that don't apply (permitted vs not)
     let n=subs.find(x=>x.name===st.name); if(!n){ n={name:st.name}; subs.push(n); }
-    if(!n.start) n.start=_ymd(new Date());       // don't override a manually set date
+    if(!n.start) n.start=_ymdToday();            // don't override a manually set date
     if(!n.due)   n.due=_ymdPlus(st.dueDays);
   });
 }
@@ -5282,6 +5353,17 @@ function renderSrVAHome(user){
   return `<div style="padding:20px 24px;max-width:100%">
     ${welcomeHeader(user)}
     ${sharedWidgets()}
+    ${(()=>{
+      const mk=_rhCards().filter(c=>MARKET_PHASES.indexOf(c.phase)>=0);
+      const dz=(d)=>d?Math.floor((_dParse(_ymd(new Date()))-_dParse(d))/86400000):null;
+      const overdue=mk.filter(c=>{const l=c.checklistMarketLast; return !l || dz(l)>=14;});
+      const openT=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status!=='done' && (t.category||'')===MARKET_TASK_CATEGORY);
+      return _rhHead("On the market — my checklists","one per listing every week · red at 14 days")+_rhRow([
+        _rhTile("Listings on the market",mk.length,"#5dade2","","openPMAssistantDashboard()"),
+        _rhTile("Checklists overdue",overdue.length,overdue.length?"#e74c3c":"#2ecc71","14+ days or never done","openPMAssistantDashboard()"),
+        _rhTile("Checklist tasks open",openT.length,"#f39c12","scheduled to me","openProjectDashboard('taskcal')"),
+      ])+(overdue.length?`<div style="background:#fff;border:0.5px solid #f0c0bb;border-left:3px solid #B42318;border-radius:10px;padding:10px 14px;margin:8px 0 4px;color:#111">${overdue.slice(0,8).map(c=>`<div style="display:flex;justify-content:space-between;gap:8px;padding:5px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;color:#185FA5;font-weight:600">${_calEsc(c.addr||'')}</span><span style="color:#B42318">${c.checklistMarketLast?('last done '+c.checklistMarketLast):'never done'}</span></div>`).join('')}</div>`:'');
+    })()}
     ${_rhHead("My desk")}
     ${_rhRow([
       _rhTile("Big projects","—","#5dade2","being built out"),
@@ -5722,6 +5804,59 @@ function onMarketToolsPanel(cards){
   const tRow=(t)=>`<div onclick="pmaToggleTask('${t.id}')" title="Click to mark completed" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:0.5px solid #f4f5f7"><div style="min-width:0;flex:1"><div style="font-size:13px;color:#111;font-weight:500">${t.category?`<span style="font-size:10px;background:#EEEDFE;color:#3C3489;padding:1px 5px;border-radius:99px;margin-right:5px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div><div style="font-size:11px;color:#999">${_calEsc(_locLabel(t))}${taskAssignees(t).length?(' · '+_calEsc(taskAssignees(t).join(', '))):''}</div></div><div style="font-size:11px;color:#B7791F;white-space:nowrap">${t.due_date||'—'} ☐</div></div>`;
   const tasksBox=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden"><div style="padding:10px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between"><div style="font-size:14px;font-weight:500;color:#111">✅ Tasks Needing Completion</div><span style="font-size:11px;background:#FAEEDA;color:#633806;padding:2px 8px;border-radius:99px">${tasks.length}</span></div><div style="padding:4px 14px 12px">${tasks.length?tasks.map(tRow).join(''):`<div style="text-align:center;color:#ccc;font-size:13px;padding:16px 0">No open tasks for on-market properties.</div>`}</div></div>`;
   return checklistBox+tasksBox;
+}
+// ---- On-market checklist scheduling (Gabe) ------------------------------------
+// The on-market checklist used to go red at 14 days and nothing ever put it on
+// anybody's calendar, so it simply did not get done. Now every listed property
+// gets a real task for the End of Project Assistant: nothing in the first week on
+// market, then one a week. The 14-day red threshold is unchanged - red still means
+// genuinely missed.
+const MARKET_TASK_CATEGORY="On the Market Checklist";
+const MARKET_PHASES=["Listed on the Market","Listed on the Market / Final Inspections"];
+function _eopAssistantName(){
+  const u=(typeof getUsers==='function'?getUsers():[]).find(x=>x.status==="approved" && x.role==="End of Project Assistant");
+  return u ? (((u.firstName||"")+" "+(u.lastName||"")).trim()||u.firstName||"") : "";
+}
+// The day this listing's clock starts: the last checklist done, else the day it was
+// stamped as listed, else the day we first noticed it (stamped below).
+function _marketBaseline(c){
+  const cl=c.checklists||{};
+  return c.checklistMarketLast || cl.timeline_done || cl.market_since || null;
+}
+async function _maybeScheduleMarketChecklists(){
+  try{
+    if(typeof isReadOnly==='function' && isReadOnly()) return;
+    const who=_eopAssistantName(); if(!who) return;
+    const today=_ymd(new Date());
+    const cards=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && MARKET_PHASES.indexOf(c.phase)>=0);
+    if(!cards.length) return;
+    const open=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status!=='done' && (t.category||'')===MARKET_TASK_CATEGORY);
+    const days=(from)=>Math.floor((_dParse(today)-_dParse(from))/86400000);
+    let made=0, stamped=0;
+    for(const c of cards){
+      let base=_marketBaseline(c);
+      if(!base){
+        // No record of when this went on the market. Start its clock today rather
+        // than invent a listing date - and write it down so it is stable from now on.
+        const cl=Object.assign({},c.checklists||{}); cl.market_since=today;
+        const { error } = await supabase.from("pm_properties").update({ checklists:cl }).eq("id",c.id);
+        if(!error){ c.checklists=cl; stamped++; }
+        continue;
+      }
+      if(days(base)<7) continue;                                   // first week on market is quiet
+      if(open.some(t=>t.property_id===c.id)) continue;              // one open task at a time
+      const due=_ymdPlus(0);                                        // today, rolled to a working day
+      const { error } = await supabase.from("pm_tasks").insert({
+        title:"On the Market Checklist — "+(c.addr||""),
+        category:MARKET_TASK_CATEGORY, assignee:who, assignees:[who],
+        start_date:due, due_date:due, property_id:c.id,
+        notes:"Weekly while the property is listed. Last completed: "+(c.checklistMarketLast||"never")+"."
+      });
+      if(!error){ made++; _logAudit("created","task","On the Market Checklist — "+(c.addr||""),"Auto-scheduled for "+who+" — listed property, weekly cadence"); }
+    }
+    if(made && typeof loadTasks==='function') await loadTasks();
+    return {made:made,stamped:stamped};
+  }catch(e){ /* never block a page load */ }
 }
 async function markMarketChecklist(id){
   if(_blockIfReadOnly()) return;
@@ -9568,4 +9703,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-29f monday-meeting-rework -->
+<!-- build: 2026-08-29g business-days + on-market-scheduling -->
