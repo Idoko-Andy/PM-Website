@@ -1803,7 +1803,6 @@ let SUB_PHASES = [
   "Budget Creation",
   "Budget Approval",
   "Drawing / Structural Phase",
-  "Pending Permit Approval",
   "Design Budget Creation",
   "Design Budget Approval",
 ];
@@ -1816,7 +1815,6 @@ let SUB_PHASE_BOARD = {
   "Budget Creation":            "SOW & Budgets",
   "Budget Approval":            "SOW & Budgets",
   "Drawing / Structural Phase": "Permits & Drawings",
-  "Pending Permit Approval":    "Permits & Drawings",
   "Design Budget Creation":     "Design Budgets & Design Status",
   "Design Budget Approval":     "Design Budgets & Design Status",
 };
@@ -1842,6 +1840,30 @@ function _inspectionSubs(card, when){
   });
 }
 function _openAfterInspections(card){ return _inspectionSubs(card,'after').filter(s=>!s.completed); }
+// Same idea for the permit itself. The app never invents "Pending Permit Approval"
+// any more - the Permit Tracker writes it, and ticks it when Jen marks the permit
+// Issued. Two steps per permit so the card shows where it actually is:
+//   Permit Submitted (<juris/number>)          - ticked once there is a submitted date
+//   Pending Permit Approval (<juris/number>)   - ticked when the status hits Issued
+const PERMIT_SUB_RE=/^(Permit Submitted|Pending Permit Approval)\b/i;
+function _permitSubs(card){
+  const subs=(card && Array.isArray(card.subPhases)) ? card.subPhases : [];
+  return subs.filter(s=>PERMIT_SUB_RE.test(s.name||''));
+}
+function _openPermitSubs(card){ return _permitSubs(card).filter(s=>!s.completed); }
+// The steps to show on a property card = the standard workflow list PLUS anything
+// the Permit Tracker (or a person) has written onto this card by hand. Both the
+// renderer and the "Save dates" writer use this one list, so the indexes line up
+// and a save can never quietly drop the extras - which is exactly what used to
+// happen to inspections.
+function _cardSubPhaseNames(card){
+  const names=SUB_PHASES.slice();
+  (card && Array.isArray(card.subPhases) ? card.subPhases : []).forEach(sp=>{
+    const n=String(sp.name||''); if(n && names.indexOf(n)<0) names.push(n);
+  });
+  return names;
+}
+function _isCardOnlySub(name){ return SUB_PHASES.indexOf(name)<0; }
 function _spApplies(name, card){
   const mode = SUBPHASE_APPLIES[name] || (/(permit approval|inspection)/i.test(name||'') ? 'permitted' : 'all');
   if(mode==='all') return true;
@@ -1864,7 +1886,7 @@ let SUBPHASE_CHAIN = {
 let PHASE_ADVANCE = {
   "Vacant / On Standby": { requires:["First Time Access Checklist"], next:"Pre Construction", notifyPM:true },
   "Pre Construction":    { requires:["SOW Creation","SOW Approval","Budget Creation","Budget Approval"], next:"Waiting Permits", notifyPM:true },
-  "Waiting Permits":     { requires:["Drawing / Structural Phase","Pending Permit Approval"], next:"Framing, MEPS, Insulation", notifyPM:true },
+  "Waiting Permits":     { requires:["Drawing / Structural Phase"], next:"Framing, MEPS, Insulation", notifyPM:true },
   "Listed on the Market / Final Inspections": { requires:["Final Electric Inspection","Final Plumbing Inspection"], next:"Listed on the Market", notifyPM:true },
 };
 function _subDone(sp,name){ return !!(sp && sp.completed && (!subphaseNeedsApproval(name) || sp.approved)); }
@@ -1876,6 +1898,12 @@ function _phaseAdvanceBlocking(card){
   // it is whatever inspections the Permit Tracker put on this card.
   if(card.phase==="Listed on the Market / Final Inspections"){
     return _openAfterInspections(card).map(s=>s.name);
+  }
+  // Waiting Permits is the same shape: the drawings step is fixed, but the permit
+  // steps are whatever the Permit Tracker has put on this card.
+  if(card.phase==="Waiting Permits"){
+    const fixed=(cfg.requires||[]).filter(name => _spApplies(name, card) && !_subDone(subs.find(s=>s.name===name), name));
+    return fixed.concat(_openPermitSubs(card).map(s=>s.name));
   }
   // Only subphases that APPLY to this property (permitted vs non-permitted) can block it.
   return (cfg.requires||[]).filter(name => _spApplies(name, card) && !_subDone(subs.find(s=>s.name===name), name));
@@ -2419,8 +2447,9 @@ async function saveSubPhaseSchedule(id){
   if (!card) return false;
   const prevById = {}; (card.subPhases||[]).forEach(sp=>{ prevById[sp.name]=sp; });
   const newSubPhases = [];
-  for(let i=0;i<SUB_PHASES.length;i++){
-    const name=SUB_PHASES[i];
+  const _spNames=_cardSubPhaseNames(card);
+  for(let i=0;i<_spNames.length;i++){
+    const name=_spNames[i];
     const prev=prevById[name]||{};
     const startEl=document.getElementById("sp-start-"+i);
     const dueEl=document.getElementById("sp-due-"+i);
@@ -2429,7 +2458,7 @@ async function saveSubPhaseSchedule(id){
     let taskId=prev.taskId||null;
     // First Time Access (Start-of-Project Assistant) and approval steps (approvers) never
     // go on the PM's task calendar — so they never create/keep a mirrored pm_task here.
-    const _pmTaskEligible = name!=="First Time Access Checklist" && !_isPureApproval(name) && _spApplies(name, card);
+    const _pmTaskEligible = name!=="First Time Access Checklist" && !_isPureApproval(name) && _spApplies(name, card) && !_isCardOnlySub(name);
     const scheduled = start && due && _pmTaskEligible;
     if(scheduled){
       const payload={ title:name, category:name, assignee:card.pm||null, assignees:card.pm?[card.pm]:[], start_date:start, due_date:due, property_id:id, notes:"Auto-created from "+(card.addr||"property")+" subphase schedule" };
@@ -3062,10 +3091,10 @@ function openPropDetail(id) {
       </select>
     </div>`;
   const _savedSub = (name)=> (c.subPhases||[]).find(sp=>sp.name===name) || {};
-  const subPhaseRows = SUB_PHASES.map((name,i) => {
+  const subPhaseRows = _cardSubPhaseNames(c).map((name,i) => {
     if(!_spApplies(name,c)) return ''; // hide steps that don't apply to this property (keeps save indices aligned)
     const sp=_savedSub(name);
-    const board = SUB_PHASE_BOARD[name] || '—';
+    const board = SUB_PHASE_BOARD[name] || (PERMIT_SUB_RE.test(name)?'Permit Tracker':(INSPECTION_SUB_RE.test(name)?'Permit Tracker · inspection':'This property only'));
     const nEsc = name.replace(/'/g,"\\'");
     const dateInput=(kind,val)=> _ro_sp
       ? `<span style="font-size:12px;color:${val?'#111':'#ccc'}">${val||'—'}</span>`
@@ -4261,7 +4290,84 @@ async function _pmSettingsWrite(key, data){
     return m || "unknown error";
   }catch(e){ return (e && e.message) || "network error"; }
 }
+// The Monday meeting's scope, in one place. Vacant / On Standby through Pre List /
+// Punchout, plus Rental Handoff (Bruce, 8/29). Once a house is listed it leaves this
+// walk-through and picks up in the On the Market meeting instead.
+const WM_TEAM_PHASES=["Vacant / On Standby","Pre Construction","Waiting Permits","Framing, MEPS, Insulation","Drywall / Exterior Work","Finishes","Pre List / Punchout Process","Rental Handoff Process"];
 async function _wmLoad(){ try{ const r=await supabase.from("pm_settings").select("data").eq("key","meeting_notes").maybeSingle(); if(r.error){ window._wmLoadOk=false; window._wmData={}; return; } window._wmLoadOk=true; window._wmData=(r.data&&r.data.data)||{}; }catch(e){ window._wmLoadOk=false; window._wmData={}; } }
+// ---- Autosave --------------------------------------------------------------
+// Bruce's rule: nobody should ever lose a meeting note because they forgot to hit
+// Save. Every box saves itself about a second after typing stops, and again the
+// moment it loses focus. The Save button stays - some people want to press it -
+// but it is now a reassurance, not a requirement.
+// The second half of the rule: if nobody ever hits "Meeting complete", whatever
+// was typed is still on the record, and the record says plainly that the meeting
+// was never closed out. That is stamped by _wmStampOpened below.
+const WM_AUTOSAVE_MS = 1100;
+let _wmAutoTimers = {};
+let _wmAutoWired = false;
+function _wmFlag(key, state){
+  const el=document.getElementById('wm-ok-'+key);
+  if(!el) return;
+  if(state==='saving'){ el.textContent='Saving\u2026'; el.style.color='#aaa'; el.style.display='inline'; return; }
+  if(state==='saved'){ el.textContent='Saved \u2713'; el.style.color='#1D9E75'; el.style.display='inline';
+    clearTimeout(_wmAutoTimers['flag:'+key]);
+    _wmAutoTimers['flag:'+key]=setTimeout(()=>{ if(el) el.style.display='none'; },1600); return; }
+  if(state==='failed'){ el.textContent='Not saved'; el.style.color='#B42318'; el.style.display='inline'; }
+}
+async function _wmAutoSave(kind, key, week){
+  if(typeof isReadOnly==='function' && isReadOnly()) return;
+  const el=document.getElementById('wm-'+key); if(!el) return;
+  if(window._wmLoadOk===false) return;              // never overwrite a failed load with blanks
+  const val=el.value;
+  const d=window._wmData=window._wmData||{};
+  const wk=week||_wmWeekKey();
+  d[wk]=d[wk]||{}; d[wk][kind]=d[wk][kind]||{};
+  if(d[wk][kind][key]===val) return;                // nothing actually changed
+  d[wk][kind][key]=val;
+  _wmFlag(key,'saving');
+  const err=await _pmSettingsWrite('meeting_notes',d);
+  _wmFlag(key, err?'failed':'saved');
+  if(!err) _wmStampOpened(kind, wk);
+}
+// One delegated listener for the whole meeting screen, re-armed on every render.
+function _wmAutoWire(kind, week){
+  const host=document.getElementById('dash-body'); if(!host) return;
+  if(_wmAutoWired && host.__wmKind===kind && host.__wmWeek===week) return;
+  host.__wmKind=kind; host.__wmWeek=week; _wmAutoWired=true;
+  if(host.__wmBound) return;
+  host.__wmBound=true;
+  const keyOf=(t)=>{
+    if(!t || t.tagName!=='TEXTAREA') return null;
+    const id=String(t.id||''); return id.slice(0,3)==='wm-' ? id.slice(3) : null;
+  };
+  host.addEventListener('input', e=>{
+    const k=keyOf(e.target); if(!k) return;
+    clearTimeout(_wmAutoTimers[k]);
+    _wmAutoTimers[k]=setTimeout(()=>_wmAutoSave(host.__wmKind, k, host.__wmWeek), WM_AUTOSAVE_MS);
+  }, true);
+  host.addEventListener('blur', e=>{
+    const k=keyOf(e.target); if(!k) return;
+    clearTimeout(_wmAutoTimers[k]);
+    _wmAutoSave(host.__wmKind, k, host.__wmWeek);
+  }, true);
+  // Leaving the page mid-sentence should not cost the sentence.
+  if(!window.__wmUnloadBound){
+    window.__wmUnloadBound=true;
+    window.addEventListener('beforeunload', ()=>{
+      Object.keys(_wmAutoTimers).forEach(k=>{ if(k.slice(0,5)!=='flag:'){ clearTimeout(_wmAutoTimers[k]); _wmAutoSave(host.__wmKind,k,host.__wmWeek); } });
+    });
+  }
+}
+// A meeting that was opened but never closed is still a fact worth keeping.
+let _wmOpenedStamped={};
+async function _wmStampOpened(kind, wk){
+  const tag=wk+':'+kind; if(_wmOpenedStamped[tag]) return;
+  _wmOpenedStamped[tag]=true;
+  const cur=_wmMeta(wk,kind,'__opened')||{};
+  if(cur.first) return;
+  try{ await _wmSetMeta(wk,kind,'__opened',{first:new Date().toISOString(), by:_miWho()}); }catch(e){}
+}
 async function _wmSaveNote(kind,pid,week){ if(_blockIfReadOnly()) return; const el=document.getElementById('wm-'+pid); if(!el) return; if(window._wmLoadOk===false){ alert("These meeting notes could not be loaded a moment ago. Saving now would overwrite the real record with a blank one, so this save was stopped. Refresh the page and try again."); return; } const d=window._wmData=window._wmData||{}; const wk=week||_wmWeekKey(); d[wk]=d[wk]||{}; d[wk][kind]=d[wk][kind]||{}; d[wk][kind][pid]=el.value; const _err=await _pmSettingsWrite('meeting_notes',d); if(_err){ alert("YOUR NOTE WAS NOT SAVED - "+_err+"\n\nCopy your text somewhere safe before you leave this page."); return; } const ok=document.getElementById('wm-ok-'+pid); if(ok){ ok.style.display='inline'; setTimeout(()=>{ok.style.display='none';},1500); } }
 async function _pdnAdd2(pm,key,elId){ const el=document.getElementById(elId); if(!el||!el.value.trim()) return; const d=window._pdnData=window._pdnData||{}; d[pm]=d[pm]||{}; d[pm][key]=d[pm][key]||[]; d[pm][key].push({t:el.value.trim(),done:false,at:_ymd(new Date())}); await _pdnSave(); openWeeklyMeeting('team'); }
 // Backlog #95 (Start-of-Project dashboard) was never built, but six tiles on the
@@ -4584,6 +4690,7 @@ function _wmClosedBanner(wk, rec){
     <div style="font-size:13.5px;color:#0d6b4a"><b>&#10003; This meeting is closed.</b> Marked complete by ${_calEsc(rec.by||'someone')} on ${_calEsc(_wmWhen(rec.at))}. The boxes are locked so the record matches what the room agreed.</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       <button onclick="_wmOpenSummary('${wk}')" style="padding:6px 13px;background:#122A4A;color:#fff;border:none;border-radius:7px;font-size:12.5px;cursor:pointer;font-weight:600">&#8595; Summary / PDF</button>
+      <button onclick="_wmEmailFlow('${wk}')" style="padding:6px 13px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">&#9993; Email it to Tommy</button>
       ${can?`<button onclick="_wmReopen('${wk}')" style="padding:6px 13px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#777;cursor:pointer">Reopen</button>`:''}
     </div></div>`;
 }
@@ -4596,6 +4703,7 @@ function _wmCloseBar(wk, rec, isPast){
     <div style="font-size:13px;color:#555;margin-right:4px"><b>When the meeting is over:</b></div>
     <button onclick="_wmComplete('${wk}')" style="padding:8px 16px;background:#122A4A;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">&#10003; Meeting complete</button>
     <button onclick="_wmOpenSummary('${wk}')" style="padding:8px 15px;background:#fff;border:0.5px solid #cdd7e6;border-radius:8px;font-size:13px;color:#185FA5;cursor:pointer;font-weight:600">&#8595; Preview the summary</button>
+    <button onclick="_wmEmailFlow('${wk}')" style="padding:8px 15px;background:#fff;border:0.5px solid #cdd7e6;border-radius:8px;font-size:13px;color:#185FA5;cursor:pointer;font-weight:600">&#9993; Email it to Tommy</button>
     <div style="font-size:12px;color:#999;flex-basis:100%;margin-top:2px">Closing the week files it under <b>Previous meetings</b>, locks the boxes, and carries the open lag-time items and questions into next Monday. You can reopen it.</div>
   </div>`;
 }
@@ -4622,7 +4730,7 @@ async function _wmReopen(wk){
 // ---- what the summary is made of --------------------------------------------
 function _wmSummaryData(wk){
   const notes=(((window._wmData||{})[wk]||{})['team'])||{};
-  const cons=["Vacant / On Standby","Pre Construction","Waiting Permits","Framing, MEPS, Insulation","Drywall / Exterior Work","Finishes","Pre List / Punchout Process"];
+  const cons=WM_TEAM_PHASES;
   const _num=(a)=>{ const m=String(a||'').match(/\d+/); return m?parseInt(m[0],10):999999; };
   const cards=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && cons.includes(c.phase)).sort((a,b)=>_num(a.addr)-_num(b.addr));
   const money=(v)=>{const n=parseFloat(String(v||"").replace(/[^0-9.\-]/g,""));return isNaN(n)?null:n;};
@@ -4769,7 +4877,7 @@ function _wmSummaryHtml(wk){
   </div>
   <div class="pad">
     <div class="kpis">
-      <div class="kpi"><div class="k">Properties reviewed</div><div class="v">${D.cards.length}</div><div class="s">vacant &rarr; pre-list</div></div>
+      <div class="kpi"><div class="k">Properties reviewed</div><div class="v">${D.cards.length}</div><div class="s">vacant &rarr; pre-list &amp; rental handoff</div></div>
       <div class="kpi"><div class="k">Budgeted</div><div class="v">${_wmMoneyShort(D.tb||null)}</div><div class="s">across the ${D.cards.length}</div></div>
       <div class="kpi"><div class="k">Spent</div><div class="v">${_wmMoneyShort(D.ts||null)}</div><div class="s">${D.tb?Math.round((D.ts/D.tb)*100):0}% of budget</div></div>
       <div class="kpi"><div class="k">Leftover</div><div class="v ${leftover!=null&&leftover<0?'red':'grn'}">${_wmMoneyShort(leftover)}</div><div class="s">${D.over.length} over budget</div></div>
@@ -4786,6 +4894,73 @@ function _wmSummaryHtml(wk){
   <div class="foot"><span>Generated from the live property cards &middot; Legacy Homes PM Hub</span><span>${esc(_wmWhen(new Date().toISOString()))}</span></div>
 </div>
 </body></html>`;
+}
+// ---- Emailing the summary (the free way) -------------------------------------
+// Bruce picked the mailto version over a paid sending service: the app writes the
+// email and opens it in whatever mail program is already signed in, and the person
+// presses send. Nothing to pay for, nothing to configure, and the mail genuinely
+// comes from them. The PDF is saved from the summary window first and attached by
+// hand - a browser cannot attach a file to a mailto for you.
+function _wmDirectorEmails(){
+  const us=(typeof getUsers==='function'?getUsers():[])
+    .filter(u=>u.status==='approved' && (u.role==='CEO' || u.role==='Project Director') && u.email);
+  return us.map(u=>u.email);
+}
+function _wmSummaryText(wk){
+  const D=_wmSummaryData(wk);
+  const L=[];
+  const money=(n)=>n==null?'--':('$'+Math.round(n).toLocaleString());
+  const leftover=(D.tb!=null&&D.ts!=null)?(D.tb-D.ts):null;
+  L.push('MONDAY MEETING SUMMARY - week of '+_wmLabel(wk));
+  L.push('');
+  L.push(D.cards.length+' properties reviewed  |  budgeted '+money(D.tb)+'  |  spent '+money(D.ts)+'  |  leftover '+money(leftover));
+  L.push(D.over.length+' over budget  |  '+D.late.length+' past their committed finish  |  '+D.moved.length+' timelines pushed this week');
+  L.push('');
+  const sect=(title, lines)=>{ L.push(title.toUpperCase()); if(!lines.length){ L.push('  (none)'); } else { lines.forEach(x=>L.push('  - '+x)); } L.push(''); };
+  sect('Needs an answer from Bruce or Tommy', D.qs.map(q=>{
+    const c=(typeof propCards!=='undefined'?propCards:[]).find(p=>p.id===q.pid);
+    return (c?(c.addr+': '):'')+q.text+'  ['+_miAgeLabel(q.raised)+']';
+  }));
+  sect('Unassigned tasks', D.unassigned.slice(0,12).map(t=>(t.title||'')+(t.due_date?(' - due '+t.due_date):'')));
+  sect('Timelines moved this week', D.moved.map(m=>m.addr+': '+(m.from||'--')+' -> '+(m.to||'--')));
+  sect('Over budget', D.over.map(o=>o.addr+': '+money(o.over)+' over'));
+  sect('Lag-time items still open', D.lag.map(x=>{
+    const c=(typeof propCards!=='undefined'?propCards:[]).find(p=>p.id===x.pid);
+    return (c?(c.addr+': '):'')+x.text;
+  }));
+  sect('Booked this week - not yet confirmed', D.booked.filter(x=>!((D.conf[x.it.key]||{}).c)).map(x=>x.addr+': '+x.it.title+' ('+x.it.date+')'));
+  L.push('Full detail, including every property note, is in the PDF attached.');
+  return L.join('\n');
+}
+function _wmEmailSummary(wk){
+  const to=_wmDirectorEmails().join(',');
+  const subj='Monday Meeting Summary - week of '+_wmLabel(wk);
+  let body=_wmSummaryText(wk);
+  // mailto has a practical length ceiling; past it some mail clients silently drop
+  // the body, which is worse than a short one.
+  const CAP=5800;
+  if(body.length>CAP) body=body.slice(0,CAP)+'\n\n[...trimmed - the rest is in the attached PDF]';
+  const href='mailto:'+encodeURIComponent(to)+'?subject='+encodeURIComponent(subj)+'&body='+encodeURIComponent(body);
+  if(href.length>1900 && body.length>1500){
+    // Very long weeks: hand over a short covering note and let the PDF carry it.
+    const shortBody='Monday meeting summary for the week of '+_wmLabel(wk)+' is attached as a PDF.\n\n'
+      +D0(wk)+'\n\nSaved from the Project Management Hub.';
+    return 'mailto:'+encodeURIComponent(to)+'?subject='+encodeURIComponent(subj)+'&body='+encodeURIComponent(shortBody);
+  }
+  return href;
+}
+function D0(wk){
+  const D=_wmSummaryData(wk);
+  return D.cards.length+' properties reviewed. '+D.qs.length+' questions need an answer, '
+    +D.over.length+' over budget, '+D.moved.length+' timelines pushed.';
+}
+// The two-step the person actually does: save the PDF, then open the email.
+function _wmEmailFlow(wk){
+  const addrs=_wmDirectorEmails();
+  const who=addrs.length?addrs.join(', '):'nobody with a CEO or Project Director account has an email on file';
+  if(!confirm("Email this summary\n\n1. The summary window opens - use your browser's Print / Save as PDF to save the file.\n2. Your email program opens with the write-up already typed, addressed to: "+who+"\n3. Attach the PDF you just saved and press send.\n\nOpen both now?")) return;
+  _wmOpenSummary(wk);
+  setTimeout(()=>{ window.location.href=_wmEmailSummary(wk); }, 700);
 }
 function _wmOpenSummary(wk){
   const html=_wmSummaryHtml(wk);
@@ -4853,7 +5028,10 @@ function openWeeklyMeeting(kind, week){
     // Vacant / On Standby through Pre List / Punchout. Once a house is listed on the
     // market - or handed to rentals - it leaves the Monday construction walk-through
     // and picks up in the On the Market meeting instead.
-    const cons=["Vacant / On Standby","Pre Construction","Waiting Permits","Framing, MEPS, Insulation","Drywall / Exterior Work","Finishes","Pre List / Punchout Process"];
+    // Rental Handoff sits here too (Bruce, 8/29): a rental being turned over is still
+    // construction work the room needs to walk, even though it will never be listed.
+    // It also appears under Coming Soon in the On the Market meeting.
+    const cons=WM_TEAM_PHASES;
     // Ordered by house number so the room walks the list 1 -> 9; deliberately NOT grouped by
     // PM, so while one property is discussed the other PMs can keep typing and texting.
     const _num=(a)=>{ const m=String(a||'').match(/\d+/); return m?parseInt(m[0],10):999999; };
@@ -5108,10 +5286,14 @@ function openWeeklyMeeting(kind, week){
   }
   document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div style="padding:20px;max-width:1000px;margin:0 auto">
     <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:4px"><div style="font-size:18px;font-weight:700;color:#111">${titles[kind]||'Weekly Meeting'}</div><div style="font-size:13px;color:#888">Week of ${_calEsc(_wmLabel(wk))} · Monday 8:00 AM${isPast?' · archived':''}</div></div>
-    <div style="font-size:12.5px;color:#999;margin-bottom:14px">Auto-prefilled from live data — type into the boxes and Save. Notes are shared with everyone for this week's meeting.${isPast?' <b style="color:#8a6d1a">You are looking back at a past week.</b>':''}</div>
+    <div style="font-size:12.5px;color:#999;margin-bottom:14px">Auto-prefilled from live data. <b style="color:#0F7B54">Everything saves itself as you type</b> — the Save buttons still work, you just don't need them. Notes are shared with everyone for this week's meeting.${isPast?' <b style="color:#8a6d1a">You are looking back at a past week.</b>':''}</div>
     ${_wmArchive(kind, wk)}
     ${body}
   </div></div></div>`;
+  // Arm autosave for whatever boxes this render put on screen, and put it on the
+  // record that this meeting was opened - so a week nobody filled in still reads
+  // as "opened, never completed" rather than as a gap.
+  try{ _wmAutoWire(kind, wk); if(!isPast && !(typeof isReadOnly==='function' && isReadOnly())) _wmStampOpened(kind, wk); }catch(e){}
 }
 function openDataSection(type) {
   const u = currentUser();
@@ -7790,6 +7972,8 @@ async function _trkSet(kind,id,field,val,rerender){
   const _saved=await _trkSave();
   if(!_saved) return;
   const ok=document.getElementById('trk-ok'); if(ok){ ok.style.display='inline'; setTimeout(()=>{ok.style.display='none';},1200); }
+  // A permit moving is not just a cell edit - it drives the property card.
+  if(kind==='permits' && typeof _permitAfterChange==='function'){ try{ await _permitAfterChange(id,field); }catch(e){} }
   if(rerender) (window._trkRerender||function(){openVAAdminDashboard('trackers');})();
 }
 function _trkVal(kind,id,field){ const e=((window._trkData||{})[kind]||{})[id]; return (e&&e[field])||''; }
@@ -8118,6 +8302,22 @@ function _permitAddTask(id, who){
 // is kept on the permit so it can never raise a second one, and updating the date
 // closes the task it raised.
 let _permitChaseRunning=false;
+// Bruce's cap: no more than five portal checks land on her list in any one day.
+// Anything past the fifth is dated for the next day, then the day after, so a
+// backlog spreads itself out instead of arriving as one unusable wall of tasks.
+const PERMIT_CHASE_PER_DAY = 5;
+// How many chase tasks are already sitting on a given day, so a second run of
+// this today tops up to five rather than starting the count over.
+async function _permitChaseLoadOnDay(){
+  const out={};
+  try{
+    const {data,error}=await supabase.from("pm_tasks")
+      .select("due_date,status").eq("category",PERMIT_TASK_CATEGORY).neq("status","done");
+    if(error||!data) return out;
+    data.forEach(t=>{ const d=t.due_date||""; if(d) out[d]=(out[d]||0)+1; });
+  }catch(e){}
+  return out;
+}
 function _permitArchitectName(){
   const u=(typeof getUsers==="function"?getUsers():[]).find(x=>x.status==="approved" && x.role==="Architect");
   return u?(((u.firstName||"")+" "+(u.lastName||"")).trim()||PERMIT_OWNERS[0]):PERMIT_OWNERS[0];
@@ -8130,7 +8330,19 @@ async function _permitChasePortalChecks(){
   try{
     const who=_permitArchitectName();
     let wrote=false;
-    const list=_permitList().filter(r=>_permitOpen(r));
+    // Oldest neglected permit first - the one nobody has looked at in the longest
+    // is the one worth today's slot.
+    const list=_permitList().filter(r=>_permitOpen(r)).sort((a,b)=>{
+      const da=_permitDaysSince(a.checked), db=_permitDaysSince(b.checked);
+      return (db===null?9999:db)-(da===null?9999:da);
+    });
+    const onDay=await _permitChaseLoadOnDay();
+    let cursor=0;   // days from today
+    const nextSlot=()=>{
+      const ymd=(typeof _ymdPlus==="function")?_ymdPlus(cursor):_ymd(new Date());
+      if((onDay[ymd]||0) >= PERMIT_CHASE_PER_DAY){ cursor++; return nextSlot(); }
+      return ymd;
+    };
     for(const r of list){
       const days=_permitDaysSince(r.checked);
       if(days!==null && days<=PERMIT_STALE_DAYS) continue;   // she is on top of it
@@ -8140,7 +8352,8 @@ async function _permitChasePortalChecks(){
         if(!ex.error && ex.data && ex.data.status!=="done") continue;
       }
       const prop=_permitProp(r);
-      const due=(typeof _ymdToday==="function")?_ymdToday():_ymd(new Date());
+      if(cursor>14) break;   // more than a fortnight out is not a to-do list any more
+      const due=nextSlot();
       const ins=await supabase.from("pm_tasks").insert({
         title:(r.addr||"Permit")+" — check the portal ("+(r.number||"no number")+")",
         category:PERMIT_TASK_CATEGORY,
@@ -8154,7 +8367,8 @@ async function _permitChasePortalChecks(){
       const d=window._trkData||{}; d.permits=d.permits||{};
       d.permits[r.id]=Object.assign({},d.permits[r.id]||{},{chk_task:ins.data.id});
       window._trkData=d; wrote=true;
-      _logAudit("created","task",(r.addr||"")+" — check the portal","Raised automatically after "+(days===null?"never being checked":days+" days without a portal check"));
+      onDay[due]=(onDay[due]||0)+1;
+      _logAudit("created","task",(r.addr||"")+" — check the portal","Raised automatically after "+(days===null?"never being checked":days+" days without a portal check")+" · scheduled for "+due);
     }
     if(wrote){ await _trkSave(); if(typeof loadTasks==="function") await loadTasks(); }
     return wrote;
@@ -8203,6 +8417,92 @@ async function _permitInspSubphase(permit, ins, passed){
   if(error||!data||!data.length) return false;
   c.subPhases=subs;
   return true;
+}
+// ---- The permit's own two subphases ------------------------------------------
+// Bruce's rule: when a job is marked permitted we do NOT auto-stamp "MEPS Permit
+// Approval" and "Pending Permit Approval" on it any more. The Permit Tracker is
+// the only thing that creates them, so a card only ever shows permit steps that
+// correspond to a permit that really exists.
+function _permitTag(r){
+  const n=String((r&&r.number)||"").trim();
+  const j=String((r&&r.juris)||"").trim();
+  return n || j || "permit";
+}
+function _permitSubLabels(r){
+  const tag=_permitTag(r);
+  return { sent:"Permit Submitted ("+tag+")", appr:"Pending Permit Approval ("+tag+")" };
+}
+// Write (or update) one subphase on the property card the permit belongs to.
+async function _permitWriteSubs(permit, pairs){
+  const c=_permitProp(permit);
+  if(!c) return false;
+  const subs=Array.isArray(c.subPhases)?c.subPhases.map(s=>Object.assign({},s)):[];
+  let changed=false;
+  pairs.forEach(([label,done,dueDays])=>{
+    const i=subs.findIndex(s=>String(s.name||"")===label);
+    if(i<0){
+      subs.push({ name:label,
+                  start:(typeof _ymdToday==="function"?_ymdToday():_ymd(new Date())),
+                  due:(typeof _ymdPlus==="function"?_ymdPlus(dueDays||14):""),
+                  completed:!!done });
+      changed=true;
+    } else if(!!subs[i].completed !== !!done){
+      subs[i].completed=!!done; changed=true;
+    }
+  });
+  if(!changed) return true;
+  const {data,error}=await supabase.from("pm_properties").update({sub_phases:subs}).eq("id",c.id).select("id");
+  if(error||!data||!data.length) return false;
+  c.subPhases=subs;
+  return true;
+}
+// Called whenever a permit's status or submitted date moves. Keeps the card honest.
+async function _permitSyncCard(id){
+  const r=((window._trkData||{}).permits||{})[id];
+  if(!r) return false;
+  const L=_permitSubLabels(r);
+  const st=String(r.status||"");
+  const submitted = !!r.submitted || !!st;                 // it exists in the tracker at all
+  const approved  = (st==="Issued" || st==="Closed");
+  return await _permitWriteSubs(r, [[L.sent, submitted, 1],[L.appr, approved, 21]]);
+}
+// Revisions means Jen has drawings to redo. That is real work with a date on it,
+// so it becomes a scheduled task rather than a colour on a dropdown.
+const PERMIT_REVISION_DAYS = 5;
+async function _permitRevisionTask(id){
+  const d=window._trkData||{}; d.permits=d.permits||{};
+  const r=d.permits[id]; if(!r) return false;
+  if(r.rev_task){
+    try{
+      const ex=await supabase.from("pm_tasks").select("id,status").eq("id",r.rev_task).maybeSingle();
+      if(!ex.error && ex.data && ex.data.status!=="done") return false;   // one open at a time
+    }catch(e){}
+  }
+  const who=_permitArchitectName();
+  const prop=_permitProp(r);
+  const start=(typeof _ymdToday==="function"?_ymdToday():_ymd(new Date()));
+  const due=(typeof _ymdPlus==="function"?_ymdPlus(PERMIT_REVISION_DAYS):"");
+  const ins=await supabase.from("pm_tasks").insert({
+    title:(r.addr||"Permit")+" \u2014 revisions to redraw ("+(r.number||"no number")+")",
+    category:PERMIT_TASK_CATEGORY, start_date:start, due_date:due, status:"open",
+    property_id:prop?prop.id:null, assignee:who, assignees:[who],
+    notes:"The "+(r.juris||"jurisdiction")+" examiner has asked for revisions. Redraw and resubmit, then put the date in Latest revision on the Permit Tracker."
+  }).select("id").single();
+  if(ins.error||!ins.data) return false;
+  d.permits[id]=Object.assign({},r,{rev_task:ins.data.id}); window._trkData=d;
+  await _trkSave();
+  _logAudit("created","task",(r.addr||"")+" \u2014 revisions to redraw","Raised automatically when the permit went to Revisions");
+  if(typeof loadTasks==="function") await loadTasks();
+  return true;
+}
+// One entry point for the tracker to call after a permit field changes.
+async function _permitAfterChange(id, field){
+  if(field!=="status" && field!=="submitted" && field!=="number") return;
+  try{ await _permitSyncCard(id); }catch(e){}
+  if(field==="status"){
+    const st=String((((window._trkData||{}).permits||{})[id]||{}).status||"");
+    if(st==="Revisions" || st==="Corrections Required"){ try{ await _permitRevisionTask(id); }catch(e){} }
+  }
 }
 async function _permitInspAdd(id){
   if(_blockIfReadOnly()) return;
@@ -11558,4 +11858,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-29w perms-and-jenn -->
+<!-- build: 2026-08-29x permit-subs-autosave -->
