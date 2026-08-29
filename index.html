@@ -260,6 +260,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
       <div class="ddi" onclick="openTVDashboard()">📺 TV Dashboard</div>
       <div class="ddi" onclick="openPMAssistantDashboard()">🗂 PM Assistant Dashboard</div>
+      <div class="ddi" onclick="openAdminDashboard('trackers')">📋 Trackers</div>
     </div>
   </div>
   <div class="ni has-dd" id="am-t">👤 Asst. Manager ▾
@@ -269,6 +270,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
       <div class="ddi" onclick="openTVDashboard()">📺 TV Dashboard</div>
+      <div class="ddi" onclick="openAdminDashboard('trackers')">📋 Trackers</div>
     </div>
   </div>
   <div class="ni has-dd" id="adm-t">🏢 Admin. Mgr ▾
@@ -6223,29 +6225,23 @@ function _marloTab(){
   const _mName=_mUser?(((_mUser.firstName||"")+" "+(_mUser.lastName||"")).trim()||"Marlo"):"Marlo";
   const _tasksAll=(typeof _tasksCache!=='undefined'?_tasksCache:[]);
   // 1. Active projects across every project manager.
-  const _amActive=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && ["Closed","Completed"].indexOf(c.phase)<0);
+  const _amAll=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived);
+  const _amActive=_amAll.filter(c=>["Closed","Completed"].indexOf(c.phase)<0);
   const _amPMs=new Set(_amActive.map(c=>c.pm).filter(Boolean));
   // 2. Her completion rate over the last seven days. pm_tasks records no completion
   // timestamp, only status - so this is "of her tasks that came due in the last 7
   // days, how many are marked done", which is the honest reading of the number.
   const _d7=_ymd(new Date(today.getTime()-7*86400000));
   const _mine7=_tasksAll.filter(t=>_taskHasAssignee(t,_mName) && t.due_date && t.due_date>=_d7 && t.due_date<=todayStr);
-  const _pct7=_taskPctFor(_mine7);
+  const _t7=_taskTally(_mine7);
+  const _pct7=_t7.pct;
+  // Share of her last-7-days tasks that had to be moved at least once.
+  const _resPct7=_mine7.length?Math.round(_t7.resched/_mine7.length*100):null;
   // 3. Her own tasks due inside 48 hours.
   const _in48=_ymd(new Date(today.getTime()+2*86400000));
   const _due48=_tasksAll.filter(t=>t.status!=='done' && _taskHasAssignee(t,_mName) && t.due_date && t.due_date>=todayStr && t.due_date<=_in48)
     .sort((a,b)=>(a.due_date||'')<(b.due_date||'')?-1:1);
   const _overdue=_tasksAll.filter(t=>t.status!=='done' && _taskHasAssignee(t,_mName) && t.due_date && t.due_date<todayStr).length;
-  const _mStat=(icon,label,value,sub,color)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${color};border-radius:10px;padding:14px 16px">
-    <div style="font-size:13px;font-weight:600;color:#111">${icon} ${label}</div>
-    <div style="font-size:29px;font-weight:600;color:${color};margin-top:6px">${value}</div>
-    <div style="font-size:11.5px;color:#999">${sub}</div>
-  </div>`;
-  const _mSquares=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;margin-bottom:18px">
-    ${_mStat('🏘','Active projects', _amActive.length, `across ${_amPMs.size} project manager${_amPMs.size===1?'':'s'}`, '#185FA5')}
-    ${_mStat('✅','Task completion', _pct7==null?'—':(_pct7+'%'), _taskTallyLine(_mine7,'last 7 days'), _pct7==null?'#888':(_pct7>=80?'#3B6D11':_pct7>=50?'#B7791F':'#B42318'))}
-    ${_mStat('⏰','Due in 48 hours', _due48.length, _overdue?`${_overdue} also overdue`:'her own tasks', _due48.length?'#D85A30':'#888')}
-  </div>`;
   const wkEnd=new Date(today);wkEnd.setDate(today.getDate()+7);const wkEndStr=_ymd(wkEnd);
   const tasks=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status!=='done'&&t.due_date&&t.due_date>=todayStr&&t.due_date<=wkEndStr).sort((a,b)=>(a.due_date||'')<(b.due_date||'')?-1:1);
   const mats=(typeof _calEventsCache!=='undefined'?_calEventsCache:[]).filter(e=>e.kind==='material'&&e.event_date>=todayStr&&e.event_date<=wkEndStr).sort((a,b)=>a.event_date<b.event_date?-1:1);
@@ -6258,15 +6254,56 @@ function _marloTab(){
   const matRows=mats.map(e=>`<div style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px"><div style="min-width:0">📦 ${_calEsc(e.title||'Material')}<div style="font-size:12px;color:#888">${_calEsc(_locLabel(e))}</div></div><span style="font-size:12px;color:#185FA5;white-space:nowrap">${e.event_date}</span></div>`).join('');
   const propRows=list=>list.map(c=>`<div onclick="openPropDetail('${c.id}')" style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px;cursor:pointer"><span>${_calEsc(c.addr)}</span><span style="font-size:12px;color:#888">${c.pm?_calEsc(c.pm):''}</span></div>`).join('');
   const card=(title,rows,count,empty)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden"><div style="padding:10px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between"><div style="font-size:14px;font-weight:600;color:#111">${title}</div><span style="font-size:11px;background:#f4f5f7;color:#888;padding:2px 8px;border-radius:99px">${count}</span></div><div style="padding:4px 14px 12px">${count?rows:`<div style="text-align:center;color:#ccc;font-size:13px;padding:16px 0">${empty}</div>`}</div></div>`;
-  return `<div style="padding:20px;max-width:1000px;margin:0 auto">
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px"><div style="width:44px;height:44px;border-radius:50%;background:#1a2744;color:#fff;font-size:19px;font-weight:600;display:flex;align-items:center;justify-content:center">M</div><div><div style="font-size:19px;font-weight:600;color:#111">Marlo</div><div style="font-size:13px;color:#888">Admin Manager</div></div></div>
-    ${_mSquares}
-    <div style="margin-bottom:14px">${card('📦 Material orders to place (from Slack #material-lists)', orderRows, orders.length, 'No material orders waiting. New orders posted in the Slack #material-lists channel show up here automatically.')}</div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
-      ${card('🗓 New tasks this week', taskRows, tasks.length, 'No tasks due this week.')}
-      ${card('📦 Material deliveries this week', matRows, mats.length, 'No deliveries scheduled this week.')}
-      ${card('🔧 Request to Remedy', propRows(rtr), rtr.length, 'No properties in RTR.')}
+  // Her own tasks inside 48 hours, newest commitment first - the PM boards show a
+  // 5-day window, hers is the 48-hour one Bruce asked for.
+  const _due48Rows=_due48.map(t=>{
+    const prop=(typeof propCards!=='undefined'?propCards:[]).find(c=>c.id===t.property_id);
+    const late=t.due_date<todayStr;
+    return `<div style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px">
+      <div style="min-width:0">${t.category?`<span style="font-size:11px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:5px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title||'')}
+        <div style="font-size:12px;color:#888">${prop?_calEsc(prop.addr||''):(_locLabel(t)?_calEsc(_locLabel(t)):'')}</div></div>
+      <span style="font-size:12px;color:${late?'#B42318':'#B7791F'};white-space:nowrap">${_calEsc(t.due_date||'')}${late?' · late':''}</span></div>`;
+  }).join('');
+  const _stat=(label,value,sub,color)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 18px;text-align:center;min-width:104px">
+    <div style="font-size:11px;color:#999;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">${label}</div>
+    <div style="font-size:29px;font-weight:500;color:${color}">${value}</div>
+    <div style="font-size:11px;color:#aaa;margin-top:2px">${sub}</div></div>`;
+  // The page body is white-on-dark; every panel here sits on a white card, so the
+  // wrapper has to state the text colour or anything that does not set its own
+  // renders white on white and vanishes.
+  return `<div style="padding:20px;max-width:1120px;margin:0 auto;color:#111">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="width:44px;height:44px;border-radius:50%;background:#1a2744;color:#fff;font-size:19px;font-weight:600;display:flex;align-items:center;justify-content:center">M</div>
+        <div><div style="font-size:19px;font-weight:600;color:#111">Marlo</div>
+          <div style="font-size:13px;color:#888">Admin Manager · ${_amActive.length} active propert${_amActive.length===1?'y':'ies'} · <span style="color:#E24B4A;font-weight:500">${_due48.length} task${_due48.length===1?'':'s'} due in 48h</span></div></div>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        ${_stat('Total Projects', _amAll.length, 'on the books', '#111')}
+        ${_stat('Active Projects', _amActive.length, `across ${_amPMs.size} PM${_amPMs.size===1?'':'s'}`, '#185FA5')}
+        ${_stat('Task Completion', _pct7==null?'—':_pct7+'%', _taskTallyLine(_mine7,'last 7 days'), _pct7==null?'#888':(_pct7>=80?'#3B6D11':_pct7>=50?'#B7791F':'#B42318'))}
+        ${_stat('Rescheduled', _resPct7==null?'—':_resPct7+'%', 'Tasks moved · last 7 days', '#B7791F')}
+      </div>
+    </div>
+
+    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden;border-top:3px solid #E24B4A;margin-bottom:14px">
+      <div style="padding:9px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between">
+        <div style="font-size:14px;font-weight:600;color:#111">📋 Her Tasks — Next 48 Hours</div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:11px;background:#FCEBEB;color:#B42318;padding:2px 8px;border-radius:99px">${_due48.length} due in 48 hours</span>
+          ${_overdue?`<span style="font-size:11px;background:#FAEEDA;color:#633806;padding:2px 8px;border-radius:99px">${_overdue} overdue</span>`:''}
+        </div>
+      </div>
+      <div style="padding:4px 14px 12px">${_due48.length?_due48Rows:'<div style="text-align:center;color:#ccc;font-size:13px;padding:16px 0">Nothing due in the next 48 hours.</div>'}</div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
       ${card('📥 Upcoming Takedowns', propRows(takedowns), takedowns.length, 'No upcoming takedowns.')}
+      ${card('🔧 Request to Remedy', propRows(rtr), rtr.length, 'No properties in RTR.')}
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      ${card('📦 Material orders to place (from Slack #material-lists)', orderRows, orders.length, 'No material orders waiting. New orders posted in the Slack #material-lists channel show up here automatically.')}
+      ${card('🚚 Material deliveries this week', matRows, mats.length, 'No deliveries scheduled this week.')}
     </div>
   </div>`;
 }
@@ -6283,7 +6320,7 @@ function openAdminDashboard(activeTab) {
   let content;
   switch(activeTab){
     case 'marlo':        content=_marloTab(); break;
-    case 'trackers':     window._trkRerender=()=>openAdminDashboard('trackers'); content=_vaTrackers(); break;
+    case 'trackers':     window._trkRerender=()=>openAdminDashboard('trackers'); window._trkCtx='admin'; content=_vaTrackers(); break;
     case 'property':     content=renderPropertyBoard(); break;
     case 'construction': content=renderConstructionCalendar(); break;
     case 'taskcal':      content=renderTaskCalendar(); break;
@@ -6416,7 +6453,7 @@ function openVAAdminDashboard(activeTab) {
   switch(activeTab){
     case 'va':           content=_vaPersonView(vaName); break;
     case 'utilities':    content=_utilitiesDashboard(); break;
-    case 'trackers':     window._trkRerender=()=>openVAAdminDashboard('trackers'); content=_vaTrackers(); break;
+    case 'trackers':     window._trkRerender=()=>openVAAdminDashboard('trackers'); window._trkCtx='va'; content=_vaTrackers(); break;
     case 'property':     content=renderPropertyBoard(); break;
     case 'construction': content=renderConstructionCalendar(); break;
     case 'taskcal':      content=renderTaskCalendar(); break;
@@ -6596,6 +6633,50 @@ function _utilGaps(c){
   return out;
 }
 
+// A property only belongs on the window list once the work has actually been asked
+// for. Ticking "Needed" on the Window Tracker is that request; entering any window
+// date counts too, so nothing already in flight falls off. Once the #window-tracker
+// Slack channel feeds requests in, it sets the same flag.
+function _winInQueue(c){
+  if(_trkOn('win',c.id,'needed')) return true;
+  return ['measured','ordered','arrived','installed'].some(k=>_trkOn('win',c.id,k))
+      || ['measure_date','order_date','arrival_date','install_date'].some(k=>!!_trkVal('win',c.id,k));
+}
+// One line per property: the single next thing Marlo has to book, not a list of
+// every box still unticked.
+function _winNextAction(c){
+  const on=(k)=>_trkOn('win',c.id,k), dt=(k)=>_trkVal('win',c.id,k);
+  if(!on('measured')) return dt('measure_date')
+    ? ('measure booked '+dt('measure_date')+' — confirm it happened')
+    : 'needs a measure booked with Steve';
+  if(!dt('arrival_date')) return 'measured — needs an arrival date';
+  if(!on('arrived')) return 'arriving '+dt('arrival_date')+' — confirm delivery';
+  if(!dt('install_date')) return 'needs an install date booked';
+  if(!on('installed')) return 'install booked '+dt('install_date')+' — confirm it happened';
+  return null;
+}
+// Utilities belong to the VA admin. Marlo only sees the list when a utility task is
+// genuinely hers; otherwise she gets a pointer to the tracker she can still open.
+function _utilTasksForViewer(){
+  const u=(typeof currentUser==='function')?currentUser():null; if(!u) return [];
+  const nm=((u.firstName||'')+' '+(u.lastName||'')).trim()||u.firstName||'';
+  if(!nm) return [];
+  const rx=/utilit|electric|water|gas\b|propane|aep|columbia gas|meter/i;
+  return (typeof _tasksCache!=='undefined'?_tasksCache:[])
+    .filter(t=>t.status!=='done' && _taskHasAssignee(t,nm) && rx.test((t.title||'')+' '+(t.category||'')+' '+(t.notes||'')));
+}
+function _utilSummaryCard(sum, utilOutList, nm){
+  const mine=_utilTasksForViewer();
+  if(window._trkCtx==='admin' && !mine.length){
+    return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 14px">
+      <div style="font-size:13.5px;font-weight:700;color:#B7791F;margin-bottom:4px">⚡ Utilities</div>
+      <div style="font-size:12px;color:#999;padding:4px 0">Nothing on your plate — utilities are run from the VA Assistant board. Click the tile above to open the tracker.</div></div>`;
+  }
+  if(window._trkCtx==='admin'){
+    return sum('⚡ Utilities — your tasks','#B7791F', mine.map(t=>_calEsc(t.title||'')+(t.due_date?(' — due '+t.due_date):'')));
+  }
+  return sum('⚡ Utilities','#B7791F', utilOutList.slice(0,20).map(c=>nm(c)+' — '+_calEsc(_utilGaps(c).join(', '))));
+}
 function _vaTrackers(){
   const d=window._trkData||{}; const ro=isReadOnly();
   const chk=(kind,id,on)=> ro?(on?'✅':'⬜'):`<span onclick="_trkToggle('${kind}','${id}')" style="cursor:pointer;font-size:17px">${on?'✅':'⬜'}</span>`;
@@ -6689,13 +6770,14 @@ function _vaTrackers(){
     <td style="padding:7px 10px;min-width:170px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${nm(c)}</span><div style="font-size:11px;color:#999">${_calEsc(c.phase||'')} · PM ${_calEsc(c.pm||'—')}</div>
       <div style="margin-top:4px;font-size:11.5px;color:#666;display:flex;gap:9px">
         <span>${fchk('win',c.id,'glass')} Glass</span><span>${fchk('win',c.id,'windows')} Windows</span><span>${fchk('win',c.id,'both')} Both</span></div></td>
+    <td style="padding:7px;text-align:center">${fchk('win',c.id,'needed')}<div style="font-size:10.5px;color:#bbb;margin-top:2px">requested</div></td>
     <td style="padding:7px;text-align:center">${dt('win',c.id,'measure_date',`_trkWinDate('${c.id}','measure_date',this.value)`)}<div style="margin-top:3px">${fchk('win',c.id,'measured')}</div></td>
     <td style="padding:7px;text-align:center">${dt('win',c.id,'order_date',`_trkWinDate('${c.id}','order_date',this.value)`)}<div style="margin-top:3px">${fchk('win',c.id,'ordered')}</div></td>
     <td style="padding:7px;text-align:center">${dt('win',c.id,'arrival_date',`_trkWinDate('${c.id}','arrival_date',this.value)`)}<div style="margin-top:3px">${fchk('win',c.id,'arrived')}</div></td>
     <td style="padding:7px;text-align:center">${dt('win',c.id,'install_date',`_trkWinDate('${c.id}','install_date',this.value)`)}<div style="margin-top:3px">${fchk('win',c.id,'installed')}</div></td>
     <td style="padding:7px">${txt('win',c.id,'notes','Notes & comments',190)}</td></tr>`;
   const winrows=active.length?active.map(winRow).join(""):'<tr><td colspan="6" style="padding:16px;color:#bbb;text-align:center">No active properties.</td></tr>';
-  const winClosed=closed.length?`<div style="margin-top:14px">${_trkTable('🗄 Closed properties — window history','#888','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">Measured</th><th style="padding:9px">Ordered</th><th style="padding:9px">Arrived</th><th style="padding:9px">Installed</th><th style="padding:9px;text-align:left">Notes</th>',closed.map(winRow).join(""))}</div>`:'';
+  const winClosed=closed.length?`<div style="margin-top:14px">${_trkTable('🗄 Closed properties — window history','#888','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">Needed</th><th style="padding:9px">Measured</th><th style="padding:9px">Ordered</th><th style="padding:9px">Arrived</th><th style="padding:9px">Installed</th><th style="padding:9px;text-align:left">Notes</th>',closed.map(winRow).join(""))}</div>`:'';
 
   // ---------- Checklist tracker ----------
   const clrows=active.length?active.map(c=>{ const subs=c.subPhases||[]; const fta=subs.find(s=>s.name==="First Time Access Checklist"); const po=subs.find(s=>/punch/i.test(s.name||'')); return `<tr data-trk="${nm(c)}" style="border-top:0.5px solid #eef0f6"><td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${nm(c)}</span></td><td style="text-align:center;padding:7px">${fta&&fta.completed?'✅':'⬜'}</td><td style="text-align:center;padding:7px">${po?(po.completed?'✅':'⬜'):'—'}</td></tr>`; }).join(""):'<tr><td colspan="3" style="padding:16px;color:#bbb;text-align:center">No active properties.</td></tr>';
@@ -6704,7 +6786,7 @@ function _vaTrackers(){
   const winDone=(c)=>_trkOn('win',c.id,'measured')&&_trkOn('win',c.id,'ordered')&&_trkOn('win',c.id,'arrived')&&_trkOn('win',c.id,'installed');
   const w9out=cons.filter(c=>!(d.w9||{})[c.id]).length;
   const mowout=active.filter(c=>!(d.mow||{})[c.id]).length + closed.filter(c=>!_trkOn('mowinfo',c.id,'removed')).length;
-  const winout=active.filter(c=>!winDone(c)).length;
+  const winout=active.filter(c=>_winInQueue(c) && _winNextAction(c)).length;
   // Only a vacant, ready house can have first-time access done. Counting every
   // active property made this disagree with the "First Time Access open" tile.
   const clout=active.filter(c=>c.phase==="Vacant / On Standby").filter(c=>{const subs=c.subPhases||[];const f=subs.find(s=>s.name==="First Time Access Checklist");return !(f&&f.completed);}).length;
@@ -6717,7 +6799,7 @@ function _vaTrackers(){
 
   if(view==='w9') return shell(back+_trkSearchBox('Search a contractor…')+_trkTable('🧾 W-9 Tracker','#7A3FA8','<th style="padding:9px 10px;text-align:left">Contractor</th><th style="padding:9px;text-align:left">Name on W-9</th><th style="padding:9px">On file</th><th style="padding:9px;text-align:left">Notes</th><th style="padding:9px;text-align:left">Email</th><th style="padding:9px;text-align:left">Phone</th>',w9rows)+`<div style="font-size:12px;color:#999">Ticking "On file" here also marks the contractor in the Contractor Directory.</div>`);
   if(view==='mow') return shell(back+_trkSearchBox('Search a property…')+_trkTable('🌱 Mowing Tracker','#3B6D11','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px;text-align:left">Who is mowing</th><th style="padding:9px;text-align:left">How often</th><th style="padding:9px;text-align:left">Cost/mow</th><th style="padding:9px;text-align:left">Contact #</th><th style="padding:9px;text-align:left">PM</th><th style="padding:9px;text-align:left">Payment</th><th style="padding:9px">On route</th><th style="padding:9px">Removed after</th>',mowrows));
-  if(view==='window') return shell(back+_trkSearchBox('Search a property…')+_trkTable('🪟 Window Tracker','#185FA5','<th style="padding:9px 10px;text-align:left">Property / what’s being replaced</th><th style="padding:9px">Measure</th><th style="padding:9px">Ordered</th><th style="padding:9px">Arrival</th><th style="padding:9px">Install</th><th style="padding:9px;text-align:left">Notes &amp; comments</th>',winrows)+`<div style="font-size:12px;color:#999;margin-top:-8px">Dates you set here land on that property’s construction calendar automatically, and Slack posts 48 hours before the measure and install dates.</div>`+winClosed);
+  if(view==='window') return shell(back+_trkSearchBox('Search a property…')+_trkTable('🪟 Window Tracker','#185FA5','<th style="padding:9px 10px;text-align:left">Property / what’s being replaced</th><th style="padding:9px">Needed</th><th style="padding:9px">Measure</th><th style="padding:9px">Ordered</th><th style="padding:9px">Arrival</th><th style="padding:9px">Install</th><th style="padding:9px;text-align:left">Notes &amp; comments</th>',winrows)+`<div style="font-size:12px;color:#999;margin-top:-8px">Tick <b>Needed</b> when a PM requests windows or glass — that puts the property on Marlo's list with its next booking. Dates you set here land on that property’s construction calendar automatically, and Slack posts 48 hours before the measure and install dates.</div>`+winClosed);
   if(view==='util'){
     const ut=window._utilTab||'e';
     const subtab=(k,label)=>`<span onclick="_utilTabTo('${k}')" style="cursor:pointer;padding:6px 13px;border-radius:7px;font-size:13px;font-weight:${ut===k?'600':'400'};background:${ut===k?'#122A4A':'#fff'};color:${ut===k?'#fff':'#444'};border:0.5px solid ${ut===k?'#122A4A':'#d8dce6'}">${label}</span>`;
@@ -6749,11 +6831,12 @@ function _vaTrackers(){
   const li=(txt)=>`<div style="font-size:12.5px;color:#333;padding:4px 0;border-bottom:0.5px solid #f1f3f7">• ${txt}</div>`;
   const sum=(title,color,items)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 14px"><div style="font-size:13.5px;font-weight:700;color:${color};margin-bottom:4px">${title}</div>${items.length?items.slice(0,6).map(li).join('')+(items.length>6?`<div style="font-size:11.5px;color:#999;padding-top:4px">+ ${items.length-6} more — click the tile</div>`:''):'<div style="font-size:12px;color:#1D9E75;padding:4px 0">All caught up ✅</div>'}</div>`;
   const w9i=cons.filter(c=>!(d.w9||{})[c.id]).map(c=>_calEsc(c.name||''));
-  const mi=closed.filter(c=>!_trkOn('mowinfo',c.id,'removed')).map(c=>'<b style="color:#8a6d1a">TEXT MOWER — remove from route:</b> '+nm(c))
-    .concat(active.filter(c=>!(d.mow||{})[c.id]).map(c=>nm(c)+' — needs adding to the route'));
-  const wi=active.filter(c=>!winDone(c)).map(c=>nm(c)+' — needs '+[!_trkOn('win',c.id,'measured')?'measure':null,!_trkOn('win',c.id,'ordered')?'order':null,!_trkOn('win',c.id,'arrived')?'arrival':null,!_trkOn('win',c.id,'installed')?'install':null].filter(Boolean).join(', '));
-  const ci=active.filter(c=>{const subs=c.subPhases||[];const f=subs.find(s=>s.name==="First Time Access Checklist");return !(f&&f.completed);}).map(c=>nm(c)+' — First Time Access open');
-  return shell(`<div style="font-size:12.5px;color:#888;margin:-6px 0 10px">What's outstanding right now — click a tile to open the full tracker.</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">${sum('🧾 W-9s needed','#7A3FA8',w9i)}${sum('🪟 Windows','#185FA5',wi)}${sum('🌱 Mowing','#3B6D11',mi)}${sum('✅ Checklists','#0B7285',ci)}${sum('⚡ Utilities','#B7791F',utilOutList.slice(0,20).map(c=>nm(c)+' — '+_calEsc(_utilGaps(c).join(', '))))}</div>`);
+  const mi=closed.filter(c=>!_trkOn('mowinfo',c.id,'removed')).map(c=>'<b style="color:#8a6d1a">REMOVE from the route:</b> '+nm(c))
+    .concat(active.filter(c=>!(d.mow||{})[c.id]).map(c=>'<b style="color:#3B6D11">ADD to the route:</b> '+nm(c)));
+  const wi=active.filter(_winInQueue).map(c=>{const a=_winNextAction(c); return a?(nm(c)+' — '+a):null;}).filter(Boolean);
+  const ci=active.filter(c=>c.phase==="Vacant / On Standby").filter(c=>{const subs=c.subPhases||[];const f=subs.find(s=>s.name==="First Time Access Checklist");return !(f&&f.completed);}).map(c=>nm(c)+' — First Time Access still to fill in')
+    .concat(active.filter(c=>{const subs=c.subPhases||[];const po=subs.find(x=>/punch/i.test(x.name||'')); return !!(po && !po.completed && (po.start||po.due));}).map(c=>nm(c)+' — Punch Out scheduled, still to fill in'));
+  return shell(`<div style="font-size:12.5px;color:#888;margin:-6px 0 10px">What's outstanding right now — click a tile to open the full tracker.</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">${sum('🧾 W-9s needed','#7A3FA8',w9i)}${sum('🪟 Windows','#185FA5',wi)}${sum('🌱 Mowing','#3B6D11',mi)}${sum('✅ Checklists','#0B7285',ci)}${_utilSummaryCard(sum,utilOutList,nm)}</div>`);
 }
 function openArchitectDashboard(activeTab) {
   activeTab = activeTab || 'main';
@@ -9279,4 +9362,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-29b on-time-task-scoring -->
+<!-- build: 2026-08-29c marlo-board-restructure -->
