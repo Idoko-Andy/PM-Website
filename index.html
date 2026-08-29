@@ -8512,6 +8512,62 @@ function _taskTallyLine(tasks, suffix){
 }
 // Does task t belong to the person "name" (tolerant of first-name-only assignments)?
 function _taskHasAssignee(t,name){ return taskAssignees(t).some(a=>_sameAssignee(a,name)); }
+// ---- FULL days on the Task Calendar ------------------------------------------
+// Anyone on the team can close out a day for a person: "Isaiah is full on Tuesday".
+// Nothing sets this automatically - it is a human saying the day is packed. It is a
+// warning, not a wall: you can still schedule onto a full day, you just have to mean
+// it, and the override is written to Edit History.
+// Shape: { "<Person Name>": { "YYYY-MM-DD": {by:"<who>", at:"<when>"} } }
+async function _fdLoad(){
+  window._fdLoaded=true;
+  try{
+    const r=await supabase.from("pm_settings").select("data").eq("key","full_days").maybeSingle();
+    if(r.error){ window._fdLoadOk=false; window._fdData={}; return; }
+    window._fdLoadOk=true; window._fdData=(r.data&&r.data.data)||{};
+  }catch(e){ window._fdLoadOk=false; window._fdData={}; }
+}
+async function _fdSave(){
+  if(window._fdLoadOk===false){ alert("The full-day list could not be loaded a moment ago, so saving now would wipe it. Refresh and try again."); return false; }
+  const err=await _pmSettingsWrite('full_days', window._fdData||{});
+  if(err){ alert("THAT DID NOT SAVE — "+err); return false; }
+  return true;
+}
+function _fdIsFull(person, ds){
+  if(!person || person==='all' || person==='Unassigned' || !ds) return false;
+  const d=(window._fdData||{})[person];
+  return !!(d && d[ds]);
+}
+function _fdWhoIsFull(ds){
+  const all=window._fdData||{};
+  return Object.keys(all).filter(p=>all[p] && all[p][ds]).sort();
+}
+function _fdInfo(person, ds){ return (((window._fdData||{})[person])||{})[ds] || null; }
+async function _fdToggle(person, ds){
+  if(_blockIfReadOnly()) return;
+  if(!person || person==='all'){ alert("Pick a person first — a full day belongs to someone.\n\nUse the person dropdown above the calendar, then mark the day."); return; }
+  const d=window._fdData=window._fdData||{};
+  d[person]=d[person]||{};
+  const was=!!d[person][ds];
+  if(was) delete d[person][ds];
+  else d[person][ds]={ by:_fdWho(), at:_ymd(new Date()) };
+  if(!Object.keys(d[person]).length) delete d[person];
+  if(!(await _fdSave())) return;
+  _logAudit(was?"updated":"created","calendar", person+" — "+ds, was?"Day reopened for scheduling":"Day marked FULL — no more tasks should be scheduled");
+  _taskRerender();
+}
+function _fdWho(){
+  const u=(typeof currentUser==='function')?currentUser():null;
+  return u?((((u.firstName||'')+' '+(u.lastName||'')).trim())||u.email||'someone'):'someone';
+}
+// Called before a task is saved. Returns true to go ahead. Warns once, naming who is
+// full, and lets the person decide - Bruce's call: advisory, never a hard stop.
+function _fdConfirmSchedule(assignees, ds){
+  if(!ds || !Array.isArray(assignees) || !assignees.length) return true;
+  const full=assignees.filter(a=>_fdIsFull(a,ds));
+  if(!full.length) return true;
+  const lines=full.map(a=>{ const i=_fdInfo(a,ds); return "  • "+a+(i&&i.by?"  (marked full by "+i.by+")":""); });
+  return confirm(ds+" is marked FULL for:\n\n"+lines.join("\n")+"\n\nSchedule this task anyway?");
+}
 const _taskCal = { y:null, m:null, day:null, view:"month", assignee:"all", loaded:false };
 function _taskRerender(){ const el=document.getElementById("pd-content"); if(el) el.innerHTML=renderTaskCalendar(); }
 function taskCalPrev(){ _taskCal.m--; if(_taskCal.m<0){_taskCal.m=11;_taskCal.y--;} _taskRerender(); }
@@ -8527,7 +8583,7 @@ function renderTaskCalendar(){
   if(st.y==null){ const d=new Date(); st.y=d.getFullYear(); st.m=d.getMonth(); }
   // Default to the logged-in user's own tasks on first open.
   if(!st._selfInit){ st._selfInit=true; try{ const u=(typeof currentUser==='function')?currentUser():null; if(u&&st.assignee==="all"){ const nm=((u.firstName||"")+" "+(u.lastName||"")).trim(); const tm=teamMembers(); const hit=tm.find(m=>m===nm)||tm.find(m=>u.firstName&&m.split(" ")[0]===u.firstName); if(hit) st.assignee=hit; } }catch(e){} }
-  if(!st.loaded){ st.loaded=true; Promise.all([loadTasks(), loadSavedAddresses()]).then(_taskRerender); }
+  if(!st.loaded){ st.loaded=true; Promise.all([loadTasks(), loadSavedAddresses(), _fdLoad()]).then(_taskRerender); }
   const ro=isReadOnly();
   // Assignee picker: "All" button + a person dropdown (matches the construction calendar's picker)
   const _tmembers=teamMembers();
@@ -8572,7 +8628,17 @@ function renderTaskCalendar(){
     const shown=ts.slice(0,3).map(taskChip).join("");
     const more=ts.length>3?`<div style="font-size:11px;color:#999">+${ts.length-3} more</div>`:"";
     const addBtn=ro?"":`<div onclick="openAddTask('${ds}')" style="position:absolute;top:4px;right:5px;font-size:13px;color:#bbb;cursor:pointer" title="Add task">＋</div>`;
-    cells.push(`<div style="position:relative;background:#fff;min-height:92px;border:0.5px solid #edf0f4;padding:4px 5px"><div style="font-size:12px;font-weight:${isToday?'600':'400'};color:${isToday?'#185FA5':'#999'};margin-bottom:3px">${day}</div>${shown}${more}${addBtn}</div>`);
+    // A day someone has closed out. Only meaningful with a person selected, so when
+    // the filter is on "all" we show who is full rather than a single flag.
+    const _selPerson = (st.assignee!=='all' && st.assignee!=='Unassigned') ? st.assignee : null;
+    const _isFull = _selPerson ? _fdIsFull(_selPerson, ds) : false;
+    const _othersFull = _selPerson ? [] : _fdWhoIsFull(ds);
+    const _fullBadge = _isFull
+      ? `<div style="font-size:9.5px;font-weight:700;color:#B42318;background:#FCEBEB;border-radius:3px;padding:1px 4px;margin-bottom:2px;letter-spacing:.03em">FULL</div>`
+      : (_othersFull.length?`<div title="${_calEsc(_othersFull.join(', '))} full this day" style="font-size:9.5px;color:#B7791F;background:#FAEEDA;border-radius:3px;padding:1px 4px;margin-bottom:2px">FULL · ${_othersFull.length}</div>`:'');
+    const _fullBtn = (ro||!_selPerson) ? '' :
+      `<div onclick="event.stopPropagation();_fdToggle('${_argEsc(_selPerson)}','${ds}')" title="${_isFull?'Reopen this day for '+_calEsc(_selPerson):'Mark this day FULL for '+_calEsc(_selPerson)}" style="position:absolute;bottom:3px;right:5px;font-size:11px;color:${_isFull?'#B42318':'#ccc'};cursor:pointer">${_isFull?'✕ full':'mark full'}</div>`;
+    cells.push(`<div style="position:relative;background:${_isFull?'#FFF6F5':'#fff'};min-height:92px;border:0.5px solid ${_isFull?'#f0c0bb':'#edf0f4'};padding:4px 5px"><div style="font-size:12px;font-weight:${isToday?'600':'400'};color:${isToday?'#185FA5':'#999'};margin-bottom:3px">${day}</div>${_fullBadge}${shown}${more}${addBtn}${_fullBtn}</div>`);
   }
   const weekdays=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d=>`<div style="text-align:center;font-size:11px;color:#999;text-transform:uppercase;letter-spacing:.05em;padding:6px 0">${d}</div>`).join("");
   const addTop=ro?"":`<button onclick="openAddTask('')" style="padding:7px 14px;background:#111;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer;white-space:nowrap">+ Add Task</button>`;
@@ -8582,6 +8648,15 @@ function renderTaskCalendar(){
     </div>`;
   if(st.view==='day'){
     const dayStr=st.day||todayStr; const isToday=dayStr===todayStr;
+    const _dvPerson=(st.assignee!=='all'&&st.assignee!=='Unassigned')?st.assignee:null;
+    const _dvFull=_dvPerson?_fdIsFull(_dvPerson,dayStr):false;
+    const _dvOthers=_dvPerson?[]:_fdWhoIsFull(dayStr);
+    const _dvInfo=_dvPerson?_fdInfo(_dvPerson,dayStr):null;
+    const _dvBanner = _dvFull
+      ? `<div style="background:#FCEBEB;border:1px solid #f0c0bb;border-radius:10px;padding:10px 14px;margin-bottom:12px;color:#B42318;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap"><div><b>${_calEsc(_dvPerson)} is FULL on ${dayStr}.</b> New tasks will warn before they are added.${_dvInfo&&_dvInfo.by?` <span style="color:#8a6d1a;font-weight:400">Marked by ${_calEsc(_dvInfo.by)}${_dvInfo.at?' on '+_calEsc(_dvInfo.at):''}.</span>`:''}</div>${ro?'':`<button onclick="_fdToggle('${_argEsc(_dvPerson)}','${dayStr}')" style="padding:6px 12px;border:0.5px solid #f0c0bb;border-radius:7px;background:#fff;color:#B42318;font-size:12.5px;cursor:pointer;font-weight:600">Reopen this day</button>`}</div>`
+      : (_dvPerson && !ro
+          ? `<div style="display:flex;justify-content:flex-end;margin-bottom:8px"><button onclick="_fdToggle('${_argEsc(_dvPerson)}','${dayStr}')" style="padding:6px 12px;border:0.5px solid #ddd;border-radius:7px;background:#fff;color:#666;font-size:12.5px;cursor:pointer">Mark ${_calEsc(_dvPerson)} FULL this day</button></div>`
+          : (_dvOthers.length?`<div style="background:#FAEEDA;border:1px solid #EAD9A8;border-radius:10px;padding:9px 13px;margin-bottom:12px;color:#633806;font-size:13px">FULL on ${dayStr} for: <b>${_calEsc(_dvOthers.join(', '))}</b>. Pick a person above to change it.</div>`:''));
     const entries=[];
     _tasksCache.forEach(t=>{ if(!_asgMatch(t)) return;
       if(t.start_date===dayStr && t.start_date!==t.due_date) entries.push({t,marker:"start"});
@@ -8598,6 +8673,7 @@ function renderTaskCalendar(){
         <div style="text-align:center;min-width:230px"><div style="font-size:17px;font-weight:600;color:${isToday?'#185FA5':'#111'}">${_prettyDay(dayStr)}</div>${isToday?'<div style="font-size:12px;color:#185FA5">Today</div>':`<div onclick="taskToday()" style="font-size:12px;color:#888;cursor:pointer;text-decoration:underline">Jump to today</div>`}</div>
         <div onclick="taskNextDay()" style="cursor:pointer;font-size:19px;color:#888;padding:5px 13px;border:0.5px solid #ddd;border-radius:8px;background:#fff">›</div>
       </div>
+      ${_dvBanner}
       ${dayBody}
     </div>`;
   }
@@ -8890,7 +8966,7 @@ async function saveTask(){
   if(error){ showE("Failed to save: "+(error.message||"")); return; }
   if(_pl.saveAddr && location) await _saveAddressForReuse(location);
   const _rlabel = dueList.length>1 ? (title+" (×"+dueList.length+", repeats "+repeat+")") : title;
-  _logAudit("created","task", category?(category+": "+_rlabel):_rlabel, asgArr.length?("Assigned to "+asgArr.join(", ")):"Unassigned");
+  _logAudit("created","task", category?(category+": "+_rlabel):_rlabel, (asgArr.length?("Assigned to "+asgArr.join(", ")):"Unassigned")+(_fdOverridden.length?(" — scheduled onto a FULL day for "+_fdOverridden.join(", ")):""));
   // Material deliveries entered on the task list also drop onto the Construction
   // Calendar so it only has to be entered once (one calendar entry per occurrence).
   if(category===_MATERIAL_TASK_CATEGORY && (prop||location)){
@@ -9761,4 +9837,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-29j live-recalc -->
+<!-- build: 2026-08-29k calendar-full-days -->
