@@ -1185,8 +1185,12 @@ const PERM_ITEMS = [
   { key:"data_overhead",    label:"PT Overhead & Expenses",  group:"Data Dash" },
   { key:"data_teamspent",   label:"Project Team Spent",      group:"Data Dash" },
   { key:"data_pmoverview",  label:"PM Team Overview",        group:"Data Dash" },
-  { key:"rep_all",          label:"Reporting (all reports)", group:"Reporting" },
-  { key:"rep_ceo",          label:"Director / CEO Meeting (Bruce & Tommy only)", group:"Reporting" },
+  { key:"trk_all",          label:"Trackers (W-9 · window · mowing · checklists · utilities · permits)", group:"Dashboards" },
+  { key:"rep_all",          label:"Reporting — daily, monthly and other reports", group:"Reporting" },
+  { key:"rep_team",         label:"Meeting: Project Team",   group:"Reporting" },
+  { key:"rep_kickoff",      label:"Meeting: Kickoff",        group:"Reporting" },
+  { key:"rep_company",      label:"Meeting: Full Company",   group:"Reporting" },
+  { key:"rep_ceo",          label:"Meeting: Director / CEO (Bruce & Tommy only)", group:"Reporting" },
   { key:"edit_history",     label:"Edit History (audit log)", group:"Admin" },
   { key:"sops_view",        label:"SOPs (default on for everyone)", group:"Defaults" },
 ];
@@ -1223,10 +1227,28 @@ Object.keys(ROLE_DEFAULTS).forEach(r=>{
   if(r==="CEO" || r==="Project Director") return;
   ROLE_DEFAULTS[r]=ROLE_DEFAULTS[r].filter(k=>CEO_ONLY_PERMS.indexOf(k)<0);
 });
+// Trackers and the three open meetings used to ride along with other permissions -
+// Trackers on "Admin Dashboard", the meetings on "Reporting". They are their own
+// keys now so Bruce can hand any one of them to any one person, so every role that
+// could already reach them keeps them by default and nobody loses anything.
+Object.keys(ROLE_DEFAULTS).forEach(r=>{
+  const p=ROLE_DEFAULTS[r];
+  if(p.indexOf("dash_admin")>=0 || p.indexOf("dash_vaadmin")>=0){ if(p.indexOf("trk_all")<0) p.push("trk_all"); }
+  if(p.indexOf("rep_all")>=0){ ["rep_team","rep_kickoff","rep_company"].forEach(k=>{ if(p.indexOf(k)<0) p.push(k); }); }
+});
 const ROLE_FALLBACK = ["dash_project","dash_pmassistant","sops_view"]; // acquisitions / unknown = view what PM assistants see
 
 // Maps a nav item's onclick signature to the permission key that gates it.
+// NOTE: matching is first-hit on indexOf, so anything more specific has to be
+// listed BEFORE the general form - "openAdminDashboard" would otherwise swallow
+// "openAdminDashboard('trackers')" and the Trackers item would inherit the Admin
+// Dashboard's permission instead of its own.
 const ONCLICK_PERM = [
+  ["openAdminDashboard('trackers')",   "trk_all"],
+  ["openVAAdminDashboard('trackers')", "trk_all"],
+  ["openWeeklyMeeting('team')",        "rep_team"],
+  ["openWeeklyMeeting('kickoff')",     "rep_kickoff"],
+  ["openWeeklyMeeting('company')",     "rep_company"],
   ["openProjectDashboard",      "dash_project"],
   ["openDesignDashboard",       "dash_design"],
   ["openTVDashboard",           "dash_tv"],
@@ -1240,8 +1262,6 @@ const ONCLICK_PERM = [
   ["openDataSection('overhead')","data_overhead"],
   ["openDataSection('teamspent')","data_teamspent"],
   ["openPMDashboard",           "data_pmoverview"],
-  // The Director / CEO Meeting sits inside Reporting but carries its own key, so
-  // everyone else on the Reporting menu still sees the other three meetings.
   ["openWeeklyMeeting('ceo')",  "rep_ceo"],
 ];
 
@@ -1281,7 +1301,9 @@ function applyPermissionsUI() {
     if (key) el.style.display = hasPerm(u,key) ? "" : "none";
   });
   const setMenu = (id, show) => { const e = document.getElementById(id); if (e) e.style.display = show ? "" : "none"; };
-  setMenu("rep-t",  hasPerm(u,"rep_all"));   // Reporting = single toggle
+  // Reporting is no longer one switch: the menu appears if the person can see any
+  // single thing inside it, and the items gate themselves individually above.
+  setMenu("rep-t", ["rep_all","rep_team","rep_kickoff","rep_company","rep_ceo"].some(k=>hasPerm(u,k)));
   setMenu("sop-t",  hasPerm(u,"sops_view")); // SOPs = single toggle (default on)
   const _hb=document.getElementById("hist-box"); if(_hb) _hb.style.display = hasPerm(u,"edit_history") ? "flex" : "none"; // Edit History box beside search
   if(typeof _confirmNavRefresh==='function') _confirmNavRefresh();
@@ -1806,6 +1828,20 @@ function subphaseNeedsApproval(name){ return !!SUBPHASE_APPROVAL[name]; }
 // Which properties a subphase applies to: 'all' | 'permitted' | 'nonpermitted'.
 // Defaults: permit-approval and inspection steps only apply to PERMITTED properties.
 let SUBPHASE_APPLIES = {};
+// The app no longer invents inspections. The Permit Tracker is the only place one
+// gets created, and adding it there writes the matching subphase onto the property
+// card. So "what has to pass before this goes on the market" is simply whichever
+// after-finishes inspections are sitting on the card, still unticked.
+const INSPECTION_SUB_RE=/inspection/i;
+function _inspectionSubs(card, when){
+  const subs=(card && Array.isArray(card.subPhases)) ? card.subPhases : [];
+  return subs.filter(s=>{
+    if(!INSPECTION_SUB_RE.test(s.name||'')) return false;
+    if(!when) return true;
+    return when==='after' ? /after finishes/i.test(s.name||'') : /before finishes/i.test(s.name||'');
+  });
+}
+function _openAfterInspections(card){ return _inspectionSubs(card,'after').filter(s=>!s.completed); }
 function _spApplies(name, card){
   const mode = SUBPHASE_APPLIES[name] || (/(permit approval|inspection)/i.test(name||'') ? 'permitted' : 'all');
   if(mode==='all') return true;
@@ -1836,8 +1872,13 @@ function _subDone(sp,name){ return !!(sp && sp.completed && (!subphaseNeedsAppro
 function _phaseAdvanceBlocking(card){
   const cfg=PHASE_ADVANCE[card.phase]; if(!cfg) return [];
   const subs=card.subPhases||[];
+  // Final Inspections is the one phase whose requirements are not a fixed list:
+  // it is whatever inspections the Permit Tracker put on this card.
+  if(card.phase==="Listed on the Market / Final Inspections"){
+    return _openAfterInspections(card).map(s=>s.name);
+  }
   // Only subphases that APPLY to this property (permitted vs non-permitted) can block it.
-  return cfg.requires.filter(name => _spApplies(name, card) && !_subDone(subs.find(s=>s.name===name), name));
+  return (cfg.requires||[]).filter(name => _spApplies(name, card) && !_subDone(subs.find(s=>s.name===name), name));
 }
 
 // ---- Editable workflow config (Settings tab) ----------------------------
@@ -2112,13 +2153,17 @@ async function updatePropertyPhaseInSupabase(id, newPhase) {
     if (!_cl.construction_start) { _cl.construction_start = _ymd(new Date()); patch.checklists = _cl; }
   }
   // Permitted properties must pass Final Inspections before hitting Listed on the Market.
+  // A permitted property is held at Final Inspections only if the Permit Tracker
+  // says there is an after-finishes inspection still to pass. It used to invent
+  // "Final Electric Inspection" and "Final Plumbing Inspection" on every permitted
+  // house whether or not those inspections were real, which meant the card and the
+  // permit tracker disagreed about what was outstanding.
   if (newPhase === "Listed on the Market" && _pc && (_pc.checklists && _pc.checklists.permitted)==='yes') {
-    const _subs2 = Array.isArray(_pc.subPhases)?_pc.subPhases.map(s=>({...s})):[];
-    const _fi=["Final Electric Inspection","Final Plumbing Inspection"];
-    const _done=_fi.every(n=>{const s=_subs2.find(x=>x.name===n);return s&&s.completed;});
-    if(!_done){
+    const _openIns=_openAfterInspections(_pc);
+    if(_openIns.length){
+      const _subs2 = Array.isArray(_pc.subPhases)?_pc.subPhases.map(s=>({...s})):[];
       patch.phase="Listed on the Market / Final Inspections";
-      _fi.forEach(n=>{ let s=_subs2.find(x=>x.name===n); if(!s){ s={name:n}; _subs2.push(s); } if(!s.completed){ if(!s.start) s.start=_ymdToday(); if(!s.due) s.due=_ymdPlus(3); } });
+      _openIns.forEach(o=>{ const s=_subs2.find(x=>x.name===o.name); if(s && !s.completed){ if(!s.start) s.start=_ymdToday(); if(!s.due) s.due=_ymdPlus(3); } });
       patch.sub_phases=_subs2;
     }
   }
@@ -2533,7 +2578,10 @@ async function _maybeAutoAdvance(propId){
   const cfg=PHASE_ADVANCE[card.phase]; if(!cfg) return false;
   // A phase with no required subphases must NOT auto-advance — otherwise checking any
   // subphase box would instantly jump the card to the next phase.
-  if(!Array.isArray(cfg.requires) || cfg.requires.length===0) return false;
+  // Final Inspections is driven by the Permit Tracker, so an empty requires list is
+  // legitimate there - it means nothing is holding the house back.
+  const _dynamicReqs=(card.phase==="Listed on the Market / Final Inspections");
+  if(!_dynamicReqs && (!Array.isArray(cfg.requires) || cfg.requires.length===0)) return false;
   if(_phaseAdvanceBlocking(card).length) return false;
   const _patch={ phase:cfg.next };
   // Auto-advance past Pre Construction starts the construction-days clock; reaching
@@ -4258,11 +4306,24 @@ function openDailyReports(){
 }
 // Only the CEO and the Project Director see the Director / CEO meeting - or
 // anyone they hand the key to individually in Settings.
-function _canSeeCeoMeeting(){
+function _canSeeCeoMeeting(){ return _canSeeMeeting('ceo'); }
+// Hiding a menu item is not the same as closing the door - these screens can also
+// be reached from a restored view or a link, so each one checks its own key.
+const _MEETING_PERM={team:'rep_team',kickoff:'rep_kickoff',company:'rep_company',ceo:'rep_ceo'};
+function _canSeeMeeting(kind){
   const u=(typeof _viewUser==='function')?_viewUser():null;
   if(!u) return false;
   if(u.isSuperAdmin) return true;
-  return hasPerm(u,'rep_ceo');
+  const k=_MEETING_PERM[kind];
+  if(!k) return hasPerm(u,'rep_all');
+  return hasPerm(u,k);
+}
+function _meetingDenied(kind){
+  const names={team:'Project Team Meeting',kickoff:'Kickoff Meeting',company:'Full Company Meeting',ceo:'Director / CEO Meeting'};
+  const extra=(kind==='ceo')?'This one is just for Bruce and Tommy.':'You do not have this meeting turned on yet.';
+  return `<div class="empty-state"><div class="icon">&#128274;</div>
+    <p style="color:#888;font-size:16px;font-weight:500">${names[kind]||'Meeting'}</p>
+    <p style="color:#555;font-size:14px;margin-top:6px;max-width:440px;margin-left:auto;margin-right:auto">${extra} Ask Bruce to turn it on for your account in Settings &rarr; Permissions.</p></div>`;
 }
 // ===================== MONDAY MEETING — CARRIED ITEMS =====================
 // Three things in the Monday meeting are not "this week's notes". They follow
@@ -4772,14 +4833,7 @@ function openWeeklyMeeting(kind, week){
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
   // Hiding the menu item is not the same as closing the door - this screen can
   // also be reached from a restored nav state or a link, so check here too.
-  if(kind==='ceo' && !_canSeeCeoMeeting()){
-    document.getElementById("dash-body").innerHTML=`<div class="empty-state">
-      <div class="icon">🔒</div>
-      <p style="color:#888;font-size:16px;font-weight:500">Director / CEO Meeting</p>
-      <p style="color:#555;font-size:14px;margin-top:6px;max-width:420px;margin-left:auto;margin-right:auto">This one is just for Bruce and Tommy. If you need to be in it, ask Bruce to turn it on for your account in Settings → Permissions.</p>
-    </div>`;
-    return;
-  }
+  if(!_canSeeMeeting(kind)){ document.getElementById("dash-body").innerHTML=_meetingDenied(kind); return; }
   if(window._wmData===undefined||window._wmData===null){ if(window._wmData===undefined){ window._wmData=null; Promise.all([_wmLoad(), _miLoad(), (window._pdnData===undefined?( (window._pdnData=null), _pdnLoad()):Promise.resolve())]).then(()=>openWeeklyMeeting(kind, week)); document.getElementById("dash-body").innerHTML='<div style="padding:40px;text-align:center;color:#999">Loading meeting…</div>'; return; } }
   const titles={team:'🤝 Project Team Meeting',kickoff:'🚀 Kickoff Meeting',company:'🏢 Full Company Meeting',ceo:'👔 Director / CEO Meeting'};
   const liveWk=_wmWeekKey();
@@ -7441,7 +7495,9 @@ function openAdminDashboard(activeTab) {
   let content;
   switch(activeTab){
     case 'marlo':        content=_marloTab(); break;
-    case 'trackers':     window._trkRerender=()=>openAdminDashboard('trackers'); window._trkCtx='admin'; content=_vaTrackers(); break;
+    case 'trackers':
+      if(!(_viewUser()&&(_viewUser().isSuperAdmin||hasPerm(_viewUser(),'trk_all')))){ content='<div class="empty-state"><div class="icon">&#128274;</div><p style="color:#888;font-size:16px;font-weight:500">Trackers</p><p style="color:#555;font-size:14px;margin-top:6px">Ask Bruce to turn Trackers on for your account in Settings &rarr; Permissions.</p></div>'; break; }
+      window._trkRerender=()=>openAdminDashboard('trackers'); window._trkCtx='admin'; content=_vaTrackers(); break;
     case 'property':     content=renderPropertyBoard(); break;
     case 'construction': content=renderConstructionCalendar(); break;
     case 'taskcal':      content=renderTaskCalendar(); break;
@@ -8687,6 +8743,114 @@ function _architectMainDashboard(){
   </div>`;
 }
 
+// ---- Jennifer's own tab -------------------------------------------------------
+// Same shape as Marlo's: who she is, her four numbers, her next 48 hours, then the
+// boards that are actually hers. Marlo's world is properties and material orders;
+// Jen's is permits and inspections, so the panels differ but the layout does not.
+function _jennTab(){
+  const today=new Date(); today.setHours(0,0,0,0); const todayStr=_ymd(today);
+  const _jUser=(typeof getUsers==='function'?getUsers():[]).find(u=>u.status==="approved" && u.role==="Architect");
+  const _jName=_jUser?(((_jUser.firstName||"")+" "+(_jUser.lastName||"")).trim()||"Jennifer Tatum"):"Jennifer Tatum";
+  const _first=String(_jName).split(" ")[0]||"Jen";
+  const tasksAll=(typeof _tasksCache!=='undefined'?_tasksCache:[]);
+  const mine=(t)=>_taskHasAssignee(t,_jName)||_taskHasAssignee(t,_first);
+
+  // Same seven-day on-time reading everybody else is scored on.
+  const _d7=_ymd(new Date(today.getTime()-7*86400000));
+  const _mine7=tasksAll.filter(t=>mine(t) && t.due_date && t.due_date>=_d7 && t.due_date<=todayStr);
+  const _t7=_taskTally(_mine7);
+  const _pct7=_t7.pct;
+  const _resPct7=_mine7.length?Math.round(_t7.resched/_mine7.length*100):null;
+  const _in48=_ymd(new Date(today.getTime()+2*86400000));
+  const _due48=tasksAll.filter(t=>t.status!=='done' && mine(t) && t.due_date && t.due_date>=todayStr && t.due_date<=_in48)
+    .sort((a,b)=>(a.due_date||'')<(b.due_date||'')?-1:1);
+  const _overdue=tasksAll.filter(t=>t.status!=='done' && mine(t) && t.due_date && t.due_date<todayStr).length;
+
+  const permits=(typeof _permitList==='function')?_permitList():[];
+  const open=permits.filter(r=>_permitOpen(r));
+  const corrections=open.filter(r=>(r.status||'')==='Corrections Required');
+  const unanswered=open.filter(r=>r.received && !r.responded);
+  const stale=open.filter(r=>{ const d=_permitDaysSince(r.checked); return d===null || d>PERMIT_STALE_DAYS; });
+  const insps=[]; permits.forEach(r=>_permitInsps(r).forEach(i=>{ if(!i.done) insps.push({r,i}); }));
+  const all=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived);
+  const drawings=all.filter(c=>(c.subPhases||[]).some(s=>/drawing/i.test(s.name||'') && !s.completed));
+
+  const _stat=(label,value,sub,color)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 18px;text-align:center;min-width:104px">
+    <div style="font-size:11px;color:#999;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">${label}</div>
+    <div style="font-size:29px;font-weight:500;color:${color}">${value}</div>
+    <div style="font-size:11px;color:#aaa;margin-top:2px">${sub}</div></div>`;
+  const card=(title,rows,count,empty,accent)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;${accent?`border-top:3px solid ${accent};`:''}border-radius:10px;overflow:hidden"><div style="padding:10px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between"><div style="font-size:14px;font-weight:600;color:#111">${title}</div><span style="font-size:11px;background:#f4f5f7;color:#888;padding:2px 8px;border-radius:99px">${count}</span></div><div style="padding:4px 14px 12px">${count?rows:`<div style="text-align:center;color:#ccc;font-size:13px;padding:16px 0">${empty}</div>`}</div></div>`;
+
+  const permRows=(list,why)=>list.map(r=>{
+    const p=_permitProp(r);
+    return `<div onclick="openArchitectDashboard('permits')" style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px;cursor:pointer">
+      <div style="min-width:0"><span style="font-weight:500;color:#111">${_calEsc(r.addr||'')}</span>
+        <div style="font-size:12px;color:#888">${_calEsc(r.number||'')}${r.juris?(' · '+_calEsc(r.juris)):''}${p?'':' · no property card'}</div></div>
+      <span style="font-size:12px;color:#B7791F;white-space:nowrap;text-align:right">${_calEsc(why(r))}</span></div>`;
+  }).join('');
+
+  const inspRows=insps.map(x=>`<div onclick="openArchitectDashboard('permits')" style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px;cursor:pointer">
+      <div style="min-width:0"><span style="color:#111">${_calEsc(x.i.name||'')}</span>
+        <div style="font-size:12px;color:#888">${_calEsc(x.r.addr||'')}</div></div>
+      <span style="font-size:12px;color:${x.i.when==='after'?'#D85A30':'#639922'};white-space:nowrap">${x.i.when==='after'?'after finishes':'before finishes'}</span></div>`).join('');
+
+  const drawRows=drawings.map(c=>`<div onclick="openPropDetail('${c.id}')" style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px;cursor:pointer">
+      <span style="color:#111">${_calEsc(c.addr||'')}</span>
+      <span style="font-size:12px;color:#888">${_calEsc(c.phase||'')}</span></div>`).join('');
+
+  const _due48Rows=_due48.map(t=>{
+    const prop=all.find(c=>c.id===t.property_id);
+    const late=t.due_date<todayStr;
+    return `<div style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px">
+      <div style="min-width:0">${t.category?`<span style="font-size:11px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:5px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title||'')}
+        <div style="font-size:12px;color:#888">${prop?_calEsc(prop.addr||''):(_locLabel(t)?_calEsc(_locLabel(t)):'')}</div></div>
+      <span style="font-size:12px;color:${late?'#B42318':'#B7791F'};white-space:nowrap">${_calEsc(t.due_date||'')}${late?' · late':''}</span></div>`;
+  }).join('');
+
+  // The page body is white-on-dark; every panel here sits on a white card, so the
+  // wrapper has to state the text colour or anything that does not set its own
+  // renders white on white and vanishes.
+  return `<div style="padding:20px;max-width:1120px;margin:0 auto;color:#111">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:12px">
+        <div style="width:44px;height:44px;border-radius:50%;background:#1a2744;color:#fff;font-size:19px;font-weight:600;display:flex;align-items:center;justify-content:center">${_calEsc(_first[0]||'J')}</div>
+        <div><div style="font-size:19px;font-weight:600;color:#111">${_calEsc(_jName)}</div>
+          <div style="font-size:13px;color:#888">Architect · ${open.length} open permit${open.length===1?'':'s'} · <span style="color:#E24B4A;font-weight:500">${_due48.length} task${_due48.length===1?'':'s'} due in 48h</span></div></div>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        ${_stat('Total Permits', permits.length, 'on the books', '#111')}
+        ${_stat('Open Permits', open.length, (permits.length-open.length)+' closed', '#185FA5')}
+        ${_stat('Task Completion', _pct7==null?'—':_pct7+'%', _taskTallyLine(_mine7,'last 7 days'), _pct7==null?'#888':(_pct7>=80?'#3B6D11':_pct7>=50?'#B7791F':'#B42318'))}
+        ${_stat('Rescheduled', _resPct7==null?'—':_resPct7+'%', 'Tasks moved · last 7 days', '#B7791F')}
+      </div>
+    </div>
+
+    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden;border-top:3px solid #E24B4A;margin-bottom:14px">
+      <div style="padding:9px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between">
+        <div style="font-size:14px;font-weight:600;color:#111">📋 Her Tasks — Next 48 Hours</div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="font-size:11px;background:#FCEBEB;color:#B42318;padding:2px 8px;border-radius:99px">${_due48.length} due in 48 hours</span>
+          ${_overdue?`<span style="font-size:11px;background:#FAEEDA;color:#633806;padding:2px 8px;border-radius:99px">${_overdue} overdue</span>`:''}
+        </div>
+      </div>
+      <div style="padding:4px 14px 12px">${_due48.length?_due48Rows:'<div style="text-align:center;color:#ccc;font-size:13px;padding:16px 0">Nothing due in the next 48 hours.</div>'}</div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+      ${card('⚠️ Corrections required', permRows(corrections,()=>'redraw'), corrections.length, 'Nothing waiting on a redraw.', '#C0392B')}
+      ${card('💬 Examiner comments unanswered', permRows(unanswered,(r)=>'in '+(r.received||'')), unanswered.length, 'Every comment has been answered.', '#B7791F')}
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+      ${card('🕑 Portals not checked', permRows(stale,(r)=>{const d=_permitDaysSince(r.checked);return d===null?'never':(d+' days');}), stale.length, 'Every open portal has been checked this week.', '#185FA5')}
+      ${card('🔩 Inspections still to pass', inspRows, insps.length, 'No inspections outstanding. Add them on the Permit Tracker.', '#639922')}
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      ${card('📐 Properties in drawings', drawRows, drawings.length, 'Nothing sitting in the drawing phase.', '#7F77DD')}
+      ${card('📄 Permit Tracker', `<div onclick="openArchitectDashboard('permits')" style="padding:12px 0;font-size:13.5px;color:#555;cursor:pointer">Every permit, every jurisdiction, every inspection.<div style="margin-top:8px;color:#185FA5;font-weight:600">Open the Permit Tracker &rsaquo;</div></div>`, 1, '', '#B03A8B')}
+    </div>
+  </div>`;
+}
+
 function openArchitectDashboard(activeTab) {
   activeTab = activeTab || 'main';
   const tabs=[
@@ -8699,7 +8863,7 @@ function openArchitectDashboard(activeTab) {
   ];
   let content;
   switch(activeTab){
-    case 'jenn':         content=_personDashView('Jennifer Tatum','Architect'); break;
+    case 'jenn':         content=_jennTab(); break;
     case 'permits':      window._permitCtx='architect'; content=`<div style="padding:20px;max-width:1240px;margin:0 auto"><div style="font-size:16px;font-weight:600;color:#111;margin-bottom:10px">📄 Permit Tracker</div>${_permitTrackerBody()}</div>`; break;
     case 'property':     content=renderPropertyBoard(); break;
     case 'construction': content=renderConstructionCalendar(); break;
@@ -8710,7 +8874,7 @@ function openArchitectDashboard(activeTab) {
   // The trackers blob holds the permit rows; load it on first open, then seed the
   // sheet's rows if nobody has ever put one in.
   // The overview counts permits, so it needs the same blob the tracker does.
-  if(activeTab==='main' && !window._trkLoaded){ _trkLoad().then(()=>_permitSeedIfEmpty()).then(()=>openArchitectDashboard('main')); }
+  if((activeTab==='main'||activeTab==='jenn') && !window._trkLoaded){ _trkLoad().then(()=>_permitSeedIfEmpty()).then(()=>openArchitectDashboard(activeTab)); }
   if(activeTab==='permits'){
     if(!window._trkLoaded){ _trkLoad().then(()=>_permitSeedIfEmpty()).then(()=>openArchitectDashboard('permits')); }
     else if(!(window._trkData||{}).permits_seeded){ _permitSeedIfEmpty().then(a=>{ if(a) openArchitectDashboard('permits'); }); }
@@ -11394,4 +11558,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-29v contractor-directory -->
+<!-- build: 2026-08-29w perms-and-jenn -->
