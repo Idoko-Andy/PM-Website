@@ -1186,6 +1186,7 @@ const PERM_ITEMS = [
   { key:"data_teamspent",   label:"Project Team Spent",      group:"Data Dash" },
   { key:"data_pmoverview",  label:"PM Team Overview",        group:"Data Dash" },
   { key:"rep_all",          label:"Reporting (all reports)", group:"Reporting" },
+  { key:"rep_ceo",          label:"Director / CEO Meeting (Bruce & Tommy only)", group:"Reporting" },
   { key:"edit_history",     label:"Edit History (audit log)", group:"Admin" },
   { key:"sops_view",        label:"SOPs (default on for everyone)", group:"Defaults" },
 ];
@@ -1212,6 +1213,16 @@ const ROLE_DEFAULTS = {
   "Assistant / Intern":                        ["dash_project","sops_view"],
   "Other":                                     ["sops_view"],
 };
+// The Director / CEO Meeting is the one report that is not simply part of
+// "Reporting". It is the CEO and the Project Director talking to each other, so
+// it is off for every other job role by default and has to be granted to a
+// person by hand. CEO and Project Director take PERM_ALL above, so they already
+// have it.
+const CEO_ONLY_PERMS = ["rep_ceo"];
+Object.keys(ROLE_DEFAULTS).forEach(r=>{
+  if(r==="CEO" || r==="Project Director") return;
+  ROLE_DEFAULTS[r]=ROLE_DEFAULTS[r].filter(k=>CEO_ONLY_PERMS.indexOf(k)<0);
+});
 const ROLE_FALLBACK = ["dash_project","dash_pmassistant","sops_view"]; // acquisitions / unknown = view what PM assistants see
 
 // Maps a nav item's onclick signature to the permission key that gates it.
@@ -1229,6 +1240,9 @@ const ONCLICK_PERM = [
   ["openDataSection('overhead')","data_overhead"],
   ["openDataSection('teamspent')","data_teamspent"],
   ["openPMDashboard",           "data_pmoverview"],
+  // The Director / CEO Meeting sits inside Reporting but carries its own key, so
+  // everyone else on the Reporting menu still sees the other three meetings.
+  ["openWeeklyMeeting('ceo')",  "rep_ceo"],
 ];
 
 let _previewPerms = null; // {name, role, email, isSuperAdmin, perms} — session-only "preview as user"
@@ -1701,7 +1715,7 @@ function openProjectDashboard(activeTab) {
   document.querySelectorAll(".dd").forEach(x => x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x => x.classList.remove("on"));
 
-  const pmTabs = PM_MANAGERS.map(nm => ({ id: 'pm:'+nm, label: nm, icon: '👤' }));
+  const pmTabs = _pmTabNames().map(nm => ({ id: 'pm:'+nm, label: nm, icon: '👤' }));
   const tabs = [
     { id: 'main',   label: 'Main Dashboard',   icon: '📊' },
     ...pmTabs,
@@ -3118,7 +3132,7 @@ function openPropDetail(id) {
           <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden">
             <div style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;font-size:13px;font-weight:500;color:#111;display:flex;align-items:center;justify-content:space-between">Property Info${(Date.now()-(window._piSaved||0)<5000)?'<span style="font-size:12px;color:#1D9E75;font-weight:600;margin-left:auto;margin-right:8px">Saved ✓</span>':''}${_ro_sp?'':`<button onclick="savePropInfo('${c.id}')" style="font-size:12px;padding:3px 10px;border-radius:4px;background:#111;color:#fff;border:none;cursor:pointer">Save Info</button>`}</div>
             <div style="padding:10px 14px">
-              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px"><span style="color:#888">Project Manager</span>${_ro_sp?`<span style="color:#111;font-weight:500">${c.pm||'—'}</span>`:`<select id="pi-pm" onchange="savePropInfo('${c.id}',true)" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"><option value="">— Assign —</option>${PM_MANAGERS.map(pm=>`<option ${c.pm===pm?'selected':''}>${_calEsc(pm)}</option>`).join('')}</select>`}</div>
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px"><span style="color:#888">Project Manager</span>${_ro_sp?`<span style="color:#111;font-weight:500">${c.pm||'—'}</span>`:`<select id="pi-pm" onchange="savePropInfo('${c.id}',true)" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"><option value="">— Assign —</option>${_pmAssignOptions(c.pm)}</select>`}</div>
               <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px"><span style="color:#888">Property Type</span>${_ro_sp?`<span style="color:#111;font-weight:500">${c.type||'—'}</span>`:`<select id="pi-type" onchange="savePropInfo('${c.id}',true)" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"><option value="">— Type —</option>${PROP_TYPES.map(t=>`<option ${c.type===t?'selected':''}>${_calEsc(t)}</option>`).join('')}</select>`}</div>
               <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px"><span style="color:#888">Main Phase</span>${_ro_sp?`<span style="color:#111;font-weight:500">${c.phase||'—'}</span>`:`<select id="pi-phase" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none">${PROP_PHASES.map(p=>`<option ${c.phase===p.name?'selected':''}>${_calEsc(p.name)}</option>`).join('')}</select>`}</div>
               <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px">
@@ -3326,7 +3340,7 @@ function openPropModal(mode, id) {
         <label style="display:block;font-size:12px;color:#888;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Project Manager</label>
         <select id="pm-pm" onchange="_pmSelectChange(this)" style="width:100%;padding:7px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:14px;color:#111;background:#fff;outline:none">
           <option value="">— Assign PM —</option>
-          ${PM_MANAGERS.map(pm=>`<option ${c&&c.pm===pm?'selected':''}>${pm}</option>`).join('')}
+          ${_pmAssignOptions(c&&c.pm)}
           <option value="__addpm">＋ Add new project manager…</option>
         </select>
       </div>
@@ -4223,10 +4237,509 @@ function openDailyReports(){
     <div style="font-size:13.5px;color:#666;margin-top:8px;line-height:1.7;background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:16px 18px">End-of-day reports are coming here and to the field app: each PM answers a short automatic checklist (what got done today, contractors on site, blockers, tomorrow's plan, photos taken) plus their own notes. Those daily answers will roll up automatically into Monday's Project Team Meeting so the meeting doc is mostly written before the meeting starts. Tell me the exact questions you want on the daily form and I'll wire it up.</div>
   </div></div></div>`;
 }
+// Only the CEO and the Project Director see the Director / CEO meeting - or
+// anyone they hand the key to individually in Settings.
+function _canSeeCeoMeeting(){
+  const u=(typeof _viewUser==='function')?_viewUser():null;
+  if(!u) return false;
+  if(u.isSuperAdmin) return true;
+  return hasPerm(u,'rep_ceo');
+}
+// ===================== MONDAY MEETING — CARRIED ITEMS =====================
+// Three things in the Monday meeting are not "this week's notes". They follow
+// the room forward until somebody closes them out:
+//   lag  — long-lead items (windows, permits). Comes back every Monday as
+//          "did this get figured out?" with the number of weeks it has been open.
+//   q    — questions that need Bruce or Tommy. Comes back until answered.
+//   note — "what are we waiting on" against one scheduled item. Stays on the item.
+// They live in their own settings blob rather than inside a week, because a week
+// is exactly the thing they are meant to outlive.
+async function _miLoad(){
+  try{
+    const r=await supabase.from("pm_settings").select("data").eq("key","meeting_items").maybeSingle();
+    if(r.error){ window._miLoadOk=false; window._miData={}; return; }
+    window._miLoadOk=true; window._miData=(r.data&&r.data.data)||{};
+  }catch(e){ window._miLoadOk=false; window._miData={}; }
+}
+async function _miSave(){
+  if(window._miLoadOk===false){ alert("The carried-forward items could not be loaded a moment ago, so saving now would wipe them. This save was stopped — refresh the page and try again."); return false; }
+  const err=await _pmSettingsWrite('meeting_items', window._miData||{});
+  if(err){ alert("THAT WAS NOT SAVED — "+err); return false; }
+  return true;
+}
+function _miAll(kind){ const d=(window._miData||{})[kind]||{}; return Object.keys(d).map(k=>Object.assign({id:k},d[k])); }
+function _miOpen(kind){ return _miAll(kind).filter(x=>!(kind==='lag'?x.closed:x.answered)); }
+function _miFor(kind,pid){ return _miOpen(kind).filter(x=>x.pid===pid); }
+function _miWho(){ const u=(typeof currentUser==='function')?currentUser():null; return u?((u.firstName||'')+' '+(u.lastName||'')).trim()||u.email||'someone':'someone'; }
+function _miNewId(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
+// Weeks open, counted in whole weeks since the item was raised. Bruce reads
+// "3 wks" faster than "19 days" in a meeting, and it is the same information.
+function _miWeeks(raised){
+  if(!raised) return 0;
+  const ms=Date.now()-Date.parse(raised+"T00:00:00");
+  return Math.max(0, Math.floor(ms/(7*86400000)));
+}
+function _miAgeLabel(raised){ const w=_miWeeks(raised); return w<1?'new':(w+' wk'+(w===1?'':'s')); }
+function _miAgeColor(raised){ const w=_miWeeks(raised); return w>=3?'#B42318':w>=1?'#B7791F':'#1D9E75'; }
+
+async function _miAdd(kind, pid, elId, whoSelId){
+  if(_blockIfReadOnly()) return;
+  const el=document.getElementById(elId); if(!el) return;
+  const text=(el.value||'').trim(); if(!text) return;
+  const d=window._miData=window._miData||{}; d[kind]=d[kind]||{};
+  const rec={pid:pid||null, text:text, by:_miWho(), raised:_ymd(new Date())};
+  if(kind==='q'){ const w=document.getElementById(whoSelId); rec.who=(w&&w.value)||'Either'; }
+  d[kind][_miNewId()]=rec;
+  if(await _miSave()){
+    _logAudit("created", kind==='lag'?"lag item":"question", text.slice(0,80), kind==='lag'?"Raised in the Monday meeting":("Needs "+(rec.who||'an answer')));
+    el.value=''; openWeeklyMeeting('team');
+  }
+}
+async function _miClose(kind, id){
+  if(_blockIfReadOnly()) return;
+  const d=window._miData||{}; const rec=(d[kind]||{})[id]; if(!rec) return;
+  const stamp=_ymd(new Date());
+  if(kind==='lag'){ rec.closed=rec.closed?null:stamp; }
+  else{
+    if(rec.answered){ rec.answered=null; }
+    else{
+      const a=prompt("Answer for: "+rec.text+"\n\n(What is the decision? This is what goes out in the summary.)","");
+      if(a===null) return;
+      rec.answered=stamp; rec.answer=a;
+    }
+  }
+  window._miData=d;
+  if(await _miSave()){
+    _logAudit(((kind==='lag')?(rec.closed?"completed":"reopened"):(rec.answered?"completed":"reopened")), kind==='lag'?"lag item":"question", (rec.text||'').slice(0,80), rec.answer?("Answer: "+rec.answer):"");
+    openWeeklyMeeting('team');
+  }
+}
+async function _miNote(kind, id, val){
+  if(_blockIfReadOnly()) return;
+  const d=window._miData||{}; const rec=(d[kind]||{})[id]; if(!rec) return;
+  rec.note=val; window._miData=d; await _miSave();
+}
+// "What are we waiting on" hangs off the scheduled item itself, so it is still
+// there next Monday without anybody retyping it.
+async function _miItemNote(itemKey, val){
+  if(_blockIfReadOnly()) return;
+  const d=window._miData=window._miData||{}; d.notes=d.notes||{};
+  if(val) d.notes[itemKey]=val; else delete d.notes[itemKey];
+  await _miSave();
+}
+function _miItemNoteVal(itemKey){ return ((window._miData||{}).notes||{})[itemKey]||''; }
+
+// ===================== MONDAY MEETING — WEEK METADATA =====================
+// Ticks and confirmations belong to one week and are not carried, so they live
+// with that week's notes under keys that cannot collide with a property id.
+function _wmMeta(wk, kind, key){ return ((((window._wmData||{})[wk]||{})[kind]||{})[key])||{}; }
+async function _wmSetMeta(wk, kind, key, obj){
+  if(_blockIfReadOnly()) return false;
+  if(window._wmLoadOk===false){ alert("This week's meeting could not be loaded a moment ago. Saving now would overwrite the real record with a blank one, so this save was stopped."); return false; }
+  const d=window._wmData=window._wmData||{};
+  d[wk]=d[wk]||{}; d[wk][kind]=d[wk][kind]||{}; d[wk][kind][key]=obj;
+  const err=await _pmSettingsWrite('meeting_notes', d);
+  if(err){ alert("THAT WAS NOT SAVED — "+err); return false; }
+  return true;
+}
+async function _wmTick(wk, itemKey, val){
+  const m=Object.assign({}, _wmMeta(wk,'team','__done'));
+  if(m[itemKey]===val) delete m[itemKey]; else m[itemKey]=val;
+  if(await _wmSetMeta(wk,'team','__done',m)) openWeeklyMeeting('team', wk);
+}
+async function _wmConf(wk, itemKey, field, on){
+  const m=Object.assign({}, _wmMeta(wk,'team','__conf'));
+  const row=Object.assign({}, m[itemKey]||{});
+  row[field]=!!on; m[itemKey]=row;
+  await _wmSetMeta(wk,'team','__conf',m);
+}
+// Monday of a week key, and the Sunday that closes it.
+function _wmRange(wk, weeks){
+  const mon=new Date(wk+"T00:00:00");
+  const end=new Date(mon.getTime()+((weeks||1)*7-1)*86400000);
+  return {from:_ymd(mon), to:_ymd(end)};
+}
+
+// ===================== MONDAY MEETING — SCHEDULED WORK =====================
+// One list mixing tasks and calendar events for a property inside a date window,
+// so the room walks the week rather than two separate lists.
+function _wmItems(pid, from, to){
+  const out=[];
+  (typeof _tasksCache!=='undefined'?_tasksCache:[]).forEach(t=>{
+    if(t.property_id!==pid) return;
+    const d=t.due_date||''; if(!d || d<from || d>to) return;
+    out.push({key:'t:'+t.id, id:t.id, type:'task', date:d, title:t.title||'Task',
+              sub:(taskAssignees(t).join(', ')||'Unassigned')+(t.category?(' · '+t.category):''),
+              done:t.status==='done', kind:'t', kindLabel:'Task'});
+  });
+  (typeof _calEventsCache!=='undefined'?_calEventsCache:[]).forEach(e=>{
+    if(e.property_id!==pid) return;
+    const d=e.event_date||''; if(!d || d<from || d>to) return;
+    const isC=e.kind==='contractor';
+    out.push({key:'e:'+e.id, id:e.id, type:'event', date:d,
+              title:isC?(_contractorName(e.contractor_id)||'Contractor'):(e.title||(e.kind==='material'?'Material':'Event')),
+              sub:isC?'Contractor booking':(e.kind==='material'?'Material / delivery':'Scheduled'),
+              done:!!e.completed, kind:isC?'c':'m', kindLabel:isC?'Contractor':(e.kind==='material'?'Material':'Scheduled')});
+  });
+  return out.sort((a,b)=>a.date<b.date?-1:(a.date>b.date?1:String(a.title).localeCompare(String(b.title))));
+}
+// Reschedule from inside the meeting. This is the whole point of the button:
+// the new date goes onto the calendar or the task itself, not into a note.
+function _wmReschedOpen(itemKey){
+  const host=document.getElementById('rs-'+itemKey.replace(':','-'));
+  if(!host) return;
+  host.innerHTML=`<input type="date" onchange="_wmReschedDo('${itemKey}',this.value)" style="padding:3px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:11.5px"/>`;
+  const inp=host.querySelector('input'); if(inp) inp.focus();
+}
+async function _wmReschedDo(itemKey, val){
+  if(_blockIfReadOnly()) return;
+  if(!val) return;
+  const [kind,id]=[itemKey.slice(0,1), itemKey.slice(2)];
+  // Weekends and federal holidays are not work days, so a reschedule lands on
+  // the next business day the same way every other date in the app does.
+  let due=(typeof _nextBusinessDay==='function')?_nextBusinessDay(val):val;
+  if(due!==val && !confirm(val+" is a weekend or a holiday.\n\nMove it to "+due+" instead?")) return;
+  if(kind==='t'){
+    const t=(_tasksCache||[]).find(x=>x.id===id); if(!t) return;
+    const asg=taskAssignees(t);
+    if(typeof _fdConfirmSchedule==='function' && !_fdConfirmSchedule(asg, due)) return;
+    // A reschedule starts a new attempt: the on-time score counts it as another
+    // go at the same job, which is what makes "one for two" work.
+    const patch={due_date:due, reschedule_count:(t.reschedule_count||0)+1};
+    const {data,error}=await supabase.from("pm_tasks").update(patch).eq("id",id).select("id");
+    if(error||!data||!data.length){ alert("That task was NOT rescheduled — "+((error&&error.message)||"nothing saved, refresh and try again")); return; }
+    _logAudit("updated","task",t.title||"",'Rescheduled in the Monday meeting: '+(t.due_date||'no date')+' → '+due);
+    await loadTasks();
+  } else {
+    const e=(_calEventsCache||[]).find(x=>x.id===id); if(!e) return;
+    const {data,error}=await supabase.from("pm_calendar_events").update({event_date:due}).eq("id",id).select("id");
+    if(error||!data||!data.length){ alert("That booking was NOT rescheduled — "+((error&&error.message)||"nothing saved, refresh and try again")); return; }
+    _logAudit("updated","calendar",_locLabel(e),'Rescheduled in the Monday meeting: '+(e.event_date||'no date')+' → '+due);
+    await loadCalendarEventsFromSupabase();
+  }
+  openWeeklyMeeting('team');
+}
+
+// ===================== MONDAY MEETING — THE TWO FINISH DATES =====================
+// Committed finish (c.end) is agreed once in the project meeting and then left
+// alone — it is the only thing on-time-versus-late is scored against, so if it
+// drifts the score is worthless. Estimated finish is the one that moves, and
+// every push is logged with a date and a reason.
+function _wmEst(c){ return ((c.checklists||{}).est_finish)||''; }
+function _wmPushes(c){ const p=(c.checklists||{}).est_pushes; return Array.isArray(p)?p:[]; }
+function _wmEstDrift(c){
+  const est=_wmEst(c), com=c.end||'';
+  if(!est||!com) return null;
+  return Math.round((Date.parse(est+"T00:00:00")-Date.parse(com+"T00:00:00"))/86400000);
+}
+async function _wmChecklistPatch(pid, patch){
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return false;
+  const cl=Object.assign({}, c.checklists||{}, patch);
+  const {data,error}=await supabase.from("pm_properties").update({checklists:cl}).eq("id",pid).select("id");
+  if(error||!data||!data.length){ alert("That was NOT saved — "+((error&&error.message)||"nothing changed, refresh and try again")); return false; }
+  c.checklists=cl; return true;
+}
+async function _wmEstSet(pid, val, why){
+  if(_blockIfReadOnly()) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return;
+  const from=_wmEst(c)||c.end||'';
+  if(!val || val===from) return;
+  const reason=(why!=null)?why:(prompt("Moving the estimated finish from "+(from||'—')+" to "+val+".\n\nWhat pushed it? (this shows in the summary)","")||'');
+  const pushes=_wmPushes(c).slice();
+  pushes.push({from:from||null, to:val, at:_ymd(new Date()), why:reason, by:_miWho()});
+  if(await _wmChecklistPatch(pid,{est_finish:val, est_pushes:pushes})){
+    _logAudit("updated","property",c.addr||"","Estimated finish "+(from||'—')+" → "+val+(reason?(" — "+reason):""));
+    openWeeklyMeeting('team');
+  }
+}
+// "Yes, still on pace" is an answer worth recording, not a no-op: it is how you
+// tell a date nobody has looked at from one that was confirmed this morning.
+async function _wmPaceOk(pid){
+  if(_blockIfReadOnly()) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return;
+  if(await _wmChecklistPatch(pid,{est_checked:_ymd(new Date())})) openWeeklyMeeting('team');
+}
+// The committed date can be changed - it just has to be deliberate.
+async function _wmCommitSet(pid, val, el){
+  if(_blockIfReadOnly()) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return;
+  if(c.end && val!==c.end){
+    if(!confirm("The committed finish date for "+(c.addr||'this property')+" is "+c.end+".\n\nThis is the date on-time versus late is measured against, so it is meant to stay put once the room agrees it — the estimated finish is the one to move.\n\nChange it to "+val+" anyway?")){
+      if(el) el.value=c.end||''; return;
+    }
+  }
+  await _wmDeal(pid,'end_date',val,el);
+  openWeeklyMeeting('team');
+}
+
+// ===================== MONDAY MEETING — CLOSING THE WEEK =====================
+// "Meeting complete" is what turns a week of typing into a record. It stamps who
+// closed it and when, locks the boxes so nothing drifts after the room emptied,
+// and the PDF and the email are both generated off that closed record - so what
+// Tommy reads afterwards is exactly what was agreed, not somebody's later edit.
+function _wmClosedBanner(wk, rec){
+  if(!rec || !rec.at) return '';
+  const can=(typeof canApprove==='function') && canApprove(typeof _myProfile!=='undefined'?_myProfile:null);
+  return `<div style="background:#EAF7F1;border:1px solid #BFE5D4;border-radius:10px;padding:11px 15px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+    <div style="font-size:13.5px;color:#0d6b4a"><b>&#10003; This meeting is closed.</b> Marked complete by ${_calEsc(rec.by||'someone')} on ${_calEsc(_wmWhen(rec.at))}. The boxes are locked so the record matches what the room agreed.</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button onclick="_wmOpenSummary('${wk}')" style="padding:6px 13px;background:#122A4A;color:#fff;border:none;border-radius:7px;font-size:12.5px;cursor:pointer;font-weight:600">&#8595; Summary / PDF</button>
+      ${can?`<button onclick="_wmReopen('${wk}')" style="padding:6px 13px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#777;cursor:pointer">Reopen</button>`:''}
+    </div></div>`;
+}
+function _wmWhen(iso){ try{ return new Date(iso).toLocaleString(undefined,{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}); }catch(e){ return iso; } }
+function _wmCloseBar(wk, rec, isPast){
+  if(rec && rec.at) return '';
+  if(isReadOnly()) return '';
+  if(isPast) return `<div style="margin-top:18px;font-size:12.5px;color:#999">This is a past week and was never marked complete. <span onclick="_wmOpenSummary('${wk}')" style="color:#185FA5;cursor:pointer">Build a summary from it anyway &rsaquo;</span></div>`;
+  return `<div style="margin-top:20px;background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:14px 16px;display:flex;gap:9px;align-items:center;flex-wrap:wrap">
+    <div style="font-size:13px;color:#555;margin-right:4px"><b>When the meeting is over:</b></div>
+    <button onclick="_wmComplete('${wk}')" style="padding:8px 16px;background:#122A4A;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">&#10003; Meeting complete</button>
+    <button onclick="_wmOpenSummary('${wk}')" style="padding:8px 15px;background:#fff;border:0.5px solid #cdd7e6;border-radius:8px;font-size:13px;color:#185FA5;cursor:pointer;font-weight:600">&#8595; Preview the summary</button>
+    <div style="font-size:12px;color:#999;flex-basis:100%;margin-top:2px">Closing the week files it under <b>Previous meetings</b>, locks the boxes, and carries the open lag-time items and questions into next Monday. You can reopen it.</div>
+  </div>`;
+}
+async function _wmComplete(wk){
+  if(_blockIfReadOnly()) return;
+  if(!confirm("Mark this Monday's meeting complete?\n\nThe boxes lock, the week is filed under Previous meetings, and the summary is generated from what is written now. Open lag-time items and unanswered questions carry into next Monday.\n\nYou can reopen it if you need to.")) return;
+  const rec={at:new Date().toISOString(), by:_miWho()};
+  if(await _wmSetMeta(wk,'team','__closed',rec)){
+    _logAudit("completed","meeting","Project Team Meeting — week of "+wk,"Marked complete");
+    openWeeklyMeeting('team', wk);
+    setTimeout(()=>_wmOpenSummary(wk), 200);
+  }
+}
+async function _wmReopen(wk){
+  if(_blockIfReadOnly()) return;
+  if(!canApprove(typeof _myProfile!=='undefined'?_myProfile:null)){ alert("Only Bruce, Marlo or Tommy can reopen a closed meeting."); return; }
+  if(!confirm("Reopen this meeting so it can be edited again?")) return;
+  if(await _wmSetMeta(wk,'team','__closed',{})){
+    _logAudit("reopened","meeting","Project Team Meeting — week of "+wk,"Reopened for editing");
+    openWeeklyMeeting('team', wk);
+  }
+}
+
+// ---- what the summary is made of --------------------------------------------
+function _wmSummaryData(wk){
+  const notes=(((window._wmData||{})[wk]||{})['team'])||{};
+  const cons=["Vacant / On Standby","Pre Construction","Waiting Permits","Framing, MEPS, Insulation","Drywall / Exterior Work","Finishes","Pre List / Punchout Process"];
+  const _num=(a)=>{ const m=String(a||'').match(/\d+/); return m?parseInt(m[0],10):999999; };
+  const cards=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && cons.includes(c.phase)).sort((a,b)=>_num(a.addr)-_num(b.addr));
+  const money=(v)=>{const n=parseFloat(String(v||"").replace(/[^0-9.\-]/g,""));return isNaN(n)?null:n;};
+  let tb=0, ts=0, over=[], late=[], moved=[];
+  cards.forEach(c=>{
+    const m=_wmCalc(c);
+    if(m.b!=null) tb+=m.b;
+    if(m.s!=null) ts+=m.s;
+    if(m.left!=null && m.left<0) over.push({c:c, m:m, note:notes[c.id+'::money']||''});
+    const drift=_wmEstDrift(c);
+    if(drift!=null && drift>0) late.push({c:c, drift:drift});
+    // A push counts as "moved this week" if it was logged in the seven days to Sunday.
+    const wkEnd=_ymd(new Date(new Date(wk+"T00:00:00").getTime()+6*86400000));
+    _wmPushes(c).forEach(p=>{ if(p.at && p.at>=wk && p.at<=wkEnd) moved.push({c:c, p:p}); });
+  });
+  const wins=cards.map(c=>({c:c, t:(notes[c.id+'::wins']||'').trim()})).filter(x=>x.t);
+  const lag=_miOpen('lag').sort((a,b)=>String(a.raised||'').localeCompare(String(b.raised||'')));
+  const qs=_miOpen('q').sort((a,b)=>String(a.raised||'').localeCompare(String(b.raised||'')));
+  const unassigned=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status!=="done" && taskAssignees(t).length===0)
+    .sort((a,b)=>String(a.due_date||'9999').localeCompare(String(b.due_date||'9999')));
+  const fwd=_wmRange(wk,2);
+  const booked=[];
+  cards.forEach(c=>{ _wmItems(c.id,fwd.from,fwd.to).forEach(it=>booked.push({c:c,it:it})); });
+  booked.sort((a,b)=>String(a.it.date).localeCompare(String(b.it.date)));
+  const conf=notes['__conf']||{};
+  return {notes:notes, cards:cards, tb:tb, ts:ts, over:over, late:late, moved:moved, wins:wins,
+          lag:lag, qs:qs, unassigned:unassigned, booked:booked, conf:conf, closed:notes['__closed']||{}};
+}
+function _wmMoneyShort(n){
+  if(n==null) return '&mdash;';
+  const a=Math.abs(n);
+  const s=a>=1000000?('$'+(a/1000000).toFixed(2)+'m'):a>=1000?('$'+Math.round(a/1000)+'k'):('$'+Math.round(a));
+  return (n<0?'&minus;':'')+s;
+}
+function _wmDateShort(d){ if(!d) return '&mdash;'; try{ return new Date(d+"T00:00:00").toLocaleDateString(undefined,{day:'numeric',month:'short'}); }catch(e){ return d; } }
+
+// ---- the printable sheet ----------------------------------------------------
+function _wmSummaryHtml(wk){
+  const D=_wmSummaryData(wk);
+  const leftover=(D.tb&&D.ts)?(D.tb-D.ts):null;
+  const esc=_calEsc;
+  const row=(cells)=>'<tr>'+cells.map(c=>'<td'+(c[1]?' class="'+c[1]+'"':'')+'>'+c[0]+'</td>').join('')+'</tr>';
+  const sec=(title,right,inner)=>`<div class="sec"><div class="sech"><h3>${title}</h3><span class="cnt">${right||''}</span></div>${inner}</div>`;
+  const none=(t)=>`<div class="none">${t}</div>`;
+
+  const movedTbl=D.moved.length?`<div class="scroller"><table><thead><tr><th>Property</th><th>Committed</th><th>Now</th><th class="num">&Delta;</th><th>Reason given</th></tr></thead><tbody>`+
+    D.moved.map(x=>row([[ '<b>'+esc(x.c.addr||'')+'</b>' ],[_wmDateShort(x.c.end),'num'],[_wmDateShort(x.p.to),'num'],
+      [(()=>{const d=_wmEstDrift(x.c); return d==null?'&mdash;':((d>0?'+':'')+d);})(),'num'],[esc(x.p.why||'not given')]])).join('')+
+    '</tbody></table></div>':none('No finish estimate moved this week.');
+
+  const overTbl=D.over.length?`<div class="scroller"><table><thead><tr><th>Property</th><th>PM</th><th class="num">Budgeted</th><th class="num">Spent</th><th class="num">Over by</th><th>Said in the meeting</th></tr></thead><tbody>`+
+    D.over.map(x=>row([['<b>'+esc(x.c.addr||'')+'</b>'],[esc(x.c.pm||'&mdash;')],[_wmMoneyShort(x.m.b),'num'],[_wmMoneyShort(x.m.s),'num'],
+      ['<span class="red">'+_wmMoneyShort(x.m.left)+'</span>','num'],[esc(x.note)||'<span class="q">nothing written</span>']])).join('')+
+    '</tbody></table></div>':none('Nothing is over budget.');
+
+  const lagList=D.lag.length?'<div class="items">'+D.lag.map(x=>{
+    const c=(typeof propCards!=='undefined'?propCards:[]).find(p=>p.id===x.pid);
+    return `<div class="item"><div class="age" style="color:${_miAgeColor(x.raised)}">${_miAgeLabel(x.raised)}</div>
+      <div class="ib"><div class="t">${c?('<b>'+esc(c.addr||'')+'</b> &mdash; '):''}${esc(x.text)}</div>
+      <div class="s">Raised ${esc(x.raised||'')} by ${esc(x.by||'')}${x.note?(' &middot; '+esc(x.note)):''}</div></div></div>`;
+  }).join('')+'</div>':none('Nothing on a long lead is open.');
+
+  // Bruce's replacement for the full property table: what actually needs a person.
+  const qList=D.qs.length?'<div class="items">'+D.qs.map(x=>{
+    const c=(typeof propCards!=='undefined'?propCards:[]).find(p=>p.id===x.pid);
+    return `<div class="item"><div class="age" style="color:${_miAgeColor(x.raised)}">${_miAgeLabel(x.raised)}</div>
+      <div class="ib"><div class="t">${c?('<b>'+esc(c.addr||'')+'</b> &mdash; '):''}${esc(x.text)}</div>
+      <div class="s">Needs <b>${esc(x.who||'an answer')}</b> &middot; asked by ${esc(x.by||'')} on ${esc(x.raised||'')}</div></div></div>`;
+  }).join('')+'</div>':none('Nothing is waiting on Bruce or Tommy.');
+
+  const unTbl=D.unassigned.length?`<div class="scroller"><table><thead><tr><th>Task</th><th>Property</th><th class="num">Due</th></tr></thead><tbody>`+
+    D.unassigned.slice(0,25).map(t=>row([[esc(t.title||'')],[esc(_locLabel(t)||'&mdash;')],[t.due_date?_wmDateShort(t.due_date):'no date','num']])).join('')+
+    '</tbody></table></div>'+(D.unassigned.length>25?`<div class="s" style="margin-top:5px">+ ${D.unassigned.length-25} more on the board</div>`:'')
+    :none('Every open task has somebody on it.');
+
+  const bookTbl=D.booked.length?`<div class="scroller"><table><thead><tr><th class="num">When</th><th>Property</th><th>What</th><th>Confirmed</th><th>Waiting on</th></tr></thead><tbody>`+
+    D.booked.slice(0,30).map(x=>{
+      const cf=D.conf[x.it.key]||{};
+      const pill=cf.c?'<span class="pill on">Confirmed</span>':'<span class="pill off">Not confirmed</span>';
+      return row([[_wmDateShort(x.it.date),'num'],['<b>'+esc(x.c.addr||'')+'</b>'],[esc(x.it.title)],[pill],[esc(_miItemNoteVal(x.it.key))||'&mdash;']]);
+    }).join('')+'</tbody></table></div>':none('Nothing is booked for the next two weeks.');
+
+  const winList=D.wins.length?'<ul>'+D.wins.map(x=>`<li><b>${esc(x.c.addr||'')}</b> &mdash; ${esc(x.t)}</li>`).join('')+'</ul>':none('No wins written up this week.');
+
+  const present=D.closed.by?('Closed by '+esc(D.closed.by)):'Not yet marked complete';
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Monday Meeting Summary — week of ${esc(wk)}</title>
+<style>
+ :root{--paper:#fff;--ink:#16181D;--muted:#5D6472;--faint:#8A91A0;--rule:#DCE0E8;--hair:#EDEFF4;
+       --navy:#122A4A;--navy-soft:#EAEEF5;--bad:#B42318;--bad-soft:#FBEAE8;--good:#0F7B54;--good-soft:#E6F4ED;--warn:#B7791F;--plum:#4A1D6E;}
+ *{box-sizing:border-box}
+ body{background:#E4E2DD;color:var(--ink);margin:0;padding:22px 14px 60px;
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.45}
+ .sheet{max-width:900px;margin:0 auto;background:var(--paper);border-radius:3px;
+        box-shadow:0 1px 2px rgba(20,24,35,.10),0 8px 26px rgba(20,24,35,.13);overflow:hidden}
+ .mast{background:var(--navy);color:#fff;padding:16px 26px;display:flex;justify-content:space-between;align-items:flex-end;gap:14px;flex-wrap:wrap}
+ .mast .co{font-size:10px;text-transform:uppercase;letter-spacing:.16em;opacity:.72;margin-bottom:3px}
+ .mast h2{margin:0;font-size:21px;font-weight:600}
+ .mast .when{font-size:11.5px;text-align:right;opacity:.85;line-height:1.7;font-family:ui-monospace,Menlo,monospace}
+ .pad{padding:20px 26px}
+ .sec{margin-bottom:22px}.sec:last-child{margin-bottom:0}
+ .sech{display:flex;align-items:baseline;gap:10px;border-bottom:1.5px solid var(--navy);padding-bottom:5px;margin-bottom:11px}
+ .sech h3{margin:0;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:var(--navy)}
+ .sech .cnt{font-size:11px;color:var(--faint);margin-left:auto;font-family:ui-monospace,Menlo,monospace}
+ .kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:6px;overflow:hidden;margin-bottom:20px}
+ .kpi{background:#fff;padding:11px 13px}
+ .kpi .k{font-size:9px;text-transform:uppercase;letter-spacing:.07em;color:var(--faint);white-space:nowrap}
+ .kpi .v{font-family:ui-monospace,Menlo,monospace;font-size:19px;font-weight:600;margin-top:3px;font-variant-numeric:tabular-nums}
+ .kpi .s{font-size:10px;color:var(--faint);margin-top:1px}
+ table{width:100%;border-collapse:collapse;font-size:12px}
+ thead th{background:var(--navy-soft);color:var(--navy);font-size:9.5px;text-transform:uppercase;letter-spacing:.06em;text-align:left;padding:6px 9px;font-weight:600;white-space:nowrap}
+ tbody td{padding:7px 9px;border-bottom:1px solid var(--hair);vertical-align:top}
+ tbody tr:last-child td{border-bottom:0}
+ .num{font-family:ui-monospace,Menlo,monospace;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+ .scroller{overflow-x:auto}
+ .red{color:var(--bad)}.grn{color:var(--good)}.amb{color:var(--warn)}.q{color:var(--faint)}
+ .none{font-size:12.5px;color:var(--faint);padding:6px 0}
+ .items{display:flex;flex-direction:column;gap:8px}
+ .item{display:flex;gap:11px;align-items:flex-start;padding-bottom:8px;border-bottom:1px solid var(--hair)}
+ .item:last-child{border-bottom:0;padding-bottom:0}
+ .age{font-family:ui-monospace,Menlo,monospace;font-size:11px;flex-shrink:0;width:52px;padding-top:1px;font-weight:600}
+ .ib{flex:1;min-width:0}.ib .t{font-size:12.5px}.ib .s{font-size:11.5px;color:var(--muted);margin-top:1px}
+ .pill{font-size:9px;text-transform:uppercase;letter-spacing:.05em;padding:1px 6px;border-radius:99px;font-weight:600;white-space:nowrap;display:inline-block}
+ .pill.on{background:var(--good-soft);color:var(--good)}.pill.off{background:var(--bad-soft);color:var(--bad)}
+ ul{margin:0;padding-left:17px;font-size:12.5px;line-height:1.6}li{margin-bottom:5px}
+ .two{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+ .foot{border-top:1px solid var(--rule);padding:12px 26px 18px;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:10.5px;color:var(--faint);font-family:ui-monospace,Menlo,monospace}
+ .bar{max-width:900px;margin:0 auto 14px;display:flex;gap:9px;flex-wrap:wrap;align-items:center}
+ .bar button{padding:8px 15px;border:1px solid var(--rule);border-radius:8px;background:#fff;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;color:var(--ink)}
+ .bar button.dark{background:var(--navy);border-color:var(--navy);color:#fff}
+ .bar .hint{font-size:12px;color:#6b6f78}
+ @media (max-width:760px){.kpis{grid-template-columns:repeat(2,1fr)}.two{grid-template-columns:1fr}}
+ @media print{body{background:#fff;padding:0}.sheet{box-shadow:none;max-width:none}.bar{display:none}}
+</style></head><body>
+<div class="bar">
+  <button class="dark" onclick="window.print()">&#8595; Save as PDF / Print</button>
+  <span class="hint">Your browser's print dialog has a <b>Save as PDF</b> destination — that is the file you attach.</span>
+</div>
+<div class="sheet">
+  <div class="mast">
+    <div><div class="co">Legacy Homes &middot; Project Team</div><h2>Monday Meeting Summary</h2></div>
+    <div class="when">Week of ${esc(_wmLabel(wk))}<br>${present}<br>${D.cards.length} properties reviewed</div>
+  </div>
+  <div class="pad">
+    <div class="kpis">
+      <div class="kpi"><div class="k">Properties reviewed</div><div class="v">${D.cards.length}</div><div class="s">vacant &rarr; pre-list</div></div>
+      <div class="kpi"><div class="k">Budgeted</div><div class="v">${_wmMoneyShort(D.tb||null)}</div><div class="s">across the ${D.cards.length}</div></div>
+      <div class="kpi"><div class="k">Spent</div><div class="v">${_wmMoneyShort(D.ts||null)}</div><div class="s">${D.tb?Math.round((D.ts/D.tb)*100):0}% of budget</div></div>
+      <div class="kpi"><div class="k">Leftover</div><div class="v ${leftover!=null&&leftover<0?'red':'grn'}">${_wmMoneyShort(leftover)}</div><div class="s">${D.over.length} over budget</div></div>
+      <div class="kpi"><div class="k">Past committed finish</div><div class="v amb">${D.late.length}</div><div class="s">of ${D.cards.length}</div></div>
+    </div>
+    ${sec('Needs an answer from Bruce or Tommy', D.qs.length+' open', qList)}
+    ${sec('Unassigned tasks', D.unassigned.length+' with nobody on them', unTbl)}
+    ${sec('Timeline moved this week', D.moved.length+' pushed', movedTbl)}
+    ${sec('Over budget', D.over.length+' propert'+(D.over.length===1?'y':'ies'), overTbl)}
+    ${sec('Lag-time items still open', D.lag.length+' open', lagList)}
+    ${sec('Booked for the next two weeks', D.booked.length+' items', bookTbl)}
+    ${sec('Wins this week','', winList)}
+  </div>
+  <div class="foot"><span>Generated from the live property cards &middot; Legacy Homes PM Hub</span><span>${esc(_wmWhen(new Date().toISOString()))}</span></div>
+</div>
+</body></html>`;
+}
+function _wmOpenSummary(wk){
+  const html=_wmSummaryHtml(wk);
+  const w=window.open('','_blank');
+  if(!w){ alert("Your browser blocked the summary window. Allow pop-ups for this site and try again."); return; }
+  w.document.open(); w.document.write(html); w.document.close();
+}
+
+// The roll-up that replaced the old "Priority Q for Tommy" box. Instead of one
+// free-text box nobody cleared, it is the live list of what is actually waiting
+// on a person - questions raised on any property, plus every open task with
+// nobody's name on it.
+function _wmOpenQuestionsPanel(cards){
+  const qs=_miOpen('q').sort((a,b)=>String(a.raised||'').localeCompare(String(b.raised||'')));
+  const un=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status!=="done" && taskAssignees(t).length===0)
+    .sort((a,b)=>String(a.due_date||'9999').localeCompare(String(b.due_date||'9999')));
+  const all=(typeof propCards!=='undefined'?propCards:[]);
+  const ro=isReadOnly();
+  const qRows=qs.length?qs.map(x=>{
+    const c=all.find(p=>p.id===x.pid);
+    return `<div style="display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:0.5px solid #f4f5f7">
+      <div style="font-family:ui-monospace,Menlo,monospace;font-size:11px;font-weight:600;color:${_miAgeColor(x.raised)};width:52px;flex-shrink:0;padding-top:2px">${_miAgeLabel(x.raised)}</div>
+      <div style="flex:1;min-width:0"><div style="font-size:13.5px;color:#111">${c?`<span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span> &mdash; `:''}${_calEsc(x.text)}</div>
+        <div style="font-size:11.5px;color:#888;margin-top:1px">Needs <b>${_calEsc(x.who||'an answer')}</b> &middot; asked by ${_calEsc(x.by||'')} on ${_calEsc(x.raised||'')}</div></div>
+      ${ro?'':`<button onclick="_miClose('q','${x.id}')" style="padding:4px 11px;border:0.5px solid #cdd7e6;border-radius:6px;background:#fff;font-size:11.5px;color:#185FA5;cursor:pointer;white-space:nowrap">Answer it</button>`}
+    </div>`;
+  }).join(''):'<div style="font-size:12.5px;color:#bbb;padding:8px 0">Nothing is waiting on Bruce or Tommy.</div>';
+  const unRows=un.length?un.slice(0,15).map(t=>`<div style="display:flex;gap:10px;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:0.5px solid #f4f5f7">
+      <div style="min-width:0;flex:1"><div style="font-size:13.5px;color:#111">${t.category?`<span style="font-size:11px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:6px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title||'')}</div>
+        <div style="font-size:11.5px;color:#888;margin-top:1px">${_locLabel(t)?_calEsc(_locLabel(t))+' &middot; ':''}${t.due_date?('Due '+_calEsc(t.due_date)):'No due date'}</div></div>
+      ${ro?'':`<select onchange="assignTask('${t.id}', this.value)" style="font-size:12px;padding:5px 8px;border:0.5px solid #ddd;border-radius:6px;background:#fff;color:#333"><option value="">Assign to&hellip;</option>${teamMembers().map(n=>`<option value="${_calEsc(n)}">${_calEsc(n)}</option>`).join('')}</select>`}
+    </div>`).join('')+(un.length>15?`<div style="font-size:12px;color:#999;padding-top:6px">+ ${un.length-15} more &mdash; the full list is on the PM Assistant dashboard.</div>`:'')
+    :'<div style="font-size:12.5px;color:#bbb;padding:8px 0">Every open task has somebody on it.</div>';
+  return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:14px 16px;margin-top:18px">
+    <div style="font-size:14px;font-weight:700;color:#111;margin-bottom:2px">&#9889; Needs a person &mdash; questions and unassigned work</div>
+    <div style="font-size:12px;color:#999;margin-bottom:10px">Everything the room could not settle on its own. This is the section that goes out at the top of the summary.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
+      <div><div style="font-size:12px;font-weight:700;color:#111;text-transform:uppercase;letter-spacing:.05em;border-bottom:1.5px solid #122A4A;padding-bottom:4px;margin-bottom:4px">Questions for Bruce / Tommy <span style="float:right;font-weight:400;color:#aaa;text-transform:none;letter-spacing:0">${qs.length}</span></div>${qRows}</div>
+      <div><div style="font-size:12px;font-weight:700;color:#111;text-transform:uppercase;letter-spacing:.05em;border-bottom:1.5px solid #122A4A;padding-bottom:4px;margin-bottom:4px">Unassigned tasks <span style="float:right;font-weight:400;color:#aaa;text-transform:none;letter-spacing:0">${un.length}</span></div>${unRows}</div>
+    </div></div>`;
+}
+
 function openWeeklyMeeting(kind, week){
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
-  if(window._wmData===undefined||window._wmData===null){ if(window._wmData===undefined){ window._wmData=null; Promise.all([_wmLoad(), (window._pdnData===undefined?( (window._pdnData=null), _pdnLoad()):Promise.resolve())]).then(()=>openWeeklyMeeting(kind)); document.getElementById("dash-body").innerHTML='<div style="padding:40px;text-align:center;color:#999">Loading meeting…</div>'; return; } }
+  // Hiding the menu item is not the same as closing the door - this screen can
+  // also be reached from a restored nav state or a link, so check here too.
+  if(kind==='ceo' && !_canSeeCeoMeeting()){
+    document.getElementById("dash-body").innerHTML=`<div class="empty-state">
+      <div class="icon">🔒</div>
+      <p style="color:#888;font-size:16px;font-weight:500">Director / CEO Meeting</p>
+      <p style="color:#555;font-size:14px;margin-top:6px;max-width:420px;margin-left:auto;margin-right:auto">This one is just for Bruce and Tommy. If you need to be in it, ask Bruce to turn it on for your account in Settings → Permissions.</p>
+    </div>`;
+    return;
+  }
+  if(window._wmData===undefined||window._wmData===null){ if(window._wmData===undefined){ window._wmData=null; Promise.all([_wmLoad(), _miLoad(), (window._pdnData===undefined?( (window._pdnData=null), _pdnLoad()):Promise.resolve())]).then(()=>openWeeklyMeeting(kind, week)); document.getElementById("dash-body").innerHTML='<div style="padding:40px;text-align:center;color:#999">Loading meeting…</div>'; return; } }
   const titles={team:'🤝 Project Team Meeting',kickoff:'🚀 Kickoff Meeting',company:'🏢 Full Company Meeting',ceo:'👔 Director / CEO Meeting'};
   const liveWk=_wmWeekKey();
   const wk = week || liveWk;
@@ -4246,77 +4759,192 @@ function openWeeklyMeeting(kind, week){
     // market - or handed to rentals - it leaves the Monday construction walk-through
     // and picks up in the On the Market meeting instead.
     const cons=["Vacant / On Standby","Pre Construction","Waiting Permits","Framing, MEPS, Insulation","Drywall / Exterior Work","Finishes","Pre List / Punchout Process"];
-    // Ordered by house number so the room walks the list 1 → 9; deliberately NOT grouped by
+    // Ordered by house number so the room walks the list 1 -> 9; deliberately NOT grouped by
     // PM, so while one property is discussed the other PMs can keep typing and texting.
     const _num=(a)=>{ const m=String(a||'').match(/\d+/); return m?parseInt(m[0],10):999999; };
     const cards=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && cons.includes(c.phase)).sort((a,b)=>_num(a.addr)-_num(b.addr)||String(a.addr||'').localeCompare(String(b.addr||'')));
+    const lastWk=_wmPrevWeek(wk);
+    const lastR=_wmRange(lastWk,1);     // Mon-Sun of the week just gone
+    const fwdR=_wmRange(wk,2);          // this week and next week - not three
+    const doneMap=_wmMeta(wk,'team','__done');
+    const confMap=_wmMeta(wk,'team','__conf');
+    const closedRec=_wmMeta(wk,'team','__closed');
+    const isClosed=!!closedRec.at;
+    const roNow=isReadOnly()||isClosed||isPast;
+    // A plain box with no "last week" panel above it, for the things that are
+    // meant to start empty every Monday.
+    const ta2=(key,ph,minH)=>roNow
+      ? `<div style="font-size:13px;color:#333;white-space:pre-wrap;background:#F7F8FB;border-radius:8px;padding:9px 11px;min-height:34px">${_calEsc(notes[key]||'')||'<span style="color:#bbb">Nothing written</span>'}</div>`
+      : `<textarea id="wm-${key}" placeholder="${ph}" style="width:100%;min-height:${minH||54}px;padding:9px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:13.5px;color:#222;resize:vertical;font-family:inherit">${_calEsc(notes[key]||'')}</textarea>
+         <div style="display:flex;align-items:center;gap:8px;margin-top:4px"><button onclick="_wmSaveNote('${kind}','${key}','${wk}')" style="padding:5px 13px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer">Save</button><span id="wm-ok-${key}" style="display:none;font-size:12px;color:#1D9E75">Saved &#10003;</span></div>`;
+    const secHead=(t,right)=>`<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;background:#F7F8FB;border-radius:8px 8px 0 0;padding:7px 12px;border-bottom:0.5px solid #eef0f6"><div style="font-size:12px;font-weight:700;color:#111">${t}</div><div style="font-size:11.5px;color:#aaa">${right||''}</div></div>`;
+    const secWrap=(head,inner)=>`<div style="border:0.5px solid #e6e8ee;border-radius:9px;margin-top:11px;overflow:hidden">${head}<div style="padding:9px 12px">${inner}</div></div>`;
+    const kindPill=(k,l)=>{ const st=k==='c'?'background:#E1F5EE;color:#0F7B54':k==='m'?'background:#FBF3E2;color:#B7791F':'background:#E7EFF8;color:#185FA5'; return `<span style="font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;padding:1px 6px;border-radius:99px;font-weight:600;margin-right:6px;${st}">${l}</span>`; };
+    const dayLbl=(d)=>{ try{ return new Date(d+"T00:00:00").toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short'}); }catch(e){ return d; } };
+    const rsBtn=(it)=>roNow?'':`<span id="rs-${it.key.replace(':','-')}"><button onclick="_wmReschedOpen('${it.key}')" style="padding:2px 9px;border:0.5px solid #e6e8ee;border-radius:6px;background:#fff;font-size:11.5px;color:#B7791F;cursor:pointer">&#8635; Reschedule</button></span>`;
+
     const blocks=cards.map(c=>{
       const _m=_wmCalc(c);
       const b=_m.b, s=_m.s, left=_m.left;
-      const cl=c.checklists||{};
-      const today=_ymd(new Date());
-      // Construction start is stamped automatically when the card leaves Pre Construction;
-      // timeline_done is stamped when it reaches Listed on the Market / Rental Handoff.
-      const cStart=_m.cStart, listed=_m.listed;
+      const cStart=_m.cStart;
       const rate=_m.rate, prodDays=_m.prodDays, prodLive=_m.prodLive;
-      // Total days accumulated - the whole clock, ending the day it was listed or
-      // handed to rentals. It should start the day the house went vacant, but only 4
-      // of 27 construction properties have ever had a vacancy date recorded, so fall
-      // back to the day we closed on it, then to the project start. The label always
-      // says which anchor was used, so an approximation never reads as fact.
       const accAnchor=_m.accAnchor, accDays=_m.accDays, accLive=_m.accLive;
       const perm=(c.checklists&&c.checklists.permitted)==='yes';
-      // id + data-label let _wmRefreshMetrics redraw just this box later.
-      const cell=(l,v,color,note,id)=>`<div ${id?`id="${id}" data-label="${l}"`:''} style="background:#f7f8fb;border-radius:7px;padding:7px 10px"><div style="font-size:10.5px;color:#999;text-transform:uppercase">${l}</div><div style="font-size:14px;font-weight:700;color:${color||'#111'}">${v}</div>${note?`<div style="font-size:10px;color:#aaa">${note}</div>`:''}</div>`;
-      const ro=isReadOnly();
-      const inp=(col,val,ph,w)=>ro?`<span style="font-size:13px;color:#111">${_calEsc(val)||'—'}</span>`:`<input value="${_calEsc(val)}" placeholder="${ph}" onchange="_wmDeal('${c.id}','${col}',this.value,this)" style="width:${w||110}px;padding:5px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px"/>`;
-      const dte=(col,val)=>ro?`<span style="font-size:13px;color:#111">${_calEsc(val)||'—'}</span>`:`<input type="date" value="${_calEsc(val)}" onchange="_wmDeal('${c.id}','${col}',this.value,this)" style="padding:5px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px"/>`;
+      // Metric boxes sit on the same visual tier as the deal fields below them -
+      // they were shouting over the row that actually gets filled in.
+      const cell=(l,v,color,note,id)=>`<div ${id?`id="${id}" data-label="${l}"`:''} style="background:#f7f8fb;border-radius:6px;padding:5px 9px"><div style="font-size:9.5px;color:#999;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap">${l}</div><div style="font-size:13px;font-weight:700;color:${color||'#111'}">${v}</div>${note?`<div style="font-size:9.5px;color:#aaa">${note}</div>`:''}</div>`;
+      const ro=roNow;
+      const inp=(col,val,ph,w)=>ro?`<span style="font-size:13px;color:#111">${_calEsc(val)||'&mdash;'}</span>`:`<input value="${_calEsc(val)}" placeholder="${ph}" onchange="_wmDeal('${c.id}','${col}',this.value,this)" style="width:${w||100}px;padding:5px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px"/>`;
       const fld=(label,inner)=>`<div style="display:flex;flex-direction:column;gap:3px"><div style="font-size:10.5px;color:#999;text-transform:uppercase;letter-spacing:.04em">${label}</div>${inner}</div>`;
+
+      const est=_wmEst(c), pushes=_wmPushes(c), drift=_wmEstDrift(c);
+      const paceDate=est||c.end||'';
+      const checkedOn=(c.checklists||{}).est_checked||'';
+      const commitCell=ro
+        ? `<span style="font-size:13px;color:#111">${_calEsc(c.end||'&mdash;')} &#128274;</span>`
+        : `<input type="date" value="${_calEsc(c.end||'')}" onchange="_wmCommitSet('${c.id}',this.value,this)" style="padding:5px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px"/>`;
+      const estCell=`<span style="font-size:13px;font-weight:600;color:${drift!=null&&drift>0?'#B7791F':'#111'}">${_calEsc(est||'&mdash;')}</span>${(drift!=null&&drift!==0)?`<div style="font-size:9.5px;font-weight:600;color:${drift>0?'#B42318':'#0F7B54'}">${drift>0?'+':''}${drift} day${Math.abs(drift)===1?'':'s'} vs committed</div>`:''}${pushes.length?`<div style="font-size:9.5px;color:#aaa">pushed ${pushes.length}&times;</div>`:''}`;
+
+      // ---- last week ----
+      const lastItems=_wmItems(c.id,lastR.from,lastR.to);
+      const lastRows=lastItems.length?lastItems.map(it=>{
+        const st=doneMap[it.key]||(it.done?'yes':'');
+        const tick=(v,label,col)=>roNow
+          ? `<span style="font-size:11.5px;color:${st===v?col:'#ccc'}">${st===v?'&#9745;':'&#9744;'} ${label}</span>`
+          : `<label onclick="_wmTick('${wk}','${it.key}','${v}')" style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:${st===v?col:'#888'};cursor:pointer"><span style="font-size:14px">${st===v?'&#9745;':'&#9744;'}</span>${label}</label>`;
+        return `<div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:0.5px solid #f4f5f7">
+          <div style="font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#888;width:74px;flex-shrink:0;padding-top:2px">${dayLbl(it.date)}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;color:#111">${kindPill(it.kind,it.kindLabel)}${_calEsc(it.title)}</div>
+            <div style="font-size:11.5px;color:#888;margin-top:1px">${_calEsc(it.sub)}</div>
+            <div style="display:flex;gap:13px;flex-wrap:wrap;align-items:center;margin-top:5px">${tick('yes','Completed','#0F7B54')}${tick('no','Not completed','#B42318')}${rsBtn(it)}</div>
+          </div></div>`;
+      }).join(''):'<div style="font-size:12.5px;color:#bbb;padding:8px 0">Nothing was scheduled on this property last week.</div>';
+
+      // ---- this week and next ----
+      const fwdItems=_wmItems(c.id,fwdR.from,fwdR.to);
+      const fwdRows=fwdItems.length?fwdItems.map(it=>{
+        const cf=confMap[it.key]||{};
+        const box=(f,label)=>roNow
+          ? `<span style="font-size:11.5px;color:${cf[f]?'#0F7B54':'#ccc'}">${cf[f]?'&#9745;':'&#9744;'} ${label}</span>`
+          : `<label style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:#888;cursor:pointer"><input type="checkbox" ${cf[f]?'checked':''} onchange="_wmConf('${wk}','${it.key}','${f}',this.checked)" style="width:14px;height:14px;cursor:pointer"/>${label}</label>`;
+        const note=_miItemNoteVal(it.key);
+        return `<div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:0.5px solid #f4f5f7">
+          <div style="font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#888;width:74px;flex-shrink:0;padding-top:2px">${dayLbl(it.date)}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;color:#111">${kindPill(it.kind,it.kindLabel)}${_calEsc(it.title)}</div>
+            <div style="font-size:11.5px;color:#888;margin-top:1px">${_calEsc(it.sub)}</div>
+            <div style="display:flex;gap:13px;flex-wrap:wrap;align-items:center;margin-top:5px">${box('c','Confirmed starting?')}${box('f','Followed up?')}${box('e','They have everything they need')}${rsBtn(it)}</div>
+            ${roNow?(note?`<div style="font-size:12px;color:#555;margin-top:5px;background:#F7F8FB;border-radius:6px;padding:6px 9px">${_calEsc(note)}</div>`:'')
+              :`<textarea onchange="_miItemNote('${it.key}',this.value)" placeholder="What are we waiting on?" style="width:100%;min-height:30px;margin-top:5px;padding:5px 8px;border:0.5px solid #e6e8ee;border-radius:6px;font-size:12.5px;resize:vertical;font-family:inherit">${_calEsc(note)}</textarea>`}
+          </div></div>`;
+      }).join(''):'<div style="font-size:12.5px;color:#bbb;padding:8px 0">Nothing booked on this property for the next two weeks.</div>';
+
+      // ---- lag-time items, carried until they close ----
+      const lag=_miFor('lag',c.id);
+      const lagRows=lag.length?lag.map(x=>`<div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:0.5px solid #f4f5f7">
+          <div style="font-family:ui-monospace,Menlo,monospace;font-size:11px;font-weight:600;color:${_miAgeColor(x.raised)};width:52px;flex-shrink:0;padding-top:2px">${_miAgeLabel(x.raised)}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;color:#111">${_calEsc(x.text)}</div>
+            <div style="font-size:11.5px;color:#888;margin-top:1px">Raised ${_calEsc(x.raised||'')} by ${_calEsc(x.by||'')}</div>
+            ${roNow?(x.note?`<div style="font-size:12px;color:#555;margin-top:5px">${_calEsc(x.note)}</div>`:''):`<div style="display:flex;gap:10px;align-items:center;margin-top:5px;flex-wrap:wrap">
+              <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:#888;cursor:pointer"><input type="checkbox" onchange="_miClose('lag','${x.id}')" style="width:14px;height:14px;cursor:pointer"/>Figured out?</label></div>
+              <textarea onchange="_miNote('lag','${x.id}',this.value)" placeholder="Where did this land this week?" style="width:100%;min-height:30px;margin-top:5px;padding:5px 8px;border:0.5px solid #e6e8ee;border-radius:6px;font-size:12.5px;resize:vertical;font-family:inherit">${_calEsc(x.note||'')}</textarea>`}
+          </div></div>`).join(''):'<div style="font-size:12.5px;color:#bbb;padding:8px 0">Nothing on a long lead right now.</div>';
+      const lagAdd=roNow?'':`<div style="display:flex;gap:7px;margin-top:8px;flex-wrap:wrap"><input id="lag-${c.id}" placeholder="What has a long lead on it?" style="flex:1;min-width:170px;padding:6px 9px;border:0.5px solid #ddd;border-radius:6px;font-size:12.5px"/><button onclick="_miAdd('lag','${c.id}','lag-${c.id}')" style="padding:6px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">Add</button></div>`;
+
+      // ---- questions that need Bruce or Tommy ----
+      const qs=_miFor('q',c.id);
+      const qRows=qs.length?qs.map(x=>`<div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:0.5px solid #f4f5f7">
+          <div style="font-family:ui-monospace,Menlo,monospace;font-size:11px;font-weight:600;color:${_miAgeColor(x.raised)};width:52px;flex-shrink:0;padding-top:2px">${_miAgeLabel(x.raised)}</div>
+          <div style="flex:1;min-width:0">
+            <div style="font-size:13px;color:#111">${_calEsc(x.text)}</div>
+            <div style="font-size:11.5px;color:#888;margin-top:1px">Needs ${_calEsc(x.who||'an answer')} &middot; asked by ${_calEsc(x.by||'')} on ${_calEsc(x.raised||'')}</div>
+            ${roNow?'':`<div style="margin-top:5px"><button onclick="_miClose('q','${x.id}')" style="padding:3px 10px;border:0.5px solid #cdd7e6;border-radius:6px;background:#fff;font-size:11.5px;color:#185FA5;cursor:pointer">Answer it</button></div>`}
+          </div></div>`).join(''):'<div style="font-size:12.5px;color:#bbb;padding:8px 0">Nothing waiting on Bruce or Tommy for this one.</div>';
+      const qAdd=roNow?'':`<div style="display:flex;gap:7px;margin-top:8px;flex-wrap:wrap">
+        <input id="q-${c.id}" placeholder="What needs deciding?" style="flex:1;min-width:170px;padding:6px 9px;border:0.5px solid #ddd;border-radius:6px;font-size:12.5px"/>
+        <select id="qw-${c.id}" style="padding:6px 9px;border:0.5px solid #ddd;border-radius:6px;font-size:12.5px"><option>Either</option><option>Bruce</option><option>Tommy</option></select>
+        <button onclick="_miAdd('q','${c.id}','q-${c.id}','qw-${c.id}')" style="padding:6px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">Add</button></div>`;
+
+      // ---- timeline check ----
+      const trail=pushes.length?`<div style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:#888;line-height:1.7;margin-top:7px">${pushes.slice(-4).map(p=>`<b style="color:#111">&rarr; ${_calEsc(p.to)}</b> ${_calEsc(p.at||'')}${p.why?(' &middot; "'+_calEsc(p.why)+'"'):''}`).join('<br>')}${pushes.length>4?`<div style="color:#bbb">+ ${pushes.length-4} earlier</div>`:''}</div>`:'';
+      const pace=roNow?`<div style="font-size:12.5px;color:#555">${paceDate?('Estimate '+_calEsc(paceDate)):'No estimate set'}${checkedOn?(' &middot; confirmed '+_calEsc(checkedOn)):''}</div>`
+        :`<div style="font-size:12.5px;color:#111;font-weight:600;margin-bottom:6px">${paceDate?('Are we still on pace for '+_calEsc(paceDate)+'?'):'No estimated finish yet &mdash; set one:'}</div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+            ${paceDate?`<button onclick="_wmPaceOk('${c.id}')" style="padding:5px 12px;border:0.5px solid #BFE5D4;border-radius:7px;background:#EAF7F1;font-size:12.5px;color:#0F7B54;cursor:pointer;font-weight:600">Yes &mdash; no change</button>`:''}
+            <span style="font-size:12.5px;color:#888">No &mdash; new estimate</span>
+            <input type="date" value="${_calEsc(est||'')}" onchange="_wmEstSet('${c.id}',this.value)" style="padding:5px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/>
+          </div>
+          ${checkedOn?`<div style="font-size:11px;color:#aaa;margin-top:5px">Last confirmed on pace ${_calEsc(checkedOn)}</div>`:''}`;
+
       return `<div data-wm-prop="${c.id}" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:14px 16px;margin-bottom:14px;color:#111">
         <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:8px">
           <span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-size:15.5px;font-weight:700;color:#185FA5">${_calEsc(c.addr||'')}${c.jvDeal?' <span style="font-size:11px;background:#EEEDFE;color:#3C3489;padding:1px 7px;border-radius:99px;vertical-align:middle">JV</span>':''}</span>
-          <span style="font-size:12px;color:#666">${_calEsc(c.phase||'')} · PM: ${_calEsc(c.pm||'—')}${perm?' · 🏛 Permitted':''}</span>
+          <span style="font-size:12px;color:#666">${_calEsc(c.phase||'')} &middot; PM: ${_calEsc(c.pm||'&mdash;')}${perm?' &middot; &#127963; Permitted':''}</span>
         </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(112px,1fr));gap:7px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:6px">
           ${cell('Budgeted',fmt(b),null,'','wm-bud-'+c.id)}
           ${cell('Spent',fmt(s),null,'','wm-spent-'+c.id)}
           ${cell('Leftover',fmt(left),left!=null&&left<0?'#B42318':'#0F7B54','','wm-left-'+c.id)}
-          ${cell('Production $ / day',rate!=null?('$'+rate.toLocaleString()):'—','#4A1D6E',prodDays!=null?(prodDays+' construction days'+(prodLive?' · LIVE':'')):'set a start date','wm-prod-'+c.id)}
-          ${cell('Total days accum.',accDays!=null?accDays:'—','#B7791F',accDays!=null?(accAnchor.label+' '+accAnchor.d+(accLive?' → today · LIVE':' → listed')):'no start date set','wm-acc-'+c.id)}
+          ${cell('Production $ / day',rate!=null?('$'+rate.toLocaleString()):'&mdash;','#4A1D6E',prodDays!=null?(prodDays+' days'+(prodLive?' &middot; LIVE':'')):'set a start date','wm-prod-'+c.id)}
+          ${cell('Days accum.',accDays!=null?accDays:'&mdash;','#B7791F',accDays!=null?(accAnchor.label+' '+accAnchor.d+(accLive?' &rarr; today':' &rarr; listed')):'no start date','wm-acc-'+c.id)}
         </div>
         <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:11px;padding-top:11px;border-top:0.5px solid #eef0f6">
           ${fld('Start date',`<span style="font-size:13px;color:${cStart?'#111':'#B7791F'}">${_calEsc(cStart||'set when it goes vacant')}</span>`)}
-          ${fld('Finish date',dte('end_date',c.end||''))}
+          ${fld('Committed finish &#128274;',commitCell)}
+          ${fld('Estimated finish',estCell)}
           ${fld('Est. profit',inp('est_profit',c.estProfit||'','$0'))}
           ${fld('Goal ARV',inp('goal_arv',c.goalArv||'','$0'))}
           ${fld('Listing on the market',_wmAgentField(c))}
           ${fld('JV deal',ro?(c.jvDeal?'Yes':'No'):`<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" ${c.jvDeal?'checked':''} onchange="_wmDeal('${c.id}','jv_deal',this.checked,this)" style="width:15px;height:15px;cursor:pointer"/> Yes</label>`)}
         </div>
-        ${perm?'<div style="margin-top:9px;font-size:12px;color:#72243E;background:#FBEAF0;border-radius:6px;padding:5px 9px;display:inline-block">IF PERMITS — fill in: days since drawings/engineer back · days since last touch with GC</div>':''}
-        <div style="margin-top:9px;display:flex;gap:8px;flex-wrap:wrap">
-          <button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">＋ Add task</button>
-          <button onclick="_wmAddEvent('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#639922;cursor:pointer;font-weight:600">＋ Schedule contractor</button>
+        ${perm?'<div style="margin-top:9px;font-size:12px;color:#72243E;background:#FBEAF0;border-radius:6px;padding:5px 9px;display:inline-block">IF PERMITS &mdash; fill in: days since drawings/engineer back &middot; days since last touch with GC</div>':''}
+
+        ${secWrap(secHead('What was scheduled last week', _wmLabel(lastWk).replace(/^\w+, /,'')+' &rarr; Sun'), lastRows+
+          `<div style="border-top:1px dashed #e6e8ee;padding-top:8px;margin-top:6px"><div style="font-size:9.5px;color:#aaa;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Comments on last week</div>${ta2(c.id+'::lastc','Anything about how last week actually went&hellip;',44)}</div>`)}
+
+        ${secWrap(secHead('Scheduled this week &amp; next week', fwdR.from+' &rarr; '+fwdR.to+' &middot; in date order'), fwdRows+
+          `<div style="border-top:1px dashed #e6e8ee;padding-top:8px;margin-top:6px"><div style="font-size:9.5px;color:#aaa;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Comments on the weeks ahead</div>${ta2(c.id+'::nextc','Anything about what is coming up&hellip;',44)}</div>`)}
+
+        ${roNow?'':`<div style="margin-top:11px;display:flex;gap:8px;flex-wrap:wrap;background:#F7F8FB;border:0.5px dashed #d5d9e2;border-radius:9px;padding:9px 12px;align-items:center">
+          <span style="font-size:12px;color:#888">Add to this property, right now:</span>
+          <button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">&#65291; Add task</button>
+          <button onclick="_wmAddEvent('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#639922;cursor:pointer;font-weight:600">&#65291; Schedule contractor</button>
           <button onclick="openPropDetail('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #e6e8ee;border-radius:7px;font-size:12.5px;color:#777;cursor:pointer">Open card</button>
+        </div>`}
+
+        ${secWrap(secHead('Timeline check','asked every Monday'), pace+trail)}
+        ${secWrap(secHead('Lag-time items','carried until they close'), lagRows+lagAdd)}
+        ${secWrap(secHead('Questions for Bruce / Tommy','carried until answered'), qRows+qAdd)}
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:11px;margin-top:11px">
+          <div><div style="font-size:12px;font-weight:700;color:#111;margin-bottom:4px">Wins this week</div>${ta2(c.id+'::wins','What went right on this property this week?')}</div>
+          <div><div style="font-size:12px;font-weight:700;color:#111;margin-bottom:4px">Money analysis &mdash; on or off budget, and why</div>${ta2(c.id+'::money','On or off budget, and why?')}</div>
         </div>
-        ${ta(c.id,'Money analysis (on/off budget & why) · lag-time items (windows, permits…) · wins this week · estimated timeline to finish · follow-ups & priorities')}
       </div>`;
     }).join('');
-    // Pre Construction comments across ALL PMs — directors see + add on one page.
+
+    // Pre Construction comments across ALL PMs - directors see + add on one page.
     const pms=[...new Set(cards.map(c=>c.pm).filter(Boolean))];
     const pdn=window._pdnData||{};
     const pmNotes=pms.map(pm=>{
       const list=(((pdn[pm]||{}).precon)||[]);
-      const items=list.map((n,i)=>`<div style="display:flex;gap:7px;align-items:flex-start;padding:5px 0;border-bottom:0.5px solid #f1f3f7"><span onclick="_pdnToggle2('${_argEsc(pm)}',${i})" style="font-size:14px;cursor:pointer">${n.done?'✅':'⬜'}</span><div style="flex:1;font-size:12.5px;color:${n.done?'#aaa':'#333'};${n.done?'text-decoration:line-through;':''}">${_calEsc(n.t)} <span style="color:#bbb;font-size:10.5px">${_calEsc(n.at||'')}</span></div></div>`).join('')||'<div style="font-size:12px;color:#bbb;padding:4px 0">No comments yet.</div>';
+      const items=list.map((n,i)=>`<div style="display:flex;gap:7px;align-items:flex-start;padding:5px 0;border-bottom:0.5px solid #f1f3f7"><span onclick="_pdnToggle2('${_argEsc(pm)}',${i})" style="font-size:14px;cursor:pointer">${n.done?'&#9989;':'&#11036;'}</span><div style="flex:1;font-size:12.5px;color:${n.done?'#aaa':'#333'};${n.done?'text-decoration:line-through;':''}">${_calEsc(n.t)} <span style="color:#bbb;font-size:10.5px">${_calEsc(n.at||'')}</span></div></div>`).join('')||'<div style="font-size:12px;color:#bbb;padding:4px 0">No comments yet.</div>';
       const elId='pdn-mtg-'+pm.replace(/[^a-z0-9]/gi,'');
-      return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 14px"><div style="font-size:13.5px;font-weight:700;color:#111;margin-bottom:4px">${_calEsc(pm)} — Pre Construction comments</div>${items}
-        ${isReadOnly()?'':`<div style="display:flex;gap:6px;margin-top:8px"><input id="${elId}" placeholder="Add a comment…" style="flex:1;min-width:0;padding:6px 9px;border:0.5px solid #ddd;border-radius:6px;font-size:12.5px"/><button onclick="_pdnAdd2('${_argEsc(pm)}','precon','${elId}')" style="padding:6px 11px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">Add</button></div>`}
+      return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 14px"><div style="font-size:13.5px;font-weight:700;color:#111;margin-bottom:4px">${_calEsc(pm)} &mdash; Pre Construction comments</div>${items}
+        ${roNow?'':`<div style="display:flex;gap:6px;margin-top:8px"><input id="${elId}" placeholder="Add a comment&hellip;" style="flex:1;min-width:0;padding:6px 9px;border:0.5px solid #ddd;border-radius:6px;font-size:12.5px"/><button onclick="_pdnAdd2('${_argEsc(pm)}','precon','${elId}')" style="padding:6px 11px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">Add</button></div>`}
       </div>`;
     }).join('');
+
     body=`
-      <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:14px 16px;margin-bottom:16px"><div style="font-size:14px;font-weight:700;color:#111">🎯 Priority Q for Tommy</div>${ta('__pq','Questions and decisions that need Tommy this week…')}</div>
+      ${_wmClosedBanner(wk, closedRec)}
       ${blocks || '<div style="color:#bbb;font-size:14px;padding:20px 0">No construction properties right now.</div>'}
-      <div style="font-size:14px;font-weight:700;color:#111;margin:18px 0 8px">💬 Pre Construction comments — all PMs</div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">${pmNotes||'<div style="color:#bbb;font-size:13px">No PMs with construction properties.</div>'}</div>`;
+      ${_wmOpenQuestionsPanel(cards)}
+      <div style="font-size:14px;font-weight:700;color:#111;margin:18px 0 8px">&#128172; Pre Construction comments &mdash; all PMs</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">${pmNotes||'<div style="color:#bbb;font-size:13px">No PMs with construction properties.</div>'}</div>
+      ${_wmCloseBar(wk, closedRec, isPast)}`;
+
   } else {
     if(kind==='kickoff'){
       // Mirrors the Kick-Off Meeting template: comps → target finishes → walkthrough →
@@ -4602,9 +5230,14 @@ function openPMDashboard() {
   // PM on at least one active property (so Tommy, Bruce, Gabe — anyone running a project —
   // appears). Bruce (Director) is kept first.
   const _assignedPMs = new Set((typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived).map(c=>((c.pm||"").trim().toLowerCase())).filter(Boolean));
-  const _pmList = getUsers()
+  const _pmAll = getUsers()
     .filter(u=> u.status==="approved" && (u.role==="Project Manager" || u.email==="bruce@legacyohiohomes.com" || _assignedPMs.has((u.firstName||"").trim().toLowerCase())))
     .sort((a,b)=>{ if(a.email==="bruce@legacyohiohomes.com") return -1; if(b.email==="bruce@legacyohiohomes.com") return 1; return (a.firstName||"").localeCompare(b.firstName||""); });
+  // Same rule as the tabs: a PM with nothing active steps off the overview until
+  // a property is assigned to them again. If that would empty the board entirely
+  // (properties still loading) fall back to showing everyone.
+  const _pmWorking = _pmAll.filter(u=>_pmHasWork((u.firstName||"").trim()));
+  const _pmList = _pmWorking.length ? _pmWorking : _pmAll;
   const _pmCards = _pmList.length
     ? _pmList.map(_mkPmCard).join("")
     : (pmCard("Bruce", _computePMMetrics("Bruce"), resolvePMName("Bruce")) + pmCard("Andrew", _computePMMetrics("Andrew"), resolvePMName("Andrew")) + pmCard("Isaiah", _computePMMetrics("Isaiah"), resolvePMName("Isaiah")));
@@ -5627,14 +6260,14 @@ function openPMAssistantDashboard(activeTab){
 }
 // Which property-phase boards each assistant role owns. Each becomes an inner tab.
 const _ASSISTANT_ROLE_BOARDS = {
-  sop: { role:'Start of Project Assistant', seed:'Alex', boards:[
+  sop: { key:'sop', role:'Start of Project Assistant', seed:'Alex', boards:[
     { id:'sop-takedowns', title:'Upcoming Takedowns',        phases:['Upcoming Takedowns'] },
     { id:'sop-occupied',  title:'Occupied / Closed',         phases:['Occupied / Closed'] },
     { id:'sop-vacant',    title:'Vacant / On Standby',       phases:['Vacant / On Standby'] },
     { id:'sop-precon',    title:'Pre Construction',          phases:['Pre Construction'] },
     { id:'sop-framing',   title:'Framing, MEPS, Insulation', phases:['Framing, MEPS, Insulation'] },
   ]},
-  eop: { role:'End of Project Assistant', seed:'Gabe', boards:[
+  eop: { key:'eop', role:'End of Project Assistant', seed:'Gabe', boards:[
     { id:'eop-prelist',  title:'Pre List / Punchout', phases:['Pre List / Punchout Process'] },
     { id:'eop-market',   title:'On the Market',       phases:['Listed on the Market'] },
     { id:'eop-contract', title:'In Contract',         phases:['In Contract'] },
@@ -5650,9 +6283,83 @@ function _phaseBoard(id){
   return null;
 }
 // The person(s) who hold a role (by first name), or the seeded placeholder.
+// ---- Who is actually sitting in each assistant seat right now ----------------
+// Normally the seat belongs to whoever has that job role on their account. But
+// seats get covered: Alex holds Start of Project Assistant and is running the TV
+// show as a PM, so Gabe covers the start seat while still holding the end seat.
+// An override set here beats the job role until somebody clears it, and it is
+// deliberately temporary - nobody's account role changes.
+let _roleHolderOverrides = {};
+async function _rhoLoad(){
+  try{
+    const r=await supabase.from("pm_settings").select("data").eq("key","role_holders").maybeSingle();
+    _roleHolderOverrides = (r.error ? {} : ((r.data && r.data.data) || {}));
+  }catch(e){ _roleHolderOverrides={}; }
+}
+async function _rhoSet(roleKey, name){
+  if(_blockIfReadOnly()) return;
+  const cfg=_ASSISTANT_ROLE_BOARDS[roleKey]; if(!cfg) return;
+  const d=Object.assign({}, _roleHolderOverrides||{});
+  if(name) d[roleKey]=[name]; else delete d[roleKey];
+  const err=await _pmSettingsWrite('role_holders', d);
+  if(err){ alert("That seat change was NOT saved - "+err); return; }
+  _roleHolderOverrides=d;
+  _logAudit("updated","role", cfg.role, name?("Covered by "+name):"Back to whoever holds the job role");
+  openPMAssistantDashboard('main');
+}
 function _roleHolders(cfg){
+  const ov=(_roleHolderOverrides||{})[cfg.key];
+  if(ov && ov.length) return ov.slice();
   const h=getUsers().filter(u=>u.status==='approved' && u.role===cfg.role).map(u=>(u.firstName||'').trim()).filter(Boolean);
   return h.length?h:[cfg.seed];
+}
+// Is this seat being covered by somebody other than the role's own holder?
+function _roleCovered(cfg){ const ov=(_roleHolderOverrides||{})[cfg.key]; return !!(ov && ov.length); }
+// ---- Project managers: only show the ones actually running something ---------
+// A PM with no active property drops off the dashboard tabs and the Team
+// Overview until a property lands on them again. The roster itself is untouched,
+// so they stay pickable in every "assign a PM" dropdown - they just stop taking
+// up a column while they have nothing on.
+function _pmHasWork(name){
+  const k=String(name||'').trim().toLowerCase(); if(!k) return false;
+  const all=(typeof propCards!=='undefined'?propCards:[]);
+  return all.some(c=>!c.archived && c.phase!=='Closed' && String(c.pm||'').trim().toLowerCase()===k);
+}
+function _pmTabNames(){
+  const roster=(typeof PM_MANAGERS!=='undefined'?PM_MANAGERS:[]).slice();
+  const all=(typeof propCards!=='undefined'?propCards:[]);
+  // Before the properties have loaded, filtering would blank the whole strip and
+  // look like a broken page. Show the full roster until there is data to judge on.
+  if(!all.length) return roster;
+  const out=roster.filter(_pmHasWork);
+  // Anyone running a property who is not on the roster at all - a temporary cover
+  // like Gabe taking a project - still earns a tab.
+  all.filter(c=>!c.archived && c.phase!=='Closed' && String(c.pm||'').trim()).forEach(c=>{
+    const nm=String(c.pm).trim();
+    if(!out.some(n=>n.toLowerCase()===nm.toLowerCase())) out.push(nm);
+  });
+  return out;
+}
+// Options for a "who is the PM on this property" dropdown. The roster comes
+// first; everybody else on the team is offered underneath so a project can be
+// handed to somebody temporarily without changing their job role.
+function _pmAssignOptions(cur){
+  const roster=(typeof PM_MANAGERS!=='undefined'?PM_MANAGERS:[]).slice();
+  const low=roster.map(n=>String(n).toLowerCase());
+  const others=[];
+  (typeof teamMembers==='function'?teamMembers():[]).forEach(full=>{
+    const n=String(full).trim().split(/\s+/)[0];
+    if(!n) return;
+    if(low.indexOf(n.toLowerCase())>=0) return;
+    if(others.some(x=>x.toLowerCase()===n.toLowerCase())) return;
+    others.push(n);
+  });
+  // A name already on the card that is in neither list still has to appear, or
+  // opening the card would silently blank whoever is on it.
+  if(cur && low.indexOf(String(cur).toLowerCase())<0 && !others.some(x=>x.toLowerCase()===String(cur).toLowerCase())) others.push(cur);
+  const opt=(n)=>`<option ${cur===n?'selected':''}>${_calEsc(n)}</option>`;
+  return `<optgroup label="Project managers">${roster.map(opt).join('')}</optgroup>`+
+         (others.length?`<optgroup label="Covering a project temporarily">${others.map(opt).join('')}</optgroup>`:'');
 }
 function _ymd(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`; }
 function getPMAContent(tab){
@@ -5692,7 +6399,7 @@ function pmAssistantRoleView(roleKey){
     return `<div onclick="openPMAssistantDashboard('phase:${b.id}')" title="Open ${_calEsc(b.title)}" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;border-top:3px solid ${p.dot};padding:11px 13px;cursor:pointer" onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.06)'" onmouseout="this.style.boxShadow='none'"><div style="font-size:12px;color:#666;margin-bottom:5px;display:flex;align-items:center;justify-content:space-between">${_calEsc(b.title)} <span style="color:#ccc">›</span></div><div style="font-size:25px;font-weight:600;color:${p.text}">${n}</div></div>`; }).join('');
   const dueTasks=_pmaDueTasks(holders); const weekEvents=_pmaWeekEvents(rolePhases);
   return `<div style="padding:14px 20px">
-    <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:12px"><div style="font-size:15px;font-weight:600;color:#111">${_calEsc(cfg.role)}</div><div style="font-size:13px;color:#999">· ${_calEsc(who)}</div></div>
+    <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:12px"><div style="font-size:15px;font-weight:600;color:#111">${_calEsc(cfg.role)}</div><div style="font-size:13px;color:#999">· ${_calEsc(who)}${_roleCovered(cfg)?' · covering temporarily':''}</div></div>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-bottom:16px">${tiles}</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
       ${_pmaCard('✅ Due Today & Tomorrow', dueTasks.map(_pmaTaskRow).join(''), dueTasks.length, 'Nothing due today or tomorrow')}
@@ -5940,9 +6647,19 @@ async function assignTask(id, name){
 function pmAssistantMainDashboard(){
   const ro=isReadOnly();
   const countPhases=(phases)=>(propCards||[]).filter(c=>phases.includes(c.phase)).length;
+  const _team=(typeof teamMembers==='function'?teamMembers():[]).map(n=>String(n).trim().split(/\s+/)[0]).filter(Boolean);
+  const _teamUniq=[]; _team.forEach(n=>{ if(!_teamUniq.some(x=>x.toLowerCase()===n.toLowerCase())) _teamUniq.push(n); });
+  const seatPicker=(cfg)=>{
+    if(ro) return '';
+    const cur=((_roleHolderOverrides||{})[cfg.key]||[])[0]||'';
+    return `<select onchange="_rhoSet('${cfg.key}', this.value)" title="Who is covering this seat right now" style="font-size:12px;padding:4px 8px;border:0.5px solid #ddd;border-radius:6px;background:#fff;color:#333;max-width:200px">
+      <option value="">— whoever holds the job role —</option>
+      ${_teamUniq.map(n=>`<option value="${_calEsc(n)}" ${cur===n?'selected':''}>${_calEsc(n)}</option>`).join('')}
+    </select>`;
+  };
   const roleSection=(cfg)=>{
-    const holders=getUsers().filter(u=>u.status==='approved' && u.role===cfg.role).map(u=>(u.firstName||'').trim()).filter(Boolean);
-    const who=holders.length?holders.join(', '):cfg.seed;
+    const holders=_roleHolders(cfg);
+    const who=holders.join(', ');
     const tiles=cfg.boards.map(b=>{
       const n=countPhases(b.phases); const p=phInfo(b.phases[0]);
       return `<div onclick="openPMAssistantDashboard('phase:${b.id}')" title="Open the ${_calEsc(b.title)} dashboard" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;border-top:3px solid ${p.dot};padding:12px 14px;cursor:pointer" onmouseover="this.style.boxShadow='0 2px 8px rgba(0,0,0,0.06)'" onmouseout="this.style.boxShadow='none'">
@@ -5951,8 +6668,11 @@ function pmAssistantMainDashboard(){
       </div>`;
     }).join('');
     return `<div style="margin-bottom:20px">
-      <div style="font-size:15px;font-weight:500;color:#111;margin-bottom:2px">${_calEsc(cfg.role)}</div>
-      <div style="font-size:12px;color:#999;margin-bottom:10px">${_calEsc(who)}</div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:2px">
+        <div style="font-size:15px;font-weight:500;color:#111">${_calEsc(cfg.role)}</div>
+        ${seatPicker(cfg)}
+      </div>
+      <div style="font-size:12px;color:#999;margin-bottom:10px">${_calEsc(who)}${_roleCovered(cfg)?` <span style="color:#B7791F">· covering temporarily</span>`:''}</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px">${tiles}</div>
     </div>`;
   };
@@ -7334,6 +8054,70 @@ function _permitTrackerBody(){
     _trkTable("📄 Permit Tracker","#B03A8B",head,body)+foot;
 }
 
+// ---------- Mowing: the mower is a contractor, not a typed name ----------
+// Every mower lives in the Contractor Directory, so the phone number is entered
+// once and read everywhere. Adding somebody here files them under Landscaping
+// automatically, which is exactly what puts them in this dropdown next time.
+const MOW_TRADE_MATCH=["landscap","mow","lawn"];
+const MOW_FREQ=["Weekly","Bi-weekly"];
+const MOW_PAY=["ACH","Zelle","Bank transfer","Credit card","Check"];
+const MOW_DEFAULT_TRADE="Landscaping";
+function _mowers(){
+  const cs=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]);
+  return cs.filter(c=>MOW_TRADE_MATCH.some(t=>String(c.trade||'').toLowerCase().indexOf(t)>=0))
+           .sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
+}
+function _mowerById(id){ return (typeof _contractorsCache!=='undefined'?_contractorsCache:[]).find(c=>c.id===id)||null; }
+// The phone is derived from the directory. Rows saved before this change kept a
+// typed number, so fall back to that rather than blanking somebody's contact.
+function _mowPhone(pid){
+  const m=_mowerById(_trkVal('mowinfo',pid,'who'));
+  if(m) return m.phone||'';
+  return _trkVal('mowinfo',pid,'phone')||'';
+}
+function _mowName(pid){
+  const w=_trkVal('mowinfo',pid,'who');
+  const m=_mowerById(w);
+  return m?(m.name||''):(w||'');
+}
+async function _mowSetWho(pid, val){
+  if(val==='__add'){ await _mowAdd(pid); return; }
+  await _trkSet('mowinfo',pid,'who',val,true);
+}
+async function _mowAdd(pid){
+  if(_blockIfReadOnly()) return;
+  const name=(prompt("Who is mowing this one? Enter their name or company.\n\nThey get added to the Contractor Directory under Landscaping so you only type this once.")||'').trim();
+  if(!name){ (window._trkRerender||function(){ openVAAdminDashboard('trackers'); })(); return; }
+  const existing=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).find(c=>String(c.name||'').trim().toLowerCase()===name.toLowerCase());
+  if(existing){
+    // Already in the directory under some other trade - reuse them and make them
+    // a mower rather than creating a duplicate contractor.
+    if(!MOW_TRADE_MATCH.some(t=>String(existing.trade||'').toLowerCase().indexOf(t)>=0)){
+      await supabase.from("pm_contractors").update({trade:MOW_DEFAULT_TRADE}).eq("id",existing.id);
+      await loadContractorsFromSupabase();
+      _logAudit("updated","contractor",name,"Filed under "+MOW_DEFAULT_TRADE+" from the Mowing Tracker");
+    }
+    await _trkSet('mowinfo',pid,'who',existing.id,true);
+    return;
+  }
+  const phone=(prompt("Contact number for "+name+":")||'').trim();
+  const ins=await supabase.from("pm_contractors").insert({name:name, phone:phone, trade:MOW_DEFAULT_TRADE}).select("id").single();
+  if(ins.error){ alert("Couldn't add "+name+" to the Contractor Directory: "+(ins.error.message||"unknown error")); return; }
+  _logAudit("created","contractor",name,"Added as a mower from the Mowing Tracker — filed under "+MOW_DEFAULT_TRADE);
+  await loadContractorsFromSupabase();
+  await _trkSet('mowinfo',pid,'who',ins.data.id,true);
+}
+// Lets someone fill in a missing number without leaving the tracker.
+async function _mowPhoneSet(pid, val){
+  const m=_mowerById(_trkVal('mowinfo',pid,'who'));
+  if(!m){ await _trkSet('mowinfo',pid,'phone',val,false); return; }
+  const {error}=await supabase.from("pm_contractors").update({phone:val}).eq("id",m.id);
+  if(error){ alert("Couldn't save that number: "+(error.message||"")); return; }
+  _logAudit("updated","contractor",m.name||"","Phone set from the Mowing Tracker");
+  await loadContractorsFromSupabase();
+  (window._trkRerender||function(){ openVAAdminDashboard('trackers'); })();
+}
+
 function _vaTrackers(){
   const d=window._trkData||{}; const ro=isReadOnly();
   const chk=(kind,id,on)=> ro?(on?'✅':'⬜'):`<span onclick="_trkToggle('${kind}','${id}')" style="cursor:pointer;font-size:17px">${on?'✅':'⬜'}</span>`;
@@ -7397,14 +8181,32 @@ function _vaTrackers(){
     <td style="padding:7px">${txt('w9info',c.id,'phone','Phone',110)}</td></tr>`).join(""):'<tr><td colspan="6" style="padding:16px;color:#bbb;text-align:center">No contractors in the directory yet.</td></tr>';
 
   // ---------- Mowing tracker (mirrors the Active Mowing Tracker sheet) ----------
+  const mowWhoSel=(c)=>{
+    const cur=_trkVal('mowinfo',c.id,'who');
+    const list=_mowers();
+    const known=list.some(m=>m.id===cur);
+    if(ro) return `<span style="font-size:12.5px;color:#111">${_calEsc(_mowName(c.id))||'—'}</span>`;
+    return `<select onchange="_mowSetWho('${c.id}',this.value)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:150px">
+      <option value="">— Not set —</option>
+      ${list.map(m=>`<option value="${m.id}" ${cur===m.id?'selected':''}>${_calEsc(m.name||'')}</option>`).join('')}
+      ${(cur&&!known)?`<option value="${_calEsc(cur)}" selected>${_calEsc(cur)} (not in the directory)</option>`:''}
+      <option value="__add">＋ Add a new mower…</option>
+    </select>`;
+  };
+  const mowPhoneCell=(c)=>{
+    const ph=_mowPhone(c.id);
+    if(ro) return `<span style="font-size:12.5px;color:#111">${_calEsc(ph)||'—'}</span>`;
+    const m=_mowerById(_trkVal('mowinfo',c.id,'who'));
+    return `<input value="${_calEsc(ph)}" placeholder="${m?'Add their number':'Pick a mower first'}" onchange="_mowPhoneSet('${c.id}',this.value)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:118px"/>${m?`<div style="font-size:10px;color:#bbb;margin-top:2px">from the directory</div>`:''}`;
+  };
   const mowRow=(c)=>`<tr data-trk="${nm(c)}" style="border-top:0.5px solid #eef0f6">
     <td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${nm(c)}</span><div style="font-size:11px;color:#999">${_calEsc(c.phase||'')}</div></td>
-    <td style="padding:7px">${txt('mowinfo',c.id,'who','Who is mowing',130)}</td>
-    <td style="padding:7px">${txt('mowinfo',c.id,'freq','Weekly / bi-weekly',110)}</td>
+    <td style="padding:7px">${mowWhoSel(c)}</td>
+    <td style="padding:7px">${usel('mowinfo',c.id,'freq',MOW_FREQ,112)}</td>
     <td style="padding:7px">${txt('mowinfo',c.id,'cost','$ per mow',70)}</td>
-    <td style="padding:7px">${txt('mowinfo',c.id,'phone','Contact #',110)}</td>
+    <td style="padding:7px">${mowPhoneCell(c)}</td>
     <td style="padding:7px;font-size:12.5px;color:#555">${_calEsc(c.pm||'—')}</td>
-    <td style="padding:7px">${txt('mowinfo',c.id,'pay','Check / card',90)}</td>
+    <td style="padding:7px">${usel('mowinfo',c.id,'pay',MOW_PAY,118)}</td>
     <td style="text-align:center;padding:7px">${chk('mow',c.id,(d.mow||{})[c.id])}</td>
     <td style="text-align:center;padding:7px">${fchk('mowinfo',c.id,'removed')}</td></tr>`;
   // A property that just closed is no longer ours — Marlo has to text the mower to take it
@@ -7412,12 +8214,12 @@ function _vaTrackers(){
   const offRoute=closed.filter(c=>!_trkOn('mowinfo',c.id,'removed'));
   const offRow=(c)=>`<tr data-trk="${nm(c)}" style="border-top:0.5px solid #eef0f6;background:#FFF7E0">
     <td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${nm(c)}</span><div style="font-size:11px;color:#8a6d1a;font-weight:600">✉️ TEXT THE MOWER — take this one off the route (${_calEsc(c.phase||'')})</div></td>
-    <td style="padding:7px">${txt('mowinfo',c.id,'who','Who is mowing',130)}</td>
-    <td style="padding:7px">${txt('mowinfo',c.id,'freq','',110)}</td>
+    <td style="padding:7px">${mowWhoSel(c)}</td>
+    <td style="padding:7px">${usel('mowinfo',c.id,'freq',MOW_FREQ,112)}</td>
     <td style="padding:7px">${txt('mowinfo',c.id,'cost','',70)}</td>
-    <td style="padding:7px">${txt('mowinfo',c.id,'phone','Contact #',110)}</td>
+    <td style="padding:7px">${mowPhoneCell(c)}</td>
     <td style="padding:7px;font-size:12.5px;color:#555">${_calEsc(c.pm||'—')}</td>
-    <td style="padding:7px">${txt('mowinfo',c.id,'pay','',90)}</td>
+    <td style="padding:7px">${usel('mowinfo',c.id,'pay',MOW_PAY,118)}</td>
     <td style="text-align:center;padding:7px;font-size:12px;color:#8a6d1a;font-weight:600">CLOSED</td>
     <td style="text-align:center;padding:7px">${fchk('mowinfo',c.id,'removed')}</td></tr>`;
   const mowrows=(offRoute.map(offRow).join("")) + (active.length?active.map(mowRow).join(""):(offRoute.length?'':'<tr><td colspan="9" style="padding:16px;color:#bbb;text-align:center">No active properties.</td></tr>'));
@@ -10117,6 +10919,8 @@ loadRolesFromSupabase().then(renderRoleSelects).catch(renderRoleSelects);
 loadPMManagers();
 // Load the PM-assistant list (drives the PM Assistant Dashboard person tabs).
 loadPMAssistants();
+// Load who is currently covering the Start / End of Project Assistant seats.
+_rhoLoad();
 // Pre-warm the Google sign-in button so it's ready when the user opens the modal.
 // _renderGoogleButton retries until GSI script is loaded.
 _renderGoogleButton();
@@ -10124,4 +10928,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-29l permit-tracker -->
+<!-- build: 2026-08-29p mowing-dropdowns -->
