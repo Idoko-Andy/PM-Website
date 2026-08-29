@@ -6125,34 +6125,127 @@ function _execShell(fnName, tabs, activeTab, content){
     </div>`;
 }
 
-// Marlo's admin MAIN dashboard: a compact board of her priority phases with permit status.
-function _adminMainDashboard(){
-  const phases=["Upcoming Takedowns","Occupied / Closed","Vacant / On Standby","Listed on the Market","In Contract","Rental Handoff Process","RTR In Process","RTR Completed (Pending Closing)","Closed"];
-  const cols=phases.map(ph=>{
-    const p=phInfo(ph); const pc=(typeof propCards!=='undefined'?propCards:[]).filter(c=>c.phase===ph && !c.archived);
-    return `<div style="width:185px;flex-shrink:0">
-      <div style="padding:7px 10px;border-radius:6px 6px 0 0;margin-bottom:6px;background:${p.bg};display:flex;align-items:center;justify-content:space-between">
-        <span style="font-size:11.5px;font-weight:500;color:${p.text};line-height:1.3">${ph}</span>
-        <span style="font-size:11px;padding:1px 5px;border-radius:99px;background:${p.cnt};color:${p.text}">${pc.length}</span>
+// ---- Admin Manager combined boards -------------------------------------------
+// Marlo sees every board a PM sees and both boards the Start / End of Project
+// assistants see, but across ALL properties instead of one person's. The five PM
+// boards reuse _PM_BOARD_GROUPS directly, so their definition can never drift
+// between her view and the PMs' own.
+const _AM_GROUPS = {
+  sop:  { title:"Start of Project", phases:["Upcoming Takedowns","Occupied / Closed","Vacant / On Standby"] },
+  eopa: { title:"End of Project",   phases:["Pre List / Punchout Process","Rental Handoff Process","RTR In Process","RTR Completed (Pending Closing)"] },
+};
+const _AM_TILES = [
+  ["sop",     "Start of Project",              "🚦","#E24B4A","takedowns, occupied and vacant houses"],
+  ["eopa",    "End of Project",                "🏁","#12987A","punch-out, rental handoff and RTR"],
+  ["precon",  "Pre Construction",              "🏗","#185FA5","pre-con and waiting on permits"],
+  ["permits", "Permits & Inspections",         "📐","#7A3FA8","permitted jobs only"],
+  ["active",  "Active Projects",               "🔨","#0B7285","framing through exterior work"],
+  ["finishes","Finishes / Pre-List & Punchout","🎨","#D85A30","finishes through rental handoff"],
+  ["eop",     "End of Project / PM Bonuses",   "🏆","#3B6D11","listed, in contract and RTR"],
+];
+function _amGroup(key){ return _AM_GROUPS[key] || _PM_BOARD_GROUPS[key] || null; }
+function _amCards(key){
+  const g=_amGroup(key); if(!g) return [];
+  return (typeof propCards!=='undefined'?propCards:[])
+    .filter(c=>!c.archived && g.phases.indexOf(c.phase)>=0 && (!g.permittedOnly || (c.checklists&&c.checklists.permitted)==='yes'))
+    .sort((a,b)=>String(a.addr||'').localeCompare(String(b.addr||'')));
+}
+function _amTile(key,title,icon,color,sub){
+  const cards=_amCards(key);
+  const pms=new Set(cards.map(c=>c.pm).filter(Boolean));
+  return `<div onclick="_amDrill('${_argEsc(key)}')" style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${color};border-radius:10px;padding:14px 16px;cursor:pointer" onmouseover="this.style.boxShadow='0 4px 14px rgba(0,0,0,0.08)'" onmouseout="this.style.boxShadow='none'">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px"><div style="font-size:13.5px;font-weight:600;color:#111;min-width:0;line-height:1.3">${icon} ${title}</div><span style="color:#ccc;flex-shrink:0">›</span></div>
+    <div style="font-size:27px;font-weight:600;color:${color};margin-top:6px">${cards.length}</div>
+    <div style="font-size:11.5px;color:#999">propert${cards.length===1?'y':'ies'}${pms.size?` &middot; ${pms.size} PM${pms.size===1?'':'s'}`:''}</div>
+    <div style="font-size:11px;color:#bbb;margin-top:3px">${sub}</div>
+  </div>`;
+}
+// Drill-in: every property on this board, sectioned by whose it is.
+function _amDrill(key){
+  const el=document.getElementById('pd-content'); if(!el) return;
+  const g=_amGroup(key); if(!g) return;
+  const cards=_amCards(key);
+  const byPM={};
+  cards.forEach(c=>{ const k=c.pm||'__none__'; (byPM[k]=byPM[k]||[]).push(c); });
+  const names=Object.keys(byPM).filter(k=>k!=='__none__').sort();
+  if(byPM['__none__']) names.push('__none__');
+  const sections=names.length?names.map(pm=>{
+    const list=byPM[pm];
+    const label = pm==='__none__' ? 'No project manager assigned' : (resolvePMName(pm)||pm);
+    return `<div style="margin-bottom:18px">
+      <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:8px">
+        <div style="font-size:14px;font-weight:700;color:${pm==='__none__'?'#B42318':'#111'}">${_calEsc(label)}</div>
+        <div style="font-size:12px;color:#999">${list.length} propert${list.length===1?'y':'ies'}</div>
       </div>
-      <div style="display:flex;flex-direction:column;gap:5px">
-        ${pc.length?pc.map(c=>{const perm=(c.checklists&&c.checklists.permitted); const pb=perm==='yes'?'<span style="font-size:10px;background:#E1F5EE;color:#0F7B54;padding:1px 5px;border-radius:99px">Permitted</span>':(perm==='no'?'<span style="font-size:10px;background:#FCEBEB;color:#B42318;padding:1px 5px;border-radius:99px">No permit</span>':'');
-          return `<div onclick="openPropDetail('${c.id}')" style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid ${p.dot};border-radius:6px;padding:8px 10px;cursor:pointer">
-            <div style="font-size:12.5px;font-weight:500;color:#111;margin-bottom:3px">${_calEsc(c.addr)}</div>
-            <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap"><span style="font-size:11px;color:#aaa">${c.pm?_calEsc(c.pm):'—'}</span>${pb}</div>
-          </div>`;}).join(''):`<div style="font-size:11px;color:#ccc;padding:10px;text-align:center">None</div>`}
-      </div>
+      <div style="display:flex;flex-direction:column;gap:8px">${list.map(_dirPropRow).join('')}</div>
     </div>`;
-  }).join('');
-  return `<div style="padding:16px 20px">
-    <div style="font-size:16px;font-weight:600;color:#111;margin-bottom:4px">Administrative Overview</div>
-    <div style="font-size:13px;color:#888;margin-bottom:14px">Priority phases across all properties, with permit status per card.</div>
-    <div style="overflow-x:auto;padding-bottom:8px"><div style="display:flex;gap:10px;align-items:flex-start;min-width:max-content">${cols}</div></div>
+  }).join(''):'<div style="color:#bbb;font-size:14px;padding:20px 0">No properties on this board right now.</div>';
+  const pmCount=names.filter(n=>n!=='__none__').length;
+  el.innerHTML=`<div style="padding:20px">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+      <button onclick="openAdminDashboard('main')" style="font-size:13px;padding:6px 12px;border:0.5px solid #cdd7e6;border-radius:6px;background:#fff;color:#185FA5;cursor:pointer">‹ Back</button>
+      <div style="font-size:17px;font-weight:600;color:#111">${_calEsc(g.title)}</div>
+    </div>
+    <div style="font-size:13px;color:#888;margin-bottom:16px">Every property on this board, across all project managers — ${cards.length} propert${cards.length===1?'y':'ies'}${pmCount?` under ${pmCount} PM${pmCount===1?'':'s'}`:''}.</div>
+    <div style="max-width:820px">${sections}</div>
+  </div>`;
+}
+// Marlo's admin MAIN dashboard: every PM board and both assistant boards, across ALL
+// properties. She has the ordinary Property Dashboard for the phase-by-phase view,
+// so this screen is the combined-roles roll-up instead.
+function _adminMainDashboard(){
+  const all=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived);
+  const done=["Closed","Completed"];
+  const activeAll=all.filter(c=>done.indexOf(c.phase)<0);
+  const pms=new Set(activeAll.map(c=>c.pm).filter(Boolean));
+  const noPM=activeAll.filter(c=>!c.pm).length;
+  const tiles=_AM_TILES.map(t=>_amTile(t[0],t[1],t[2],t[3],t[4]));
+  const band=(label,rows)=>`<div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin:0 0 8px">${label}</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-bottom:20px">${rows}</div>`;
+  return `<div style="padding:20px;max-width:1100px;margin:0 auto">
+    <div style="font-size:16px;font-weight:600;color:#111;margin-bottom:3px">Administrative Overview</div>
+    <div style="font-size:13px;color:#888;margin-bottom:8px">Every board the project managers and the start / end-of-project assistants work from, across all properties. Click any square to see its properties grouped by PM.</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px">
+      <span style="font-size:12px;background:#EEF3FA;color:#185FA5;padding:3px 10px;border-radius:99px">${activeAll.length} active propert${activeAll.length===1?'y':'ies'}</span>
+      <span style="font-size:12px;background:#F1F4EE;color:#3B6D11;padding:3px 10px;border-radius:99px">${pms.size} project manager${pms.size===1?'':'s'}</span>
+      ${noPM?`<span style="font-size:12px;background:#FCEBEB;color:#B42318;padding:3px 10px;border-radius:99px">${noPM} with no PM assigned</span>`:''}
+    </div>
+    ${band('Start &amp; end of project', tiles.slice(0,2).join(''))}
+    ${band('Project manager boards', tiles.slice(2).join(''))}
   </div>`;
 }
 // Marlo's personal tab: this week's tasks + deliveries, RTR properties, upcoming takedowns.
 function _marloTab(){
   const today=new Date();today.setHours(0,0,0,0);const todayStr=_ymd(today);
+  // Whose tasks count as hers. Prefer the real profile name so a task assigned to
+  // "Marlo Berry-Kinison" and one assigned to "Marlo" both land here.
+  const _mUser=(typeof getUsers==='function'?getUsers():[]).find(u=>u.status==="approved" && /^marlo/i.test((u.firstName||"")));
+  const _mName=_mUser?(((_mUser.firstName||"")+" "+(_mUser.lastName||"")).trim()||"Marlo"):"Marlo";
+  const _tasksAll=(typeof _tasksCache!=='undefined'?_tasksCache:[]);
+  // 1. Active projects across every project manager.
+  const _amActive=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && ["Closed","Completed"].indexOf(c.phase)<0);
+  const _amPMs=new Set(_amActive.map(c=>c.pm).filter(Boolean));
+  // 2. Her completion rate over the last seven days. pm_tasks records no completion
+  // timestamp, only status - so this is "of her tasks that came due in the last 7
+  // days, how many are marked done", which is the honest reading of the number.
+  const _d7=_ymd(new Date(today.getTime()-7*86400000));
+  const _mine7=_tasksAll.filter(t=>_taskHasAssignee(t,_mName) && t.due_date && t.due_date>=_d7 && t.due_date<=todayStr);
+  const _done7=_mine7.filter(t=>t.status==='done').length;
+  const _pct7=_mine7.length?Math.round(_done7/_mine7.length*100):null;
+  // 3. Her own tasks due inside 48 hours.
+  const _in48=_ymd(new Date(today.getTime()+2*86400000));
+  const _due48=_tasksAll.filter(t=>t.status!=='done' && _taskHasAssignee(t,_mName) && t.due_date && t.due_date>=todayStr && t.due_date<=_in48)
+    .sort((a,b)=>(a.due_date||'')<(b.due_date||'')?-1:1);
+  const _overdue=_tasksAll.filter(t=>t.status!=='done' && _taskHasAssignee(t,_mName) && t.due_date && t.due_date<todayStr).length;
+  const _mStat=(icon,label,value,sub,color)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${color};border-radius:10px;padding:14px 16px">
+    <div style="font-size:13px;font-weight:600;color:#111">${icon} ${label}</div>
+    <div style="font-size:29px;font-weight:600;color:${color};margin-top:6px">${value}</div>
+    <div style="font-size:11.5px;color:#999">${sub}</div>
+  </div>`;
+  const _mSquares=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;margin-bottom:18px">
+    ${_mStat('🏘','Active projects', _amActive.length, `across ${_amPMs.size} project manager${_amPMs.size===1?'':'s'}`, '#185FA5')}
+    ${_mStat('✅','Task completion', _pct7==null?'—':(_pct7+'%'), _pct7==null?'no tasks due in the last 7 days':`${_done7} of ${_mine7.length} due in the last 7 days`, _pct7==null?'#888':(_pct7>=80?'#3B6D11':_pct7>=50?'#B7791F':'#B42318'))}
+    ${_mStat('⏰','Due in 48 hours', _due48.length, _overdue?`${_overdue} also overdue`:'her own tasks', _due48.length?'#D85A30':'#888')}
+  </div>`;
   const wkEnd=new Date(today);wkEnd.setDate(today.getDate()+7);const wkEndStr=_ymd(wkEnd);
   const tasks=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status!=='done'&&t.due_date&&t.due_date>=todayStr&&t.due_date<=wkEndStr).sort((a,b)=>(a.due_date||'')<(b.due_date||'')?-1:1);
   const mats=(typeof _calEventsCache!=='undefined'?_calEventsCache:[]).filter(e=>e.kind==='material'&&e.event_date>=todayStr&&e.event_date<=wkEndStr).sort((a,b)=>a.event_date<b.event_date?-1:1);
@@ -6166,7 +6259,8 @@ function _marloTab(){
   const propRows=list=>list.map(c=>`<div onclick="openPropDetail('${c.id}')" style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px;cursor:pointer"><span>${_calEsc(c.addr)}</span><span style="font-size:12px;color:#888">${c.pm?_calEsc(c.pm):''}</span></div>`).join('');
   const card=(title,rows,count,empty)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden"><div style="padding:10px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between"><div style="font-size:14px;font-weight:600;color:#111">${title}</div><span style="font-size:11px;background:#f4f5f7;color:#888;padding:2px 8px;border-radius:99px">${count}</span></div><div style="padding:4px 14px 12px">${count?rows:`<div style="text-align:center;color:#ccc;font-size:13px;padding:16px 0">${empty}</div>`}</div></div>`;
   return `<div style="padding:20px;max-width:1000px;margin:0 auto">
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px"><div style="width:44px;height:44px;border-radius:50%;background:#1a2744;color:#fff;font-size:19px;font-weight:600;display:flex;align-items:center;justify-content:center">M</div><div><div style="font-size:19px;font-weight:600;color:#111">Marlo</div><div style="font-size:13px;color:#888">Senior Administrative Assistant</div></div></div>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px"><div style="width:44px;height:44px;border-radius:50%;background:#1a2744;color:#fff;font-size:19px;font-weight:600;display:flex;align-items:center;justify-content:center">M</div><div><div style="font-size:19px;font-weight:600;color:#111">Marlo</div><div style="font-size:13px;color:#888">Admin Manager</div></div></div>
+    ${_mSquares}
     <div style="margin-bottom:14px">${card('📦 Material orders to place (from Slack #material-lists)', orderRows, orders.length, 'No material orders waiting. New orders posted in the Slack #material-lists channel show up here automatically.')}</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">
       ${card('🗓 New tasks this week', taskRows, tasks.length, 'No tasks due this week.')}
@@ -9135,4 +9229,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-28b utilities-tab-retired -->
+<!-- build: 2026-08-29a marlo-admin-boards -->
