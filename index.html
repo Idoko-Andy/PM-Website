@@ -5823,14 +5823,19 @@ function _marketBaseline(c){
   const cl=c.checklists||{};
   return c.checklistMarketLast || cl.timeline_done || cl.market_since || null;
 }
+let _marketSchedRunning=false;
 async function _maybeScheduleMarketChecklists(){
+  // loadPropertiesFromSupabase runs more than once during start-up, so a second
+  // pass can overlap the first. Without this latch both passes see no task yet and
+  // both insert one - which is exactly how 5289 Hazelton ended up with duplicates.
+  if(_marketSchedRunning) return;
+  _marketSchedRunning=true;
   try{
     if(typeof isReadOnly==='function' && isReadOnly()) return;
     const who=_eopAssistantName(); if(!who) return;
     const today=_ymd(new Date());
     const cards=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && MARKET_PHASES.indexOf(c.phase)>=0);
     if(!cards.length) return;
-    const open=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status!=='done' && (t.category||'')===MARKET_TASK_CATEGORY);
     const days=(from)=>Math.floor((_dParse(today)-_dParse(from))/86400000);
     let made=0, stamped=0;
     for(const c of cards){
@@ -5844,7 +5849,12 @@ async function _maybeScheduleMarketChecklists(){
         continue;
       }
       if(days(base)<7) continue;                                   // first week on market is quiet
-      if(open.some(t=>t.property_id===c.id)) continue;              // one open task at a time
+      // Ask the DATABASE whether one is already open, not the in-memory cache - the
+      // cache can be a page-load behind and that is what created the duplicate.
+      const dup=await supabase.from("pm_tasks").select("id")
+        .eq("property_id",c.id).eq("category",MARKET_TASK_CATEGORY).neq("status","done").limit(1);
+      if(dup.error) continue;                                       // unsure? do nothing
+      if(dup.data && dup.data.length) continue;                     // one open task at a time
       const due=_ymdPlus(0);                                        // today, rolled to a working day
       const { error } = await supabase.from("pm_tasks").insert({
         title:"On the Market Checklist — "+(c.addr||""),
@@ -5857,6 +5867,7 @@ async function _maybeScheduleMarketChecklists(){
     if(made && typeof loadTasks==='function') await loadTasks();
     return {made:made,stamped:stamped};
   }catch(e){ /* never block a page load */ }
+  finally{ _marketSchedRunning=false; }
 }
 async function markMarketChecklist(id){
   if(_blockIfReadOnly()) return;
@@ -9703,4 +9714,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-29g business-days + on-market-scheduling -->
+<!-- build: 2026-08-29h no-duplicate-market-tasks -->
