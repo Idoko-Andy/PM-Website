@@ -4214,10 +4214,16 @@ function openWeeklyMeeting(kind, week){
         prodDays=Math.max(1,Math.round((_dParse(listed||today)-_dParse(cStart))/86400000));
         const sp=_spentNow(c); if(sp!=null) rate=Math.round(sp/prodDays);
       }
-      // Total days accumulated - the whole clock, from the day it went vacant to the
-      // day it was listed or handed to rentals.
-      let accDays=null; const accLive=!!(c.vacancyDate&&!listed);
-      if(c.vacancyDate) accDays=Math.max(0,Math.round((_dParse(listed||today)-_dParse(c.vacancyDate))/86400000));
+      // Total days accumulated - the whole clock, ending the day it was listed or
+      // handed to rentals. It should start the day the house went vacant, but only 4
+      // of 27 construction properties have ever had a vacancy date recorded, so fall
+      // back to the day we closed on it, then to the project start. The label always
+      // says which anchor was used, so an approximation never reads as fact.
+      const accAnchor = c.vacancyDate ? {d:c.vacancyDate,label:'vacant'}
+                      : (c.closingDate ? {d:c.closingDate,label:'closed'}
+                      : (c.start ? {d:c.start,label:'project start'} : null));
+      let accDays=null; const accLive=!!(accAnchor&&!listed);
+      if(accAnchor) accDays=Math.max(0,Math.round((_dParse(listed||today)-_dParse(accAnchor.d))/86400000));
       const perm=(c.checklists&&c.checklists.permitted)==='yes';
       const cell=(l,v,color,note)=>`<div style="background:#f7f8fb;border-radius:7px;padding:7px 10px"><div style="font-size:10.5px;color:#999;text-transform:uppercase">${l}</div><div style="font-size:14px;font-weight:700;color:${color||'#111'}">${v}</div>${note?`<div style="font-size:10px;color:#aaa">${note}</div>`:''}</div>`;
       const ro=isReadOnly();
@@ -4234,7 +4240,7 @@ function openWeeklyMeeting(kind, week){
           ${cell('Spent',fmt(s))}
           ${cell('Leftover',fmt(left),left!=null&&left<0?'#B42318':'#0F7B54')}
           ${cell('Production $ / day',rate!=null?('$'+rate.toLocaleString()):'—','#4A1D6E',prodDays!=null?(prodDays+' construction days'+(prodLive?' · LIVE':'')):'set a start date')}
-          ${cell('Total days accum.',accDays!=null?accDays:'—','#B7791F',accDays!=null?('vacant '+c.vacancyDate+(accLive?' → today · LIVE':' → listed')):'no vacancy date')}
+          ${cell('Total days accum.',accDays!=null?accDays:'—','#B7791F',accDays!=null?(accAnchor.label+' '+accAnchor.d+(accLive?' → today · LIVE':' → listed')):'no start date set')}
         </div>
         <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:11px;padding-top:11px;border-top:0.5px solid #eef0f6">
           ${fld('Start date',`<span style="font-size:13px;color:${cStart?'#111':'#B7791F'}">${_calEsc(cStart||'set when it goes vacant')}</span>`)}
@@ -9714,4 +9720,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-29h no-duplicate-market-tasks -->
+<!-- build: 2026-08-29i days-accum-fallback -->
