@@ -3397,7 +3397,134 @@ function openPropDetail(id) {
     </div>`;
   }).join('');
 
-  // Quick-submit forms (below Notes): drop a construction event or a task straight
+  // ---- "Everything on this house" ---------------------------------------------------
+// The property card could WRITE a task or a calendar event but never SHOWED you the ones
+// that already existed, and it showed nothing at all from the permit tracker or the other
+// trackers. So the one screen named after the house was the one screen that could not tell
+// you what was happening to it. Every panel below is read from the same caches the other
+// screens use, so nothing can drift, and every row clicks through to where it is edited.
+function _pdOpenTasks(pid){
+  return (typeof _tasksCache!=='undefined'?_tasksCache:[])
+    .filter(t=>t.property_id===pid)
+    .sort((a,b)=>{
+      const ad=(a.status==='done')?1:0, bd=(b.status==='done')?1:0;
+      return ad-bd || String(a.due_date||'9999').localeCompare(String(b.due_date||'9999'));
+    });
+}
+function _pdEvents(pid){
+  return (typeof _calEventsCache!=='undefined'?_calEventsCache:[])
+    .filter(e=>e.property_id===pid)
+    .sort((a,b)=>String(b.event_date||'').localeCompare(String(a.event_date||'')));
+}
+function _pdPermits(pid){
+  if(typeof _permitList!=='function') return [];
+  return _permitList().filter(r=>{
+    const pr=(typeof _permitProp==='function')?_permitProp(r):null; return pr && pr.id===pid;
+  });
+}
+function _pdLinked(c){
+  const today=_ymd(new Date());
+  const wrap=(title, count, sub, inner, openWhat)=>`
+    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden;margin-top:12px">
+      <div style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <div style="font-size:13px;font-weight:500;color:#111">${title}
+          <span style="font-size:12px;color:#aaa;font-weight:400">${count}</span></div>
+        ${openWhat?`<span onclick="${openWhat}" style="font-size:12px;color:#185FA5;cursor:pointer">Open ${'\u203a'}</span>`:''}
+      </div>
+      <div style="padding:4px 14px 10px">${inner||`<div style="padding:10px 0;font-size:12.5px;color:#bbb">${sub}</div>`}</div>
+    </div>`;
+
+  // --- tasks -----------------------------------------------------------------
+  const tasks=_pdOpenTasks(c.id);
+  const openN=tasks.filter(t=>t.status!=='done').length;
+  const lateN=tasks.filter(t=>t.status!=='done' && t.due_date && t.due_date<today).length;
+  const taskRows=tasks.slice(0,12).map(t=>{
+    const done=t.status==='done';
+    const late=!done && t.due_date && t.due_date<today;
+    const who=(typeof taskAssignees==='function'?taskAssignees(t):[]).join(', ');
+    return `<div onclick="openTaskDetail('${t.id}')" style="display:flex;align-items:baseline;gap:9px;padding:6px 0;border-bottom:0.5px solid #f4f5f7;cursor:pointer">
+      <span style="font-size:13px;flex-shrink:0;color:${done?'#0F7B54':(late?'#B42318':'#c9ccd4')}">${done?'&#9745;':'&#9744;'}</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;color:${done?'#999':'#111'};${done?'text-decoration:line-through':''};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(t.title||'')}</div>
+        <div style="font-size:11px;color:#aaa">${_calEsc(t.category||'')}${who?(' &middot; '+_calEsc(who)):''}</div>
+      </div>
+      <div style="font-size:11.5px;flex-shrink:0;color:${late?'#B42318':'#999'};font-weight:${late?'600':'400'}">${_calEsc(t.due_date||'')}${late?' late':''}</div>
+    </div>`;
+  }).join('');
+  const taskPanel=wrap('&#9989; Tasks on this house',
+    tasks.length?`&mdash; ${openN} open${lateN?(', '+lateN+' late'):''}`:'',
+    'Nothing on the task calendar for this house yet.',
+    taskRows + (tasks.length>12?`<div style="padding:7px 0;font-size:11.5px;color:#aaa">+ ${tasks.length-12} more &mdash; open the task calendar to see them all</div>`:''),
+    `openProjectDashboard('tasks')`);
+
+  // --- construction calendar --------------------------------------------------
+  const evs=_pdEvents(c.id);
+  const evRows=evs.slice(0,8).map(e=>{
+    const con=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).find(x=>x.id===e.contractor_id);
+    const label=con?(con.business_name||con.name):(e.title||'');
+    const icon=e.kind==='material'?'&#128230;':(e.kind==='contractor'?'&#9733;':'&bull;');
+    return `<div style="display:flex;align-items:baseline;gap:9px;padding:6px 0;border-bottom:0.5px solid #f4f5f7">
+      <span style="flex-shrink:0">${icon}</span>
+      <div style="flex:1;min-width:0;font-size:13px;color:${e.completed?'#999':'#111'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(label)||'&mdash;'}</div>
+      <div style="font-size:11.5px;color:#999;flex-shrink:0">${_calEsc(e.event_date||'')}</div>
+    </div>`;
+  }).join('');
+  const evPanel=wrap('&#128197; Construction calendar',
+    evs.length?`&mdash; ${evs.length} booking${evs.length===1?'':'s'}`:'',
+    'Nothing booked on the construction calendar for this house.',
+    evRows + (evs.length>8?`<div style="padding:7px 0;font-size:11.5px;color:#aaa">+ ${evs.length-8} more</div>`:''),
+    `openProjectDashboard('calendar')`);
+
+  // --- permits ----------------------------------------------------------------
+  const pers=_pdPermits(c.id);
+  const perRows=pers.map(r=>{
+    const insps=Array.isArray(r.insps)?r.insps:[];
+    const fails=insps.reduce((a,x)=>a+(parseInt(x.fails,10)||0),0);
+    const st=String(r.status||'');
+    const col= /issued|closed/i.test(st) ? '#0F7B54' : (/reject|revis/i.test(st) ? '#B42318' : '#B7791F');
+    return `<div style="display:flex;align-items:baseline;gap:9px;padding:6px 0;border-bottom:0.5px solid #f4f5f7">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;color:#111;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(r.type||r.number||'Permit')}</div>
+        <div style="font-size:11px;color:#aaa">${_calEsc(r.number||'')}${r.submitted?(' &middot; submitted '+_calEsc(r.submitted)):''}${insps.length?(' &middot; '+insps.length+' inspection'+(insps.length===1?'':'s')+(fails?(', '+fails+' failed'):'')):''}</div>
+      </div>
+      <div style="font-size:11.5px;font-weight:600;flex-shrink:0;color:${col}">${_calEsc(st)||'&mdash;'}</div>
+    </div>`;
+  }).join('');
+  const perPanel=wrap('&#128196; Permits',
+    pers.length?`&mdash; ${pers.length}`:'',
+    'No permits on the permit tracker for this house.',
+    perRows,
+    `openVAAdminDashboard('trackers')`);
+
+  // --- the other trackers ------------------------------------------------------
+  const d=(window._trkData||{});
+  const on=(k)=>!!((d[k]||{})[c.id]);
+  const mowWho=(typeof _mowName==='function')?_mowName(c.id):'';
+  const bits=[];
+  bits.push(['&#127793; Mowing', mowWho?('on the route &mdash; '+mowWho):(on('mow')?'on the route':'not on the route'), mowWho||on('mow')?'#0F7B54':'#bbb']);
+  const winRec=((d.win||{})[c.id])||{};
+  const winTxt = winRec.installed?'installed' : (winRec.ordered?'ordered' : (winRec.measured?'measured' : (winRec.needed?'requested':'nothing requested')));
+  bits.push(['&#129525; Windows', winTxt, winRec.needed?'#B7791F':'#bbb']);
+  bits.push(['&#9989; Checklist', on('checklist')?'done':'outstanding', on('checklist')?'#0F7B54':'#B7791F']);
+  const uCount=((d.ulog||{})[c.id]||[]).length;
+  bits.push(['&#9889; Utilities', uCount?(uCount+' log entr'+(uCount===1?'y':'ies')):'nothing logged', uCount?'#0F7B54':'#bbb']);
+  const trkPanel=wrap('&#128203; Trackers', '', '',
+    `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;padding-top:6px">
+      ${bits.map(b=>`<div style="background:#fafbfc;border:0.5px solid #eef0f6;border-radius:7px;padding:8px 10px">
+        <div style="font-size:11px;color:#999">${b[0]}</div>
+        <div style="font-size:12.5px;color:${b[2]};font-weight:500;margin-top:2px">${_calEsc(b[1])}</div></div>`).join('')}
+    </div>`,
+    `openVAAdminDashboard('trackers')`);
+
+  return `<div style="margin-top:16px">
+    <div style="font-size:12px;color:#999;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">Everything on this house</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div>${taskPanel}${perPanel}</div>
+      <div>${evPanel}${trkPanel}</div>
+    </div>
+  </div>`;
+}
+// Quick-submit forms (below Notes): drop a construction event or a task straight
   // onto the calendars, pre-linked to this property — no need to switch tabs.
   const _qaInput = "width:100%;padding:7px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:14px;color:#111;background:#fff;outline:none;box-sizing:border-box";
   const _qaBtn = "padding:8px;background:#111;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer";
@@ -3545,6 +3672,7 @@ function openPropDetail(id) {
           <div style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;font-size:13px;font-weight:500;color:#111">Notes</div>
           <div style="padding:10px 14px;font-size:14px;color:#888;line-height:1.6">${c.notes||'No notes added yet.'}</div>
         </div>
+        ${_pdLinked(c)}
         ${quickAddForms}
         <div style="display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-top:12px">
           ${c.driveUrl ? `<a href="${c.driveUrl}" target="_blank" style="display:flex;align-items:center;gap:5px;padding:7px 14px;font-size:13px;border-radius:6px;cursor:pointer;background:#fff;color:#185FA5;border:0.5px solid #cdd7e6;text-decoration:none">📁 Open Folder ↗</a>` : ''}
@@ -6037,12 +6165,15 @@ function _compMeetingBody(wk){
   const addr=(c)=>`<span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span>`;
 
   // --- where each source meeting stands ---
+  // Each pill opens the meeting it is reporting on. This screen summarises the other three
+  // and used to be a dead end - you could see that the Monday walk-through had not been
+  // closed out, but not get to it.
   const src=[['team','Monday walk-through'],['market','On the Market'],['kickoff','Kick-offs']].map(x=>{
     const c=closedOf(x[0]), o=openedOf(x[0]);
     const st=c?['closed '+_wmWhen(c.at),'#0F7B54','#E6F4ED']
              :(o?['open, not closed out','#B7791F','#FBF3E2']
                 :['not held yet','#B42318','#FBEAE8']);
-    return `<span style="font-size:11.5px;padding:3px 9px;border-radius:99px;font-weight:600;color:${st[1]};background:${st[2]};margin-right:6px">${x[1]}: ${st[0]}</span>`;
+    return `<span onclick="openWeeklyMeeting('${x[0]}','${wk}')" title="Open the ${_calEsc(x[1])} meeting" style="font-size:11.5px;padding:3px 9px;border-radius:99px;font-weight:600;color:${st[1]};background:${st[2]};margin-right:6px;cursor:pointer">${x[1]}: ${st[0]} &rsaquo;</span>`;
   }).join('');
 
   // --- construction: over budget, timelines pushed ---
@@ -9486,7 +9617,16 @@ function openDirectorCEODashboard(activeTab) {
 function openSeniorVADashboard() {
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
-  document.getElementById("dash-body").innerHTML = `<div class="empty-state"><div class="icon">💼</div><p style="color:#888;font-size:16px;font-weight:500">Senior VA Dashboard</p><p style="color:#555;font-size:14px;margin-top:6px">Being built out. Check back soon.</p></div>`;
+  // This said "being built out" while the screen it should show was already finished and
+  // sitting one function away - the Senior VA's own home page. Show that.
+  const u=(typeof _effectiveUser==='function')?_effectiveUser():(typeof currentUser==='function'?currentUser():null);
+  try{
+    document.getElementById("dash-body").innerHTML =
+      (typeof renderSrVAHome==='function') ? renderSrVAHome(u||{}) : renderSeniorVAHome(u||{});
+  }catch(e){
+    document.getElementById("dash-body").innerHTML =
+      `<div class="empty-state"><div class="icon">\uD83D\uDCBC</div><p style="color:#888;font-size:16px;font-weight:500">Senior VA Dashboard</p><p style="color:#555;font-size:14px;margin-top:6px">Could not draw this screen: ${_calEsc((e&&e.message)||'')}</p></div>`;
+  }
 }
 function openVAAdminDashboard(activeTab) {
   activeTab = activeTab || 'main';
@@ -11545,6 +11685,44 @@ function _tradeCell(c){
   opts+=`<option value="__other__">＋ Other…</option>`;
   return `<select onchange="setContractorTrade('${c.id}',this.value)" style="width:100%;max-width:180px;padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-size:13px;color:#333;background:#fff;cursor:pointer">${opts}</select>`;
 }
+// "Times used" was a number you could not open. Every booking, newest first, with the house
+// it was on - and each row goes straight to that property card.
+function _contractorJobs(id){
+  const c=(_contractorsCache||[]).find(x=>x.id===id)||{};
+  const who=c.business_name||c.name||'This contractor';
+  const evs=(typeof _calEventsCache!=='undefined'?_calEventsCache:[])
+    .filter(e=>e.contractor_id===id)
+    .sort((a,b)=>String(b.event_date||'').localeCompare(String(a.event_date||'')));
+  const rows=evs.map(e=>{
+    const pr=(typeof propCards!=='undefined'?propCards:[]).find(p=>p.id===e.property_id);
+    const where=pr?pr.addr:(e.location||'no address');
+    const icon=e.kind==='material'?'&#128230;':(e.kind==='contractor'?'&#9733;':'&bull;');
+    return `<tr style="border-top:0.5px solid #eef0f6">
+      <td style="padding:8px 12px;font-size:12.5px;color:#666;white-space:nowrap">${_calEsc(e.event_date||'')}</td>
+      <td style="padding:8px 12px;font-size:13px">${icon} ${_calEsc(e.title||e.kind||'')}</td>
+      <td style="padding:8px 12px;font-size:13px">${pr
+        ?`<span onclick="document.getElementById('con-jobs-modal').remove();openPropDetail('${pr.id}')" style="color:#185FA5;cursor:pointer">${_calEsc(where)}</span>`
+        :`<span style="color:#999">${_calEsc(where)}</span>`}</td>
+      <td style="padding:8px 12px;font-size:12px;color:${e.completed?'#0F7B54':'#B7791F'};white-space:nowrap">${e.completed?'done':'booked'}</td>
+    </tr>`;
+  }).join('');
+  const host=document.createElement('div');
+  host.id='con-jobs-modal';
+  host.style.cssText='position:fixed;inset:0;background:rgba(17,17,17,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px';
+  host.onclick=(e)=>{ if(e.target===host) host.remove(); };
+  host.innerHTML=`<div style="background:#fff;border-radius:12px;max-width:720px;width:100%;max-height:80vh;overflow:auto;box-shadow:0 18px 50px rgba(0,0,0,.25)">
+    <div style="padding:16px 20px;border-bottom:0.5px solid #e7eaf0;display:flex;justify-content:space-between;align-items:center;gap:12px">
+      <div>
+        <div style="font-size:16px;font-weight:600;color:#111">${_calEsc(who)}</div>
+        <div style="font-size:12.5px;color:#888;margin-top:2px">${evs.length} booking${evs.length===1?'':'s'} on the construction calendar${c.trade?(' &middot; '+_calEsc(c.trade)):''}${c.phone?(' &middot; '+_calEsc(c.phone)):''}</div>
+      </div>
+      <span onclick="document.getElementById('con-jobs-modal').remove()" style="cursor:pointer;font-size:22px;color:#aaa;line-height:1">&times;</span>
+    </div>
+    ${evs.length?`<table style="width:100%;border-collapse:collapse"><tbody>${rows}</tbody></table>`
+      :'<div style="padding:26px;text-align:center;color:#bbb;font-size:14px">Never booked on a job.</div>'}
+  </div>`;
+  document.body.appendChild(host);
+}
 function renderContractorDirectory(){
   const ro = isReadOnly();
   const inp=(c,field,ph,w)=>ro?`<span style="color:#333">${_calEsc(c[field])||'<span style="color:#bbb">—</span>'}</span>`
@@ -11563,7 +11741,7 @@ function renderContractorDirectory(){
       <td style="padding:9px 12px;border-bottom:0.5px solid #eee">${inp(c,'email','Email')}${c.email?`<div style="margin-top:2px"><a href="mailto:${_calEsc(c.email)}" style="font-size:11px;color:#185FA5;text-decoration:none">✉️ email</a></div>`:''}</td>
       <td style="padding:9px 12px;border-bottom:0.5px solid #eee;color:#777">${ro?_calEsc(c.trade||"—"):_tradeCell(c)}</td>
       <td style="padding:9px 12px;border-bottom:0.5px solid #eee;text-align:center">
-        <div style="font-size:16px;font-weight:600;color:${uses?'#111':'#ccc'}">${uses}</div>
+        <div onclick="${uses?`_contractorJobs('${c.id}')`:''}" style="font-size:16px;font-weight:600;${uses?'color:#185FA5;cursor:pointer;text-decoration:underline':'color:#ccc'}">${uses}</div>
         <div style="font-size:10.5px;color:#bbb">${last?('last '+_calEsc(last)):'never booked'}</div></td>
       <td style="padding:9px 12px;border-bottom:0.5px solid #eee;text-align:center">
         ${ro?(c.red_flag?'🚩':'—')
@@ -11851,10 +12029,12 @@ function _calContractorChange(){
 function _calAddrField(pfx, propId, loc, dis){
   const props=(typeof propCards!=='undefined'?propCards:[]);
   const propOpts=props.map(p=>`<option value="${p.id}" ${propId===p.id?"selected":""}>${_calEsc(p.addr)}</option>`).join("");
+  const _linked=propId?props.find(p=>p.id===propId):null;
+  const _open=_linked?`<span onclick="openPropDetail('${propId}')" style="font-size:12px;color:#185FA5;cursor:pointer;margin-left:8px">Open ${_calEsc(_linked.addr||'the property card')} &rsaquo;</span>`:'';
   const savedMatch = loc && _savedAddrCache.some(a=>a.address===loc);
   const isOther = !!loc && !propId && !savedMatch;
   const savedOpts = _savedAddrCache.map(a=>`<option value="addr::${_calEsc(a.address)}" ${(!propId&&loc===a.address)?"selected":""}>${_calEsc(a.address)}</option>`).join("");
-  return `<div class="form-row"><label>Property / address</label>
+  return `<div class="form-row"><label>Property / address${_open}</label>
       <select id="${pfx}-prop" onchange="_calAddrToggle('${pfx}')" ${dis||""}>
         <option value="">— Select property —</option>
         ${propOpts?`<optgroup label="Our properties">${propOpts}</optgroup>`:""}
@@ -12794,10 +12974,13 @@ function _recurDueDates(dueStr, mode, untilStr){
 function _taskPropField(propId, loc, dis){
   const props=(typeof propCards!=='undefined'?propCards:[]);
   const propOpts=props.map(p=>`<option value="${p.id}" ${propId===p.id?"selected":""}>${_calEsc(p.addr)}</option>`).join("");
+  // A task knew which house it belonged to but gave you no way to get there. One click now.
+  const _linked=propId?props.find(p=>p.id===propId):null;
+  const _open=_linked?`<span onclick="openPropDetail('${propId}')" style="font-size:12px;color:#185FA5;cursor:pointer;margin-left:8px">Open ${_calEsc(_linked.addr||'the property card')} &rsaquo;</span>`:'';
   const savedMatch = loc && _savedAddrCache.some(a=>a.address===loc);
   const isOther = !!loc && !propId && !savedMatch;
   const savedOpts = _savedAddrCache.map(a=>`<option value="addr::${_calEsc(a.address)}" ${(!propId&&loc===a.address)?"selected":""}>${_calEsc(a.address)}</option>`).join("");
-  return `<div class="form-row"><label>Property / address (optional)</label>
+  return `<div class="form-row"><label>Property / address (optional)${_open}</label>
       <select id="task-prop" onchange="_taskPropChange()" ${dis||""}>
         <option value="">— None —</option>
         ${propOpts?`<optgroup label="Our properties">${propOpts}</optgroup>`:""}
@@ -13882,4 +14065,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-30n auto-advance-eop-pushtrail -->
+<!-- build: 2026-08-30o pages-communicating -->
