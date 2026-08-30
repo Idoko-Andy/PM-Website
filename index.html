@@ -3228,7 +3228,12 @@ function openPropDetail(id) {
           <div style="background:#f4f5f7;border-radius:8px;padding:12px 14px">
             <div style="font-size:11px;color:#aaa;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Final Budget</div>
             <div style="font-size:18px;font-weight:500;color:#111">${c.budget||'—'}</div>
-            <div style="font-size:12px;color:#aaa;margin-top:2px">From project tracker</div>
+            ${(()=>{ const cl=c.checklists||{}; const base=cl.budget_base, cont=cl.budget_contingency;
+              // Bruce, 30 Aug: the Final Budget is the C30-C32 block. The card carries C32 -
+              // the budget WITH contingency - and shows the two figures it is made of, so
+              // nobody has to open the sheet to see where the number came from.
+              if(base||cont) return `<div style="font-size:11.5px;color:#888;margin-top:2px">${_calEsc(base)||'—'} + ${_calEsc(cont)||'$0'} contingency</div><div style="font-size:11px;color:#bbb">Total W/ Contingency, from the tracker</div>`;
+              return `<div style="font-size:12px;color:#aaa;margin-top:2px">From project tracker &middot; incl. contingency</div>`; })()}
           </div>
           <div style="background:#f4f5f7;border-radius:8px;padding:12px 14px">
             <div style="font-size:11px;color:#aaa;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Spent to Date</div>
@@ -12998,4 +13003,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-30d nav-fix -->
+<!-- build: 2026-08-30e final-budget -->
