@@ -2861,11 +2861,27 @@ function _datesArePlaceholder(c){
 // True when this card cannot honestly produce a timeline: no start, no finish, or the
 // same-day placeholder pair above.
 function _datesUnset(c){ return !c || !c.start || !c.end || _datesArePlaceholder(c); }
-function _velStart(c){
-  if(c && c.checklists && c.checklists.construction_start) return c.checklists.construction_start;
-  if(_datesArePlaceholder(c)) return null;
-  return (c && c.start) || null;
+// ONE definition of when construction started. The property card, the Monday meeting card
+// and every $/day figure used to each work this out their own way, so the same house could
+// read 16 days in one place and 0 in another.
+//
+// checklists.construction_start is stamped the moment a card leaves Pre Construction. On
+// this board most of those stamps landed on 1 Aug 2026, when the cards were first brought
+// in - long after money was actually going out. 427-439 Hanford started in July 2025 and
+// 994-996 Livingston in March, but both are stamped 1 Aug. Worse, 6060 Cleveland is stamped
+// 21 Aug, four days AFTER it was listed, which is exactly why its "Construction to listed"
+// row read 0 days.
+//
+// So take the EARLIER of the two anchors - money over the days money was being spent - and
+// ignore a same-day placeholder start date entirely.
+function _consStart(c){
+  if(!c) return null;
+  const stamp=(c.checklists && c.checklists.construction_start) || null;
+  const begun=_datesArePlaceholder(c) ? null : (c.start || null);
+  if(stamp && begun) return String(begun)<String(stamp) ? begun : stamp;
+  return stamp || begun || null;
 }
+function _velStart(c){ return _consStart(c); }
 
 // What a property had spent as of a given date (null when no snapshot that old exists yet).
 function _spentAsOf(pid,dateStr){
@@ -4002,7 +4018,13 @@ async function _pdnLoad(){ try{ const r=await supabase.from("pm_settings").selec
 async function _pdnSave(){ if(window._pdnLoadOk===false){ alert("These comments could not be loaded a moment ago, so saving now would overwrite them all with a blank list. This save was stopped - refresh the page and try again."); return false; } const _err=await _pmSettingsWrite('pm_drill_notes', window._pdnData||{}); if(_err){ alert("YOUR COMMENT WAS NOT SAVED - "+_err); return false; } return true; }
 async function _pdnAdd(pm,key){ const el=document.getElementById('pdn-new'); if(!el||!el.value.trim()) return; const d=window._pdnData=window._pdnData||{}; d[pm]=d[pm]||{}; d[pm][key]=d[pm][key]||[]; d[pm][key].push({t:el.value.trim(),done:false,at:_ymd(new Date())}); await _pdnSave(); _pmBoardDrill(pm,key); }
 async function _pdnToggle(pm,key,i){ if(_blockIfReadOnly()) return; const l=(((window._pdnData||{})[pm]||{})[key])||[]; if(l[i]){ l[i].done=!l[i].done; await _pdnSave(); _pmBoardDrill(pm,key); } }
-async function _pdnDel(pm,key,i){ if(_blockIfReadOnly()) return; const l=(((window._pdnData||{})[pm]||{})[key])||[]; l.splice(i,1); await _pdnSave(); _pmBoardDrill(pm,key); }
+async function _pdnDel(pm,key,i){
+  if(_blockIfReadOnly()) return;
+  const l=(((window._pdnData||{})[pm]||{})[key])||[];
+  const gone=l[i]; const txt=String((gone&&(gone.text||gone.note))||gone||'').slice(0,70);
+  if(!_confirmDelete(txt?('this note - "'+txt+'"'):'this note')) return;
+  l.splice(i,1); await _pdnSave(); _pmBoardDrill(pm,key);
+}
 
 function pmStatRow(label, val, color) {
   return `<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px">
@@ -4345,9 +4367,7 @@ function _wmCalc(c){
   // be long after money actually started going out - 8 Hide Away Hills was stamped the
   // day it moved and read $59,049 a day off a single day. Take whichever anchor is
   // EARLIER, so the rate is money over the days that money was being spent.
-  const _ph=(typeof _datesArePlaceholder==='function') && _datesArePlaceholder(c);
-  let cStart=cl.construction_start||(_ph?null:(c.start||null));
-  if(cl.construction_start && c.start && !_ph && String(c.start)<String(cl.construction_start)) cStart=c.start;
+  const cStart=_consStart(c);
   const listed=cl.timeline_done||null;
   let rate=null, prodDays=null; const prodLive=!!(cStart&&!listed);
   if(cStart){
@@ -5216,8 +5236,13 @@ const MKT_TABS=[
   ["soon",    "⏳ Coming Soon",             "About to be listed, or being handed to rentals"],
   ["doc",     "📄 Suggested Listing Doc","Comps behind the number we are going to ask"]
 ];
-function _mktTab(){ const t=window._mktTab||'active'; return MKT_TABS.some(x=>x[0]===t)?t:'active'; }
-function _mktGo(t,wk){ window._mktTab=t; openWeeklyMeeting('market', wk); }
+// The selected tab lives in _mktTabSel, NOT _mktTab.
+// `function _mktTab()` is a top-level declaration, so it is also window._mktTab. Writing
+// window._mktTab='contract' therefore REPLACED the function with a string, and the very
+// next render threw "_mktTab is not a function" - which is why In Contract, Coming Soon
+// and Suggested Listing Doc could not be opened at all. Keep the two names apart.
+function _mktTab(){ const t=window._mktTabSel||'active'; return MKT_TABS.some(x=>x[0]===t)?t:'active'; }
+function _mktGo(t,wk){ window._mktTabSel=t; openWeeklyMeeting('market', wk); }
 function _mktCards(which){
   const _n=(a)=>{ const m=String(a||'').match(/\d+/); return m?parseInt(m[0],10):999999; };
   const ph=MKT_PHASES[which]||[];
@@ -8438,15 +8463,23 @@ function _accumSegments(c){
   const today=_ymd(new Date());
   const cl=(c && c.checklists) || {};
   const bought = c.closingDate || null;
-  const cStart = cl.construction_start || null;
+  const cStart = _consStart(c);
   const listed = cl.timeline_done || null;
   const sold   = c.closedDate || null;
-  const days=(a,b)=> a ? Math.max(0, Math.round((_dParse(b||today)-_dParse(a))/86400000)) : null;
+  // A stage that finishes BEFORE it starts is bad data, not a zero-day stage. Clamping it to
+  // 0 is what made 6060 Cleveland sit there reading "0 d" as though the work took no time.
+  // Report the gap as out-of-order so somebody fixes the dates instead of believing the 0.
+  const seg=(a,b)=>{
+    if(!a) return { n:null, bad:false };
+    const n=Math.round((_dParse(b||today)-_dParse(a))/86400000);
+    return n<0 ? { n:n, bad:true } : { n:n, bad:false };
+  };
+  const s1=seg(bought,cStart), s2=seg(cStart,listed), s3=seg(listed,sold);
   return [
-    { label:"Takedown \u2192 pre-con done", from:bought, to:cStart, n:days(bought,cStart), live:!!(bought&&!cStart),
+    { label:"Takedown \u2192 pre-con done", from:bought, to:cStart, n:s1.n, bad:s1.bad, live:!!(bought&&!cStart),
       note:c.vacancyDate?("vacant "+c.vacancyDate):"" },
-    { label:"Construction \u2192 listed",    from:cStart, to:listed, n:days(cStart,listed), live:!!(cStart&&!listed), note:"" },
-    { label:"Listed \u2192 sold",            from:listed, to:sold,   n:days(listed,sold),   live:!!(listed&&!sold),   note:"" }
+    { label:"Construction \u2192 listed",    from:cStart, to:listed, n:s2.n, bad:s2.bad, live:!!(cStart&&!listed), note:"" },
+    { label:"Listed \u2192 sold",            from:listed, to:sold,   n:s3.n, bad:s3.bad, live:!!(listed&&!sold),   note:"" }
   ];
 }
 // $/day for the property card. Spend to date over construction days, the same basis
@@ -8468,7 +8501,9 @@ function _accumBox(c){
   const row=(x)=>{
     const val = (x.n==null)
       ? '<span style="font-size:12px;color:#c4c8d0">not started</span>'
-      : `<span style="font-weight:600;color:${x.live?"#B8860B":"#111"}">${x.n}<span style="font-size:10px;font-weight:400;color:#aaa"> d</span></span>`;
+      : (x.bad
+        ? '<span style="font-size:12px;color:#B42318;font-weight:700">check dates</span>'
+        : `<span style="font-weight:600;color:${x.live?"#B8860B":"#111"}">${x.n}<span style="font-size:10px;font-weight:400;color:#aaa"> d</span></span>`);
     const range = (x.n==null) ? "" : (x.from + (x.to ? (" \u2192 " + x.to) : " \u2192 today"));
     return `<div style="display:flex;justify-content:space-between;align-items:baseline;gap:6px;padding:4px 0;border-bottom:0.5px solid #e8eaef">
       <div style="min-width:0">
@@ -8479,14 +8514,17 @@ function _accumBox(c){
       <div style="font-size:15px;flex-shrink:0;white-space:nowrap">${val}</div>
     </div>`;
   };
-  const started=segs.filter(x=>x.n!=null);
+  // An out-of-order stage is excluded from the total rather than subtracted from it.
+  const started=segs.filter(x=>x.n!=null && !x.bad);
   const total=started.reduce((a,x)=>a+x.n,0);
+  const anyBad=segs.some(x=>x.bad);
   return `<div style="font-size:11px;color:#aaa;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:3px">Days Accumulated</div>
     ${segs.map(row).join("")}
     <div style="display:flex;justify-content:space-between;align-items:baseline;padding-top:5px">
       <span style="font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.04em">Total</span>
       <span style="font-size:16px;font-weight:700;color:#111">${started.length?total:"\u2014"}${started.length?'<span style="font-size:10px;font-weight:400;color:#aaa"> d</span>':""}</span>
     </div>
+    ${anyBad?'<div style="font-size:10.5px;color:#B42318;margin-top:4px;line-height:1.35">One stage finishes before it starts \u2014 the dates on this property are out of order. Fix them in Property Info and this will add up again.</div>':""}
     ${_velDayLine(c)}`;
 }
 function _propCardMini(c){
@@ -9445,7 +9483,7 @@ async function _utilPayAdd(pid,sub){
 }
 async function _utilPayDel(pid,sub,i){
   if(_blockIfReadOnly()) return;
-  if(!confirm("Delete this payment record?")) return;
+  if(!_confirmDelete('this utility payment record')) return;
   const arr=_utilArr('upay',pid,sub).slice(); arr.splice(i,1);
   if(!(await _utilArrWrite('upay',pid,sub,arr))) return;
   _utilOpenHistory(pid);
@@ -9463,7 +9501,7 @@ async function _utilLogAdd(pid){
 }
 async function _utilLogDel(pid,i){
   if(_blockIfReadOnly()) return;
-  if(!confirm("Delete this log entry?")) return;
+  if(!_confirmDelete('this utility log entry')) return;
   const arr=_utilArr('ulog',pid).slice(); arr.splice(i,1);
   if(!(await _utilArrWrite('ulog',pid,null,arr))) return;
   _utilOpenHistory(pid);
@@ -9948,6 +9986,9 @@ async function _permitInspRemove(id, insId){
   if(_blockIfReadOnly()) return;
   const d=window._trkData||{};
   const rec=Object.assign({},(d.permits||{})[id]||{});
+  const gone=(Array.isArray(rec.insps)?rec.insps:[]).find(x=>x.id===insId);
+  if(!_confirmDelete('this inspection'+(gone&&gone.type?(' - '+gone.type):'')+(gone&&gone.date?(' on '+gone.date):''),
+     'It is removed from '+(rec.addr||'this permit')+" and from the inspection timings.")) return;
   const list=(Array.isArray(rec.insps)?rec.insps:[]).filter(x=>x.id!==insId);
   rec.insps=list; d.permits=d.permits||{}; d.permits[id]=rec; window._trkData=d;
   if(await _trkSave()) _permitRerender();
@@ -10246,7 +10287,9 @@ function _vaTrackers(){
     <td style="padding:7px">${txt('w9info',c.id,'note','Notes / no W-9 needed',170)}</td>
     <td style="padding:7px">${ro?(_calEsc(c.email)||'—'):`<input value="${_calEsc(c.email||'')}" placeholder="Email" onchange="setContractorField('${c.id}','email',this.value)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:150px"/>`}
       <div style="font-size:10px;color:#bbb;margin-top:2px">from the directory</div></td>
-    <td style="padding:7px">${ro?(_calEsc(c.phone)||'—'):`<input value="${_calEsc(c.phone||'')}" placeholder="Phone" onchange="setContractorField('${c.id}','phone',this.value)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:120px"/>`}</td></tr>`).join(""):'<tr><td colspan="6" style="padding:16px;color:#bbb;text-align:center">No contractors in the directory yet. Add them under Tools → Contractor Directory.</td></tr>';
+    <td style="padding:7px">${ro?(_calEsc(c.phone)||'—'):`<input value="${_calEsc(c.phone||'')}" placeholder="Phone" onchange="setContractorField('${c.id}','phone',this.value)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:120px"/>`}</td>
+    ${ro?'':`<td style="padding:7px;text-align:right;color:${_contractorUses(c.id)?'#111':'#c9ccd4'};font-weight:${_contractorUses(c.id)?'600':'400'}">${_contractorUses(c.id)}</td>
+    <td style="padding:7px;text-align:right;white-space:nowrap"><span onclick="deleteContractor('${c.id}','trackers')" title="Delete this contractor everywhere" style="cursor:pointer;color:#c0392b;font-size:12.5px">Remove</span></td>`}</tr>`).join(""):'<tr><td colspan="8" style="padding:16px;color:#bbb;text-align:center">No contractors in the directory yet. Add them under Tools → Contractor Directory.</td></tr>';
 
   // ---------- Mowing tracker (mirrors the Active Mowing Tracker sheet) ----------
   const mowWhoSel=(c)=>{
@@ -10327,7 +10370,7 @@ function _vaTrackers(){
   const back=`<div onclick="window._trkView='summary';(window._trkRerender||function(){openVAAdminDashboard('trackers');})()" style="display:inline-flex;align-items:center;gap:5px;font-size:13px;color:#185FA5;cursor:pointer;margin-bottom:10px">‹ Back to Trackers</div>`;
   const shell=(inner)=>`<div style="padding:20px;max-width:1120px;margin:0 auto"><div style="font-size:16px;font-weight:600;color:#111;margin-bottom:10px">📋 Trackers</div>${tiles}${inner}</div>`;
 
-  if(view==='w9') return shell(back+_trkSearchBox('Search a contractor…')+_trkTable('🧾 W-9 Tracker','#7A3FA8','<th style="padding:9px 10px;text-align:left">Contractor</th><th style="padding:9px;text-align:left">Name on W-9</th><th style="padding:9px">On file</th><th style="padding:9px;text-align:left">Notes</th><th style="padding:9px;text-align:left">Email</th><th style="padding:9px;text-align:left">Phone</th>',w9rows)+`<div style="font-size:12px;color:#999">Ticking "On file" here also marks the contractor in the Contractor Directory.</div>`);
+  if(view==='w9') return shell(back+_trkSearchBox('Search a contractor…')+_trkTable('🧾 W-9 Tracker','#7A3FA8','<th style="padding:9px 10px;text-align:left">Contractor</th><th style="padding:9px;text-align:left">Name on W-9</th><th style="padding:9px">On file</th><th style="padding:9px;text-align:left">Notes</th><th style="padding:9px;text-align:left">Email</th><th style="padding:9px;text-align:left">Phone</th>'+(ro?'':'<th style="padding:9px;text-align:right">Jobs</th><th></th>'),w9rows)+`<div style="font-size:12px;color:#999">Ticking "On file" here also marks the contractor in the Contractor Directory.${ro?'':' <b>Remove</b> deletes the whole contractor record — use it on duplicates, and remove the copy with 0 jobs against it.'}</div>`);
   if(view==='mow') return shell(back+_trkSearchBox('Search a property…')+_trkTable('🌱 Mowing Tracker','#3B6D11','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px;text-align:left">Who is mowing</th><th style="padding:9px;text-align:left">How often</th><th style="padding:9px;text-align:left">Cost/mow</th><th style="padding:9px;text-align:left">Contact #</th><th style="padding:9px;text-align:left">PM</th><th style="padding:9px;text-align:left">Payment</th><th style="padding:9px">On route</th><th style="padding:9px">Removed after</th>',mowrows)+_trkClosedSimple(closed,'mowing history'));
   if(view==='window') return shell(back+_trkSearchBox('Search a property…')+_trkTable('🪟 Window Tracker','#185FA5','<th style="padding:9px 10px;text-align:left">Property / what’s being replaced</th><th style="padding:9px">Needed</th><th style="padding:9px">Measure</th><th style="padding:9px">Ordered</th><th style="padding:9px">Arrival</th><th style="padding:9px">Install</th><th style="padding:9px;text-align:left">Notes &amp; comments</th>',winrows)+`<div style="font-size:12px;color:#999;margin-top:-8px">Tick <b>Needed</b> when a PM requests windows or glass — that puts the property on Marlo's list with its next booking. Dates you set here land on that property’s construction calendar automatically, and Slack posts 48 hours before the measure and install dates.</div>`+winClosed);
   if(view==='util'){
@@ -11169,6 +11212,15 @@ async function loadCalendarEventsFromSupabase(){
 }
 // How many times we have actually put this contractor on a job. Derived from the
 // construction calendar rather than stored, so it can never drift out of date.
+// Every delete in the app asks first, in the same words, and always NAMES the thing being
+// removed - "are you sure" on its own tells you nothing about what you are about to lose.
+// Bruce's rule, 30 Aug: no delete button anywhere without a confirm.
+function _confirmDelete(what, consequence){
+  let m='Delete '+(what||'this')+'?';
+  if(consequence) m += '\n\n'+consequence;
+  m += '\n\nThis cannot be undone.';
+  return confirm(m);
+}
 function _contractorUses(id){
   return (typeof _calEventsCache!=='undefined'?_calEventsCache:[]).filter(e=>e.contractor_id===id).length;
 }
@@ -11310,7 +11362,7 @@ function renderContractorDirectory(){
       <div style="flex:1;min-width:120px"><label style="font-size:12px;color:#888;display:block;margin-bottom:4px">Phone</label><input id="ct-phone" placeholder="(614) 555-0100" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px"/></div>
       <div style="flex:1.2;min-width:140px"><label style="font-size:12px;color:#888;display:block;margin-bottom:4px">Email</label><input id="ct-email" placeholder="name@company.com" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px"/></div>
       <div style="flex:1;min-width:120px"><label style="font-size:12px;color:#888;display:block;margin-bottom:4px">Trade</label><input id="ct-trade" list="ct-trade-list" placeholder="Plumbing, HVAC…" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px"/><datalist id="ct-trade-list">${CONTRACTOR_TRADES.map(t=>`<option value="${_calEsc(t)}"></option>`).join('')}</datalist></div>
-      <button onclick="saveContractor()" style="padding:9px 16px;background:#111;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer">+ Add</button>
+      <button onclick="_submit('ct-add',this,'Adding…',saveContractor)" style="padding:9px 16px;background:#111;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer">+ Add</button>
     </div>`;
   const th=(t,align)=>`<th style="text-align:${align||'left'};padding:9px 12px;font-size:12px;color:#999;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap">${t}</th>`;
   document.getElementById("dash-body").innerHTML =
@@ -11363,13 +11415,33 @@ async function setContractorTrade(id,val){
   await loadContractorsFromSupabase();
   renderContractorDirectory();
 }
-async function deleteContractor(id){
+// Removing a contractor takes them off the directory, the W-9 tracker, the mowing tracker
+// and every contractor dropdown at once - they are all the same record. So say plainly what
+// is about to disappear, and say it louder when the person is actually booked on jobs.
+async function deleteContractor(id, redraw){
   if(_blockIfReadOnly()) return;
-  if(!confirm("Remove this contractor from the directory?")) return;
+  const c=(_contractorsCache||[]).find(x=>x.id===id)||{};
+  const who=c.name||c.business_name||"this contractor";
+  const uses=(typeof _contractorUses==='function')?_contractorUses(id):0;
+  let msg='Remove "'+who+'" from the directory?\n\n'
+        + 'This takes them off the W-9 tracker, the mowing tracker and every contractor '
+        + 'dropdown as well - it is all one record.';
+  if(uses>0){
+    msg += '\n\n\u26a0\ufe0f They are booked on '+uses+' job'+(uses===1?'':'s')+' on the construction '
+         + 'calendar. Those bookings will be left without a contractor name.\n\n'
+         + 'If this is a duplicate, remove the copy that has 0 jobs against it instead.';
+  }
+  msg += '\n\nThis cannot be undone.';
+  if(!confirm(msg)) return;
   const { error } = await supabase.from("pm_contractors").delete().eq("id",id);
-  if(error){ alert("Failed to remove: "+(error.message||"unknown error")); return; }
+  if(error){ _toast("Could not remove "+who+" — "+(error.message||"unknown error"),"bad"); return; }
+  if(typeof _logAudit==="function") _logAudit("deleted","contractor", who,
+    "Removed from the contractor directory"+(uses?(" — was booked on "+uses+" calendar job"+(uses===1?'':'s')):" — had no bookings"));
+  _toast("Removed "+who);
   await loadContractorsFromSupabase();
-  renderContractorDirectory();
+  // Redraw whichever screen the person is actually looking at.
+  if(redraw==='trackers' && typeof window._trkRerender==='function') window._trkRerender();
+  else renderContractorDirectory();
 }
 
 // ---- Construction Calendar (Project Dashboard tab) ----
@@ -12290,7 +12362,11 @@ function _newStepAdd(){
   _newStepsRender();
 }
 function _newStepSet(i, v){ if(_newSteps[i]){ const t=String(v||'').trim(); if(t) _newSteps[i].text=t; else _newStepDel(i); } }
-function _newStepDel(i){ _newSteps.splice(i,1); _newStepsRender(); }
+function _newStepDel(i){
+  const gone=_newSteps[i];
+  if(!_confirmDelete('the step "'+String((gone&&gone.text)||'').slice(0,60)+'"')) return;
+  _newSteps.splice(i,1); _newStepsRender();
+}
 function _newStepsField(){
   return `<div class="form-row"><label>&#9745; Steps <span style="font-weight:400;color:#999;font-size:12px">&mdash; optional checklist inside this task</span></label>
     <div style="border:0.5px solid #333;border-radius:8px;padding:8px 10px;background:#161616">
@@ -12336,6 +12412,8 @@ async function removeSubtask(id, sid, ctx){
   if(_blockIfReadOnly()) return;
   const t=(_tasksCache||[]).find(x=>x.id===id); if(!t) return;
   const gone=_subList(t).find(x=>x.id===sid);
+  if(!_confirmDelete('the step "'+String((gone&&gone.text)||'').slice(0,60)+'"',
+     'It comes off this task for everyone.')) return;
   const list=_subList(t).filter(x=>x.id!==sid);
   if(!await _subWrite(id, list, 'Removed the step "'+String(gone&&gone.text||'').slice(0,60)+'"')) return;
   _subRefresh(id, ctx);
@@ -12919,9 +12997,18 @@ function _wfChainStarts(k){ const e=_wfDraft.chain[k]; if(!e) return null; if(!A
 function _wfSetChainStartDays(k,idx,val){ const s=_wfChainStarts(k); if(s&&s[idx]){ const n=parseInt(val,10); s[idx].dueDays=isNaN(n)?0:n; } }
 function _wfSetChainStartName(k,idx,val){ const s=_wfChainStarts(k); if(s&&s[idx]){ s[idx].name=val; } }
 function _wfSetChainOn(k,val){ if(_wfDraft.chain[k]) _wfDraft.chain[k].on=val; }
-function _wfRemoveChainStart(k,idx){ const s=_wfChainStarts(k); if(s){ s.splice(idx,1); if(!s.length) delete _wfDraft.chain[k]; } _renderSettings(); }
+function _wfRemoveChainStart(k,idx){
+  const s=_wfChainStarts(k); const gone=s&&s[idx];
+  if(!_confirmDelete('the rule that starts "'+((gone&&gone.name)||'this step')+'" after "'+k+'"')) return;
+  if(s){ s.splice(idx,1); if(!s.length) delete _wfDraft.chain[k]; }
+  _renderSettings();
+}
 function _wfAddChainStart(k){ const s=_wfChainStarts(k); if(!s) return; s.push({ name:(_wfDraft.subPhases[0]||""), dueDays:3 }); _renderSettings(); }
-function _wfRemoveChain(k){ delete _wfDraft.chain[k]; _renderSettings(); }
+function _wfRemoveChain(k){
+  if(!_confirmDelete('the whole chain rule for "'+k+'"',
+     'Every step it starts will stop being scheduled automatically.')) return;
+  delete _wfDraft.chain[k]; _renderSettings();
+}
 function _wfAddChain(){
   const from=document.getElementById("wf-ch-from").value, to=document.getElementById("wf-ch-to").value;
   const days=parseInt(document.getElementById("wf-ch-days").value,10);
@@ -13166,7 +13253,7 @@ function _mEditTask(id){
       <div style="flex:1"><div class="m-label" style="margin-top:12px">Due</div><input id="me-due" type="date" class="m-input" value="${_calEsc(t.due_date||"")}"/></div>
     </div>
     <div class="m-label" style="margin-top:12px">Notes</div><textarea id="me-notes" class="m-input" rows="2">${_calEsc(t.notes||"")}</textarea>
-    <button class="m-btn" onclick="_mSubmitTaskEdit('${t.id}')">Save changes</button>
+    <button class="m-btn" onclick="_submit('m-task-edit',this,'Saving…',()=>_mSubmitTaskEdit('${t.id}'))">Save changes</button>
     <button class="m-btn m-btn-lite" onclick="_mOpenTask('${t.id}')">Cancel</button>
   `);
   // Pre-select the property this task is already attached to.
@@ -13430,7 +13517,7 @@ function _mAddFormEvent(preMaterial){
     ${kindSel}
     <div class="m-label" style="margin-top:12px">${preMaterial?"What's being delivered":"Description"}</div><input id="me-title" class="m-input" placeholder="${preMaterial?"e.g. Cabinets, flooring":"e.g. Framing crew starts"}"/>
     <div class="m-label" style="margin-top:12px">Notes</div><textarea id="me-notes" class="m-input" rows="2"></textarea>
-    <button class="m-btn" onclick="_mSubmitEvent()">Save</button>
+    <button class="m-btn" onclick="_submit('m-event',this,'Saving…',_mSubmitEvent)">Save</button>
   `);
 }
 async function _mSubmitEvent(){
@@ -13444,9 +13531,10 @@ async function _mSubmitEvent(){
   if(!date){ alert("Pick a date."); return; }
   const row={ property_id:prop, location, event_date:date, kind, title, notes, completed:false };
   const { error }=await supabase.from("pm_calendar_events").insert(row);
-  if(error){ alert("Couldn't save: "+(error.message||"")); return; }
+  if(error){ _toast("That was NOT saved — "+(error.message||""),"bad"); return; }
   if(_pl.saveAddr && location) await _saveAddressForReuse(location);
   if(typeof _logAudit==="function") _logAudit("created","calendar", title||_mKindLabel(kind), prop?_propAddr(prop):location);
+  _toast("Added: "+(title||_mKindLabel(kind)));
   await loadCalendarEventsFromSupabase(); _mProp=prop; _mDay=date; _mGo("build");
 }
 // ============================ end Mobile app =================================
@@ -13577,4 +13665,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-30l date-placeholder-guard -->
+<!-- build: 2026-08-30m tabs-days-deletes -->
