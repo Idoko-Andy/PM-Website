@@ -3174,7 +3174,7 @@ function openPropDetail(id) {
           <input type="date" id="pc-date" style="${_qaInput}" />
           <select id="pc-kind" style="${_qaInput}"><option value="material">📦 Material delivery</option><option value="contractor">★ Contractor start</option><option value="custom">• Custom</option></select>
           <input type="text" id="pc-detail" placeholder="What's delivered / contractor name / description" style="${_qaInput}" />
-          <button onclick="savePropConstruction('${c.id}')" style="${_qaBtn}">Add to Construction Calendar</button>
+          <button onclick="_submit('prop-const-${c.id}',this,'Adding…',()=>savePropConstruction('${c.id}'))" style="${_qaBtn}">Add to Construction Calendar</button>
         </div>
       </div>
       <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden">
@@ -3188,7 +3188,7 @@ function openPropDetail(id) {
             <div style="flex:1"><div style="font-size:11px;color:#999;margin-bottom:2px">Start (optional)</div><input type="date" id="pt-start" style="${_qaInput}" /></div>
             <div style="flex:1"><div style="font-size:11px;color:#999;margin-bottom:2px">Due</div><input type="date" id="pt-due" style="${_qaInput}" /></div>
           </div>
-          <button onclick="savePropTask('${c.id}')" style="${_qaBtn}">Add to Task Calendar</button>
+          <button onclick="_submit('prop-task-${c.id}',this,'Adding…',()=>savePropTask('${c.id}'))" style="${_qaBtn}">Add to Task Calendar</button>
         </div>
       </div>
     </div>`;
@@ -3298,7 +3298,7 @@ function openPropDetail(id) {
           <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden">
             <div style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;font-size:13px;font-weight:500;color:#111;display:flex;align-items:center;justify-content:space-between">
               Sub Phases
-              ${_ro_sp?'':`<button onclick="saveSubPhaseSchedule('${c.id}')" style="font-size:12px;padding:3px 10px;border-radius:4px;background:#111;color:#fff;border:none;cursor:pointer">Save dates</button>`}
+              ${_ro_sp?'':`<button onclick="_submit('sp-save-${c.id}',this,'Saving…',()=>saveSubPhaseSchedule('${c.id}'))" style="font-size:12px;padding:3px 10px;border-radius:4px;background:#111;color:#fff;border:none;cursor:pointer">Save dates</button>`}
             </div>
             <div style="padding:10px 14px">${subPhaseRows}</div>
             ${_ro_sp?'':`<div style="padding:0 14px 10px;font-size:11px;color:#aaa">Set a start &amp; finish date, then Save. Each scheduled subphase becomes a task for ${c.pm?_calEsc(c.pm):'this property\'s PM'} on the Task Calendar.</div>`}
@@ -3334,10 +3334,13 @@ async function savePropConstruction(propId){
     else contractor_id=ct.id;
   }
   const { error } = await supabase.from("pm_calendar_events").insert({ property_id:propId, event_date:date, kind, title, contractor_id, notes:null });
-  if(error){ alert("Failed to add event: "+(error.message||"")); return; }
+  if(error){ _toast("That construction item was NOT added \u2014 "+(error.message||""),"bad"); return; }
   _logAudit("created","calendar", _propAddr(propId), (kind==="contractor"?("Contractor start: "+detail):(kind==="custom"?("Custom: "+detail):("Material delivery: "+detail)))+" (from property card)");
   await loadCalendarEventsFromSupabase();
+  // Clear the form so a second press cannot repeat the same booking.
+  ["pc-date","pc-detail"].forEach(id=>{const el=document.getElementById(id); if(el) el.value="";});
   openPropDetail(propId);
+  _toast("On the construction calendar for "+date+": "+detail);
 }
 function _ptCatToggle(){ const s=document.getElementById("pt-cat"); const n=document.getElementById("pt-cat-new"); if(s&&n) n.style.display = s.value==="__new"?"":"none"; }
 // Quick-submit a task straight from the property card.
@@ -3354,10 +3357,13 @@ async function savePropTask(propId){
   if(!due){ alert("Pick a due date."); return; }
   if(start && start>due){ alert("Start date can't be after the due date."); return; }
   const { error } = await supabase.from("pm_tasks").insert({ title, category:cat, assignee:asg, assignees:asg?[asg]:[], start_date:start, due_date:due, property_id:propId });
-  if(error){ alert("Failed to add task: "+(error.message||"")); return; }
+  if(error){ _toast("That task was NOT added \u2014 "+(error.message||""),"bad"); return; }
   _logAudit("created","task", cat?(cat+": "+title):title, asg?("Assigned to "+asg):"Unassigned");
   await loadTasks();
+  // Clear the form so the same task cannot be sent twice by accident.
+  ["pt-title","pt-cat-new","pt-start","pt-due"].forEach(id=>{const el=document.getElementById(id); if(el) el.value="";});
   openPropDetail(propId);
+  _toast("Task added: "+title+(asg?(" \u2014 "+asg):" \u2014 nobody assigned yet"));
 }
 
 // ===================== PROPERTY MODAL =====================
@@ -7405,7 +7411,7 @@ function openInviteUser(){
     <div class="form-row"><label>Their name (optional)</label><input type="text" id="inv-name" placeholder="First and last" /></div>
     <div class="form-row"><label>Job role</label><select id="inv-role"><option value="">— Select a role —</option>${roleOpts}</select></div>
     <div class="form-row"><label>A line from you (optional)</label><textarea id="inv-note" rows="2" placeholder="Anything you want to say in the email"></textarea></div>
-    <button class="btn-full" onclick="sendInvite()">✉️ Write the invite email</button>`;
+    <button class="btn-full" onclick="_submit('invite',this,'Writing…',sendInvite)">✉️ Write the invite email</button>`;
   const box=document.getElementById("invite-inner");
   if(box){ box.innerHTML=html; openModal("invite-modal"); return; }
   // No dedicated modal in this build - fall back to the task modal shell.
@@ -11178,7 +11184,7 @@ function openAddCalEvent(dateStr){
       </div>
     </div>
     <div class="form-row"><label>Notes (optional)</label><input type="text" id="cal-notes" placeholder="Anything the team should know" /></div>
-    <button class="btn-full" onclick="saveCalEvent()">Add to calendar</button>`;
+    <button class="btn-full" onclick="_submit('cal-new',this,'Adding…',saveCalEvent)">Add to calendar</button>`;
   document.getElementById("calevent-inner").innerHTML=html;
   openModal("calevent-modal");
 }
@@ -11337,7 +11343,7 @@ function openCalEventDetail(id){
     </div>
     <div class="form-row"><label>Notes (optional)</label><input type="text" id="cale-notes" value="${_calEsc(e.notes||'')}" placeholder="Anything the team should know" ${dis} /></div>
     ${ro?'':`
-    <button class="btn-full" onclick="saveCalEventEdit('${e.id}')">Save changes</button>
+    <button class="btn-full" onclick="_submit('cal-edit-${e.id}',this,'Saving…',()=>saveCalEventEdit('${e.id}'))">Save changes</button>
     <div style="text-align:center;margin-top:12px"><a onclick="deleteCalEvent('${e.id}')" style="color:#c0392b;cursor:pointer;font-size:14px">Delete this event</a></div>`}`;
   document.getElementById("calevent-inner").innerHTML=html;
   openModal("calevent-modal");
@@ -11810,7 +11816,7 @@ function openAddTask(dateStr, pre){
     <div class="form-row"><label>Refer questions to (optional)</label><input type="text" id="task-refer" list="task-refer-list" placeholder="Type or pick a name" /><datalist id="task-refer-list">${referList}</datalist></div>
     <div class="form-row"><label>Notes / comments (optional)</label><textarea id="task-notes" rows="6" placeholder="Everything the person needs to do this without asking a question — what, where, who to call, what done looks like." style="width:100%;min-height:130px;resize:vertical;line-height:1.5"></textarea></div>
     <input type="hidden" id="task-edit-id" value="" />
-    <button class="btn-full" onclick="saveTask()">Add task</button>`;
+    <button class="btn-full" onclick="saveTask(this)">Add task</button>`;
   openModal("task-modal");
   // Optional prefill, used by the trackers so a task raised from a row arrives
   // already pointed at the right property, header and person.
@@ -11923,7 +11929,7 @@ function _subtaskList(t, dark, ctx){
     </div>`).join('') : `<div style="font-size:13px;color:${dark?'#777':'#aaa'};padding:7px 2px">No steps yet. Break the job into the pieces it actually takes.</div>`;
   const add=ro?'':`<div style="display:flex;gap:6px;margin-top:8px">
       <input id="sub-input-${t.id}" placeholder="Add a step&hellip;" onkeydown="if(event.key==='Enter'){event.preventDefault();addSubtask('${t.id}','sub-input-${t.id}','${ctx||'desktop'}')}" style="flex:1;padding:8px 10px;border:0.5px solid ${dark?'#333':'#d8dce6'};border-radius:7px;font-size:14px;background:${dark?'#161616':'#fff'};color:${dark?'#eee':'#111'}"/>
-      <button onclick="addSubtask('${t.id}','sub-input-${t.id}','${ctx||'desktop'}')" style="padding:8px 14px;background:#185FA5;color:#fff;border:none;border-radius:7px;font-size:13px;cursor:pointer;white-space:nowrap">Add step</button>
+      <button onclick="_submit('sub-${t.id}',this,'Adding…',()=>addSubtask('${t.id}','sub-input-${t.id}','${ctx||'desktop'}'))" style="padding:8px 14px;background:#185FA5;color:#fff;border:none;border-radius:7px;font-size:13px;cursor:pointer;white-space:nowrap">Add step</button>
     </div>`;
   return bar+rows+add;
 }
@@ -11999,9 +12005,9 @@ function openTaskDetail(id){
     <div class="form-row"><label>💬 Comments <span style="font-weight:400;color:#999;font-size:12px">— a running log, kept forever</span></label>
       <div style="border:0.5px solid #333;border-radius:8px;padding:6px 10px;max-height:180px;overflow-y:auto;background:#161616">${_taskCommentsList(t,true)}</div>
       ${ro?'':`<textarea id="task-comment-input" rows="2" placeholder="Add a comment — why it wasn't done, what's next, etc." style="width:100%;margin-top:6px"></textarea>
-      <button onclick="addTaskComment('${t.id}','task-comment-input','desktop')" style="margin-top:4px;padding:8px 14px;background:#185FA5;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer">Add comment</button>`}
+      <button onclick="_submit('cmt-${t.id}',this,'Posting…',()=>addTaskComment('${t.id}','task-comment-input','desktop'))" style="margin-top:4px;padding:8px 14px;background:#185FA5;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer">Add comment</button>`}
     </div>
-    ${ro?'':`<button class="btn-full" onclick="saveTask()">Save changes</button>
+    ${ro?'':`<button class="btn-full" onclick="saveTask(this)">Save changes</button>
     <div onclick="deleteTask('${t.id}')" style="text-align:center;margin-top:12px;color:#c0392b;font-size:13px;cursor:pointer">Delete task</div>`}`;
   openModal("task-modal");
 }
@@ -12080,7 +12086,73 @@ function _resolveTaskProp(){
   if(v.indexOf("addr::")===0) return { property_id:null, location:v.slice(6), saveAddr:false };
   return { property_id:v||null, location:null, saveAddr:false };
 }
-async function saveTask(){
+// ===================== SAVING: ONE CLICK, ONE RECORD =====================
+// Bruce, 30 Aug: "when I click add a task, it doesn't really confirm it's been
+// added ... it just doesn't respond at all. And if you keep clicking add task, it
+// just adds it multiple times."
+//
+// He was right, and it was the same shape of bug everywhere something saved.
+// Between the click and the modal closing there are several round trips - the
+// insert, the audit row, a full task reload, sometimes a calendar entry. On a slow
+// connection that is seconds of a screen doing nothing, so the natural thing to do
+// is click again, and every click inserted another row.
+//
+// _submit fixes both halves at once: the button goes busy the instant you press it
+// and the second click is ignored, so one press can only ever make one record.
+let _submitBusy = {};
+async function _submit(key, btn, busyLabel, fn){
+  if(_submitBusy[key]) return;                 // already running - swallow the extra click
+  _submitBusy[key] = true;
+  const el = (btn && btn.tagName) ? btn : null;
+  const wasHtml = el ? el.innerHTML : null;
+  const wasDis  = el ? el.disabled : null;
+  if(el){
+    el.disabled = true;
+    el.style.opacity = '0.7';
+    el.style.cursor = 'wait';
+    el.innerHTML = '<span style="display:inline-block;width:11px;height:11px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;vertical-align:-1px;margin-right:7px;animation:_spin .6s linear infinite"></span>'+_calEsc(busyLabel||'Saving…');
+  }
+  try {
+    return await fn();
+  } catch(e) {
+    // A crash used to leave the button spinning for ever with no explanation.
+    _toast('Something went wrong: '+((e&&e.message)||e), 'bad');
+    throw e;
+  } finally {
+    _submitBusy[key] = false;
+    if(el && document.body.contains(el)){
+      el.disabled = !!wasDis; el.innerHTML = wasHtml;
+      el.style.opacity = ''; el.style.cursor = '';
+    }
+  }
+}
+// A short message that says what just happened, then gets out of the way. Saving
+// something and seeing nothing is what made the app feel broken.
+function _toast(msg, kind){
+  if(!document.getElementById('_toast-style')){
+    const st=document.createElement('style'); st.id='_toast-style';
+    st.textContent='@keyframes _spin{to{transform:rotate(360deg)}}'
+      +'@keyframes _toastIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}'
+      +'@keyframes _toastOut{to{opacity:0;transform:translateY(10px)}}'
+      +'#_toast-host{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:99999;display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none}'
+      +'#_toast-host .tst{pointer-events:auto;font:500 14px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif;padding:11px 17px;border-radius:10px;box-shadow:0 8px 26px rgba(0,0,0,.22);max-width:min(90vw,460px);animation:_toastIn .18s ease-out;display:flex;align-items:center;gap:9px}';
+    document.head.appendChild(st);
+  }
+  let host=document.getElementById('_toast-host');
+  if(!host){ host=document.createElement('div'); host.id='_toast-host'; document.body.appendChild(host); }
+  const bad = (kind==='bad');
+  const el=document.createElement('div');
+  el.className='tst';
+  el.style.background = bad ? '#B42318' : '#0F7B54';
+  el.style.color = '#fff';
+  el.innerHTML = '<span style="font-size:15px">'+(bad?'&#9888;':'&#10003;')+'</span><span>'+_calEsc(msg)+'</span>';
+  host.appendChild(el);
+  setTimeout(()=>{ el.style.animation='_toastOut .25s ease-in forwards'; setTimeout(()=>{ if(el.parentNode) el.parentNode.removeChild(el); }, 260); }, bad?5200:2600);
+}
+
+// The button calls this; the real work is in _saveTaskInner below.
+function saveTask(btn){ return _submit('task-save', btn, 'Adding…', _saveTaskInner); }
+async function _saveTaskInner(){
   if(_blockIfReadOnly()) return;
   const err=document.getElementById("task-err");
   const showE=(m)=>{ if(err){err.textContent=m;err.style.display="block";} };
@@ -12104,11 +12176,14 @@ async function saveTask(){
   const editId=(_eidEl && _eidEl.value) ? _eidEl.value : "";
   if(editId){
     const { error } = await supabase.from("pm_tasks").update({ title, category, assignee:asg, assignees:asgArr, start_date:start, due_date:due, due_time:dueTime, property_id:prop, location, refer_to:refer, notes }).eq("id",editId);
-    if(error){ showE("Failed to save: "+(error.message||"")); return; }
+    if(error){ showE("Failed to save: "+(error.message||"")); _toast("That task was NOT saved","bad"); return; }
     if(_pl.saveAddr && location) await _saveAddressForReuse(location);
     _logAudit("updated","task", category?(category+": "+title):title, asgArr.length?("Assigned to "+asgArr.join(", ")):"Unassigned");
-    await loadTasks();
+    // Close and confirm the instant the write lands. Reloading 300-odd tasks first
+    // is what made this feel like nothing had happened.
     closeModal("task-modal");
+    _toast('Saved \u2014 '+title);
+    await loadTasks();
     _taskRerender();
     return;
   }
@@ -12116,10 +12191,23 @@ async function saveTask(){
   const runtil=(document.getElementById("task-repeat-until")?document.getElementById("task-repeat-until").value:"")||"";
   if(runtil && runtil<due){ showE("'Repeat until' can't be before the due date."); return; }
   const dueList=_recurDueDates(due, repeat, runtil);
+  // FULL-day check. This was written months ago and never actually wired up: the
+  // confirm was never called, and the audit line below referred to _fdOverridden,
+  // a variable nothing ever created. That threw a ReferenceError on EVERY task
+  // creation - after the row had already been inserted - so the modal never closed
+  // and the screen looked frozen. Clicking again inserted a second copy. This is
+  // the duplicate-task bug Bruce reported on 30 Aug. Wired up properly now.
+  let _fdOverridden = [];
+  if(typeof _fdConfirmSchedule === 'function'){
+    for(const d of dueList){
+      if(!_fdConfirmSchedule(asgArr, d)) { showE("Nothing was added \u2014 you chose not to schedule onto a full day."); return; }
+      asgArr.forEach(a=>{ if(typeof _fdIsFull==='function' && _fdIsFull(a,d) && _fdOverridden.indexOf(a)<0) _fdOverridden.push(a); });
+    }
+  }
   const offDays=(start!=null)?Math.round((_dParse(due)-_dParse(start))/86400000):null;
   const rows=dueList.map(d=>({ title, category, assignee:asg, assignees:asgArr, start_date:(offDays!=null?_dAddDays(d,-offDays):null), due_date:d, due_time:dueTime, property_id:prop, location, refer_to:refer, notes }));
   const { error } = await supabase.from("pm_tasks").insert(rows);
-  if(error){ showE("Failed to save: "+(error.message||"")); return; }
+  if(error){ showE("Failed to save: "+(error.message||"")); _toast("That task was NOT added","bad"); return; }
   if(_pl.saveAddr && location) await _saveAddressForReuse(location);
   const _rlabel = dueList.length>1 ? (title+" (×"+dueList.length+", repeats "+repeat+")") : title;
   _logAudit("created","task", category?(category+": "+_rlabel):_rlabel, (asgArr.length?("Assigned to "+asgArr.join(", ")):"Unassigned")+(_fdOverridden.length?(" — scheduled onto a FULL day for "+_fdOverridden.join(", ")):""));
@@ -12130,8 +12218,11 @@ async function saveTask(){
     const { error:ce } = await supabase.from("pm_calendar_events").insert(evs);
     if(!ce){ _logAudit("created","calendar", prop?_propAddr(prop):location, "Material delivery (from task): "+title); await loadCalendarEventsFromSupabase(); }
   }
-  await loadTasks();
   closeModal("task-modal");
+  _toast(dueList.length>1
+    ? ('Added '+dueList.length+' \u00d7 '+title+(asgArr.length?(' for '+asgArr.join(', ')):' \u2014 nobody assigned yet'))
+    : ('Task added: '+title+(asgArr.length?(' \u2014 '+asgArr.join(', ')):' \u2014 nobody assigned yet')));
+  await loadTasks();
   _taskRerender();
 }
 
@@ -12603,7 +12694,7 @@ function _mTaskDetail(id){
       <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:8px">💬 Comments</div>
       <div>${_taskCommentsList(t,false)}</div>
       ${ro?'':`<textarea id="m-comment-input" rows="3" class="m-input" placeholder="Add a comment — why it wasn't done, what's next…"></textarea>
-      <button class="m-btn" onclick="addTaskComment('${t.id}','m-comment-input','mobile')">Add comment</button>`}
+      <button class="m-btn" onclick="_submit('cmt-m-${t.id}',this,'Posting…',()=>addTaskComment('${t.id}','m-comment-input','mobile'))">Add comment</button>`}
     </div>`;
 }
 
@@ -13003,4 +13094,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-30e final-budget -->
+<!-- build: 2026-08-30f save-guard -->
