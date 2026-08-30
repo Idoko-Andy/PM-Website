@@ -867,6 +867,9 @@ async function init() {
       loadCalendarEventsFromSupabase(),
       loadSavedAddresses()
     ]);
+    // A house sitting vacant with the checklist unfinished must always have somebody
+    // on it. Checked on every load, so it self-heals no matter how the house got there.
+    try{ const n=await _ftaSweep(); if(n) _toast(n+" First Time Access task"+(n===1?"":"s")+" raised for "+_sopHolderFull()); }catch(e){}
     document.getElementById("dash-body").innerHTML = renderGenericHome(user);
     applyPermissionsUI();
     _applyMobileMode();
@@ -2260,13 +2263,50 @@ async function updatePropertyPhaseInSupabase(id, newPhase) {
   // ACTUAL task list. Until now it only appeared as a subphase on the card, which
   // means nothing chased it and nobody was told - Bruce spotted this on 30 Aug
   // while walking through what should happen to 3260 Avalon after it closes.
-  if (newPhase === "Vacant / On Standby") { try { await _ftaTaskFor(id); } catch(e){} }
+  if (newPhase === "Vacant / On Standby") { try { await loadTasks(); await _ftaTaskFor(id); await loadTasks(); } catch(e){} }
   await loadPropertiesFromSupabase();
   return true;
 }
-// Who currently holds the Start of Project seat. Respects the temporary cover
-// Bruce set (Gabe is covering while Alex runs the TV show) rather than the job
-// role alone, so the task lands on whoever is actually doing the work today.
+// ===================== FIRST TIME ACCESS: STATE, NOT EVENT =====================
+// Bruce, 30 Aug: 1348 Haybrook was sitting in Vacant / On Standby with the checklist
+// unfinished and nothing on Gabe's list. The first version of this only fired on the
+// MOVE into Vacant / On Standby - and Haybrook had moved days earlier, so nothing
+// ever ran. A house that is already sitting there is exactly the case that matters.
+//
+// So the trigger is now the STATE, not the event: any property sitting in Vacant /
+// On Standby with the First Time Access Checklist unfinished should have an open
+// task on the Start of Project seat. That holds however it got there - the Confirm
+// Vacant button, a drag on the board, the phase dropdown, the Slack automation
+// writing SQL, or a card created straight into that phase.
+//
+// The team already uses the category "1st Time access" and writes these by hand, so
+// we match their convention and, crucially, recognise THEIR tasks so nobody gets a
+// duplicate of a job they already have.
+const FTA_CATEGORY = "1st Time access";
+const FTA_RE = /(1st|first)[\s\-_]*time[\s\-_]*access/i;
+function _ftaSub(card){
+  return ((card && card.subPhases) || []).find(sp=>/first time access/i.test(sp.name||''));
+}
+// Does this house need somebody on the checklist right now?
+function _ftaNeeded(card){
+  if(!card || card.archived) return false;
+  if(card.phase !== 'Vacant / On Standby') return false;
+  const sp=_ftaSub(card);
+  return !(sp && sp.completed);
+}
+// Any open task on this property that is plainly already the first-time-access job -
+// whatever somebody happened to call it.
+// NOTE: this deliberately counts DONE tasks too. If somebody has already walked this
+// house and closed the task off, we do not hand them the same job again just because
+// the checklist on the card has not been ticked. The card being unticked is a nudge
+// for a person, not a reason to manufacture work. (Agreed 30 Aug.)
+function _ftaOpenTask(pid){
+  return (typeof _tasksCache!=='undefined'?_tasksCache:[]).find(t =>
+    t.property_id===pid &&
+    (FTA_RE.test(t.title||'') || FTA_RE.test(t.category||'')));
+}
+// Who holds the Start of Project seat. Respects the temporary cover Bruce set
+// (Gabe covering while Alex runs the TV show) rather than the job role alone.
 function _sopHolder(){
   try{
     const cfg=(typeof _ASSISTANT_ROLE_BOARDS!=='undefined') ? _ASSISTANT_ROLE_BOARDS.sop : null;
@@ -2274,27 +2314,59 @@ function _sopHolder(){
   }catch(e){}
   return 'Gabe';
 }
-// One open First Time Access task per property, due 3 days after it goes vacant.
-// Idempotent: if one is already open for this property it is left alone, so a
-// second phase move or a re-run of the Slack sync can never double it up.
+// Tasks are assigned by full name elsewhere in the app, so resolve "Gabe" to
+// "Gabe Wasem" when that person has an account. Falls back to the short name.
+function _sopHolderFull(){
+  const short=String(_sopHolder()||'').trim();
+  if(!short) return short;
+  try{
+    const u=(typeof getUsers==='function'?getUsers():[]).find(x=>
+      x.status==='approved' && String(x.firstName||'').trim().toLowerCase()===short.toLowerCase());
+    if(u) return ((u.firstName||'')+' '+(u.lastName||'')).trim() || short;
+  }catch(e){}
+  return short;
+}
+// Create the task for one property, unless it plainly already has one.
 async function _ftaTaskFor(propId){
   const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===propId);
-  const addr=c?(c.addr||''):'';
-  const who=_sopHolder();
-  const existing=await supabase.from("pm_tasks")
-    .select("id,status").eq("property_id",propId).eq("category","First Time Access").neq("status","done").limit(1);
-  if(!existing.error && existing.data && existing.data.length) return false;   // already out
-  const start=_ymdToday(), due=_ymdPlus(3);
+  if(!c || !_ftaNeeded(c)) return false;
+  if(_ftaOpenTask(propId)) return false;              // they already have this job
+  // Re-check against the database, not just the cache, so two tabs can't both make one.
+  const ex=await supabase.from("pm_tasks").select("id,title,category,status")
+    .eq("property_id",propId);
+  if(!ex.error && (ex.data||[]).some(t=>FTA_RE.test(t.title||'')||FTA_RE.test(t.category||''))) return false;
+  const who=_sopHolderFull();
+  const sp=_ftaSub(c);
+  // Respect the dates already on the card; only invent them if there are none.
+  const start=(sp && sp.start) || (typeof _ymdToday==="function"?_ymdToday():_ymd(new Date()));
+  const due  =(sp && sp.due)   || (typeof _ymdPlus==="function"?_ymdPlus(3):"");
   const ins=await supabase.from("pm_tasks").insert({
-    title:(addr||"New property")+" — First Time Access Checklist",
-    category:"First Time Access", start_date:start, due_date:due, status:"open",
+    title:(c.addr||"New property")+" — First Time Access Checklist",
+    category:FTA_CATEGORY, start_date:start, due_date:due, status:"open",
     property_id:propId, assignee:who, assignees:[who],
-    notes:"This house has just gone vacant. Walk it, fill in the First Time Access Checklist on the property card, and get photos into CompanyCam. Due 72 hours after it went vacant."
+    notes:"This house is vacant and the First Time Access Checklist is not finished. Walk it, fill the checklist in on the property card, and get photos into CompanyCam. Once it is ticked the house can move to Pre Construction and the PM takes it from there."
   }).select("id").single();
   if(ins.error) return false;
-  _logAudit("created","task", addr+" — First Time Access Checklist", "Raised automatically for "+who+" when the property went vacant");
-  if(typeof loadTasks==="function") await loadTasks();
+  _logAudit("created","task",(c.addr||"")+" — First Time Access Checklist",
+    "Raised automatically for "+who+" — the house is vacant and the checklist is not done");
   return true;
+}
+// Sweep every vacant house. Runs at startup and after anything that could have
+// changed a phase, so a house can never sit vacant with nobody on the checklist.
+let _ftaSweeping=false;
+async function _ftaSweep(){
+  if(_ftaSweeping) return 0;
+  if(typeof isReadOnly==='function' && isReadOnly()) return 0;
+  if(typeof propCards==='undefined' || !propCards.length) return 0;
+  _ftaSweeping=true;
+  try{
+    const need=(propCards||[]).filter(_ftaNeeded).filter(c=>!_ftaOpenTask(c.id));
+    if(!need.length) return 0;
+    let made=0;
+    for(const c of need){ if(await _ftaTaskFor(c.id)) made++; }
+    if(made && typeof loadTasks==="function") await loadTasks();
+    return made;
+  } finally { _ftaSweeping=false; }
 }
 
 // Move a property to a chosen phase via dropdown (no dragging). Same gate as drag:
@@ -11862,11 +11934,20 @@ async function _fdToggle(person, ds){
   const d=window._fdData=window._fdData||{};
   d[person]=d[person]||{};
   const was=!!d[person][ds];
-  if(was) delete d[person][ds];
-  else d[person][ds]={ by:_fdWho(), at:_ymd(new Date()) };
+  if(was){ delete d[person][ds]; }
+  else {
+    // Bruce, 30 Aug: whoever marks a day full should be able to say why, once.
+    // Optional on purpose — an empty reason still marks the day.
+    const why=(prompt("Mark "+person+" FULL on "+ds+".\n\nWhy? (optional — everyone scheduling that day will see this)")||"").trim();
+    if(why===null) return;
+    d[person][ds]={ by:_fdWho(), at:_ymd(new Date()), why:why||null };
+  }
   if(!Object.keys(d[person]).length) delete d[person];
   if(!(await _fdSave())) return;
-  _logAudit(was?"updated":"created","calendar", person+" — "+ds, was?"Day reopened for scheduling":"Day marked FULL — no more tasks should be scheduled");
+  const _w=(!was && d[person] && d[person][ds] && d[person][ds].why) ? d[person][ds].why : '';
+  _logAudit(was?"updated":"created","calendar", person+" — "+ds,
+    was?"Day reopened for scheduling":("Day marked FULL"+(_w?(" — "+_w):" — no reason given")));
+  if(typeof _toast==='function') _toast(was?(person+" is open again on "+ds):(person+" is marked FULL on "+ds));
   _taskRerender();
 }
 function _fdWho(){
@@ -11879,7 +11960,8 @@ function _fdConfirmSchedule(assignees, ds){
   if(!ds || !Array.isArray(assignees) || !assignees.length) return true;
   const full=assignees.filter(a=>_fdIsFull(a,ds));
   if(!full.length) return true;
-  const lines=full.map(a=>{ const i=_fdInfo(a,ds); return "  • "+a+(i&&i.by?"  (marked full by "+i.by+")":""); });
+  const lines=full.map(a=>{ const i=_fdInfo(a,ds);
+    return "  • "+a+(i&&i.by?("  (marked full by "+i.by+")"):"")+(i&&i.why?("\n      \u201C"+i.why+"\u201D"):""); });
   return confirm(ds+" is marked FULL for:\n\n"+lines.join("\n")+"\n\nSchedule this task anyway?");
 }
 const _taskCal = { y:null, m:null, day:null, view:"month", assignee:"all", loaded:false };
@@ -11967,7 +12049,7 @@ function renderTaskCalendar(){
     const _dvOthers=_dvPerson?[]:_fdWhoIsFull(dayStr);
     const _dvInfo=_dvPerson?_fdInfo(_dvPerson,dayStr):null;
     const _dvBanner = _dvFull
-      ? `<div style="background:#FCEBEB;border:1px solid #f0c0bb;border-radius:10px;padding:10px 14px;margin-bottom:12px;color:#B42318;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap"><div><b>${_calEsc(_dvPerson)} is FULL on ${dayStr}.</b> New tasks will warn before they are added.${_dvInfo&&_dvInfo.by?` <span style="color:#8a6d1a;font-weight:400">Marked by ${_calEsc(_dvInfo.by)}${_dvInfo.at?' on '+_calEsc(_dvInfo.at):''}.</span>`:''}</div>${ro?'':`<button onclick="_fdToggle('${_argEsc(_dvPerson)}','${dayStr}')" style="padding:6px 12px;border:0.5px solid #f0c0bb;border-radius:7px;background:#fff;color:#B42318;font-size:12.5px;cursor:pointer;font-weight:600">Reopen this day</button>`}</div>`
+      ? `<div style="background:#FCEBEB;border:1px solid #f0c0bb;border-radius:10px;padding:10px 14px;margin-bottom:12px;color:#B42318;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap"><div><b>${_calEsc(_dvPerson)} is FULL on ${dayStr}.</b> New tasks will warn before they are added.${_dvInfo&&_dvInfo.by?` <span style="color:#8a6d1a;font-weight:400">Marked by ${_calEsc(_dvInfo.by)}${_dvInfo.at?' on '+_calEsc(_dvInfo.at):''}.</span>`:''}${_dvInfo&&_dvInfo.why?`<div style="font-size:13px;color:#8a6d1a;margin-top:4px;font-weight:400">“${_calEsc(_dvInfo.why)}”</div>`:''}</div>${ro?'':`<button onclick="_fdToggle('${_argEsc(_dvPerson)}','${dayStr}')" style="padding:6px 12px;border:0.5px solid #f0c0bb;border-radius:7px;background:#fff;color:#B42318;font-size:12.5px;cursor:pointer;font-weight:600">Reopen this day</button>`}</div>`
       : (_dvPerson && !ro
           ? `<div style="display:flex;justify-content:flex-end;margin-bottom:8px"><button onclick="_fdToggle('${_argEsc(_dvPerson)}','${dayStr}')" style="padding:6px 12px;border:0.5px solid #ddd;border-radius:7px;background:#fff;color:#666;font-size:12.5px;cursor:pointer">Mark ${_calEsc(_dvPerson)} FULL this day</button></div>`
           : (_dvOthers.length?`<div style="background:#FAEEDA;border:1px solid #EAD9A8;border-radius:10px;padding:9px 13px;margin-bottom:12px;color:#633806;font-size:13px">FULL on ${dayStr} for: <b>${_calEsc(_dvOthers.join(', '))}</b>. Pick a person above to change it.</div>`:''));
@@ -12080,8 +12162,10 @@ function openAddTask(dateStr, pre){
     ${_taskPropField(null,null,"")}
     <div class="form-row"><label>Refer questions to (optional)</label><input type="text" id="task-refer" list="task-refer-list" placeholder="Type or pick a name" /><datalist id="task-refer-list">${referList}</datalist></div>
     <div class="form-row"><label>Notes / comments (optional)</label><textarea id="task-notes" rows="6" placeholder="Everything the person needs to do this without asking a question — what, where, who to call, what done looks like." style="width:100%;min-height:130px;resize:vertical;line-height:1.5"></textarea></div>
+    ${_newStepsField()}
     <input type="hidden" id="task-edit-id" value="" />
     <button class="btn-full" onclick="saveTask(this)">Add task</button>`;
+  _newStepsReset(); _newStepsRender();
   openModal("task-modal");
   // Optional prefill, used by the trackers so a task raised from a row arrives
   // already pointed at the right property, header and person.
@@ -12156,6 +12240,76 @@ async function toggleSubtask(id, sid, ctx){
   if(!await _subWrite(id, list, (list[i].done?'Ticked off':'Reopened')+' the step "'+String(list[i].text||'').slice(0,60)+'"')) return;
   _subRefresh(id, ctx);
 }
+// Bruce, 30 Aug: you should be able to build the checklist while you are creating
+// the task, not only after it exists. The steps are held here until the task is
+// saved, then written with it in the same insert — so a task and its steps can
+// never half-exist.
+let _newSteps = [];
+function _newStepsReset(){ _newSteps = []; }
+function _newStepsRender(){
+  const host=document.getElementById('new-steps-list'); if(!host) return;
+  if(!_newSteps.length){
+    host.innerHTML = `<div style="font-size:13px;color:#888;padding:6px 2px">No steps yet &mdash; optional. Break the job into the pieces it actually takes and they get ticked off one at a time.</div>`;
+    return;
+  }
+  host.innerHTML = _newSteps.map((x,i)=>`<div style="display:flex;align-items:center;gap:9px;padding:6px 2px;border-bottom:0.5px solid #2a2a2a">
+      <div style="font-size:20px;line-height:1;flex-shrink:0">&#11036;</div>
+      <input value="${_calEsc(x.text)}" onchange="_newStepSet(${i},this.value)"
+        style="flex:1;min-width:0;padding:6px 9px;border:0.5px solid #333;border-radius:6px;font-size:14px;background:#161616;color:#eee"/>
+      <div onclick="_newStepDel(${i})" title="Remove this step" style="font-size:14px;color:#555;cursor:pointer;padding:4px 6px;flex-shrink:0">&#10005;</div>
+    </div>`).join('');
+}
+function _newStepAdd(){
+  const el=document.getElementById('new-step-input');
+  const t=((el&&el.value)||'').trim();
+  if(!t){ if(el) el.focus(); return; }
+  _newSteps.push({ id:Date.now().toString(36)+Math.random().toString(36).slice(2,5), text:t, done:false });
+  if(el){ el.value=''; el.focus(); }
+  _newStepsRender();
+}
+function _newStepSet(i, v){ if(_newSteps[i]){ const t=String(v||'').trim(); if(t) _newSteps[i].text=t; else _newStepDel(i); } }
+function _newStepDel(i){ _newSteps.splice(i,1); _newStepsRender(); }
+function _newStepsField(){
+  return `<div class="form-row"><label>&#9745; Steps <span style="font-weight:400;color:#999;font-size:12px">&mdash; optional checklist inside this task</span></label>
+    <div style="border:0.5px solid #333;border-radius:8px;padding:8px 10px;background:#161616">
+      <div id="new-steps-list"></div>
+      <div style="display:flex;gap:6px;margin-top:8px">
+        <input id="new-step-input" placeholder="Add a step&hellip;"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();_newStepAdd()}"
+          style="flex:1;min-width:0;padding:8px 10px;border:0.5px solid #333;border-radius:7px;font-size:14px;background:#161616;color:#eee"/>
+        <button type="button" onclick="_newStepAdd()" style="padding:8px 14px;background:#185FA5;color:#fff;border:none;border-radius:7px;font-size:13px;cursor:pointer;white-space:nowrap">Add step</button>
+      </div>
+    </div></div>`;
+}
+// Bruce, 30 Aug: a step you have already added should be editable, not just
+// tickable and deletable. Turns the row into a text box in place.
+function startEditSubtask(id, sid, ctx){
+  if(_blockIfReadOnly()) return;
+  const t=(_tasksCache||[]).find(x=>x.id===id); if(!t) return;
+  const x=_subList(t).find(y=>y.id===sid); if(!x) return;
+  const row=document.getElementById('sub-row-'+id+'-'+sid); if(!row) return;
+  const dark=row.getAttribute('data-dark')==='1';
+  row.innerHTML=`<input id="sub-edit-${id}-${sid}" value="${_calEsc(x.text||'')}"
+      onkeydown="if(event.key==='Enter'){event.preventDefault();saveSubtaskEdit('${id}','${sid}','${ctx||'desktop'}')}else if(event.key==='Escape'){_subRefresh('${id}','${ctx||'desktop'}')}"
+      style="flex:1;min-width:0;padding:7px 9px;border:1px solid #185FA5;border-radius:6px;font-size:14px;background:${dark?'#161616':'#fff'};color:${dark?'#eee':'#111'}"/>
+    <button onclick="saveSubtaskEdit('${id}','${sid}','${ctx||'desktop'}')" style="padding:7px 11px;background:#185FA5;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">Save</button>
+    <span onclick="_subRefresh('${id}','${ctx||'desktop'}')" style="font-size:12px;color:${dark?'#777':'#aaa'};cursor:pointer;padding:0 4px">Cancel</span>`;
+  const el=document.getElementById('sub-edit-'+id+'-'+sid); if(el){ el.focus(); el.select(); }
+}
+async function saveSubtaskEdit(id, sid, ctx){
+  if(_blockIfReadOnly()) return;
+  const el=document.getElementById('sub-edit-'+id+'-'+sid);
+  const text=((el&&el.value)||'').trim();
+  if(!text){ _subRefresh(id,ctx); return; }
+  const t=(_tasksCache||[]).find(x=>x.id===id); if(!t) return;
+  const list=_subList(t).map(y=>Object.assign({},y));
+  const i=list.findIndex(y=>y.id===sid); if(i<0) return;
+  const before=list[i].text||'';
+  if(before===text){ _subRefresh(id,ctx); return; }
+  list[i].text=text;
+  if(!await _subWrite(id, list, 'Changed a step from "'+before.slice(0,40)+'" to "'+text.slice(0,40)+'"')) return;
+  _subRefresh(id, ctx);
+}
 async function removeSubtask(id, sid, ctx){
   if(_blockIfReadOnly()) return;
   const t=(_tasksCache||[]).find(x=>x.id===id); if(!t) return;
@@ -12184,13 +12338,14 @@ function _subtaskList(t, dark, ctx){
       <div style="flex:1;height:5px;border-radius:99px;background:${dark?'#2a2a2a':'#eef0f6'};overflow:hidden"><div style="height:100%;width:${Math.round((c.done/c.total)*100)}%;background:${c.done===c.total?'#12987A':'#185FA5'}"></div></div>
       <div style="font-size:11.5px;color:${dark?'#8aa7c8':'#888'};white-space:nowrap">${c.done} of ${c.total} done</div>
     </div>`:'';
-  const rows=list.length? list.map(x=>`<div style="display:flex;align-items:flex-start;gap:9px;padding:6px 2px;border-bottom:0.5px solid ${dark?'#2a2a2a':'#f1f3f7'}">
-      <div onclick="${ro?'':`toggleSubtask('${t.id}','${x.id}','${ctx||'desktop'}')`}" title="${x.done?'Untick this step':'Tick this step off'}" style="font-size:18px;line-height:1.1;cursor:${ro?'default':'pointer'};user-select:none">${x.done?'&#9989;':'&#11036;'}</div>
+  const rows=list.length? list.map(x=>`<div id="sub-row-${t.id}-${x.id}" data-dark="${dark?'1':'0'}" style="display:flex;align-items:center;gap:9px;padding:6px 2px;border-bottom:0.5px solid ${dark?'#2a2a2a':'#f1f3f7'}">
+      <div onclick="${ro?'':`toggleSubtask('${t.id}','${x.id}','${ctx||'desktop'}')`}" title="${x.done?'Untick this step':'Tick this step off'}" style="font-size:20px;line-height:1.1;cursor:${ro?'default':'pointer'};user-select:none;flex-shrink:0">${x.done?'&#9989;':'&#11036;'}</div>
       <div style="flex:1;min-width:0">
         <div style="font-size:14px;color:${x.done?(dark?'#777':'#999'):(dark?'#eee':'#111')};${x.done?'text-decoration:line-through;':''}white-space:pre-wrap">${_calEsc(x.text||'')}</div>
         ${x.done&&x.doneBy?`<div style="font-size:11px;color:${dark?'#666':'#aaa'};margin-top:1px">${_calEsc(x.doneBy)} &middot; ${_calEsc(_fmtCommentDate(x.doneAt))}</div>`:''}
       </div>
-      ${ro?'':`<div onclick="removeSubtask('${t.id}','${x.id}','${ctx||'desktop'}')" title="Remove this step" style="font-size:12px;color:${dark?'#555':'#ccc'};cursor:pointer;padding:0 2px">&#10005;</div>`}
+      ${ro?'':`<div onclick="startEditSubtask('${t.id}','${x.id}','${ctx||'desktop'}')" title="Edit this step" style="font-size:14px;color:${dark?'#7aa7d8':'#185FA5'};cursor:pointer;padding:4px 6px;flex-shrink:0">&#9998;</div>
+      <div onclick="removeSubtask('${t.id}','${x.id}','${ctx||'desktop'}')" title="Remove this step" style="font-size:14px;color:${dark?'#555':'#ccc'};cursor:pointer;padding:4px 6px;flex-shrink:0">&#10005;</div>`}
     </div>`).join('') : `<div style="font-size:13px;color:${dark?'#777':'#aaa'};padding:7px 2px">No steps yet. Break the job into the pieces it actually takes.</div>`;
   const add=ro?'':`<div style="display:flex;gap:6px;margin-top:8px">
       <input id="sub-input-${t.id}" placeholder="Add a step&hellip;" onkeydown="if(event.key==='Enter'){event.preventDefault();addSubtask('${t.id}','sub-input-${t.id}','${ctx||'desktop'}')}" style="flex:1;padding:8px 10px;border:0.5px solid ${dark?'#333':'#d8dce6'};border-radius:7px;font-size:14px;background:${dark?'#161616':'#fff'};color:${dark?'#eee':'#111'}"/>
@@ -12470,7 +12625,11 @@ async function _saveTaskInner(){
     }
   }
   const offDays=(start!=null)?Math.round((_dParse(due)-_dParse(start))/86400000):null;
-  const rows=dueList.map(d=>({ title, category, assignee:asg, assignees:asgArr, start_date:(offDays!=null?_dAddDays(d,-offDays):null), due_date:d, due_time:dueTime, property_id:prop, location, refer_to:refer, notes }));
+  // Steps typed into the Add Task form travel with the task itself. A repeating task
+  // gets its own copy per occurrence, so ticking this week does not tick next week.
+  const _steps=(typeof _newSteps!=='undefined'?_newSteps:[]).filter(x=>x && String(x.text||'').trim());
+  const rows=dueList.map(d=>({ title, category, assignee:asg, assignees:asgArr, start_date:(offDays!=null?_dAddDays(d,-offDays):null), due_date:d, due_time:dueTime, property_id:prop, location, refer_to:refer, notes,
+    subtasks:_steps.map(x=>({ id:Date.now().toString(36)+Math.random().toString(36).slice(2,5), text:String(x.text).trim(), done:false })) }));
   const { error } = await supabase.from("pm_tasks").insert(rows);
   if(error){ showE("Failed to save: "+(error.message||"")); _toast("That task was NOT added","bad"); return; }
   if(_pl.saveAddr && location) await _saveAddressForReuse(location);
@@ -12486,7 +12645,8 @@ async function _saveTaskInner(){
   closeModal("task-modal");
   _toast(dueList.length>1
     ? ('Added '+dueList.length+' \u00d7 '+title+(asgArr.length?(' for '+asgArr.join(', ')):' \u2014 nobody assigned yet'))
-    : ('Task added: '+title+(asgArr.length?(' \u2014 '+asgArr.join(', ')):' \u2014 nobody assigned yet')));
+    : ('Task added: '+title+(_steps.length?(' \u2014 '+_steps.length+' step'+(_steps.length===1?'':'s')):'')+(asgArr.length?(' \u2014 '+asgArr.join(', ')):' \u2014 nobody assigned yet')));
+  _newStepsReset();
   await loadTasks();
   _taskRerender();
 }
@@ -13126,7 +13286,7 @@ function _mAddTab(){
     +item("🏗","Add a construction item","Schedule work on a property","event")
     +item("📦","Add a material delivery","Log a delivery to a job","material");
 }
-function _mOpenAdd(kind){ const body=document.getElementById("m-body"); if(!body) return; body.innerHTML= kind==="task"?_mAddFormTask():_mAddFormEvent(kind==="material"); body.scrollTop=0; }
+function _mOpenAdd(kind){ const body=document.getElementById("m-body"); if(!body) return; if(kind==="task") _newStepsReset(); body.innerHTML= kind==="task"?_mAddFormTask():_mAddFormEvent(kind==="material"); if(kind==="task") _mNewStepsRender(); body.scrollTop=0; }
 function _mFormWrap(title,inner){
   return `<button class="m-btn m-btn-lite" style="width:auto;padding:7px 14px;font-size:14px;border-radius:99px;margin-bottom:12px;margin-top:0" onclick="_mGo('add')">‹ Back</button>
     <div class="m-card"><div style="font-size:17px;font-weight:700;color:#111;margin-bottom:4px">${title}</div>${inner}</div>`;
@@ -13159,6 +13319,37 @@ function _mResolveAddr(pfx){
   if(v.indexOf("addr::")===0) return {property_id:null,location:v.slice(6),saveAddr:false};
   return {property_id:v||null,location:null,saveAddr:false};
 }
+// The same "build the checklist as you create the task" flow, sized for a phone:
+// bigger touch targets, light surface, and the step list above the Save button so
+// nothing is hidden below the fold.
+function _mNewStepsRender(){
+  const host=document.getElementById('m-steps-list'); if(!host) return;
+  if(!_newSteps.length){ host.innerHTML = `<div style="font-size:13.5px;color:#888;padding:8px 2px">No steps yet — optional.</div>`; return; }
+  host.innerHTML = _newSteps.map((x,i)=>`<div style="display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:0.5px solid #eef0f5">
+      <div style="font-size:22px;line-height:1;flex-shrink:0">&#11036;</div>
+      <input value="${_calEsc(x.text)}" onchange="_newStepSet(${i},this.value);_mNewStepsRender()"
+        style="flex:1;min-width:0;padding:9px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:16px;background:#fff;color:#111"/>
+      <div onclick="_newStepDel(${i});_mNewStepsRender()" style="font-size:18px;color:#bbb;cursor:pointer;padding:6px 8px;flex-shrink:0">&#10005;</div>
+    </div>`).join('');
+}
+function _mNewStepAdd(){
+  const el=document.getElementById('m-step-input');
+  const t=((el&&el.value)||'').trim(); if(!t){ if(el) el.focus(); return; }
+  _newSteps.push({ id:Date.now().toString(36)+Math.random().toString(36).slice(2,5), text:t, done:false });
+  if(el){ el.value=''; el.focus(); }
+  _mNewStepsRender();
+}
+function _mNewStepsField(){
+  return `<div class="m-label" style="margin-top:12px">&#9745; Steps <span style="font-weight:400;color:#888">— optional checklist</span></div>
+    <div style="border:0.5px solid #e0e4ec;border-radius:10px;padding:8px 11px;background:#fafbfc">
+      <div id="m-steps-list"></div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <input id="m-step-input" class="m-input" style="flex:1;margin:0" placeholder="Add a step…"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();_mNewStepAdd()}"/>
+        <button type="button" onclick="_mNewStepAdd()" style="padding:11px 16px;background:#185FA5;color:#fff;border:none;border-radius:9px;font-size:15px;font-weight:600;cursor:pointer;white-space:nowrap">Add</button>
+      </div>
+    </div>`;
+}
 function _mAddFormTask(){
   const myName=_mMyName();
   const whoOpts=`<option value="">— Unassigned —</option>`+teamMembers().map(n=>`<option value="${_calEsc(n)}" ${n===myName?"selected":""}>${_calEsc(n)}</option>`).join("");
@@ -13176,7 +13367,8 @@ function _mAddFormTask(){
       <div style="flex:1"><div class="m-label" style="margin-top:12px">Repeat until</div><input id="mt-repeat-until" type="date" class="m-input"/></div>
     </div>
     <div class="m-label" style="margin-top:12px">Notes</div><textarea id="mt-notes" class="m-input" rows="2"></textarea>
-    <button class="m-btn" onclick="_mSubmitTask()">Save task</button>
+    ${_mNewStepsField()}
+    <button class="m-btn" onclick="_submit('m-task',this,'Saving…',_mSubmitTask)">Save task</button>
   `);
 }
 async function _mSubmitTask(){
@@ -13195,11 +13387,15 @@ async function _mSubmitTask(){
   if(runtil && runtil<due){ alert("'Repeat until' can't be before the due date."); return; }
   const dueList=_recurDueDates(due, repeat, runtil);
   const offDays=(start!=null)?Math.round((_dParse(due)-_dParse(start))/86400000):null;
-  const rows=dueList.map(d=>({ title, category:cat, assignee:who, assignees:who?[who]:[], due_date:d, start_date:(offDays!=null?_dAddDays(d,-offDays):null), property_id:prop, location, notes, status:"open" }));
+  const _steps=(typeof _newSteps!=='undefined'?_newSteps:[]).filter(x=>x && String(x.text||'').trim());
+  const rows=dueList.map(d=>({ title, category:cat, assignee:who, assignees:who?[who]:[], due_date:d, start_date:(offDays!=null?_dAddDays(d,-offDays):null), property_id:prop, location, notes, status:"open",
+    subtasks:_steps.map(x=>({ id:Date.now().toString(36)+Math.random().toString(36).slice(2,5), text:String(x.text).trim(), done:false })) }));
   const { error }=await supabase.from("pm_tasks").insert(rows);
-  if(error){ alert("Couldn't save task: "+(error.message||"")); return; }
+  if(error){ _toast("That task was NOT saved — "+(error.message||""),"bad"); return; }
   if(_pl.saveAddr && location) await _saveAddressForReuse(location);
   if(typeof _logAudit==="function") _logAudit("created","task", dueList.length>1?(title+" (×"+dueList.length+", repeats "+repeat+")"):title, who?("Assignee: "+who):"");
+  _toast("Task added: "+title+(_steps.length?(" — "+_steps.length+" step"+(_steps.length===1?"":"s")):""));
+  _newStepsReset();
   await loadTasks(); _mGo("day");
 }
 function _mAddFormEvent(preMaterial){
@@ -13359,4 +13555,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-30i sop-tabs -->
+<!-- build: 2026-08-30k steps-and-full-reason -->
