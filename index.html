@@ -339,10 +339,10 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openDailyReports()">📝 Daily Reports and Huddles</div>
       <div class="ddi" onclick="openEndOfDayReports()">🌙 End of Day Reports</div>
       <div class="ddl" style="margin-top:4px">Reports</div>
-      <div class="ddi">🗓 Biweekly Reports</div>
+      <div class="ddi" onclick="_notBuiltYet('Biweekly Reports')">🗓 Biweekly Reports</div>
       <div class="ddi" onclick="openMonthlyReports()">📅 Monthly Reports</div>
-      <div class="ddi">📆 Yearly Reports</div>
-      <div class="ddi">🏁 End of Project Reports</div>
+      <div class="ddi" onclick="_notBuiltYet('Yearly Reports')">📆 Yearly Reports</div>
+      <div class="ddi" onclick="openWeeklyMeeting('eop')">🏁 End of Project Reports</div>
     </div>
   </div>
   <div class="ni has-dd" id="tools-t">🔧 Tools ▾
@@ -6208,6 +6208,17 @@ function openClosedByYear(){
   </div></div></div>`;
 }
 
+// A menu item that does nothing when you click it is indistinguishable from a
+// broken one - which is exactly the complaint that led to the task-save fix. Any
+// item we have deliberately not built yet says so out loud instead.
+function _notBuiltYet(name){
+  document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
+  document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
+  const host=document.getElementById("dash-body"); if(!host) return;
+  host.innerHTML=`<div class="empty-state"><div class="icon">&#128736;</div>
+    <p style="color:#888;font-size:16px;font-weight:500">${_calEsc(name)}</p>
+    <p style="color:#555;font-size:14px;margin-top:6px;max-width:430px;margin-left:auto;margin-right:auto">This one has not been built yet &mdash; it is on the list, not lost. Tell Bruce what you would want on it and it moves up the queue.</p></div>`;
+}
 function openDataSection(type) {
   const u = currentUser();
   document.querySelectorAll(".dd").forEach(x => x.classList.remove("open"));
@@ -13131,4 +13142,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-30g fta-task -->
+<!-- build: 2026-08-30h dead-links -->
