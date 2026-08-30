@@ -2252,7 +2252,44 @@ async function updatePropertyPhaseInSupabase(id, newPhase) {
   if (error) { alert("Failed to update phase: " + (error.message || "unknown error")); return false; }
   if (!_rows2 || !_rows2.length) { alert("That move was not saved. Either the property no longer exists, or your account does not have permission to move it. Refresh the page and try again."); return false; }
   _logAudit("moved","property", _pc?_pc.addr:"", "Moved to “"+newPhase+"”");
+  // Landing in Vacant / On Standby also has to put the checklist on somebody's
+  // ACTUAL task list. Until now it only appeared as a subphase on the card, which
+  // means nothing chased it and nobody was told - Bruce spotted this on 30 Aug
+  // while walking through what should happen to 3260 Avalon after it closes.
+  if (newPhase === "Vacant / On Standby") { try { await _ftaTaskFor(id); } catch(e){} }
   await loadPropertiesFromSupabase();
+  return true;
+}
+// Who currently holds the Start of Project seat. Respects the temporary cover
+// Bruce set (Gabe is covering while Alex runs the TV show) rather than the job
+// role alone, so the task lands on whoever is actually doing the work today.
+function _sopHolder(){
+  try{
+    const cfg=(typeof _ASSISTANT_ROLE_BOARDS!=='undefined') ? _ASSISTANT_ROLE_BOARDS.sop : null;
+    if(cfg && typeof _roleHolders==='function'){ const h=_roleHolders(cfg); if(h && h.length) return h[0]; }
+  }catch(e){}
+  return 'Gabe';
+}
+// One open First Time Access task per property, due 3 days after it goes vacant.
+// Idempotent: if one is already open for this property it is left alone, so a
+// second phase move or a re-run of the Slack sync can never double it up.
+async function _ftaTaskFor(propId){
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===propId);
+  const addr=c?(c.addr||''):'';
+  const who=_sopHolder();
+  const existing=await supabase.from("pm_tasks")
+    .select("id,status").eq("property_id",propId).eq("category","First Time Access").neq("status","done").limit(1);
+  if(!existing.error && existing.data && existing.data.length) return false;   // already out
+  const start=_ymdToday(), due=_ymdPlus(3);
+  const ins=await supabase.from("pm_tasks").insert({
+    title:(addr||"New property")+" — First Time Access Checklist",
+    category:"First Time Access", start_date:start, due_date:due, status:"open",
+    property_id:propId, assignee:who, assignees:[who],
+    notes:"This house has just gone vacant. Walk it, fill in the First Time Access Checklist on the property card, and get photos into CompanyCam. Due 72 hours after it went vacant."
+  }).select("id").single();
+  if(ins.error) return false;
+  _logAudit("created","task", addr+" — First Time Access Checklist", "Raised automatically for "+who+" when the property went vacant");
+  if(typeof loadTasks==="function") await loadTasks();
   return true;
 }
 
@@ -13094,4 +13131,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-30f save-guard -->
+<!-- build: 2026-08-30g fta-task -->
