@@ -3527,7 +3527,7 @@ function _pdLinked(c){
   const on=(k)=>!!((d[k]||{})[c.id]);
   const mowWho=(typeof _mowName==='function')?_mowName(c.id):'';
   const bits=[];
-  bits.push(['&#127793; Mowing', mowWho?('on the route &mdash; '+mowWho):(on('mow')?'on the route':'not on the route'), mowWho||on('mow')?'#0F7B54':'#bbb']);
+  bits.push(['&#127793; Mowing', mowWho?('on the route \u2014 '+mowWho):(on('mow')?'on the route':'not on the route'), mowWho||on('mow')?'#0F7B54':'#bbb']);
   const winRec=((d.win||{})[c.id])||{};
   const winTxt = winRec.installed?'installed' : (winRec.ordered?'ordered' : (winRec.measured?'measured' : (winRec.needed?'requested':'nothing requested')));
   bits.push(['&#129525; Windows', winTxt, winRec.needed?'#B7791F':'#bbb']);
@@ -14363,4 +14363,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-30q stale-save-guard -->
+<!-- build: 2026-08-30r stale-guard-and-dash -->
