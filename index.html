@@ -352,17 +352,21 @@ body.mobile-on .overlay{z-index:6000 !important;}
         <span>📋 Job Role SOPs</span><span style="opacity:0.45;font-size:14px">‹</span>
         <div class="sop-sub">
           <div class="ddl">Job Role SOPs</div>
-          <div class="ddi" onclick="openSOP('role','Project Director')">⬡ Project Director SOP</div>
-          <div class="ddi" onclick="openSOP('role','Project Manager')">🏗 Project Manager SOP</div>
-          <div class="ddi" onclick="openSOP('role','Administrative Assistant')">🏢 Administrative Assistant SOP</div>
-          <div class="ddi" onclick="openSOP('role','Senior Administrative Assistant')">🏢 Senior Administrative Assistant SOP</div>
-          <div class="ddi" onclick="openSOP('role','Virtual Administrative Assistant')">💻 Virtual Administrative Assistant SOP</div>
-          <div class="ddi" onclick="openSOP('role','Senior Virtual Administrative Assistant')">💻 Senior Virtual Administrative Assistant SOP</div>
-          <div class="ddi" onclick="openSOP('role','Start of Project Assistant')">🚀 Start of Project Assistant SOP</div>
-          <div class="ddi" onclick="openSOP('role','End of Project Assistant')">🏁 End of Project Assistant SOP</div>
-          <div class="ddi" onclick="openSOP('role','Assistant / Intern')">🎓 Assistant / Intern SOP</div>
-          <div class="ddi" onclick="openSOP('role','VA Assistant')">💻 VA Assistant SOP</div>
-          <div class="ddi" onclick="openSOP('role','Architect')">📐 Architect SOP</div>
+          <div style="font-size:11px;color:#777;padding:2px 14px 6px">Each one opens with three tabs: the listing ad, the description, and the breakdown.</div>
+          <div class="ddi" onclick="openSOP('role','CEO')">👔 CEO</div>
+          <div class="ddi" onclick="openSOP('role','Project Director')">⬡ Project Director</div>
+          <div class="ddi" onclick="openSOP('role','Administrative Manager')">🏢 Administrative Manager</div>
+          <div class="ddi" onclick="openSOP('role','Project Manager')">🏗 Project Manager</div>
+          <div class="ddi" onclick="openSOP('role','PM Assistant')">🗂 PM Assistant</div>
+          <div class="ddi" onclick="openSOP('role','Start of Project Assistant')">🚀 Start of Project Assistant</div>
+          <div class="ddi" onclick="openSOP('role','End of Project Assistant')">🏁 End of Project Assistant</div>
+          <div class="ddi" onclick="openSOP('role','Senior Administrative Assistant')">🏢 Senior Administrative Assistant</div>
+          <div class="ddi" onclick="openSOP('role','Administrative Assistant')">🏢 Administrative Assistant</div>
+          <div class="ddi" onclick="openSOP('role','Senior Virtual Administrative Assistant')">💻 Senior Virtual Administrative Assistant</div>
+          <div class="ddi" onclick="openSOP('role','Virtual Administrative Assistant')">💻 Virtual Administrative Assistant</div>
+          <div class="ddi" onclick="openSOP('role','Architect')">📐 Architect</div>
+          <div class="ddi" onclick="openSOP('role','Realtor')">🔑 Realtor</div>
+          <div class="ddi" onclick="openSOP('role','Assistant / Intern')">🎓 Assistant / Intern</div>
         </div>
       </div>
       <div class="ddi" onclick="openSOP('systems','')">⚙️ Systems &amp; Processes SOPs</div>
@@ -6808,35 +6812,246 @@ let _sopCache = {};
 let _currentSop = null;
 function _defaultSopHtml(role){
   const sop = ROLE_SOPS[role];
-  if(!sop) return `<h2>${_calEsc(role)} SOP</h2><p>Add the standard operating procedure for this role here.</p>`;
+  // Four job roles (CEO, Administrative Manager, PM Assistant, Realtor) never had an
+  // SOP written. Rather than show them an empty page, build a real first draft from
+  // the same facts the other two tabs use.
+  if(!sop){
+    const f=(typeof ROLE_SOP_FACTS!=='undefined') ? ROLE_SOP_FACTS[role] : null;
+    if(!f) return `<h2>${_calEsc(role)}</h2><p>Add the standard operating procedure for this role here.</p>`;
+    return `<h2>${_calEsc(role)} — how the job is done</h2>`
+      +`<div class="sop-box">This is a first draft, written from what the role actually does in this system. Nobody has checked it against how the job is really run yet.</div>`
+      +`<h3>Role overview</h3><p>${_calEsc(f.purpose)} Reports to ${_calEsc(f.reports)}.`
+        +((f.manages && f.manages!=='nobody') ? ` Responsible for ${_calEsc(f.manages)}.` : '')+`</p>`
+      +`<h3>The work, step by step</h3><ol>`+f.does.map(x=>`<li>${_calEsc(x)}</li>`).join('')+`</ol>`
+      +`<h3>Where the work lives</h3><ol>`+(f.systems||[]).map(x=>`<li>${_calEsc(x)}</li>`).join('')+`</ol>`
+      +`<h3>What good looks like</h3><ol>`+(f.good||[]).map(x=>`<li>${_calEsc(x)}</li>`).join('')+`</ol>`
+      +`<h3>Daily</h3><p>[What has to happen every day in this seat?]</p>`
+      +`<h3>Weekly</h3><p>[What has to happen every week?]</p>`
+      +`<h3>Escalate when</h3><p>[At what point does this seat stop deciding and come to you?]</p>`;
+  }
   let h = `<h2>${_calEsc(role)} SOP</h2>`;
   sop.sections.forEach(sec=>{ h += `<h3>${_calEsc(sec.title)}</h3><ol>`; sec.items.forEach(it=>{ h += `<li>${_calEsc(it)}</li>`; }); h += `</ol>`; });
   return h;
+}
+// ===================== SOPs: THREE TABS PER JOB ROLE =====================
+// Bruce, 30 Aug: every job role gets the same three tabs — the ad we post when we
+// are hiring for that seat, a plain description of what the job is, and the
+// step-by-step breakdown of how it is actually done. (He raised a bonus-structure
+// tab and then withdrew it, so there isn't one.)
+//
+// Each tab is stored separately (role:<Role>:ad / :desc / :breakdown) so editing
+// one never touches the others. Anything already written under the old single-key
+// SOP is carried into the Breakdown tab rather than lost.
+const ROLE_SOP_TABS = [
+  ['ad',        '📢 Job Role Listing Ad', 'Post this when we are hiring for this seat. Written to be copied straight into Indeed or a Facebook group.'],
+  ['desc',      '📝 Job Role SOP Description', 'What this job is, in plain English — for somebody deciding whether they want it, or whether somebody is doing it.'],
+  ['breakdown', '🔧 Job Role SOP Breakdown', 'How the job is actually done, step by step. This is the one people work from.']
+];
+let _sopTab = 'breakdown';
+function _sopTabKey(role, tab){ return 'role:'+role+':'+tab; }
+
+// The facts each role's starter draft is built from. Deliberately short - the
+// generator turns these into a real first draft, and Bruce edits from there.
+// Every one of these came from watching what the role actually does in this app.
+const ROLE_SOP_FACTS = {
+  "CEO": { icon:"👔", reports:"nobody — this is the top of the company", manages:"the Project Director",
+    purpose:"Owns the company's direction, its money and its people. Sets what we buy, what we spend and who we hire.",
+    systems:["Director / CEO Meeting","Full Company Meeting","Closed Properties by Year","Data Dash"],
+    does:["Set acquisition strategy and the closings target for the year.","Approve the things nobody below can approve — budget overruns, hires, new lines of work.","Read the Monday summary and the Full Company Meeting rather than sitting in every meeting.","Decide when a project's numbers stop making sense and it should be sold as-is."],
+    good:["The company hits 8–10 closings a year with the margin we planned.","Nothing is a surprise — the numbers you read on Monday are the numbers."],
+    qs:["Is the CEO seat Tommy, and should it stay a single named person in the app?","Should the CEO be able to edit any SOP, or only read them?"] },
+
+  "Project Director": { icon:"⬡", reports:"the CEO", manages:"Project Managers, the Administrative Manager and the assistant seats",
+    purpose:"Accountable for every active project from the day we take it down to the day it closes. The person everything escalates to.",
+    systems:["Project Team Meeting (Monday)","Kickoff Meeting","On the Market Meeting","Property Dashboard","Admin Panel"],
+    does:["Run the Monday Project Team Meeting and hold the room to the two dates — the committed finish and the current estimate.","Approve scope, budget and any change that moves a committed finish date.","Decide who runs which job, and move a PM off one when it is not working.","Answer everything sitting in the 'Needs a person' panel before the next Monday."],
+    good:["No property goes a week without being walked in a meeting.","Every open question has an owner and a date."],
+    qs:["Anything you escalate to Tommy that should be a formal step here rather than a phone call?","Should moving a committed finish date require your approval in the app, or stay honour-system?"] },
+
+  "Administrative Manager": { icon:"🏢", reports:"the Project Director", manages:"the administrative and virtual assistants",
+    purpose:"Owns the paperwork and the trackers that keep every job legal, paid and supplied.",
+    systems:["Trackers (W-9 · window · mowing · checklists · utilities · permits)","Contractor Directory","Construction Calendar"],
+    does:["Keep the W-9 tracker at zero missing before anyone is paid.","Run the mowing route — add a house when it comes on, take it off when it closes.","Get permit paperwork printed and to the warehouse the day a permit is issued.","Keep utilities on, in our name, and paid; log every call in the utility history.","Keep the Contractor Directory honest — red-flag anyone we should not hire again."],
+    good:["Nobody is ever waiting on a W-9, a utility or a permit document.","The trackers say the same thing the real world does."],
+    qs:["Who covers the trackers when Marlo is out?","Should a red-flagged contractor be blocked from being booked, or only warned about?"] },
+
+  "Project Manager": { icon:"🏗", reports:"the Project Director", manages:"contractors on their own jobs",
+    purpose:"Runs a set of houses from first access to listed — the schedule, the money and the trades.",
+    systems:["Property Dashboard","Project Team Meeting","Construction Calendar","Task Calendar","project tracker sheet"],
+    does:["Walk every one of your properties before Monday and know its number.","Keep the property tracker sheet current — it is where spend, budget and ARV come from.","Book contractors on the Construction Calendar so the office can see the week.","Give a committed finish date once, then keep the estimate honest against it.","Raise lag-time items the moment you know, not the week they bite."],
+    good:["Spend lands inside the budget including contingency.","The finish date you committed to is the one it finishes on."],
+    qs:["How many active houses is a fair load for one PM?","Should a PM be able to change their own committed finish date, or should that need you?"] },
+
+  "PM Assistant": { icon:"🗂", reports:"the Project Manager and the Project Director", manages:"nobody",
+    purpose:"Takes the running-around off the PMs so they stay on the houses.",
+    systems:["Task Calendar","Property Dashboard","Construction Calendar"],
+    does:["Pick up unassigned tasks before they age.","Chase materials, deliveries and dumpsters.","Keep photos going into CompanyCam.","Fill in what the PM does not have time to type."],
+    good:["No task sits unassigned for more than a day."],
+    qs:["Is this seat one person across all PMs, or one per PM?"] },
+
+  "Start of Project Assistant": { icon:"🚀", reports:"the Project Director", manages:"nobody",
+    purpose:"Gets a house from the day we own it to the day work can start.",
+    systems:["First Time Access Checklist","Property Dashboard","Utility Tracker"],
+    does:["Walk a house within 72 hours of it going vacant and fill in the First Time Access Checklist.","Get photos into CompanyCam on that first walk.","Get utilities started in our name.","Make sure locks, access and the lockbox are sorted before a trade turns up."],
+    good:["No house sits vacant with nobody having been inside it."],
+    qs:["Alex holds this seat but Gabe is covering while Alex runs the TV show — is that still right?","Besides the checklist, what has to be true before a job may leave Vacant / On Standby?"] },
+
+  "End of Project Assistant": { icon:"🏁", reports:"the Project Director", manages:"nobody",
+    purpose:"Gets a finished house ready to sell or ready to rent, and closed out cleanly.",
+    systems:["End of Project Meeting","Pre List / Punchout","Rental Handoff","RTR"],
+    does:["Run the punch list until a house is genuinely list-ready.","Hand rentals over properly rather than half-finished.","Fill in the End of Project Report while the job is fresh — the overview and the budget review.","Make sure final inspections are actually passed, not assumed."],
+    good:["Nothing gets listed with a punch list still open.","Every closed house has a written End of Project Report."],
+    qs:["Who signs off that a house is genuinely list-ready — you, the PM, or the realtor?"] },
+
+  "Senior Administrative Assistant": { icon:"🏢", reports:"the Administrative Manager", manages:"the administrative assistants",
+    purpose:"The senior pair of hands in the office — approvals, money paperwork and keeping the juniors right.",
+    systems:["Trackers","Contractor Directory","Admin Dashboard"],
+    does:["Approve what the Administrative Manager delegates.","Check the junior assistants' work before it goes out.","Own vendor onboarding end to end."],
+    good:["Nothing needs redoing."],
+    qs:["What can this seat approve without asking Marlo?"] },
+
+  "Administrative Assistant": { icon:"🏢", reports:"the Senior Administrative Assistant", manages:"nobody",
+    purpose:"Keeps the office paperwork moving day to day.",
+    systems:["Trackers","Task Calendar"],
+    does:["Chase W-9s and insurance certificates.","Log invoices and receipts.","Keep contact details current in the Contractor Directory."],
+    good:["The trackers are current without anybody asking."],
+    qs:["Is this an in-office seat only, or can it be remote?"] },
+
+  "Senior Virtual Administrative Assistant": { icon:"💻", reports:"the Project Director", manages:"the virtual assistants",
+    purpose:"Runs the remote team and owns data quality across the whole app.",
+    systems:["VA Admin Dashboard","Trackers","Data Dash","Reporting"],
+    does:["Own the clean-up queue — properties with no PM, no type, no listed date.","Check the scheduled automations actually ran and wrote something.","Build the reports nobody else has time to build.","Train and check the VAs."],
+    good:["The gaps list gets shorter every week, not longer."],
+    qs:["Should this seat be able to see money figures, or only operational data?"] },
+
+  "Virtual Administrative Assistant": { icon:"💻", reports:"the Senior Virtual Administrative Assistant", manages:"nobody",
+    purpose:"Remote hands for data entry, tracker upkeep and chasing.",
+    systems:["Trackers","Task Calendar","Property Dashboard"],
+    does:["Enter and tidy tracker data.","Chase people for the things the trackers say are missing.","Keep the task calendar honest."],
+    good:["What is in the app matches what is true."],
+    qs:["What hours do the VAs cover, and does that need showing in the app?"] },
+
+  "Architect": { icon:"📐", reports:"the Project Director", manages:"nobody",
+    purpose:"Gets drawings done and permits through, and keeps inspections moving.",
+    systems:["Permit Tracker","Architect Dashboard","Property Dashboard"],
+    does:["Check every open permit's portal at least weekly — the app raises a task if you do not, five a day at most.","Answer examiner comments the day they land.","Redraw and resubmit revisions within five days.","Add each required inspection to the permit so it appears on the property card.","Mark a permit Issued the moment it is, so the property can move on."],
+    good:["No permit sits unlooked-at for more than a week.","Nothing is waiting on a drawing."],
+    qs:["Should 'days until approved' be measured from submission to the day you mark it Issued, or should we add a real approval-date field?","Is a week the right chase interval, or should high-priority permits be tighter?"] },
+
+  "Realtor": { icon:"🔑", reports:"the Project Director", manages:"nobody",
+    purpose:"Prices, lists and sells the houses, and reads the market back to the team.",
+    systems:["On the Market Meeting","Realtor Dashboard","Suggested Listing Doc"],
+    does:["Build the comps and recommend the list price before a house is ready.","Post showing confirmations so the app can tell a house is live.","Bring repetitive feedback back to the Monday room — price, smell, layout, photos.","Own the contract through inspection, appraisal and remedies to close."],
+    good:["Houses sell near the number we planned, in the days we planned."],
+    qs:["Is the realtor in-house or an outside agent — does the app need to handle both?","What do you want on the Realtor Dashboard that isn't there yet?"] },
+
+  "Assistant / Intern": { icon:"🎓", reports:"whoever they are placed with", manages:"nobody",
+    purpose:"Learning the business by doing the jobs that need doing.",
+    systems:["Task Calendar"],
+    does:["Take assigned tasks and finish them.","Ask before guessing.","Write down what you learn."],
+    good:["They become useful quickly."],
+    qs:["Is this paid, and is there a set length to it?"] }
+};
+
+function _sopQuestionsBox(qs){
+  if(!qs || !qs.length) return '';
+  return '<div class="sop-box"><b>❓ Questions for Bruce — answer these and I will fold them in</b><ul>'
+    + qs.map(q=>'<li>'+_calEsc(q)+'</li>').join('') + '</ul></div>';
+}
+// --- Starter drafts ----------------------------------------------------------
+function _sopSeedAd(role){
+  const f=ROLE_SOP_FACTS[role];
+  if(!f) return '<h2>'+_calEsc(role)+' — job listing ad</h2><p>Write the ad we post when hiring for this seat.</p>';
+  return '<h2>'+_calEsc(role)+'</h2>'
+    +'<p><b>Legacy Homes · Columbus, Ohio</b></p>'
+    +'<div class="sop-box">This is a draft. Everything in square brackets needs a real answer before it is posted anywhere.</div>'
+    +'<h3>About us</h3><p>Legacy Homes buys, renovates and sells houses across central Ohio. We run 8 to 10 projects to completion a year, and we run them properly — real budgets, real timelines, and a team that knows where every job stands on any given day.</p>'
+    +'<h3>The role</h3><p>'+_calEsc(f.purpose)+'</p>'
+    +'<h3>What you would actually be doing</h3><ul>'+f.does.map(x=>'<li>'+_calEsc(x)+'</li>').join('')+'</ul>'
+    +'<h3>Who you would work with</h3><p>You would report to '+_calEsc(f.reports)+'.'+(f.manages && f.manages!=='nobody' ? (' You would be responsible for '+_calEsc(f.manages)+'.') : '')+'</p>'
+    +'<h3>What we are looking for</h3><ul>'
+      +'<li>[Years of experience, and in what]</li>'
+      +'<li>[Any licence, certification or ticket that is genuinely required]</li>'
+      +'<li>Comfortable working in a system rather than out of your head — we run on '+_calEsc((f.systems||[]).slice(0,2).join(' and '))+'.</li>'
+      +'<li>Says it plainly when something has slipped, early rather than late.</li></ul>'
+    +'<h3>What we offer</h3><ul><li>[Pay range]</li><li>[Hours, and whether any of it is remote]</li><li>[Benefits, vehicle, phone, tools]</li></ul>'
+    +'<h3>To apply</h3><p>[Where do they send it — an email address, a form, a phone number?]</p>'
+    +_sopQuestionsBox([].concat(
+        ['What is the pay range we would actually post for this seat?',
+         'Is it full time, and are the hours fixed?',
+         'Where should applications go?'], f.qs||[]));
+}
+function _sopSeedDesc(role){
+  const f=ROLE_SOP_FACTS[role];
+  if(!f) return '<h2>'+_calEsc(role)+' — description</h2><p>Describe what this job is.</p>';
+  return '<h2>'+_calEsc(role)+' — what this job is</h2>'
+    +'<p><b>In one sentence.</b> '+_calEsc(f.purpose)+'</p>'
+    +'<h3>Where it sits</h3><p>Reports to '+_calEsc(f.reports)+'. '
+      +(f.manages && f.manages!=='nobody' ? ('Responsible for '+_calEsc(f.manages)+'.') : 'Does not manage anybody.')+'</p>'
+    +'<h3>What this seat owns</h3><ul>'+f.does.map(x=>'<li>'+_calEsc(x)+'</li>').join('')+'</ul>'
+    +'<h3>Where the work lives</h3><p>'+(f.systems||[]).map(x=>'<b>'+_calEsc(x)+'</b>').join(' · ')+'</p>'
+    +'<h3>What good looks like</h3><ul>'+(f.good||[]).map(x=>'<li>'+_calEsc(x)+'</li>').join('')+'</ul>'
+    +'<h3>What this seat does NOT own</h3><p>[Worth writing down — most arguments come from two people thinking they own the same thing.]</p>'
+    +_sopQuestionsBox([].concat(
+        ['Is there anything on this list that is genuinely somebody else’s job?',
+         'What belongs in "does NOT own" for this seat?'], f.qs||[]));
+}
+function _sopSeedBreakdown(role, legacyHtml){
+  const f=ROLE_SOP_FACTS[role];
+  const body = (legacyHtml && legacyHtml.trim()) ? legacyHtml : _defaultSopHtml(role);
+  const extra = f ? _sopQuestionsBox([].concat(
+      ['Is this breakdown still how the job is really done, or has it drifted?',
+       'What step gets skipped most often when things are busy?'], f.qs||[])) : '';
+  return body + extra;
+}
+async function _sopSeedFor(role, tab){
+  if(tab==='ad')   return _sopSeedAd(role);
+  if(tab==='desc') return _sopSeedDesc(role);
+  // Breakdown inherits anything already written under the old single-key SOP.
+  const legacy = await _loadSopContent('role:'+role);
+  return _sopSeedBreakdown(role, legacy);
 }
 async function _loadSopContent(key){
   const { data, error } = await supabase.from("pm_sops").select("content").eq("sop_key",key).maybeSingle();
   return (error||!data) ? null : data.content;
 }
-async function openSOP(type, role) {
+async function openSOP(type, role, tab) {
   document.querySelectorAll(".dd").forEach(x => x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x => x.classList.remove("on"));
   if (type === "systems") { renderSystemsGrid(); openModal("systems-modal"); return; }
-  const key = "role:" + role;
-  _currentSop = { key, role };
-  document.getElementById("sop-modal-title").textContent = "📋 " + role + " SOP";
+  _sopTab = (tab && ROLE_SOP_TABS.some(t=>t[0]===tab)) ? tab : 'breakdown';
+  const key = _sopTabKey(role, _sopTab);
+  _currentSop = { key, role, tab:_sopTab };
+  document.getElementById("sop-modal-title").textContent = "📋 " + role;
   document.getElementById("sop-modal-body").innerHTML = `<div style="color:#888;font-size:14px;padding:30px 0;text-align:center">Loading…</div>`;
   openModal("sop-modal");
   let content = await _loadSopContent(key);
-  if (content == null || !content.trim()) content = _defaultSopHtml(role);
+  if (content == null || !content.trim()) content = await _sopSeedFor(role, _sopTab);
   _sopCache[key] = content;
   _renderSopView();
+}
+// Switching tab inside the open modal.
+async function sopGoTab(tab){
+  if(!_currentSop) return;
+  await openSOP('role', _currentSop.role, tab);
+}
+function _sopTabBar(){
+  if(!_currentSop) return '';
+  const cur=_currentSop.tab||'breakdown';
+  return `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px">${ROLE_SOP_TABS.map(t=>{
+    const on=(t[0]===cur);
+    return `<div onclick="sopGoTab('${t[0]}')" title="${_calEsc(t[2])}" style="cursor:pointer;padding:7px 13px;border-radius:8px;font-size:13px;font-weight:${on?700:500};border:1px solid ${on?'#7aa7d8':'#3a3a3a'};background:${on?'#1d2a3a':'transparent'};color:${on?'#cfe2f7':'#aaa'}">${t[1]}</div>`;
+  }).join('')}</div>`;
 }
 function _renderSopView(){
   if(!_currentSop) return;
   const content = _sopCache[_currentSop.key] || "";
+  const cur=(ROLE_SOP_TABS.find(t=>t[0]===(_currentSop.tab||'breakdown'))||[])[2]||'';
   const editBtn = isReadOnly() ? "" : `<button onclick="editSop()" style="padding:6px 14px;font-size:13px;background:#fff;color:#111;border:none;border-radius:6px;cursor:pointer">✎ Edit</button>`;
   document.getElementById("sop-modal-body").innerHTML =
-    `<div style="display:flex;justify-content:flex-end;margin-bottom:12px">${editBtn}</div>
+    `${_sopTabBar()}
+     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:8px 0 12px">
+       <div style="font-size:12px;color:#888;max-width:70%">${_calEsc(cur)}</div>${editBtn}</div>
      <div class="sop-doc">${content}</div>`;
 }
 function _sopInsertBox(){ document.execCommand('insertHTML', false, '<div class="sop-box">Note…</div>'); }
@@ -6859,17 +7074,19 @@ function editSop(){
      <div class="sop-doc" id="sop-editor" contenteditable="true">${content}</div>
      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
        <button onclick="_renderSopView()" style="padding:8px 16px;font-size:14px;background:transparent;color:#ccc;border:1px solid #444;border-radius:6px;cursor:pointer">Cancel</button>
-       <button onclick="saveSop()" style="padding:8px 16px;font-size:14px;background:#fff;color:#111;border:none;border-radius:6px;cursor:pointer">Save SOP</button>
+       <button onclick="_submit('sop-save',this,'Saving…',saveSop)" style="padding:8px 16px;font-size:14px;background:#fff;color:#111;border:none;border-radius:6px;cursor:pointer">Save SOP</button>
      </div>`;
 }
 async function saveSop(){
   if(_blockIfReadOnly()) return;
-  const { key, role } = _currentSop;
+  const { key, role, tab } = _currentSop;
   const html = document.getElementById("sop-editor").innerHTML;
   const { error } = await supabase.from("pm_sops").upsert({ sop_key:key, content:html, updated_at:new Date().toISOString() });
-  if(error){ alert("Failed to save SOP: "+(error.message||"unknown error")); return; }
+  if(error){ _toast("That SOP was NOT saved — "+(error.message||"unknown error"),"bad"); return; }
   _sopCache[key] = html;
-  _logAudit("updated","sop", role+" SOP", "Edited the "+role+" SOP");
+  const label=(ROLE_SOP_TABS.find(t=>t[0]===(tab||'breakdown'))||['','SOP'])[1];
+  _logAudit("updated","sop", role+" — "+label, "Edited the "+role+" "+label);
+  _toast("Saved — "+role+" "+label.replace(/^[^ ]+ /,''));
   _renderSopView();
 }
 
@@ -13142,4 +13359,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-30h dead-links -->
+<!-- build: 2026-08-30i sop-tabs -->
