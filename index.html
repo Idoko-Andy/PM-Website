@@ -294,6 +294,14 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openTVDashboard()">📺 TV Dashboard</div>
     </div>
   </div>
+  <div class="ni has-dd" id="rlt-t">🔑 Realtor ▾
+    <div class="dd" id="rlt-d" style="min-width:230px">
+      <div class="ddl">Realtor</div>
+      <div class="ddi" onclick="openRealtorDashboard()">🔑 Realtor Dashboard</div>
+      <div class="ddi" onclick="openWeeklyMeeting('market')">🏡 On the Market Meeting</div>
+      <div class="ddi" onclick="openPropertyDashboard()">🏠 Property Dashboard</div>
+    </div>
+  </div>
   <div class="ni has-dd" id="arch-t">📐 Architect ▾
     <div class="dd" id="arch-d">
       <div class="ddl">Architect</div>
@@ -642,6 +650,11 @@ body.mobile-on .overlay{z-index:6000 !important;}
     <h2>Admin Panel</h2>
     <p class="sub">Manage user registrations and access levels</p>
 
+    <div style="margin:-4px 0 14px">
+      <button onclick="openInviteUser()" style="padding:8px 15px;background:#122A4A;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">✉️ Invite someone by email</button>
+      <span style="font-size:12px;color:#888;margin-left:8px">Sends them a sign-up link with their role already set. You still approve them here.</span>
+    </div>
+
     <div class="tab-row">
       <div class="tab active" onclick="switchAdminTab('tab-pending')">Pending Approval <span id="pending-count-badge"></span></div>
       <div class="tab" onclick="switchAdminTab('tab-users')">All Users</div>
@@ -669,6 +682,11 @@ body.mobile-on .overlay{z-index:6000 !important;}
 <!-- ===== TASK MODAL ===== -->
 <div class="overlay" id="task-modal">
   <div class="modal" style="max-width:440px" id="task-inner"></div>
+</div>
+
+<!-- ===== INVITE MODAL ===== -->
+<div class="overlay" id="invite-modal">
+  <div class="modal" style="max-width:440px" id="invite-inner"></div>
 </div>
 
 <script>
@@ -904,7 +922,7 @@ function renderLoggedOut(noticeMsg) {
 
 // ===================== MODALS =====================
 function openModal(id) { document.getElementById(id).classList.add("show"); }
-function closeModal(id) { document.getElementById(id).classList.remove("show"); }
+function closeModal(id) { const el=document.getElementById(id); if(el) el.classList.remove("show"); }
 function switchModal(from, to) { closeModal(from); openModal(to); }
 
 // ===================== SIGN IN (Google Identity Services + Supabase signInWithIdToken) =====================
@@ -1186,6 +1204,7 @@ const PERM_ITEMS = [
   { key:"dash_seniorva",    label:"Senior VA Dashboard",     group:"Dashboards" },
   { key:"dash_vaadmin",     label:"VA Admin Dashboard",      group:"Dashboards" },
   { key:"dash_architect",   label:"Architect Dashboard",     group:"Dashboards" },
+  { key:"dash_realtor",     label:"Realtor Dashboard",       group:"Dashboards" },
   { key:"data_overhead",    label:"PT Overhead & Expenses",  group:"Data Dash" },
   { key:"data_teamspent",   label:"Project Team Spent",      group:"Data Dash" },
   { key:"data_pmoverview",  label:"PM Team Overview",        group:"Data Dash" },
@@ -1220,7 +1239,7 @@ const ROLE_DEFAULTS = {
   "Start of Project Assistant":                ["dash_project","dash_pmassistant","sops_view"],
   "End of Project Assistant":                  ["dash_project","dash_pmassistant","sops_view"],
   "Architect":                                 ["dash_project","dash_design","dash_architect","sops_view"],
-  "Realtor":                                   ["dash_project","sops_view"],
+  "Realtor":                                   ["dash_project","dash_realtor","rep_market","sops_view"],
   "Assistant / Intern":                        ["dash_project","sops_view"],
   "Other":                                     ["sops_view"],
 };
@@ -1269,6 +1288,7 @@ const ONCLICK_PERM = [
   ["openSeniorVADashboard",     "dash_seniorva"],
   ["openVAAdminDashboard",      "dash_vaadmin"],
   ["openArchitectDashboard",    "dash_architect"],
+  ["openRealtorDashboard",      "dash_realtor"],
   ["openDataSection('overhead')","data_overhead"],
   ["openDataSection('teamspent')","data_teamspent"],
   ["openPMDashboard",           "data_pmoverview"],
@@ -1448,7 +1468,8 @@ const ROLE_NAVTAB = {
   "PM Assistant":"am-t","Start of Project Assistant":"am-t","End of Project Assistant":"am-t","Assistant / Intern":"am-t",
   "Administrative Manager":"adm-t","Senior Administrative Assistant":"adm-t","Administrative Assistant":"adm-t",
   "Senior Virtual Administrative Assistant":"va-t","Virtual Administrative Assistant":"va-t",
-  "Architect":"arch-t"
+  "Architect":"arch-t",
+  "Realtor":"rlt-t"
 };
 const NAV_SUPER_ROLES = ["CEO","Project Director","Senior Virtual Administrative Assistant"];
 
@@ -4291,6 +4312,15 @@ async function _pdnToggle2(pm,i){ const l=(((window._pdnData||{})[pm]||{}).preco
 // throwing, so the old `try{ await upsert }catch(e){}` pattern swallowed EVERY
 // failure and the caller then showed a green "Saved ✓". Returns null on success,
 // a human-readable reason on failure.
+// Read one settings blob. Returns {} rather than null so a caller can merge into
+// it safely, and never throws - a failed read must not look like an empty record.
+async function _pmSettingsRead(key){
+  try{
+    const r=await supabase.from("pm_settings").select("data").eq("key",key).maybeSingle();
+    if(r.error) return null;
+    return (r.data && r.data.data) || {};
+  }catch(e){ return null; }
+}
 async function _pmSettingsWrite(key, data){
   try{
     const { error } = await supabase.from("pm_settings").upsert({ key:key, data:(data||{}) }, { onConflict:'key' });
@@ -7309,6 +7339,114 @@ function _effectiveUser(){
     role:_previewPerms.role, email:_previewPerms.email,
     isSuperAdmin:_previewPerms.isSuperAdmin, accessLevel:_previewPerms.accessLevel
   });
+}
+
+// ===================== REALTOR DASHBOARD =====================
+// A placeholder with real edges: it says plainly that it is being built, and in
+// the meantime it puts the two things a realtor genuinely needs in front of them -
+// what is on the market and what is about to be. Nothing here pretends to be
+// finished.
+function openRealtorDashboard(){
+  document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
+  document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
+  const act=(typeof _mktCards==='function')?_mktCards('active'):[];
+  const ctr=(typeof _mktCards==='function')?_mktCards('contract'):[];
+  const soon=(typeof _mktCards==='function')?_mktCards('soon'):[];
+  const tile=(icon,title,n,sub,color,click)=>`<div ${click?`onclick="${click}"`:''} style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${color};border-radius:10px;padding:13px 15px;${click?'cursor:pointer':''}">
+      <div style="display:flex;justify-content:space-between"><div style="font-size:13.5px;font-weight:600;color:#111">${icon} ${title}</div>${click?'<span style="color:#ccc">›</span>':''}</div>
+      <div style="font-size:26px;font-weight:600;color:${color};margin-top:5px">${n}</div>
+      <div style="font-size:11px;color:#999">${sub}</div></div>`;
+  const list=(cards, empty)=>cards.length?cards.map(c=>`<div onclick="openPropDetail('${c.id}')" style="display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:0.5px solid #f4f5f7;cursor:pointer">
+      <div style="min-width:0"><div style="font-size:13.5px;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</div>
+        <div style="font-size:11.5px;color:#999">${_calEsc(c.phase||'')}${c.pm?(' · PM '+_calEsc(c.pm)):''}</div></div>
+      <div style="font-size:12px;color:#888;white-space:nowrap">${_calEsc(c.goalArv||'')||'no ARV yet'}</div>
+    </div>`).join(''):`<div style="font-size:12.5px;color:#bbb;padding:8px 0">${empty}</div>`;
+  const card=(title,inner)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:13px 16px">
+      <div style="font-size:14px;font-weight:700;color:#111;margin-bottom:4px">${title}</div>${inner}</div>`;
+
+  document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div style="padding:20px;max-width:1000px;margin:0 auto">
+    <div style="font-size:18px;font-weight:700;color:#111">🔑 Realtor Dashboard</div>
+    <div style="font-size:12.5px;color:#999;margin-bottom:12px">Listings, showings and contracts in one place.</div>
+    <div style="background:#FFF7E0;border:1px solid #EAD9A8;border-radius:11px;padding:12px 15px;margin-bottom:14px">
+      <div style="font-size:13.5px;color:#6b5310"><b>🚧 This dashboard is still being built.</b> The squares below are live and correct, but the realtor-specific reporting — showing feedback trends, price-drop history, commission tracking — is not here yet. Tell Bruce what you actually need on it and it gets built.</div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:14px">
+      ${tile('🏡','On the market',act.length,'listed right now','#185FA5',"openWeeklyMeeting('market')")}
+      ${tile('🤝','In contract',ctr.length,'through to closing','#12987A',"openWeeklyMeeting('market')")}
+      ${tile('⏳','Coming soon',soon.length,'about to be listed','#B7791F',"openWeeklyMeeting('market')")}
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">
+      ${card('🏡 On the market', list(act,'Nothing is listed right now.'))}
+      ${card('🤝 In contract', list(ctr,'Nothing is in contract.'))}
+      ${card('⏳ Coming soon', list(soon,'Nothing is queued to be listed.'))}
+    </div>
+  </div></div></div>`;
+}
+
+// ===================== INVITE SOMEONE BY EMAIL =====================
+// Bruce, 29 Aug: be able to invite somebody by email so they can make an account.
+// This deliberately does NOT create the account or set a password - it writes the
+// email into the app so their sign-up is recognised and pre-set to the right role,
+// and then hands you a ready-written email to send. Passwords stay between the
+// person and the sign-in screen; nothing here ever handles one.
+function openInviteUser(){
+  const roleOpts=(typeof roleOptions==='function')?roleOptions('', true):'';
+  const html=`
+    <button class="modal-close" onclick="closeModal('invite-modal')">✕</button>
+    <h2>Invite someone by email</h2>
+    <div class="error-msg" id="invite-err"></div>
+    <div style="font-size:13px;color:#888;margin:-6px 0 14px;line-height:1.6">They will get an email asking them to sign up. When they do, their account already knows what job they hold and what they can see, and it still needs your approval in the Admin Panel before it goes live. <b>Nobody's password ever passes through this app.</b></div>
+    <div class="form-row"><label>Their email</label><input type="email" id="inv-email" placeholder="name@company.com" /></div>
+    <div class="form-row"><label>Their name (optional)</label><input type="text" id="inv-name" placeholder="First and last" /></div>
+    <div class="form-row"><label>Job role</label><select id="inv-role"><option value="">— Select a role —</option>${roleOpts}</select></div>
+    <div class="form-row"><label>A line from you (optional)</label><textarea id="inv-note" rows="2" placeholder="Anything you want to say in the email"></textarea></div>
+    <button class="btn-full" onclick="sendInvite()">✉️ Write the invite email</button>`;
+  const box=document.getElementById("invite-inner");
+  if(box){ box.innerHTML=html; openModal("invite-modal"); return; }
+  // No dedicated modal in this build - fall back to the task modal shell.
+  const t=document.getElementById("task-inner");
+  if(t){ t.innerHTML=html.replace("closeModal('invite-modal')","closeModal('task-modal')"); openModal("task-modal"); }
+}
+function _inviteRows(){ return ((window._pmInvites)||[]); }
+async function sendInvite(){
+  if(_blockIfReadOnly()) return;
+  const err=document.getElementById("invite-err");
+  const show=(m)=>{ if(err){ err.textContent=m; err.style.display="block"; } else alert(m); };
+  const email=((document.getElementById("inv-email")||{}).value||"").trim().toLowerCase();
+  const name =((document.getElementById("inv-name") ||{}).value||"").trim();
+  const role =((document.getElementById("inv-role") ||{}).value||"").trim();
+  const note =((document.getElementById("inv-note") ||{}).value||"").trim();
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ show("That does not look like an email address."); return; }
+  if(!role){ show("Pick the job role they will hold."); return; }
+  const already=(typeof getUsers==='function'?getUsers():[]).find(u=>String(u.email||'').toLowerCase()===email);
+  if(already){ show(already.status==='approved'?"They already have an account here.":"They have already signed up and are waiting for approval in the Admin Panel."); return; }
+  // Record the invitation so the signup can be matched to it and so there is a
+  // record of who invited whom.
+  const d=await _pmSettingsRead('invites');
+  if(d===null){ show("The invitation list could not be read just now, so saving would have wiped it. Nothing was changed - try again in a moment."); return; }
+  d[email]={ role:role, name:name, by:_miWho(), at:new Date().toISOString(), note:note };
+  const werr=await _pmSettingsWrite('invites', d);
+  if(werr){ show("The invitation was not saved - "+werr); return; }
+  window._pmInvites=d;
+  _logAudit("created","user", email, "Invited as "+role+(name?(" ("+name+")"):""));
+  const url=window.location.origin+window.location.pathname;
+  const subject="You have been added to the Legacy Homes Project Management Hub";
+  const body=(name?("Hi "+name+",\n\n"):"Hi,\n\n")
+    +"You have been set up on the Legacy Homes Project Management Hub as "+role+".\n\n"
+    +"To get in, open this link and create your account with this email address ("+email+"):\n"
+    +url+"\n\n"
+    +"Use the Sign up option, pick "+role+" as your role, and choose your own password - nobody here can see it. "
+    +"Your account is checked and approved before it goes live, so there may be a short wait after you sign up.\n"
+    +(note?("\n"+note+"\n"):"")
+    +"\n"+_miWho()+"\nLegacy Homes";
+  closeModal('invite-modal'); closeModal('task-modal');
+  window.location.href='mailto:'+encodeURIComponent(email)+'?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body);
+}
+// The role an invited person should land on when they sign up.
+function _inviteRoleFor(email){
+  const d=window._pmInvites||{};
+  const rec=d[String(email||'').toLowerCase()];
+  return rec?rec.role:'';
 }
 
 function renderGenericHome(user) {
@@ -12860,4 +12998,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-30b eop-closed-archive -->
+<!-- build: 2026-08-30c realtor-and-invites -->
