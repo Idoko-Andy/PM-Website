@@ -311,6 +311,8 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" id="dd-teamspent" onclick="openDataSection('teamspent')">💸 Project Team Spent</div>
       <div class="ddl" style="margin-top:4px">Project Managers</div>
       <div class="ddi" onclick="openPMDashboard()">👥 PM Team Overview</div>
+      <div class="ddl" style="margin-top:4px">Closings</div>
+      <div class="ddi" onclick="openClosedByYear()">🏁 Closed Properties by Year</div>
       <div class="ddl" style="margin-top:4px">Task Data</div>
       <div class="ddi" onclick="openTaskDataHousing()">🗄 Task Data Housing</div>
       <div class="ddi" onclick="openDollarsDayHousing()">💵 $ / Day Housing</div>
@@ -322,6 +324,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openWeeklyMeeting('team')">🤝 Project Team Meeting</div>
       <div class="ddi" onclick="openWeeklyMeeting('market')">🏡 On the Market Meeting</div>
       <div class="ddi" onclick="openWeeklyMeeting('kickoff')">🚀 Kickoff Meeting</div>
+      <div class="ddi" onclick="openWeeklyMeeting('eop')">🏁 End of Project Meeting</div>
       <div class="ddi" onclick="openWeeklyMeeting('company')">🏢 Full Company Meeting</div>
       <div class="ddi" onclick="openWeeklyMeeting('ceo')">👔 Director / CEO Meeting</div>
       <div class="ddl" style="margin-top:4px">Daily</div>
@@ -1186,10 +1189,12 @@ const PERM_ITEMS = [
   { key:"data_overhead",    label:"PT Overhead & Expenses",  group:"Data Dash" },
   { key:"data_teamspent",   label:"Project Team Spent",      group:"Data Dash" },
   { key:"data_pmoverview",  label:"PM Team Overview",        group:"Data Dash" },
+  { key:"data_closed",      label:"Closed Properties by Year", group:"Data Dash" },
   { key:"trk_all",          label:"Trackers (W-9 · window · mowing · checklists · utilities · permits)", group:"Dashboards" },
   { key:"rep_all",          label:"Reporting — daily, monthly and other reports", group:"Reporting" },
   { key:"rep_team",         label:"Meeting: Project Team",   group:"Reporting" },
   { key:"rep_market",       label:"Meeting: On the Market",  group:"Reporting" },
+  { key:"rep_eop",          label:"Meeting: End of Project", group:"Reporting" },
   { key:"rep_kickoff",      label:"Meeting: Kickoff",        group:"Reporting" },
   { key:"rep_company",      label:"Meeting: Full Company",   group:"Reporting" },
   { key:"rep_ceo",          label:"Meeting: Director / CEO (Bruce & Tommy only)", group:"Reporting" },
@@ -1250,12 +1255,14 @@ const ONCLICK_PERM = [
   ["openVAAdminDashboard('trackers')", "trk_all"],
   ["openWeeklyMeeting('team')",        "rep_team"],
   ["openWeeklyMeeting('market')",      "rep_market"],
+  ["openWeeklyMeeting('eop')",         "rep_eop"],
   ["openWeeklyMeeting('kickoff')",     "rep_kickoff"],
   ["openWeeklyMeeting('company')",     "rep_company"],
   ["openProjectDashboard",      "dash_project"],
   ["openDesignDashboard",       "dash_design"],
   ["openTVDashboard",           "dash_tv"],
   ["openPMAssistantDashboard",  "dash_pmassistant"],
+  ["openClosedByYear",          "data_closed"],
   ["openTaskDataHousing",       "data_pmoverview"],
   ["openDollarsDayHousing",     "data_pmoverview"],
   ["openAdminDashboard",        "dash_admin"],
@@ -4426,7 +4433,7 @@ function openDailyReports(){
 function _canSeeCeoMeeting(){ return _canSeeMeeting('ceo'); }
 // Hiding a menu item is not the same as closing the door - these screens can also
 // be reached from a restored view or a link, so each one checks its own key.
-const _MEETING_PERM={team:'rep_team',market:'rep_market',kickoff:'rep_kickoff',company:'rep_company',ceo:'rep_ceo'};
+const _MEETING_PERM={team:'rep_team',market:'rep_market',kickoff:'rep_kickoff',eop:'rep_eop',company:'rep_company',ceo:'rep_ceo'};
 function _canSeeMeeting(kind){
   const u=(typeof _viewUser==='function')?_viewUser():null;
   if(!u) return false;
@@ -4436,7 +4443,7 @@ function _canSeeMeeting(kind){
   return hasPerm(u,k);
 }
 function _meetingDenied(kind){
-  const names={team:'Project Team Meeting',market:'On the Market Meeting',kickoff:'Kickoff Meeting',company:'Full Company Meeting',ceo:'Director / CEO Meeting'};
+  const names={team:'Project Team Meeting',market:'On the Market Meeting',kickoff:'Kickoff Meeting',eop:'End of Project Meeting',company:'Full Company Meeting',ceo:'Director / CEO Meeting'};
   const extra=(kind==='ceo')?'This one is just for Bruce and Tommy.':'You do not have this meeting turned on yet.';
   return `<div class="empty-state"><div class="icon">&#128274;</div>
     <p style="color:#888;font-size:16px;font-weight:500">${names[kind]||'Meeting'}</p>
@@ -4722,7 +4729,7 @@ function _wmCloseBar(wk, rec, isPast, kind){
     <div style="font-size:12px;color:#999;flex-basis:100%;margin-top:2px">Closing the week files it under <b>Past meetings</b> and locks the boxes. You do not have to press it &mdash; everything you type is already saved, and a week nobody closed still shows up in the record as exactly that. You can reopen it.</div>
   </div>`;
 }
-const _MEETING_NAMES={team:'Project Team Meeting',market:'On the Market Meeting',kickoff:'Kickoff Meeting',company:'Full Company Meeting',ceo:'Director / CEO Meeting'};
+const _MEETING_NAMES={team:'Project Team Meeting',market:'On the Market Meeting',kickoff:'Kickoff Meeting',eop:'End of Project Meeting',company:'Full Company Meeting',ceo:'Director / CEO Meeting'};
 async function _wmComplete(wk, kind){
   kind=kind||'team';
   if(_blockIfReadOnly()) return;
@@ -5421,6 +5428,170 @@ function _kickMeetingBody(wk, notes, prevNotes, roNow){
 }
 function isPastWeek(wk){ return wk!==_wmWeekKey(); }
 
+// ===================== END OF PROJECT MEETING =====================
+// Built from the End of Project Report template in Bruce's SOP (29 Aug 2026).
+// Every line the app already knows is filled in before anybody sits down -
+// budget, spend, ARV, days on market, permit turnaround, failed inspections and
+// the contractors who were actually booked on the job. What is left is the two
+// things only a person can write: what the project was, and what happened to the
+// budget. Nothing here is invented: a figure the app cannot source is left blank
+// with a note saying where it should come from.
+const EOP_WINDOW_DAYS = 180;   // how far back the meeting looks for closed jobs
+function _eopCards(){
+  const all=(typeof propCards!=='undefined'?propCards:[]);
+  const cutoff=_ymd(new Date(Date.now()-EOP_WINDOW_DAYS*86400000));
+  return all.filter(c=>!c.archived && (c.phase==='Closed' || c.phase==='RTR Completed (Pending Closing)'))
+            .filter(c=>{ const d=c.closedDate||c.closingDateSell||''; return !d || d>=cutoff; })
+            .sort((a,b)=>String(b.closedDate||b.closingDateSell||'').localeCompare(String(a.closedDate||a.closingDateSell||'')));
+}
+// Permit facts for one property, straight off the Permit Tracker.
+function _eopPermit(c){
+  const rows=(typeof _permitList==='function'?_permitList():[]).filter(r=>{
+    const p=(typeof _permitProp==='function')?_permitProp(r):null; return p && p.id===c.id;
+  });
+  if(!rows.length) return {has:false, days:null, failed:null, n:0};
+  let days=null, failed=0, insp=0;
+  rows.forEach(r=>{
+    if(r.submitted && r.issued_on){ /* explicit issue date if one is ever added */ }
+    (Array.isArray(r.insps)?r.insps:[]).forEach(x=>{ insp++; failed += (parseInt(x.fails,10)||0); });
+    if(r.submitted && (r.status==='Issued'||r.status==='Closed') && r.checked){
+      const d=Math.round((_dParse(r.checked)-_dParse(r.submitted))/86400000);
+      if(d>=0 && (days===null || d>days)) days=d;
+    }
+  });
+  return {has:true, days:days, failed:insp?failed:null, n:rows.length};
+}
+// Everyone who was actually booked onto the job, from the construction calendar.
+function _eopContractors(c){
+  const evs=(typeof _calEventsCache!=='undefined'?_calEventsCache:[]).filter(e=>e.property_id===c.id);
+  const names={};
+  evs.forEach(e=>{
+    if(e.contractor_id){
+      const k=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).find(x=>x.id===e.contractor_id);
+      if(k){ names[(k.business_name||k.name||'').trim()||k.name]=true; return; }
+    }
+    if(e.kind==='contractor' && e.title) names[String(e.title).trim()]=true;
+  });
+  return Object.keys(names).filter(Boolean).sort();
+}
+function _eopDom(c, notes){
+  const listed=(notes&&notes[c.id+'::listed_on'])||((c.checklists||{}).timeline_done)||'';
+  const sold=c.closedDate||c.closingDateSell||'';
+  if(!listed||!sold) return null;
+  const d=Math.round((_dParse(sold)-_dParse(listed))/86400000);
+  return d>=0?d:null;
+}
+function _eopMeetingBody(wk, notes, prevNotes, roNow){
+  const cards=_eopCards();
+  const V=(pid,f)=>notes[pid+'::'+f]||'';
+  const id=(pid,f)=>'wm-'+pid+'::'+f;
+  const box='padding:6px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13.5px;color:#111;background:#fff';
+  const money=(v)=>{const n=parseFloat(String(v||'').replace(/[^0-9.\-]/g,''));return isNaN(n)?null:n;};
+  const tx=(pid,f,ph,w)=>roNow
+    ? `<span style="font-size:14px;font-weight:700;color:${V(pid,f)?'#111':'#ccc'}">${_calEsc(V(pid,f))||'—'}</span>`
+    : `<input id="${id(pid,f)}" value="${_calEsc(V(pid,f))}" placeholder="${ph||''}" style="${box};width:${w||'100%'};font-weight:600"/>`;
+  const ta=(pid,f,ph,minH)=>roNow
+    ? `<div style="font-size:13px;color:#333;white-space:pre-wrap;background:#F7F8FB;border-radius:7px;padding:8px 10px;min-height:30px">${_calEsc(V(pid,f))||'<span style="color:#bbb">Nothing written</span>'}</div>`
+    : `<textarea id="${id(pid,f)}" placeholder="${ph||''}" style="width:100%;min-height:${minH||64}px;padding:8px 10px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13.5px;color:#222;resize:vertical;font-family:inherit">${_calEsc(V(pid,f))}</textarea><div style="margin-top:2px"><span id="wm-ok-${pid}::${f}" style="display:none;font-size:11.5px;color:#1D9E75">Saved ✓</span></div>`;
+  // A read-only figure the app sourced itself, with where it came from underneath.
+  const known=(label,val,src,color)=>`<div style="background:#f7f8fb;border-radius:7px;padding:7px 10px">
+      <div style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:.04em">${label}</div>
+      <div style="font-size:14.5px;font-weight:700;color:${val?(color||'#111'):'#ccc'}">${val||'—'}</div>
+      <div style="font-size:9.5px;color:#bbb">${src}</div></div>`;
+  const asked=(label,pid,f,ph,src)=>`<div style="background:#fff;border:0.5px solid #e6e8ee;border-radius:7px;padding:7px 10px">
+      <div style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:.04em">${label}</div>
+      ${tx(pid,f,ph)}
+      <div style="font-size:9.5px;color:#bbb;margin-top:2px">${src}</div></div>`;
+
+  const blocks=cards.map(c=>{
+    const b=money(c.budget), sp=money(c.spent);
+    const over=(b!=null&&sp!=null)?(sp-b):null;
+    const perm=(c.checklists||{}).permitted;
+    const P=_eopPermit(c);
+    const cons=_eopContractors(c);
+    const dom=_eopDom(c, notes);
+    const closed=c.closedDate||c.closingDateSell||'';
+    const filled=!!((V(c.id,'overview')||'').trim() && (V(c.id,'budget_review')||'').trim());
+    const chip=(t,col,bg)=>`<span style="font-size:10.5px;font-weight:600;color:${col};background:${bg};padding:1px 7px;border-radius:99px;white-space:nowrap">${t}</span>`;
+    const chips=[
+      (over!=null?chip((over>0?'+':'')+_wmMoneyShort(Math.abs(over))+(over>0?' over':' under'), over>0?'#B42318':'#0F7B54', over>0?'#FBEAE8':'#E6F4ED'):''),
+      (dom!=null?chip(dom+' DOM','#185FA5','#E7EFF8'):''),
+      (perm==='yes'?chip('permitted','#4A1D6E','#F3E8FB'):''),
+      chip(filled?'report written':'report not written yet', filled?'#0F7B54':'#B7791F', filled?'#E6F4ED':'#FBF3E2')
+    ].filter(Boolean).join(' ');
+
+    return `<details data-wm-prop="${c.id}" ${_wmIsOpen(c.id)?'open':''} ontoggle="_wmToggleOpen('${c.id}',this.open)" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;margin-bottom:9px;color:#111">
+      <summary style="cursor:pointer;padding:11px 14px 11px 4px;outline:none">
+        <div style="display:inline-flex;width:calc(100% - 26px);vertical-align:middle;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <span style="font-size:15px;font-weight:700;color:#185FA5">${_calEsc(c.addr||'')}</span>
+          <span style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">${chips}<span style="font-size:11.5px;color:#888;margin-left:4px">${closed?('closed '+_wmDateShort(closed)):'no close date'}</span></span>
+        </div>
+      </summary>
+      <div style="padding:0 16px 14px">
+        <div style="font-size:11.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">Budgeted vs. spent</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px">
+          ${known('ACQ budget', _calEsc((c.checklists||{}).acqBudget||''), 'from the property card')}
+          ${known('Budgeted', _calEsc(c.budget||''), 'from the tracker sheet')}
+          ${known('Spent', _calEsc(c.spent||''), 'from the tracker sheet', over!=null&&over>0?'#B42318':'#111')}
+          ${known(over!=null&&over>0?'Over by':'Under by', over!=null?_wmMoneyShort(Math.abs(over)):'', 'budgeted less spent', over!=null&&over>0?'#B42318':'#0F7B54')}
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-top:8px">
+          ${asked('Original list price', c.id, 'list_price', '$0', 'what we first asked')}
+          ${known('ACQ ARV', _calEsc(c.goalArv||''), 'goal ARV from H10')}
+          ${asked('Sales price', c.id, 'sale_price', '$0', 'what it actually sold for')}
+          ${known('DOM', dom!=null?(dom+' days'):'', dom!=null?'listed to closed':'needs a listed date')}
+        </div>
+        ${dom==null?`<div style="margin-top:6px;display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px">
+            ${asked('Date it was listed', c.id, 'listed_on', 'YYYY-MM-DD', 'so DOM can work itself out')}
+          </div>`:''}
+
+        <div style="font-size:11.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em;margin:13px 0 6px">If permitted</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px">
+          ${known('Permitted job', perm==='yes'?'Yes':(perm==='no'?'No':''), 'from the property card')}
+          ${perm==='yes'
+            ? known('Days until approved', P.days!=null?(P.days+' days'):'', P.has?'submitted → portal checked when issued':'no permit on the tracker', P.days!=null&&P.days>60?'#B7791F':'#111')
+            : known('Days until approved', 'N/A', 'not a permitted job')}
+          ${perm==='yes'
+            ? known('Failed inspections', P.failed!=null?String(P.failed):'', P.has?'from the permit tracker':'no permit on the tracker', P.failed?'#B42318':'#111')
+            : known('Failed inspections', 'N/A', 'not a permitted job')}
+        </div>
+
+        <div style="font-size:11.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em;margin:13px 0 5px">Contractors used</div>
+        <div style="background:#f7f8fb;border-radius:7px;padding:8px 11px">
+          ${cons.length?`<div style="font-size:13px;color:#111">${cons.map(n=>`<span style="display:inline-block;background:#fff;border:0.5px solid #e0e4ec;border-radius:99px;padding:2px 9px;margin:0 5px 5px 0;font-size:12px">${_calEsc(n)}</span>`).join('')}</div>
+             <div style="font-size:9.5px;color:#bbb">everyone booked onto this job on the construction calendar</div>`
+            :`<div style="font-size:12.5px;color:#bbb">Nobody was booked onto this job on the construction calendar &mdash; add them below.</div>`}
+          <div style="margin-top:6px">${tx(c.id,'contractors_extra','Anyone else who worked on it')}</div>
+        </div>
+
+        <div style="font-size:11.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em;margin:13px 0 4px">Project overview</div>
+        ${ta(c.id,'overview','What the job actually was — scope, what changed, anything worth remembering next time we buy one like it.')}
+
+        <div style="font-size:11.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em;margin:13px 0 4px">Budget review <span style="font-weight:400;text-transform:none;letter-spacing:0;color:#aaa">— with the data to support it</span></div>
+        ${ta(c.id,'budget_review','Where the money went that we did not plan for, and why. Name the line items and the amounts.',80)}
+
+        ${roNow?'':`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:11px">
+          <button onclick="openPropDetail('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">Open the property card ›</button>
+          <button onclick="_miAddQuick('q','${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#B7791F;cursor:pointer;font-weight:600">＋ Question for Bruce / Tommy</button>
+        </div>`}
+      </div>
+    </details>`;
+  }).join('');
+
+  const closedRec=_wmMeta(wk,'eop','__closed');
+  const written=cards.filter(c=>(V(c.id,'overview')||'').trim() && (V(c.id,'budget_review')||'').trim()).length;
+  return `${_wmClosedBanner(wk, closedRec, 'eop')}
+    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:13px 16px;margin-bottom:14px;font-size:13.5px;color:#444;line-height:1.7">One <b>End of Project Report</b> per house we have finished, following the SOP template. The numbers are already filled in from the tracker sheet, the permit tracker and the construction calendar &mdash; the two boxes at the bottom of each one are the part only a person can write. <b style="color:#0F7B54">Everything saves itself as you type.</b></div>
+    ${cards.length?`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:9px">
+      <div style="font-size:12.5px;color:#888">${cards.length} finished in the last ${EOP_WINDOW_DAYS} days &middot; ${written} written up</div>
+      <div style="display:flex;gap:6px">
+        <button onclick="_wmExpandAll(true)" style="padding:5px 11px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12px;color:#555;cursor:pointer">Expand all</button>
+        <button onclick="_wmExpandAll(false)" style="padding:5px 11px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12px;color:#555;cursor:pointer">Collapse all</button>
+      </div></div>`:''}
+    ${blocks || '<div style="color:#bbb;font-size:14px;padding:20px 0">Nothing has closed in the last '+EOP_WINDOW_DAYS+' days.</div>'}
+    ${_wmCloseBar(wk, closedRec, isPastWeek(wk), 'eop')}`;
+}
+
 // ===================== FULL COMPANY MEETING =====================
 // Bruce, 29 Aug: nobody fills this one in. It is assembled from the meetings that
 // already happened this week - Monday's walk-through, the On the Market meeting and
@@ -5460,7 +5631,7 @@ function _compMeetingBody(wk){
   }).join('');
 
   // --- construction: over budget, timelines pushed ---
-  const overRows=D.over.length?D.over.map(x=>line(addr(x.c)+' <span style="color:#B42318;font-weight:600">'+_wmMoneyShort(x.m.left)+' over</span>'+(x.note?'<div style="font-size:12px;color:#888;margin-top:1px">'+_calEsc(x.note)+'</div>':''), _calEsc(x.c.pm)||'no PM')).join(''):none('Nothing is over budget.');
+  const overRows=D.over.length?D.over.map(x=>line(addr(x.c)+' <span style="color:#B42318;font-weight:600">'+_wmMoneyShort(Math.abs(x.m.left))+' over</span>'+(x.note?'<div style="font-size:12px;color:#888;margin-top:1px">'+_calEsc(x.note)+'</div>':''), _calEsc(x.c.pm)||'no PM')).join(''):none('Nothing is over budget.');
   const movedRows=D.moved.length?D.moved.map(x=>line(addr(x.c)+' — moved to <b>'+_calEsc(x.p.to||'')+'</b>'+(x.p.why?'<div style="font-size:12px;color:#888;margin-top:1px">'+_calEsc(x.p.why)+'</div>':''), _wmDateShort(x.p.at))).join(''):none('No finish date moved this week.');
 
   // --- on the market ---
@@ -5537,7 +5708,7 @@ function openWeeklyMeeting(kind, week){
   // also be reached from a restored nav state or a link, so check here too.
   if(!_canSeeMeeting(kind)){ document.getElementById("dash-body").innerHTML=_meetingDenied(kind); return; }
   if(window._wmData===undefined||window._wmData===null){ if(window._wmData===undefined){ window._wmData=null; Promise.all([_wmLoad(), _miLoad(), (window._pdnData===undefined?( (window._pdnData=null), _pdnLoad()):Promise.resolve())]).then(()=>openWeeklyMeeting(kind, week)); document.getElementById("dash-body").innerHTML='<div style="padding:40px;text-align:center;color:#999">Loading meeting…</div>'; return; } }
-  const titles={team:'🤝 Project Team Meeting',market:'🏡 On the Market Meeting',kickoff:'🚀 Kickoff Meeting',company:'🏢 Full Company Meeting',ceo:'👔 Director / CEO Meeting'};
+  const titles={team:'🤝 Project Team Meeting',market:'🏡 On the Market Meeting',kickoff:'🚀 Kickoff Meeting',eop:'🏁 End of Project Meeting',company:'🏢 Full Company Meeting',ceo:'👔 Director / CEO Meeting'};
   const liveWk=_wmWeekKey();
   const wk = week || liveWk;
   const isPast = wk!==liveWk;
@@ -5788,6 +5959,10 @@ function openWeeklyMeeting(kind, week){
       const closedRec=_wmMeta(wk,'kickoff','__closed');
       const roNow=isReadOnly()||!!closedRec.at||isPast;
       body=_kickMeetingBody(wk, notes, prevNotes, roNow);
+    } else if(kind==='eop'){
+      const closedRec=_wmMeta(wk,'eop','__closed');
+      const roNow=isReadOnly()||!!closedRec.at||isPast;
+      body=_eopMeetingBody(wk, notes, prevNotes, roNow);
     } else if(kind==='company'){
       body=_compMeetingBody(wk);
     } else {
@@ -5806,6 +5981,155 @@ function openWeeklyMeeting(kind, week){
   // as "opened, never completed" rather than as a gap.
   try{ _wmAutoWire(kind, wk); if(!isPast && !(typeof isReadOnly==='function' && isReadOnly())) _wmStampOpened(kind, wk); }catch(e){}
 }
+// ===================== CLOSED PROPERTIES BY YEAR =====================
+// Bruce, 29 Aug: profit per property, how many we closed, what kind of rehab it
+// was, and what share came in on timeline and on budget - month by month and for
+// the year, against the goal of 8 to 10 closings.
+// Everything here is derived. Nothing is typed in, so nothing can go stale.
+const CLOSINGS_GOAL_LOW = 8, CLOSINGS_GOAL_HIGH = 10;
+function _cbyMoney(v){ const n=parseFloat(String(v||'').replace(/[^0-9.\-]/g,'')); return isNaN(n)?null:n; }
+function _cbyClosed(){
+  return (typeof propCards!=='undefined'?propCards:[])
+    .filter(c=>c.phase==='Closed')
+    .map(c=>{
+      const d=c.closedDate||c.closingDateSell||'';
+      const b=_cbyMoney(c.budget), sp=_cbyMoney(c.spent);
+      const cl=c.checklists||{};
+      // On budget = we did not spend more than we said we would.
+      const onBudget=(b!=null&&sp!=null&&b>0)?(sp<=b):null;
+      // On timeline = it was listed (or handed over) on or before the finish date
+      // the room committed to. Both dates have to exist for the question to mean
+      // anything - a missing one is "unknown", never a pass.
+      const done=cl.timeline_done||d||'';
+      const onTime=(c.end&&done)?(done<=c.end):null;
+      return { c:c, ymd:d, year:/^\d{4}/.test(d)?d.slice(0,4):'unknown', month:/^\d{4}-\d{2}/.test(d)?d.slice(0,7):'unknown',
+               profit:_cbyMoney(c.estProfit), arv:_cbyMoney(c.goalArv), b:b, s:sp,
+               onBudget:onBudget, onTime:onTime, type:c.type||'' };
+    })
+    .sort((a,b)=>String(b.ymd).localeCompare(String(a.ymd)));
+}
+function _cbyPct(list, key){
+  const known=list.filter(x=>x[key]!==null);
+  if(!known.length) return null;
+  return Math.round((known.filter(x=>x[key]).length/known.length)*100);
+}
+function _cbySum(list){
+  let p=0, n=0;
+  list.forEach(x=>{ if(x.profit!=null){ p+=x.profit; n++; } });
+  return {profit:n?p:null, priced:n};
+}
+function openClosedByYear(){
+  document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
+  document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
+  const all=_cbyClosed();
+  const years=[...new Set(all.map(x=>x.year))].sort().reverse();
+  const yr=(window._cbyYear && years.indexOf(window._cbyYear)>=0) ? window._cbyYear : (years[0]||String(new Date().getFullYear()));
+  const mine=all.filter(x=>x.year===yr);
+  const S=_cbySum(mine);
+  const pctT=_cbyPct(mine,'onTime'), pctB=_cbyPct(mine,'onBudget');
+  const goalPct=Math.min(100, Math.round((mine.length/CLOSINGS_GOAL_HIGH)*100));
+
+  const money=(n)=>n==null?'&mdash;':((n<0?'&minus;$':'$')+Math.abs(Math.round(n)).toLocaleString());
+  const pill=(label,on,click)=>`<span onclick="${click}" style="display:inline-block;padding:5px 13px;margin:0 6px 6px 0;border-radius:99px;font-size:13px;cursor:pointer;border:0.5px solid ${on?'#185FA5':'#dde2ec'};background:${on?'#E6F1FB':'#fff'};color:${on?'#185FA5':'#555'};font-weight:${on?600:400}">${label}</span>`;
+  const kpi=(k,v,sub,color)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:12px 14px">
+      <div style="font-size:10.5px;color:#999;text-transform:uppercase;letter-spacing:.05em">${k}</div>
+      <div style="font-size:23px;font-weight:700;color:${color||'#111'};margin-top:2px">${v}</div>
+      <div style="font-size:11px;color:#aaa">${sub||''}</div></div>`;
+  const yn=(v)=>v===null?'<span style="color:#ccc">unknown</span>'
+                :(v?'<span style="color:#0F7B54;font-weight:600">Yes</span>':'<span style="color:#B42318;font-weight:600">No</span>');
+
+  // ---- month by month ----
+  const months=[...new Set(mine.map(x=>x.month))].sort().reverse();
+  const monthRows=months.map(m=>{
+    const list=mine.filter(x=>x.month===m);
+    const ms=_cbySum(list);
+    const mt=_cbyPct(list,'onTime'), mb=_cbyPct(list,'onBudget');
+    const label=(m==='unknown')?'No closing date on the card':(()=>{ try{ return new Date(m+'-01T00:00:00').toLocaleDateString(undefined,{month:'long',year:'numeric'}); }catch(e){ return m; } })();
+    const inner=list.map(x=>`<tr style="border-top:0.5px solid #f4f5f7">
+        <td style="padding:7px 10px"><span onclick="openPropDetail('${x.c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(x.c.addr||'')}</span></td>
+        <td style="padding:7px;color:#666">${_calEsc(x.ymd)||'&mdash;'}</td>
+        <td style="padding:7px">${_calEsc(x.type)||'<span style="color:#ccc">no type set</span>'}</td>
+        <td style="padding:7px;text-align:right;font-variant-numeric:tabular-nums">${money(x.b)}</td>
+        <td style="padding:7px;text-align:right;font-variant-numeric:tabular-nums">${money(x.s)}</td>
+        <td style="padding:7px;text-align:right;font-variant-numeric:tabular-nums;font-weight:700;color:${x.profit==null?'#ccc':(x.profit<0?'#B42318':'#0F7B54')}">${money(x.profit)}</td>
+        <td style="padding:7px;text-align:center">${yn(x.onTime)}</td>
+        <td style="padding:7px;text-align:center">${yn(x.onBudget)}</td>
+      </tr>`).join('');
+    return `<details open style="border-top:0.5px solid #e0e4ec">
+      <summary style="cursor:pointer;padding:9px 14px;outline:none;font-size:13.5px;font-weight:700;color:#122A4A">
+        📁 ${_calEsc(label)}
+        <span style="font-weight:400;color:#888;margin-left:8px">${list.length} closing${list.length===1?'':'s'} · profit ${money(ms.profit)}${mt!=null?(' · '+mt+'% on timeline'):''}${mb!=null?(' · '+mb+'% on budget'):''}</span>
+      </summary>
+      <div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;color:#111">
+        <thead><tr style="background:#F2F4F9;color:#122A4A">
+          <th style="padding:8px 10px;text-align:left">Property</th><th style="padding:8px;text-align:left">Closed</th>
+          <th style="padding:8px;text-align:left">Type of rehab</th><th style="padding:8px;text-align:right">Budgeted</th>
+          <th style="padding:8px;text-align:right">Spent</th><th style="padding:8px;text-align:right">Profit</th>
+          <th style="padding:8px">On timeline</th><th style="padding:8px">On budget</th></tr></thead>
+        <tbody>${inner}</tbody></table></div></details>`;
+  }).join('');
+
+  // ---- by type of rehab ----
+  const types=[...new Set(mine.map(x=>x.type||'(no type set)'))].sort();
+  const typeRows=types.map(t=>{
+    const list=mine.filter(x=>(x.type||'(no type set)')===t);
+    const ts=_cbySum(list);
+    return `<tr style="border-top:0.5px solid #f4f5f7">
+      <td style="padding:7px 10px">${_calEsc(t)}</td>
+      <td style="padding:7px;text-align:center">${list.length}</td>
+      <td style="padding:7px;text-align:right;font-variant-numeric:tabular-nums;font-weight:600;color:${ts.profit==null?'#ccc':(ts.profit<0?'#B42318':'#0F7B54')}">${money(ts.profit)}</td>
+      <td style="padding:7px;text-align:right;font-variant-numeric:tabular-nums">${ts.priced?money(ts.profit/ts.priced):'&mdash;'}</td>
+      <td style="padding:7px;text-align:center">${_cbyPct(list,'onTime')==null?'<span style="color:#ccc">—</span>':(_cbyPct(list,'onTime')+'%')}</td>
+      <td style="padding:7px;text-align:center">${_cbyPct(list,'onBudget')==null?'<span style="color:#ccc">—</span>':(_cbyPct(list,'onBudget')+'%')}</td>
+    </tr>`;
+  }).join('');
+
+  const unpriced=mine.filter(x=>x.profit==null).length;
+  const noType=mine.filter(x=>!x.type).length;
+  const noDates=mine.filter(x=>x.onTime===null).length;
+  const caveats=[
+    (unpriced?`${unpriced} of them have no profit figure yet — the tracker sheet has no selling price in column H, so they are left out of the profit totals rather than counted as zero.`:''),
+    (noType?`${noType} have no type of rehab set on the property card.`:''),
+    (noDates?`${noDates} cannot be scored on timeline because they are missing either a committed finish date or a listed date.`:'')
+  ].filter(Boolean);
+
+  document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div style="padding:20px;max-width:1120px;margin:0 auto">
+    <div style="font-size:18px;font-weight:700;color:#111">🏁 Closed Properties by Year</div>
+    <div style="font-size:12.5px;color:#999;margin-bottom:12px">Every house we have finished and sold, worked out from the property cards and the tracker sheets. Nothing on this page is typed in by hand.</div>
+    <div style="margin-bottom:12px">${years.length?years.map(y=>pill(y+' <span style="color:#aaa;font-weight:400">'+all.filter(x=>x.year===y).length+'</span>', y===yr, `window._cbyYear='${y}';openClosedByYear()`)).join(''):'<span style="color:#bbb;font-size:13px">Nothing has closed yet.</span>'}</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px">
+      ${kpi('Closings in '+yr, mine.length, 'goal is '+CLOSINGS_GOAL_LOW+'–'+CLOSINGS_GOAL_HIGH, mine.length>=CLOSINGS_GOAL_LOW?'#0F7B54':'#B7791F')}
+      ${kpi('Total profit', money(S.profit), S.priced+' of '+mine.length+' have a figure', S.profit!=null&&S.profit<0?'#B42318':'#0F7B54')}
+      ${kpi('Average per house', S.priced?money(S.profit/S.priced):'&mdash;', 'across the ones we can price')}
+      ${kpi('On timeline', pctT==null?'&mdash;':(pctT+'%'), pctT==null?'no dates to score':'of the ones we can score', pctT!=null&&pctT<70?'#B7791F':'#0F7B54')}
+      ${kpi('On budget', pctB==null?'&mdash;':(pctB+'%'), pctB==null?'no budgets to score':'of the ones we can score', pctB!=null&&pctB<70?'#B7791F':'#0F7B54')}
+    </div>
+    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:12px 15px;margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap">
+        <div style="font-size:13.5px;font-weight:700;color:#111">Against the goal</div>
+        <div style="font-size:12px;color:#888">${mine.length} of ${CLOSINGS_GOAL_HIGH} · ${mine.length>=CLOSINGS_GOAL_LOW?'inside the target range':(CLOSINGS_GOAL_LOW-mine.length)+' more to reach '+CLOSINGS_GOAL_LOW}</div>
+      </div>
+      <div style="height:9px;border-radius:99px;background:#eef0f6;overflow:hidden;margin-top:7px;position:relative">
+        <div style="height:100%;width:${goalPct}%;background:${mine.length>=CLOSINGS_GOAL_LOW?'#12987A':'#185FA5'}"></div>
+        <div style="position:absolute;top:-2px;bottom:-2px;left:${Math.round((CLOSINGS_GOAL_LOW/CLOSINGS_GOAL_HIGH)*100)}%;width:2px;background:#B7791F" title="${CLOSINGS_GOAL_LOW} closings"></div>
+      </div>
+      <div style="font-size:10.5px;color:#bbb;margin-top:3px">The amber line is ${CLOSINGS_GOAL_LOW}; the end of the bar is ${CLOSINGS_GOAL_HIGH}.</div>
+    </div>
+    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;overflow:hidden;margin-bottom:14px">
+      <div style="padding:11px 14px;font-size:14px;font-weight:700;color:#111">By type of rehab</div>
+      <div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;color:#111">
+        <thead><tr style="background:#122A4A;color:#fff"><th style="padding:8px 10px;text-align:left">Type</th><th style="padding:8px">Closings</th><th style="padding:8px;text-align:right">Total profit</th><th style="padding:8px;text-align:right">Average</th><th style="padding:8px">On timeline</th><th style="padding:8px">On budget</th></tr></thead>
+        <tbody>${typeRows||'<tr><td colspan="6" style="padding:16px;color:#bbb;text-align:center">Nothing closed in this year.</td></tr>'}</tbody></table></div>
+    </div>
+    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;overflow:hidden;margin-bottom:14px">
+      <div style="padding:11px 14px;font-size:14px;font-weight:700;color:#111">Month by month</div>
+      ${monthRows||'<div style="padding:16px;color:#bbb;text-align:center;font-size:13px">Nothing closed in this year.</div>'}
+    </div>
+    ${caveats.length?`<div style="background:#FFF7E0;border:1px solid #EAD9A8;border-radius:10px;padding:11px 14px;font-size:12.5px;color:#6b5310;line-height:1.6">
+      <b>Worth knowing before you quote these numbers:</b><br/>${caveats.map(x=>'• '+x).join('<br/>')}</div>`:''}
+  </div></div></div>`;
+}
+
 function openDataSection(type) {
   const u = currentUser();
   document.querySelectorAll(".dd").forEach(x => x.classList.remove("open"));
@@ -8502,6 +8826,55 @@ async function _trkWinDate(id,field,val){
     if(typeof loadCalendarEventsFromSupabase==='function') await loadCalendarEventsFromSupabase();
   }catch(e){}
 }
+// ---- Closed properties fold into month folders --------------------------------
+// Bruce, 29 Aug: once a property closes it has to drop off the main tracker screen
+// and live in a folder for that month of that year. Every tracker uses the same
+// component, so a closed house is filed the same way wherever you look at it.
+function _trkMonthKey(c){
+  const d=c.closedDate||c.closingDateSell||'';
+  return /^\d{4}-\d{2}/.test(d)?d.slice(0,7):'unknown';
+}
+function _trkMonthLabel(k){
+  if(k==='unknown') return 'No closing date on the card';
+  try{ return new Date(k+'-01T00:00:00').toLocaleDateString(undefined,{month:'long',year:'numeric'}); }catch(e){ return k; }
+}
+function _trkYearOf(k){ return k==='unknown'?'—':k.slice(0,4); }
+// cards: the closed property cards. rowFn: (card) => a <tr>. head: the <th> row.
+// Returns one collapsible folder per month, newest first, grouped under the year.
+function _trkClosedFolders(title, cards, head, rowFn, color){
+  if(!cards.length) return '';
+  const by={};
+  cards.forEach(c=>{ const k=_trkMonthKey(c); (by[k]=by[k]||[]).push(c); });
+  const keys=Object.keys(by).sort().reverse();
+  const years=[...new Set(keys.map(_trkYearOf))];
+  const folders=years.map(y=>{
+    const mine=keys.filter(k=>_trkYearOf(k)===y);
+    const n=mine.reduce((a,k)=>a+by[k].length,0);
+    const months=mine.map(k=>`<details style="border-top:0.5px solid #eef0f6">
+        <summary style="cursor:pointer;padding:8px 14px;font-size:13px;color:#333;outline:none">📁 ${_calEsc(_trkMonthLabel(k))} <span style="color:#aaa;font-weight:400">· ${by[k].length} propert${by[k].length===1?'y':'ies'}</span></summary>
+        <div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;color:#111"><thead><tr style="background:#F2F4F9;color:#122A4A">${head}</tr></thead><tbody>${by[k].map(rowFn).join('')}</tbody></table></div>
+      </details>`).join('');
+    return `<details style="border-top:0.5px solid #e0e4ec">
+        <summary style="cursor:pointer;padding:9px 14px;font-size:13.5px;font-weight:700;color:#122A4A;outline:none">🗂 ${_calEsc(y)} <span style="color:#aaa;font-weight:400">· ${n} closed</span></summary>
+        ${months}</details>`;
+  }).join('');
+  return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden;margin-bottom:16px">
+      <div style="padding:10px 14px;font-size:14px;font-weight:700;color:${color||'#888'}">${title}
+        <div style="font-size:11.5px;font-weight:400;color:#aaa;margin-top:1px">Closed houses come off the live list and file themselves under the month they closed.</div></div>
+      ${folders}</div>`;
+}
+// The plain version, for trackers whose live table has no meaningful "history"
+// row of its own. Same folders, so the rule reads the same everywhere.
+function _trkClosedSimple(closed, what){
+  return _trkClosedFolders('\ud83d\uddc4 Closed properties — '+what, closed,
+    '<th style="padding:8px 10px;text-align:left">Property</th><th style="padding:8px;text-align:left">Closed</th><th style="padding:8px;text-align:left">Last phase</th><th style="padding:8px"></th>',
+    (c)=>`<tr data-trk="${_calEsc(c.addr||'')}" style="border-top:0.5px solid #eef0f6">
+        <td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span></td>
+        <td style="padding:7px;color:#666">${_calEsc(c.closedDate||c.closingDateSell||'')||'<span style="color:#ccc">no date</span>'}</td>
+        <td style="padding:7px;color:#888">${_calEsc(c.phase||'')}</td>
+        <td style="padding:7px;text-align:right"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;color:#185FA5;font-size:12px">Open the card &rsaquo;</span></td>
+      </tr>`, '#888');
+}
 function _trkTable(title,color,head,rows){ return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:auto;margin-bottom:16px"><div style="padding:10px 14px;border-bottom:0.5px solid #e0e4ec;font-size:14px;font-weight:700;color:${color}">${title}</div><table style="width:100%;border-collapse:collapse;font-size:13.5px;color:#111"><thead><tr style="background:#122A4A;color:#fff">${head}</tr></thead><tbody>${rows}</tbody></table></div>`; }
 // Type-to-filter that keeps your cursor in the box (filters rows in place, no re-render).
 function _trkSearchBox(ph){ return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><input id="trk-search" placeholder="${ph}" oninput="_trkFilter()" style="flex:1;max-width:340px;padding:8px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:13.5px;outline:none"/><span id="trk-ok" style="display:none;font-size:12px;color:#1D9E75">Saved ✓</span></div>`; }
@@ -9048,6 +9421,21 @@ async function _permitInspToggle(id, insId){
     onCard?(list[i].done?"Passed — the matching subphase on the property card is now ticked":"Reopened on the property card too"):"No property card matched");
   _permitRerender();
 }
+// A failed inspection is a fact the End of Project report asks for by name, so it
+// needs somewhere to live. One counter per inspection - it can fail more than once.
+async function _permitInspFail(id, insId, delta){
+  if(_blockIfReadOnly()) return;
+  const d=window._trkData||{};
+  const rec=Object.assign({},(d.permits||{})[id]||{});
+  const list=(Array.isArray(rec.insps)?rec.insps.map(x=>Object.assign({},x)):[]);
+  const i=list.findIndex(x=>x.id===insId); if(i<0) return;
+  const n=Math.max(0,(parseInt(list[i].fails,10)||0)+(delta||1));
+  list[i].fails=n;
+  rec.insps=list; d.permits=d.permits||{}; d.permits[id]=rec; window._trkData=d;
+  if(!await _trkSave()) return;
+  _logAudit("updated","permit",(rec.addr||"")+" — "+_permitInspLabel(list[i]), n?("Failed "+n+" time"+(n===1?"":"s")):"Failure count cleared");
+  _permitRerender();
+}
 async function _permitInspRemove(id, insId){
   if(_blockIfReadOnly()) return;
   const d=window._trkData||{};
@@ -9110,6 +9498,7 @@ function _permitTrackerBody(){
         <div style="min-width:0;flex:1">
           <div style="font-size:12px;color:${ins.done?"#1D9E75":"#111"}">${_calEsc(ins.name||"")}</div>
           <div style="font-size:10px;color:#aaa">${ins.when==="after"?"after finishes":"before finishes"}${ins.done&&ins.date?(" · passed "+_calEsc(ins.date)):""}</div>
+          <div style="font-size:10px;margin-top:1px">${(parseInt(ins.fails,10)||0)?`<span style="color:#B42318;font-weight:600">failed ${parseInt(ins.fails,10)}&times;</span>`:`<span style="color:#ccc">no failures</span>`}${ro?"":` <span onclick="_permitInspFail('${r.id}','${ins.id}',1)" title="Record a failed inspection" style="cursor:pointer;color:#B42318;margin-left:4px">+fail</span>${(parseInt(ins.fails,10)||0)?` <span onclick="_permitInspFail('${r.id}','${ins.id}',-1)" title="Take one back" style="cursor:pointer;color:#bbb">&minus;</span>`:''}`}</div>
         </div>
         ${ro?"":`<span onclick="_permitInspRemove('${r.id}','${ins.id}')" title="Remove" style="cursor:pointer;font-size:11px;color:#ddd">✕</span>`}
       </div>`).join(""):`<div style="font-size:11.5px;color:#bbb;padding:2px 0">None yet.</div>`;
@@ -9407,7 +9796,7 @@ function _vaTrackers(){
     <td style="padding:7px;text-align:center">${dt('win',c.id,'install_date',`_trkWinDate('${c.id}','install_date',this.value)`)}<div style="margin-top:3px">${fchk('win',c.id,'installed')}</div></td>
     <td style="padding:7px">${txt('win',c.id,'notes','Notes & comments',190)}</td></tr>`;
   const winrows=active.length?active.map(winRow).join(""):'<tr><td colspan="6" style="padding:16px;color:#bbb;text-align:center">No active properties.</td></tr>';
-  const winClosed=closed.length?`<div style="margin-top:14px">${_trkTable('🗄 Closed properties — window history','#888','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">Needed</th><th style="padding:9px">Measured</th><th style="padding:9px">Ordered</th><th style="padding:9px">Arrived</th><th style="padding:9px">Installed</th><th style="padding:9px;text-align:left">Notes</th>',closed.map(winRow).join(""))}</div>`:'';
+  const winClosed=closed.length?`<div style="margin-top:14px">${_trkClosedFolders('🗄 Closed properties — window history', closed, '<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">Needed</th><th style="padding:9px">Measured</th><th style="padding:9px">Ordered</th><th style="padding:9px">Arrived</th><th style="padding:9px">Installed</th><th style="padding:9px;text-align:left">Notes</th>', winRow, '#888')}</div>`:'';
 
   // ---------- Checklist tracker ----------
   const clrows=active.length?active.map(c=>{ const subs=c.subPhases||[]; const fta=subs.find(s=>s.name==="First Time Access Checklist"); const po=subs.find(s=>/punch/i.test(s.name||'')); return `<tr data-trk="${nm(c)}" style="border-top:0.5px solid #eef0f6"><td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${nm(c)}</span></td><td style="text-align:center;padding:7px">${fta&&fta.completed?'✅':'⬜'}</td><td style="text-align:center;padding:7px">${po?(po.completed?'✅':'⬜'):'—'}</td></tr>`; }).join(""):'<tr><td colspan="3" style="padding:16px;color:#bbb;text-align:center">No active properties.</td></tr>';
@@ -9431,7 +9820,7 @@ function _vaTrackers(){
   const shell=(inner)=>`<div style="padding:20px;max-width:1120px;margin:0 auto"><div style="font-size:16px;font-weight:600;color:#111;margin-bottom:10px">📋 Trackers</div>${tiles}${inner}</div>`;
 
   if(view==='w9') return shell(back+_trkSearchBox('Search a contractor…')+_trkTable('🧾 W-9 Tracker','#7A3FA8','<th style="padding:9px 10px;text-align:left">Contractor</th><th style="padding:9px;text-align:left">Name on W-9</th><th style="padding:9px">On file</th><th style="padding:9px;text-align:left">Notes</th><th style="padding:9px;text-align:left">Email</th><th style="padding:9px;text-align:left">Phone</th>',w9rows)+`<div style="font-size:12px;color:#999">Ticking "On file" here also marks the contractor in the Contractor Directory.</div>`);
-  if(view==='mow') return shell(back+_trkSearchBox('Search a property…')+_trkTable('🌱 Mowing Tracker','#3B6D11','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px;text-align:left">Who is mowing</th><th style="padding:9px;text-align:left">How often</th><th style="padding:9px;text-align:left">Cost/mow</th><th style="padding:9px;text-align:left">Contact #</th><th style="padding:9px;text-align:left">PM</th><th style="padding:9px;text-align:left">Payment</th><th style="padding:9px">On route</th><th style="padding:9px">Removed after</th>',mowrows));
+  if(view==='mow') return shell(back+_trkSearchBox('Search a property…')+_trkTable('🌱 Mowing Tracker','#3B6D11','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px;text-align:left">Who is mowing</th><th style="padding:9px;text-align:left">How often</th><th style="padding:9px;text-align:left">Cost/mow</th><th style="padding:9px;text-align:left">Contact #</th><th style="padding:9px;text-align:left">PM</th><th style="padding:9px;text-align:left">Payment</th><th style="padding:9px">On route</th><th style="padding:9px">Removed after</th>',mowrows)+_trkClosedSimple(closed,'mowing history'));
   if(view==='window') return shell(back+_trkSearchBox('Search a property…')+_trkTable('🪟 Window Tracker','#185FA5','<th style="padding:9px 10px;text-align:left">Property / what’s being replaced</th><th style="padding:9px">Needed</th><th style="padding:9px">Measure</th><th style="padding:9px">Ordered</th><th style="padding:9px">Arrival</th><th style="padding:9px">Install</th><th style="padding:9px;text-align:left">Notes &amp; comments</th>',winrows)+`<div style="font-size:12px;color:#999;margin-top:-8px">Tick <b>Needed</b> when a PM requests windows or glass — that puts the property on Marlo's list with its next booking. Dates you set here land on that property’s construction calendar automatically, and Slack posts 48 hours before the measure and install dates.</div>`+winClosed);
   if(view==='util'){
     const ut=window._utilTab||'e';
@@ -9457,10 +9846,10 @@ function _vaTrackers(){
     if(ut==='m') return shell(back+bar+_trkSearchBox('Search a property…')+_trkTable('📋 Utility Info Master Sheet','#122A4A','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px;text-align:left">Electric provider</th><th style="padding:9px;text-align:left">Gas provider</th><th style="padding:9px;text-align:left">Water provider</th><th style="padding:9px;text-align:left">Comments</th><th style="padding:9px">Status</th><th style="padding:9px">History</th>',umRows));
     const u=UTILS.find(x=>x.key===ut)||UTILS[0];
     const rows=active.length?active.map(uRow(u)).join(''):uEmpty(u.key==='g'?16:14);
-    return shell(back+bar+_trkSearchBox('Search a property, provider or account #…')+_trkTable(`${u.icon} ${u.label} Tracker`,u.color,uHead(u),rows)+`<div style="font-size:12px;color:#999;margin-top:-8px">Every box saves the moment you leave it. Scroll the table sideways for the payment columns, or click <b>📜 open</b> on a row for that property's full payment history and call log.</div>`);
+    return shell(back+bar+_trkSearchBox('Search a property, provider or account #…')+_trkTable(`${u.icon} ${u.label} Tracker`,u.color,uHead(u),rows)+`<div style="font-size:12px;color:#999;margin-top:-8px">Every box saves the moment you leave it. Scroll the table sideways for the payment columns, or click <b>📜 open</b> on a row for that property's full payment history and call log.</div>`+_trkClosedSimple(closed,'utility history'));
   }
   if(view==='permit') return shell(back+_permitTrackerBody());
-  if(view==='checklist') return shell(back+_trkSearchBox('Search a property…')+_trkTable('✅ Checklist Tracker','#0B7285','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">First Time Access</th><th style="padding:9px">Punch Out</th>',clrows));
+  if(view==='checklist') return shell(back+_trkSearchBox('Search a property…')+_trkTable('✅ Checklist Tracker','#0B7285','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">First Time Access</th><th style="padding:9px">Punch Out</th>',clrows)+_trkClosedSimple(closed,'checklist history'));
 
   const li=(txt)=>`<div style="font-size:12.5px;color:#333;padding:4px 0;border-bottom:0.5px solid #f1f3f7">• ${txt}</div>`;
   const sum=(title,color,items)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 14px"><div style="font-size:13.5px;font-weight:700;color:${color};margin-bottom:4px">${title}</div>${items.length?items.slice(0,6).map(li).join('')+(items.length>6?`<div style="font-size:11.5px;color:#999;padding-top:4px">+ ${items.length-6} more — click the tile</div>`:''):'<div style="font-size:12px;color:#1D9E75;padding:4px 0">All caught up ✅</div>'}</div>`;
@@ -12471,4 +12860,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-30a kickoff-and-company -->
+<!-- build: 2026-08-30b eop-closed-archive -->
