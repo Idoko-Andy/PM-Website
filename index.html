@@ -324,6 +324,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddl" style="margin-top:4px">Task Data</div>
       <div class="ddi" onclick="openTaskDataHousing()">🗄 Task Data Housing</div>
       <div class="ddi" onclick="openDollarsDayHousing()">💵 $ / Day Housing</div>
+      <div class="ddi" onclick="openPermitDataHousing()">📈 Permit &amp; Inspection Data</div>
     </div>
   </div>
   <div class="ni has-dd" id="rep-t">📊 Reporting ▾
@@ -4540,6 +4541,26 @@ function _wmWeekKey(){
   return _ymd(rolled ? new Date(thisMon.getTime()+7*86400000) : thisMon);
 }
 function _wmMonday(dateStr){ const d=new Date(dateStr+"T00:00:00"); const day=d.getDay(); const back=(day===0?6:day-1); return _ymd(new Date(d.getTime()-back*86400000)); }
+// The Monday walk-through and the On the Market meeting run on different days, so their
+// weeks cannot roll on the same day.
+//
+// Bruce, 30 Aug: "that meeting we have every Tuesday at nine AM... the reset will go away
+// Saturday and auto fill for the next meeting Sunday. So Katie can start filling things out
+// on Sunday if she wants to."
+//
+// So for On the Market: this week's sheet is live Monday through Friday, clears on Saturday,
+// and next week's - already prefilled - is open from Sunday. Everything else keeps the
+// Thursday-noon roll that suits the Monday meeting.
+window.__mktPrefilled_ = window.__mktPrefilled_ || {};
+function _wmWeekKeyFor(kind){
+  if(kind!=='market') return _wmWeekKey();
+  const d=new Date(); d.setHours(0,0,0,0);
+  const day=d.getDay();                       // 0 Sun ... 6 Sat
+  const back=(day===0?6:day-1);               // days back to this week's Monday
+  const thisMon=new Date(d.getTime()-back*86400000);
+  const rolled=(day===6 || day===0);          // Saturday and Sunday belong to next week
+  return _ymd(rolled ? new Date(thisMon.getTime()+7*86400000) : thisMon);
+}
 function _wmPrevWeek(wk){ return _ymd(new Date(new Date(wk+"T00:00:00").getTime()-7*86400000)); }
 function _wmLabel(wk){ try{ return new Date(wk+"T00:00:00").toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric",year:"numeric"}); }catch(e){ return wk; } }
 // Archive browser: year -> month -> that Monday. Only weeks with saved notes appear.
@@ -5542,6 +5563,56 @@ function _mktMarginNote(c){
   return 'price less spend to date — the sheet has no goal ARV yet';
 }
 
+// Which On-the-Market answers describe the LISTING (carry forward every week) and which
+// describe THIS WEEK (start blank). Bruce, 30 Aug: "we will go over what data will be
+// repeated and automated and moved over as we build this out" - so this list is meant to be
+// argued with. Change it here and the whole cycle follows.
+const MKT_CARRY = [
+  'date_listed',      // the day it went on
+  'list_date',
+  'list_price',       // what we are asking
+  'drops',            // the price-drop history so far
+  'sh_total',         // showings ALL TIME - cumulative, so it carries
+  'cma',              // link to the CMA
+  'pm',
+  'contract_price',
+  'close_date',
+  'sugg_price',
+  'doc_comps','doc_range','doc_reco','doc_why'   // the Suggested Listing Doc
+];
+// Deliberately NOT carried, because they are answers about the week just gone:
+//   sh_7 (showings in the last 7 days), feedback, pm_notes, rem_* (this week's remedies)
+let _mktPrefilling=false;
+async function _mktPrefillWeek(wk){
+  if(_mktPrefilling) return 0;
+  if(typeof isReadOnly==='function' && isReadOnly()) return 0;
+  if(window._wmLoadOk===false) return 0;         // never write over a failed load
+  const d=window._wmData||{};
+  const cur=((d[wk]||{}).market)||{};
+  const prev=((d[_wmPrevWeek(wk)]||{}).market)||{};
+  if(!Object.keys(prev).length) return 0;
+  const patch={};
+  for(const k in prev){
+    if(k.indexOf('::')<0) continue;              // skip __closed / __opened metadata
+    const f=k.split('::')[1];
+    if(MKT_CARRY.indexOf(f)<0) continue;
+    if(String(cur[k]==null?'':cur[k]).trim()) continue;   // never overwrite this week's answer
+    if(!String(prev[k]==null?'':prev[k]).trim()) continue;
+    patch[k]=prev[k];
+  }
+  if(!Object.keys(patch).length) return 0;
+  _mktPrefilling=true;
+  try{
+    d[wk]=d[wk]||{}; d[wk].market=Object.assign({}, d[wk].market||{}, patch);
+    window._wmData=d;
+    const err=await _pmSettingsWrite('meeting_notes', d);
+    if(err){ delete d[wk].market; return 0; }
+    if(typeof _logAudit==='function') _logAudit('updated','settings','On the Market meeting',
+      'Prefilled '+Object.keys(patch).length+' answer'+(Object.keys(patch).length===1?'':'s')+
+      ' for the week of '+wk+' from the week before, so the sheet is ready before Tuesday.');
+    return Object.keys(patch).length;
+  } finally { _mktPrefilling=false; }
+}
 function _mktMeetingBody(wk, kind, notes, prevNotes, roNow){
   const tab=_mktTab();
   const V=(pid,f)=>notes[pid+'::'+f]||'';
@@ -6255,7 +6326,7 @@ function openWeeklyMeeting(kind, week){
   if(!_canSeeMeeting(kind)){ document.getElementById("dash-body").innerHTML=_meetingDenied(kind); return; }
   if(window._wmData===undefined||window._wmData===null){ if(window._wmData===undefined){ window._wmData=null; Promise.all([_wmLoad(), _miLoad(), (window._pdnData===undefined?( (window._pdnData=null), _pdnLoad()):Promise.resolve())]).then(()=>openWeeklyMeeting(kind, week)); document.getElementById("dash-body").innerHTML='<div style="padding:40px;text-align:center;color:#999">Loading meeting…</div>'; return; } }
   const titles={team:'🤝 Project Team Meeting',market:'🏡 On the Market Meeting',kickoff:'🚀 Kickoff Meeting',eop:'🏁 End of Project Meeting',company:'🏢 Full Company Meeting',ceo:'👔 Director / CEO Meeting'};
-  const liveWk=_wmWeekKey();
+  const liveWk=_wmWeekKeyFor(kind);
   const wk = week || liveWk;
   const isPast = wk!==liveWk;
   window.__wmLastKind=kind; window.__wmLastWeek=week||null;
@@ -6498,6 +6569,12 @@ function openWeeklyMeeting(kind, week){
   } else if(kind==='market'){
     const closedRec=_wmMeta(wk,'market','__closed');
     const roNow=isReadOnly()||!!closedRec.at||isPast;
+    // Carry last week's standing answers into this week's sheet the first time anybody opens
+    // it, then redraw so they are actually on screen rather than only in the data.
+    if(!isPast && !closedRec.at && !roNow && !window.__mktPrefilled_[wk]){
+      window.__mktPrefilled_[wk]=true;
+      _mktPrefillWeek(wk).then(n=>{ if(n && window.__wmLastKind==='market') openWeeklyMeeting('market', week); });
+    }
     body=_mktMeetingBody(wk, kind, notes, prevNotes, roNow);
 
   } else {
@@ -6563,6 +6640,192 @@ function _cbySum(list){
   let p=0, n=0;
   list.forEach(x=>{ if(x.profit!=null){ p+=x.profit; n++; } });
   return {profit:n?p:null, priced:n};
+}
+// ============ Permit & Inspection Data Housing ==================================
+// Bruce, 30 Aug: "how many days on average permits are submitted by building department
+// as well until the time permit is approved... from the very first time it's submitted to
+// the official approval, we wanna track that by the building department. And then we also
+// wanna track the average time to complete drawings, average time to get engineer stamp,
+// average time to pass all rough MEP inspections, average time to pass final inspections."
+//
+// Every figure here is measured from dates the team already enters. Where a date has never
+// been captured the screen says so and says how many rows are waiting, rather than quietly
+// averaging a smaller number and looking confident about it.
+function _pdhDays(a,b){
+  if(!a||!b) return null;
+  const d=Math.round((_dParse(b)-_dParse(a))/86400000);
+  return isFinite(d)?d:null;
+}
+function _pdhStat(vals){
+  const v=vals.filter(x=>x!=null && x>=0).sort((a,b)=>a-b);
+  if(!v.length) return null;
+  const sum=v.reduce((a,b)=>a+b,0);
+  return { n:v.length, avg:Math.round(sum/v.length),
+           med:v[Math.floor(v.length/2)], min:v[0], max:v[v.length-1] };
+}
+// --- 1. submitted -> issued, per building department -----------------------------
+function _pdhPermitRows(){
+  return (typeof _permitList==='function'?_permitList():[]).map(r=>({
+    r:r,
+    juris:String(r.juris||'').trim()||'(no department recorded)',
+    addr:r.addr||'',
+    days:_pdhDays(r.submitted, r.issued),
+    stampDays:_pdhDays(r.submitted, r.stamped),
+    awaiting:(!r.issued && /issued|closed/i.test(String(r.status||'')))
+  }));
+}
+// --- 2. drawings: the Drawing / Structural Phase subphase, start -> completed ------
+function _pdhDrawingRows(){
+  const out=[];
+  (typeof propCards!=='undefined'?propCards:[]).forEach(c=>{
+    (c.subPhases||[]).forEach(sp=>{
+      if(!/drawing|structural/i.test(sp.name||'')) return;
+      const done=sp.completedAt?String(sp.completedAt).slice(0,10):null;
+      out.push({ addr:c.addr||'', start:sp.start||null, done:done,
+                 days:_pdhDays(sp.start, done), open:!!(sp.start&&!done) });
+    });
+  });
+  return out;
+}
+// --- 3 & 4. inspections, before finishes (rough MEP) and after (finals) ------------
+// Measured from the day the permit was issued - the first day the work could legally be
+// inspected - to the day the LAST inspection of that group passed.
+function _pdhInspRows(when){
+  const out=[];
+  (typeof _permitList==='function'?_permitList():[]).forEach(r=>{
+    const list=(Array.isArray(r.insps)?r.insps:[]).filter(x=>String(x.when||'before')===when);
+    if(!list.length) return;
+    const from=r.issued||r.submitted||null;
+    const passed=list.filter(x=>x.done && x.date).map(x=>x.date).sort();
+    const allDone=list.every(x=>x.done);
+    const fails=list.reduce((a,x)=>a+(parseInt(x.fails,10)||0),0);
+    out.push({ addr:r.addr||'', juris:r.juris||'', n:list.length, fails:fails,
+               from:from, last:passed.length?passed[passed.length-1]:null,
+               days:(allDone&&passed.length)?_pdhDays(from, passed[passed.length-1]):null,
+               open:!allDone });
+  });
+  return out;
+}
+function openPermitDataHousing(){
+  document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
+  document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
+  if(typeof _trkLoad==='function' && !window._trkLoaded){
+    document.getElementById("dash-body").innerHTML='<div style="padding:40px;text-align:center;color:#999">Loading permit data…</div>';
+    _trkLoad().then(()=>openPermitDataHousing()); return;
+  }
+  const perms=_pdhPermitRows();
+  const draw=_pdhDrawingRows();
+  const rough=_pdhInspRows('before');
+  const final=_pdhInspRows('after');
+
+  const sIssue=_pdhStat(perms.map(x=>x.days));
+  const sStamp=_pdhStat(perms.map(x=>x.stampDays));
+  const sDraw =_pdhStat(draw.map(x=>x.days));
+  const sRough=_pdhStat(rough.map(x=>x.days));
+  const sFinal=_pdhStat(final.map(x=>x.days));
+
+  const waitingIssue=perms.filter(x=>x.awaiting).length;
+  const openDraw=draw.filter(x=>x.open).length;
+
+  const kpi=(label, st, missingNote)=>`
+    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:13px 15px">
+      <div style="font-size:10.5px;color:#999;text-transform:uppercase;letter-spacing:.05em;line-height:1.35;min-height:26px">${label}</div>
+      <div style="font-size:27px;font-weight:600;color:${st?'#111':'#c9ccd4'};line-height:1.1;margin-top:3px">
+        ${st?st.avg:'—'}<span style="font-size:13px;font-weight:400;color:#aaa">${st?' days':''}</span></div>
+      <div style="font-size:11px;color:#aaa;margin-top:3px">
+        ${st?`across ${st.n} &middot; median ${st.med} &middot; ${st.min}\u2013${st.max}`:'nothing measurable yet'}</div>
+      ${missingNote?`<div style="font-size:10.5px;color:#B7791F;margin-top:4px">${missingNote}</div>`:''}
+    </div>`;
+
+  // --- by building department ---
+  const byJ={};
+  perms.forEach(x=>{ (byJ[x.juris]=byJ[x.juris]||[]).push(x); });
+  const jRows=Object.keys(byJ).sort().map(j=>{
+    const rows=byJ[j], st=_pdhStat(rows.map(x=>x.days));
+    const wait=rows.filter(x=>x.awaiting).length;
+    return `<tr style="border-top:0.5px solid #eef0f6">
+      <td style="padding:9px 12px;font-weight:600;color:#111">${_calEsc(j)}</td>
+      <td style="padding:9px 12px;text-align:center;color:#666">${rows.length}</td>
+      <td style="padding:9px 12px;text-align:center;font-weight:700;font-size:15px;color:${st?'#111':'#c9ccd4'}">${st?st.avg:'—'}</td>
+      <td style="padding:9px 12px;text-align:center;color:#666">${st?st.med:'—'}</td>
+      <td style="padding:9px 12px;text-align:center;color:#0F7B54">${st?st.min:'—'}</td>
+      <td style="padding:9px 12px;text-align:center;color:#B42318">${st?st.max:'—'}</td>
+      <td style="padding:9px 12px;text-align:center;color:${wait?'#B7791F':'#ccc'};font-size:12.5px">${wait||'—'}</td>
+    </tr>`;
+  }).join('');
+
+  const th=(t,a)=>`<th style="text-align:${a||'left'};padding:9px 12px;font-size:11px;color:#999;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap">${t}</th>`;
+  const detail=(title, rows, cols, body, note)=>`
+    <div style="margin-top:18px">
+      <div style="font-size:13.5px;font-weight:600;color:#111;margin-bottom:6px">${title}
+        <span style="font-size:12px;font-weight:400;color:#aaa">&mdash; ${rows} row${rows===1?'':'s'}</span></div>
+      ${note?`<div style="font-size:12px;color:#888;margin-bottom:7px">${note}</div>`:''}
+      <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:9px;overflow:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:13px;color:#111">
+          <thead><tr style="background:#fafbfc">${cols}</tr></thead>
+          <tbody>${body||`<tr><td colspan="9" style="padding:18px;text-align:center;color:#bbb">Nothing recorded yet.</td></tr>`}</tbody>
+        </table></div></div>`;
+
+  const drawBody=draw.sort((a,b)=>(b.days==null?-1:b.days)-(a.days==null?-1:a.days)).map(x=>`
+    <tr style="border-top:0.5px solid #eef0f6">
+      <td style="padding:8px 12px">${_calEsc(x.addr)}</td>
+      <td style="padding:8px 12px;text-align:center;color:#666">${_calEsc(x.start||'—')}</td>
+      <td style="padding:8px 12px;text-align:center;color:#666">${_calEsc(x.done||'—')}</td>
+      <td style="padding:8px 12px;text-align:center;font-weight:600;color:${x.days==null?'#B7791F':'#111'}">${x.days==null?(x.open?'still open':'—'):x.days+'d'}</td>
+    </tr>`).join('');
+
+  const inspBody=(rows)=>rows.map(x=>`
+    <tr style="border-top:0.5px solid #eef0f6">
+      <td style="padding:8px 12px">${_calEsc(x.addr)}<div style="font-size:11px;color:#aaa">${_calEsc(x.juris||'')}</div></td>
+      <td style="padding:8px 12px;text-align:center;color:#666">${x.n}</td>
+      <td style="padding:8px 12px;text-align:center;color:${x.fails?'#B42318':'#ccc'};font-weight:${x.fails?'600':'400'}">${x.fails||'0'}</td>
+      <td style="padding:8px 12px;text-align:center;color:#666">${_calEsc(x.from||'—')}</td>
+      <td style="padding:8px 12px;text-align:center;color:#666">${_calEsc(x.last||'—')}</td>
+      <td style="padding:8px 12px;text-align:center;font-weight:600;color:${x.days==null?'#B7791F':'#111'}">${x.days==null?(x.open?'not all passed':'—'):x.days+'d'}</td>
+    </tr>`).join('');
+
+  document.getElementById("dash-body").innerHTML=`
+    <div style="background:#f4f5f7;min-height:500px;padding:24px">
+      <div style="max-width:1180px;margin:0 auto">
+        <div style="font-size:19px;font-weight:500;color:#111;margin-bottom:4px">\uD83D\uDCC8 Permit &amp; Inspection Data</div>
+        <div style="font-size:13px;color:#888;margin-bottom:16px;max-width:78ch">How long each stage really takes, measured from the dates already on the permit tracker and the property cards. Nothing here is estimated &mdash; where a date has never been entered the row says so instead of guessing.</div>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:11px">
+          ${kpi('Permit submitted \u2192 issued', sIssue, waitingIssue?(waitingIssue+' issued permit'+(waitingIssue===1?'':'s')+' need an issue date'):'')}
+          ${kpi('Drawings \u2014 start to finished', sDraw, openDraw?(openDraw+' still open'):'')}
+          ${kpi('Submitted \u2192 engineer stamp', sStamp, sStamp?'':'no stamp dates entered yet')}
+          ${kpi('Rough MEP inspections \u2014 all passed', sRough, '')}
+          ${kpi('Final inspections \u2014 all passed', sFinal, '')}
+        </div>
+
+        <div style="margin-top:20px">
+          <div style="font-size:13.5px;font-weight:600;color:#111;margin-bottom:6px">By building department</div>
+          <div style="font-size:12px;color:#888;margin-bottom:7px">Days from the day it was submitted to the day it was issued. This is the number that tells you which department to build the schedule around.</div>
+          <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:9px;overflow:auto">
+            <table style="width:100%;border-collapse:collapse;font-size:13px;color:#111">
+              <thead><tr style="background:#fafbfc">
+                ${th('Building department')}${th('Permits','center')}${th('Average','center')}${th('Median','center')}${th('Fastest','center')}${th('Slowest','center')}${th('Missing a date','center')}
+              </tr></thead>
+              <tbody>${jRows||`<tr><td colspan="7" style="padding:18px;text-align:center;color:#bbb">No permits on the tracker yet.</td></tr>`}</tbody>
+            </table></div></div>
+
+        ${detail('Drawings / structural phase', draw.length,
+          th('Property')+th('Started','center')+th('Finished','center')+th('Days','center'), drawBody,
+          'Measured from the day the Drawing / Structural Phase step was scheduled to the day it was ticked on the property card.')}
+
+        ${detail('Rough MEP inspections (before finishes)', rough.length,
+          th('Property')+th('Inspections','center')+th('Failures','center')+th('From','center')+th('Last passed','center')+th('Days','center'), inspBody(rough),
+          'From the day the permit was issued to the day the last "before finishes" inspection passed. A house only gets a number once every one of them has passed.')}
+
+        ${detail('Final inspections (after finishes)', final.length,
+          th('Property')+th('Inspections','center')+th('Failures','center')+th('From','center')+th('Last passed','center')+th('Days','center'), inspBody(final),
+          'Same basis, for the inspections that happen once the work is finished.')}
+
+        <div style="margin-top:18px;background:#FFF7E0;border:1px solid #EAD9A8;border-radius:9px;padding:11px 15px;font-size:12.5px;color:#6b5310;line-height:1.6">
+          <b>Two of these only get better from here.</b> The permit tracker never used to record the day a permit was <i>issued</i>, or the day the engineer <i>stamped</i> the drawings &mdash; there was nowhere to put them. Both columns now exist on the permit tracker. Fill them in as permits come back and these averages become real; until then a permit with no issue date is left out rather than guessed at.
+        </div>
+      </div>
+    </div>`;
 }
 function openClosedByYear(){
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
@@ -9971,7 +10234,11 @@ const PERMIT_SEED = [
 ["City of Grove City","3610-3612 Grove City Rd","PR20260000492","2026-03-11","Low","Closed","N","2026-08-19","Final occupancy and final HVAC passed 8/17","","","","",""],
 ["City of Bexley","2808 Powell","RBLD-26-97","2026-06-09","High","Under Review","Y","2026-08-20","Conditional approval issued 7/30; corrections required before the full permit can be issued. Revision drawings uploaded 8/3 for review. Robin confirmed 8/5 revisions have been received and were passed along to plan review. TBD on timing. Sent follow-up message 8/10 but haven't heard back. Sent another message 8/13. Bexley told Bruce on 8/13 they have until 9/3 to finish their review. Robin messaged in portal the review can take up to 4 weeks.","","","2026-07-30","","2026-08-03"]
 ];
-const PERMIT_FIELDS=["juris","addr","number","submitted","priority","status","tv","checked","notes","examiner","email","received","comment","responded"];
+// "issued" and "stamped" were added 30 Aug 2026 for the Permit & Inspection data housing.
+// Until then the tracker knew when a permit went IN but never when it came back, so
+// "how long does this building department actually take" could not be answered at all.
+// Old rows have no issued date; they are counted as unknown rather than guessed at.
+const PERMIT_FIELDS=["juris","addr","number","submitted","priority","status","tv","checked","notes","examiner","email","received","comment","responded","issued","stamped"];
 
 function _permitSlug(s){ return String(s||"").toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"").slice(0,54); }
 function _permitList(){
@@ -10381,6 +10648,8 @@ function _permitTrackerBody(){
   const head=`<th style="padding:9px 10px;text-align:left;min-width:190px">Address</th>
     <th style="padding:9px;text-align:left">Permit / application #</th>
     <th style="padding:9px">Submitted</th>
+    <th style="padding:9px">Issued</th>
+    <th style="padding:9px">Engineer stamp</th>
     <th style="padding:9px">Priority</th>
     <th style="padding:9px">Status</th>
     <th style="padding:9px">TV house</th>
@@ -10450,6 +10719,10 @@ function _permitTrackerBody(){
           ${ro?"":`<div style="margin-top:4px"><span onclick="_permitRemove('${r.id}')" style="font-size:11px;color:#bbb;cursor:pointer">remove</span></div>`}</td>
         <td style="padding:7px;vertical-align:top">${tx(r.id,"number","Permit #",140)}</td>
         <td style="padding:7px;vertical-align:top;text-align:center">${dt(r.id,"submitted")}</td>
+        <td style="padding:7px;vertical-align:top;text-align:center">${dt(r.id,"issued")}
+          ${(r.submitted&&r.issued)?`<div style="font-size:10.5px;color:#0F7B54;margin-top:2px">${_pdhDays(r.submitted,r.issued)} days</div>`
+            :((/issued|closed/i.test(String(r.status||""))&&!r.issued)?'<div style="font-size:10.5px;color:#B7791F;margin-top:2px">needs a date</div>':"")}</td>
+        <td style="padding:7px;vertical-align:top;text-align:center">${dt(r.id,"stamped")}</td>
         <td style="padding:7px;vertical-align:top;text-align:center">${sel(r.id,"priority",[""].concat(PERMIT_PRIORITIES),98,_permitPriorityColor)}</td>
         <td style="padding:7px;vertical-align:top;text-align:center">${sel(r.id,"status",[""].concat(PERMIT_STATUSES),168,_permitStatusColor)}</td>
         <td style="padding:7px;vertical-align:top;text-align:center">${sel(r.id,"tv",["","Y","N"],62)}</td>
@@ -14065,4 +14338,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-30o pages-communicating -->
+<!-- build: 2026-08-30p market-cycle-permit-data -->
