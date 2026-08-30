@@ -870,6 +870,11 @@ async function init() {
     // A house sitting vacant with the checklist unfinished must always have somebody
     // on it. Checked on every load, so it self-heals no matter how the house got there.
     try{ const n=await _ftaSweep(); if(n) _toast(n+" First Time Access task"+(n===1?"":"s")+" raised for "+_sopHolderFull()); }catch(e){}
+    // And the other half of the same idea: any house whose phase requirements are already
+    // met moves itself on, no matter where the box got ticked.
+    try{ const m=await _advanceSweep(); if(m) _toast(m+" propert"+(m===1?"y":"ies")+" moved to the next phase \u2014 the PM has been told"); }catch(e){}
+    // A house that has closed owes an End of Project Report. Raised on the PM's own board.
+    try{ const e=await _eopSweep(); if(e) _toast(e+" End of Project Report"+(e===1?"":"s")+" now due \u2014 on the PM's task list"); }catch(e){}
     document.getElementById("dash-body").innerHTML = renderGenericHome(user);
     applyPermissionsUI();
     _applyMobileMode();
@@ -2771,6 +2776,91 @@ async function _maybeAutoAdvance(propId){
   _logAudit("advanced","property", card.addr||"", "Auto-advanced "+card.phase+" → "+cfg.next+(cfg.notifyPM&&pmName?(" · PM notified: "+pmName):""));
   await loadPropertiesFromSupabase();
   return true;
+}
+// Resolve a card's PM ("Isaiah") to the full name tasks are filed under ("Isaiah Stinson"),
+// so a notice lands on the same list they already look at.
+function _pmFullName(short){
+  const nm=String(short||'').trim(); if(!nm) return '';
+  try{
+    const u=(typeof getUsers==='function'?getUsers():[]).find(x=>
+      x.status==='approved' && String(x.firstName||'').trim().toLowerCase()===nm.toLowerCase());
+    if(u) return ((u.firstName||'')+' '+(u.lastName||'')).trim()||nm;
+    const t=(typeof teamMembers==='function'?teamMembers():[]).find(m=>
+      String(m).split(' ')[0].toLowerCase()===nm.toLowerCase());
+    if(t) return t;
+  }catch(e){}
+  return nm;
+}
+// "Notify the PM" in an app that has no notification centre yet means: put it on the list
+// they actually read. One notice per property per move, deduped against the cache AND the
+// database so a second tab or a re-run cannot double it.
+let _advNoticed=null;
+async function _advNotifyPM(card, fromPhase, toPhase){
+  try{
+    if(!card) return;
+    const who=_pmFullName(card.pm); if(!who) return;
+    const title=(card.addr||'Property')+' \u2014 now in '+toPhase;
+    _advNoticed = _advNoticed || new Set();
+    if(_advNoticed.has(title)) return;      // already sent in this session
+    if((_tasksCache||[]).some(t=>t.property_id===card.id && String(t.title||'')===title)) return;
+    const ex=await supabase.from('pm_tasks').select('id').eq('property_id',card.id).eq('title',title).limit(1);
+    if(ex.error || (ex.data||[]).length) return;
+    _advNoticed.add(title);
+    const today=_ymd(new Date());
+    await supabase.from('pm_tasks').insert({
+      title:title, category:'Phase Move', status:'open',
+      start_date:today, due_date:today,
+      property_id:card.id, assignee:who, assignees:[who],
+      notes:'Everything '+fromPhase+' was waiting on is finished, so this house moved itself to '
+           +toPhase+'. It is yours now \u2014 open the property card and check the next steps have dates on them.'
+    });
+  }catch(e){ /* a missed notice must never block the move itself */ }
+}
+// THE CONSISTENT CHECK Bruce asked for.
+//
+// _maybeAutoAdvance only ever ran as a side effect of somebody ticking a box in this
+// browser. So a checklist finished on the mobile app, or by the Slack sync, or before the
+// rule existed, left the house sitting in the wrong phase forever. This walks every card on
+// every load and moves anything whose requirements are already met - however they got met.
+//
+// It repeats while it keeps finding work, so a house can travel more than one phase in one
+// pass (finish the checklist AND the SOW and it goes Vacant -> Pre Construction -> Waiting
+// Permits in one go), capped so a bad config can never spin.
+let _advSweeping=false;
+async function _advanceSweep(){
+  if(_advSweeping) return 0;
+  if(typeof isReadOnly==='function' && isReadOnly()) return 0;
+  if(typeof propCards==='undefined' || !propCards.length) return 0;
+  _advSweeping=true;
+  try{
+    let moved=0;
+    // Every move this sweep has already made, as "<property id> -> <phase>". A card is
+    // reloaded from the database between passes, but if that reload is slow or fails the
+    // card in memory still says the old phase - and without this the same house would be
+    // moved again on the next pass. Belt and braces on a write.
+    const done=new Set();
+    for(let pass=0; pass<3; pass++){
+      const ready=(propCards||[]).filter(c=>
+        c && !c.archived && PHASE_ADVANCE[c.phase]
+        && !done.has(c.id+' -> '+(PHASE_ADVANCE[c.phase]||{}).next)
+        && _phaseAdvanceBlocking(c).length===0);
+      if(!ready.length) break;
+      let movedThisPass=0;
+      for(const c of ready){
+        const from=c.phase, to=(PHASE_ADVANCE[c.phase]||{}).next, card=c;
+        const key=c.id+' -> '+to;
+        if(done.has(key)) continue;
+        done.add(key);                       // claim it BEFORE the await, not after
+        if(await _maybeAutoAdvance(c.id)){
+          movedThisPass++; moved++;
+          if((PHASE_ADVANCE[from]||{}).notifyPM) await _advNotifyPM(card, from, to);
+        }
+      }
+      if(!movedThisPass) break;
+    }
+    if(moved && typeof loadTasks==='function') await loadTasks();
+    return moved;
+  } finally { _advSweeping=false; }
 }
 // A PM marks a subphase completed; un-checking clears any prior approval.
 // Mirror every SCHEDULED subphase (has start+due) onto the PM's task calendar.
@@ -4844,6 +4934,54 @@ async function _wmReschedDo(itemKey, val){
 // every push is logged with a date and a reason.
 function _wmEst(c){ return ((c.checklists||{}).est_finish)||''; }
 function _wmPushes(c){ const p=(c.checklists||{}).est_pushes; return Array.isArray(p)?p:[]; }
+// Bruce, 30 Aug: keep the WHOLE trail, not a count - "that way we can track the data and
+// analyse and see how many times we were wrong". Every push has always been stored in full;
+// this is what lets anyone actually read it back.
+function _wmPushHistory(pid){
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return;
+  const pushes=_wmPushes(c);
+  const days=(a,b)=>(!a||!b)?null:Math.round((Date.parse(b+'T00:00:00')-Date.parse(a+'T00:00:00'))/86400000);
+  const first=pushes.length?(pushes[0].from||c.end||''):'';
+  const last =pushes.length?(pushes[pushes.length-1].to||''):'';
+  const total=days(first,last);
+  const rows=pushes.map((p,i)=>{
+    const d=days(p.from,p.to);
+    return `<tr style="border-top:0.5px solid #eef0f6">
+      <td style="padding:8px 10px;color:#999;font-size:12px">${i+1}</td>
+      <td style="padding:8px 10px;font-size:13px;color:#111;white-space:nowrap">${_calEsc(p.from||'not set')} &rarr; <b>${_calEsc(p.to||'')}</b></td>
+      <td style="padding:8px 10px;font-size:13px;white-space:nowrap;color:${d==null?'#999':(d>0?'#B42318':'#0F7B54')};font-weight:600">${d==null?'&mdash;':((d>0?'+':'')+d+'d')}</td>
+      <td style="padding:8px 10px;font-size:12.5px;color:#666;white-space:nowrap">${_calEsc(p.at||'')}${p.by?`<div style="font-size:11px;color:#aaa">${_calEsc(p.by)}</div>`:''}</td>
+      <td style="padding:8px 10px;font-size:13px;color:#333">${_calEsc(p.why||'')||'<span style="color:#ccc">no reason given</span>'}</td>
+    </tr>`;
+  }).join('');
+  const host=document.createElement('div');
+  host.id='push-hist-modal';
+  host.style.cssText='position:fixed;inset:0;background:rgba(17,17,17,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:24px';
+  host.onclick=(e)=>{ if(e.target===host) host.remove(); };
+  host.innerHTML=`<div style="background:#fff;border-radius:12px;max-width:760px;width:100%;max-height:82vh;overflow:auto;box-shadow:0 18px 50px rgba(0,0,0,.25)">
+    <div style="padding:16px 20px;border-bottom:0.5px solid #e7eaf0;display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+      <div>
+        <div style="font-size:16px;font-weight:600;color:#111">${_calEsc(c.addr||'Property')} &mdash; every time the finish date moved</div>
+        <div style="font-size:12.5px;color:#888;margin-top:3px">
+          Committed finish <b>${_calEsc(c.end||'not set')}</b> &middot; estimated now <b>${_calEsc(_wmEst(c)||'not set')}</b>
+          ${total!=null?` &middot; <span style="color:${total>0?'#B42318':'#0F7B54'};font-weight:600">${total>0?'+':''}${total} days across ${pushes.length} push${pushes.length===1?'':'es'}</span>`:''}
+        </div>
+      </div>
+      <span onclick="document.getElementById('push-hist-modal').remove()" style="cursor:pointer;font-size:22px;color:#aaa;line-height:1">&times;</span>
+    </div>
+    ${pushes.length?`<table style="width:100%;border-collapse:collapse">
+      <thead><tr style="background:#fafbfc">
+        <th style="text-align:left;padding:8px 10px;font-size:11px;color:#999;text-transform:uppercase">#</th>
+        <th style="text-align:left;padding:8px 10px;font-size:11px;color:#999;text-transform:uppercase">Moved from &rarr; to</th>
+        <th style="text-align:left;padding:8px 10px;font-size:11px;color:#999;text-transform:uppercase">Slip</th>
+        <th style="text-align:left;padding:8px 10px;font-size:11px;color:#999;text-transform:uppercase">When &middot; who</th>
+        <th style="text-align:left;padding:8px 10px;font-size:11px;color:#999;text-transform:uppercase">Why</th>
+      </tr></thead><tbody>${rows}</tbody></table>`
+    :'<div style="padding:26px;text-align:center;color:#bbb;font-size:14px">This date has never been moved.</div>'}
+    <div style="padding:12px 20px;font-size:11.5px;color:#aaa;border-top:0.5px solid #eef0f6">Nothing here is ever trimmed &mdash; the full trail is kept so the pattern can be looked at later.</div>
+  </div>`;
+  document.body.appendChild(host);
+}
 function _wmEstDrift(c){
   const est=_wmEst(c), com=c.end||'';
   if(!est||!com) return null;
@@ -5672,6 +5810,85 @@ function _eopContractors(c){
   });
   return Object.keys(names).filter(Boolean).sort();
 }
+// --- End of Project Report: raised the moment a house closes ---------------------
+// Bruce, 30 Aug: "what triggers an end of project report needing to be filled out is once a
+// property has moved into the closed channel on the property dashboard... then it'll pop up
+// on the PM's board that they need to fill in the project report for that specific property."
+//
+// The report itself lives in the End of Project meeting and is already prefilled from the
+// tracker sheet, the permit tracker and the construction calendar. What was missing was
+// anything telling the PM it was owed. Like the vacancy checklist, this is a STATE check that
+// runs on every load, not something that only fires if you happen to be watching.
+const EOP_CATEGORY='End of Project Report';
+// Has anyone actually written this one up? The two boxes only a person can fill are the
+// overview and the budget review, and they can be written in any week's meeting.
+function _eopWritten(pid){
+  const data=(window._wmData||{});
+  for(const wk in data){
+    const n=((data[wk]||{}).eop)||{};
+    const ov=String(n[pid+'::overview']||'').trim();
+    const br=String(n[pid+'::budget_review']||'').trim();
+    if(ov && br) return true;
+  }
+  return false;
+}
+function _eopOpenTask(pid){
+  return (typeof _tasksCache!=='undefined'?_tasksCache:[])
+    .find(t => t.property_id===pid && String(t.category||'')===EOP_CATEGORY);
+}
+async function _eopTaskFor(card){
+  if(!card || card.archived) return false;
+  if(_eopWritten(card.id)) return false;
+  if(_eopOpenTask(card.id)) return false;
+  const ex=await supabase.from('pm_tasks').select('id').eq('property_id',card.id).eq('category',EOP_CATEGORY).limit(1);
+  if(ex.error || (ex.data||[]).length) return false;
+  const who=_pmFullName(card.pm);
+  if(!who) return false;                       // nobody to give it to - the meeting still lists it
+  const closed=card.closedDate||card.closingDateSell||_ymd(new Date());
+  const cons=(typeof _eopContractors==='function')?_eopContractors(card):[];
+  const today=_ymd(new Date());
+  const due=(typeof _ymdPlus==='function')?_ymdPlus(7):today;
+  const ins=await supabase.from('pm_tasks').insert({
+    title:(card.addr||'Property')+' \u2014 End of Project Report',
+    category:EOP_CATEGORY, status:'open',
+    start_date:today, due_date:due,
+    property_id:card.id, assignee:who, assignees:[who],
+    notes:'This house closed on '+closed+', so its End of Project Report is now due.\n\n'
+      +'Open the End of Project meeting and find '+(card.addr||'this property')+'. The numbers are '
+      +'already filled in from the tracker sheet, the permit tracker and the construction calendar. '
+      +'The two boxes at the bottom are the ones only you can write: what actually happened on this '
+      +'job, and where the money went that we did not plan for.\n\n'
+      +(cons.length
+        ? ('Contractors booked on this job, pulled off the construction calendar: '+cons.join(', ')+'.')
+        : 'No contractors were booked to this house on the construction calendar, so that section will be empty.')
+      +'\n\nThis task closes itself once both boxes have something in them.'
+  }).select('id').single();
+  if(ins.error) return false;
+  _logAudit('created','task',(card.addr||'')+' \u2014 End of Project Report',
+    'Raised automatically for '+who+' \u2014 the house moved to Closed on '+closed);
+  return true;
+}
+let _eopSweeping=false;
+async function _eopSweep(){
+  if(_eopSweeping) return 0;
+  if(typeof isReadOnly==='function' && isReadOnly()) return 0;
+  if(typeof propCards==='undefined' || !propCards.length) return 0;
+  _eopSweeping=true;
+  try{
+    let made=0, closedOff=0;
+    for(const c of _eopCards()){
+      if(await _eopTaskFor(c)) made++;
+      // And the other direction: once the write-up exists, stop nagging.
+      const t=_eopOpenTask(c.id);
+      if(t && t.status!=='done' && _eopWritten(c.id)){
+        const r=await supabase.from('pm_tasks').update({status:'done'}).eq('id',t.id).select('id');
+        if(!r.error){ t.status='done'; closedOff++; }
+      }
+    }
+    if((made||closedOff) && typeof loadTasks==='function') await loadTasks();
+    return made;
+  } finally { _eopSweeping=false; }
+}
 function _eopDom(c, notes){
   const listed=(notes&&notes[c.id+'::listed_on'])||((c.checklists||{}).timeline_done)||'';
   const sold=c.closedDate||c.closingDateSell||'';
@@ -5974,7 +6191,7 @@ function openWeeklyMeeting(kind, week){
       const commitCell=ro
         ? `<span style="font-size:13px;color:#111">${_calEsc(c.end)||'&mdash;'} &#128274;</span>`
         : `<input type="date" value="${_calEsc(c.end||'')}" onchange="_wmCommitSet('${c.id}',this.value,this)" style="padding:5px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px"/>`;
-      const estCell=`<span style="font-size:13px;font-weight:600;color:${drift!=null&&drift>0?'#B7791F':'#111'}">${_calEsc(est)||'&mdash;'}</span>${(drift!=null&&drift!==0)?`<div style="font-size:9.5px;font-weight:600;color:${drift>0?'#B42318':'#0F7B54'}">${drift>0?'+':''}${drift} day${Math.abs(drift)===1?'':'s'} vs committed</div>`:''}${pushes.length?`<div style="font-size:9.5px;color:#aaa">pushed ${pushes.length}&times;</div>`:''}`;
+      const estCell=`<span style="font-size:13px;font-weight:600;color:${drift!=null&&drift>0?'#B7791F':'#111'}">${_calEsc(est)||'&mdash;'}</span>${(drift!=null&&drift!==0)?`<div style="font-size:9.5px;font-weight:600;color:${drift>0?'#B42318':'#0F7B54'}">${drift>0?'+':''}${drift} day${Math.abs(drift)===1?'':'s'} vs committed</div>`:''}${pushes.length?`<div onclick="_wmPushHistory('${c.id}')" title="See every time this date moved" style="font-size:9.5px;color:#185FA5;cursor:pointer;text-decoration:underline">pushed ${pushes.length}&times; &mdash; see the trail</div>`:''}`;
 
       // ---- last week ----
       const lastItems=_wmItems(c.id,lastR.from,lastR.to);
@@ -13665,4 +13882,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-30m tabs-days-deletes -->
+<!-- build: 2026-08-30n auto-advance-eop-pushtrail -->
