@@ -2171,20 +2171,45 @@ async function savePropInfo(id, fieldOnly){
   const _phaseChanged = !fieldOnly && _newPhase && _newPhase !== c.phase;
   if (fieldOnly) data.phase = c.phase;
   if (_phaseChanged) data.phase = c.phase;
-  const ok=await savePropertyToSupabase(id, data);
+  // Property Info edits FIVE things. Everything else in `data` is copied off the card in
+  // memory, which may be hours old - and writing that back is how a value somebody else
+  // cleared comes back from the dead. Name the five, and the save merges the rest from the
+  // live row instead of the stale card. (30 Aug: this is what resurrected 12424 Graham's
+  // cleared "Us Selling" date twelve minutes after it was cleared.)
+  const ok=await savePropertyToSupabase(id, data, ['phase','pm','type','start_date','end_date']);
   if(!ok) return;
   if (_phaseChanged) { const moved = await updatePropertyPhaseInSupabase(id, _newPhase); if(!moved) return; }
   window._piSaved = Date.now();
   openPropDetail(id);
 }
 
-async function savePropertyToSupabase(id, data) {
+// `owns` (optional) is the list of DATABASE COLUMNS the form the person is looking at
+// actually edits. When it is given, every other column is taken from a fresh read of the
+// row rather than from the card held in this browser - so a screen that has been open for
+// hours can still save its own five fields without quietly rolling back anything a
+// colleague, or the nightly sheet sync, changed in the meantime.
+// Callers that legitimately edit the whole property (the Add / Edit Property modal) pass
+// nothing and keep writing the whole row.
+async function savePropertyToSupabase(id, data, owns) {
   if (_blockIfReadOnly()) return false;
   // A silently-expired login makes every write fail with a confusing RLS error — catch it first.
   try{ const _s=await supabase.auth.getSession(); if(!_s.data.session){ alert("Your login session has expired — refresh the page and log back in, then try again."); return false; } }catch(e){}
   const _friendly=(m)=>/row-level security/i.test(m||"") ? "Your login session looks expired or lacks permission — refresh the page and log back in, then try again." : (m||"unknown error");
   if (id) {
-    const { data: _rows, error } = await supabase.from("pm_properties").update(_propCardToRow(data)).eq("id", id).select("id");
+    let _payload = _propCardToRow(data);
+    if (Array.isArray(owns) && owns.length) {
+      const _fresh = await supabase.from("pm_properties")
+        .select(Object.keys(_payload).join(",")).eq("id", id).maybeSingle();
+      if (_fresh.error) { alert("Could not check the property for other people's changes before saving, so nothing was written. Refresh and try again."); return false; }
+      if (_fresh.data) {
+        const _merged = {};
+        Object.keys(_payload).forEach(k => {
+          _merged[k] = (owns.indexOf(k) >= 0) ? _payload[k] : _fresh.data[k];
+        });
+        _payload = _merged;
+      }
+    }
+    const { data: _rows, error } = await supabase.from("pm_properties").update(_payload).eq("id", id).select("id");
     if (error) { alert("Failed to save property: " + _friendly(error.message)); return false; }
     // A zero-row UPDATE comes back with error null - that is how a row hidden by
     // row-level security looks. Without this check we would report success and the
@@ -14338,4 +14363,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-30p market-cycle-permit-data -->
+<!-- build: 2026-08-30q stale-save-guard -->
