@@ -2848,7 +2848,25 @@ function phInfo(name){ return PROP_PHASES.find(p=>p.name===name)||{bg:"#f4f5f7",
 function _teamTasksDone7(){ const t=new Date();t.setHours(0,0,0,0); const a=_ymd(new Date(t.getTime()-7*86400000)); const s=_ymd(t); return (typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(x=>x.status==='done'&&x.due_date&&x.due_date>=a&&x.due_date<=s).length; }
 // Construction-days clock: starts when the property moves into Waiting Permits
 // (stamped in checklists.construction_start); older cards fall back to their Start Date.
-function _velStart(c){ return (c.checklists && c.checklists.construction_start) || c.start || null; }
+// A project that starts and finishes on the SAME day is not a real schedule - it is the
+// placeholder pair the original board import wrote (start = end = the day the card was
+// created). Left alone it defeats the "set your dates" warning, invents a $/day rate off a
+// window nobody agreed to, and scores the manager late on a finish date that was never set.
+// Treat it as "no dates set" everywhere, so the app asks for the real ones instead.
+function _datesArePlaceholder(c){
+  if(!c) return false;
+  const a=String(c.start||'').trim(), b=String(c.end||'').trim();
+  return !!(a && b && a===b);
+}
+// True when this card cannot honestly produce a timeline: no start, no finish, or the
+// same-day placeholder pair above.
+function _datesUnset(c){ return !c || !c.start || !c.end || _datesArePlaceholder(c); }
+function _velStart(c){
+  if(c && c.checklists && c.checklists.construction_start) return c.checklists.construction_start;
+  if(_datesArePlaceholder(c)) return null;
+  return (c && c.start) || null;
+}
+
 // What a property had spent as of a given date (null when no snapshot that old exists yet).
 function _spentAsOf(pid,dateStr){
   const h=(window._snapHist||{})[pid]; if(!h||!h.length) return null;
@@ -3359,7 +3377,7 @@ function openPropDetail(id) {
           </div>
           </div>
         </div>
-        ${(()=>{ const ci=PROP_PHASES.findIndex(p=>p.name==="Pre Construction"); const pi=PROP_PHASES.findIndex(p=>p.name===c.phase); if(ci>=0&&pi>=ci&&(!c.start||!c.end)) return `<div style="background:#FFF7E0;border:1px solid #EAD9A8;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13.5px;color:#6b5310"><b>⚠️ Set this project's Start &amp; Finish dates.</b> ${(!c.start&&!c.end)?'Both are':(!c.start?'The start date is':'The finish date is')} missing — the $/day tracker and On-Timeline scoring need them. Set them in Property Info or in Monday's Project Team Meeting.</div>`; return ''; })()}
+        ${(()=>{ const ci=PROP_PHASES.findIndex(p=>p.name==="Pre Construction"); const pi=PROP_PHASES.findIndex(p=>p.name===c.phase); const _ph=_datesArePlaceholder(c); if(ci>=0&&pi>=ci&&(_datesUnset(c))) return `<div style="background:#FFF7E0;border:1px solid #EAD9A8;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13.5px;color:#6b5310"><b>⚠️ Set this project's Start &amp; Finish dates.</b> ${_ph?('Both read '+_calEsc(c.start)+' — that is the placeholder the board was imported with, not a real schedule.'):((!c.start&&!c.end)?'Both are':(!c.start?'The start date is':'The finish date is'))+' missing'} — the $/day tracker and On-Timeline scoring need them. Set them in Property Info or in Monday's Project Team Meeting.</div>`; return ''; })()}
         <div style="background:#f4f5f7;border-radius:6px;height:6px;margin-bottom:16px;overflow:hidden">
           <div style="height:100%;width:${Math.min(pct,100)}%;background:${progColor};border-radius:6px"></div>
         </div>
@@ -4327,8 +4345,9 @@ function _wmCalc(c){
   // be long after money actually started going out - 8 Hide Away Hills was stamped the
   // day it moved and read $59,049 a day off a single day. Take whichever anchor is
   // EARLIER, so the rate is money over the days that money was being spent.
-  let cStart=cl.construction_start||c.start||null;
-  if(cl.construction_start && c.start && String(c.start)<String(cl.construction_start)) cStart=c.start;
+  const _ph=(typeof _datesArePlaceholder==='function') && _datesArePlaceholder(c);
+  let cStart=cl.construction_start||(_ph?null:(c.start||null));
+  if(cl.construction_start && c.start && !_ph && String(c.start)<String(cl.construction_start)) cStart=c.start;
   const listed=cl.timeline_done||null;
   let rate=null, prodDays=null; const prodLive=!!(cStart&&!listed);
   if(cStart){
@@ -6388,6 +6407,9 @@ function _computePMMetrics(name){
   let _tlOn=0,_tlOff=0;
   mine.forEach(c=>{
     if(!c.end || c.archived) return;
+    // A same-day start/finish pair is the import placeholder, not a date anybody agreed to.
+    // Scoring a manager late against it is the single most unfair number on the board.
+    if(typeof _datesArePlaceholder==='function' && _datesArePlaceholder(c)) return;
     if(_PRE_WORK.includes(c.phase) && !(c.checklists && c.checklists.construction_start)) return;
     const td=(c.checklists&&c.checklists.timeline_done)||null;
     if(td){ if(td<=c.end) _tlOn++; else _tlOff++; }
@@ -13555,4 +13577,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-30k steps-and-full-reason -->
+<!-- build: 2026-08-30l date-placeholder-guard -->
