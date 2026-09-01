@@ -14,6 +14,7 @@
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.7"></script>
+<script>if(!window.supabase||!window.supabase.createClient){document.write('<scr'+'ipt src="https://unpkg.com/@supabase/supabase-js@2.39.7/dist/umd/supabase.js"><\/scr'+'ipt>');}</script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
@@ -513,6 +514,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
     <p class="sub">Sign in with Google, or with your email &amp; password</p>
     <div class="error-msg" id="signin-error"></div>
     <div class="success-msg" id="signin-success"></div>
+    <div id="signin-busy" style="display:none;margin:8px 0;padding:9px 12px;background:#eef3ff;border:1px solid #cfe0ff;border-radius:6px;color:#2a4a8a;font-size:13px">Signing you in…</div>
     <div id="modal-gsi-btn" style="display:flex;justify-content:center;margin:10px 0 4px"></div>
     <div style="display:flex;align-items:center;gap:10px;margin:16px 0 8px;color:#666;font-size:12px"><div style="flex:1;height:1px;background:#2a2a2a"></div>OR<div style="flex:1;height:1px;background:#2a2a2a"></div></div>
     <div class="form-row"><label>Email</label><input type="email" id="login-email" placeholder="you@example.com" autocomplete="username" /></div>
@@ -702,6 +704,15 @@ const LOGO_B64 = "iVBORw0KGgoAAAANSUhEUgAAAIMAAABpCAYAAAAZQpCCAAAAtGVYSWZJSSoACA
 const SUPABASE_URL = "https://kwhgymympuhfvqbedwpd.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable__DNUtcdM8SqCMzTZM4gtXw_1wf9IWa9";
 const GOOGLE_CLIENT_ID = "894060704626-6fc5c51jofbq6a6fl6632ahfl5nfn3mi.apps.googleusercontent.com";
+if (!window.supabase || !window.supabase.createClient) {
+  // Without this library nothing can run. Never leave a blank page behind.
+  var _db = document.getElementById("dash-body");
+  if (_db) _db.innerHTML = '<div style="min-height:420px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:48px 24px;text-align:center;background:linear-gradient(180deg,#111 0%,#1a1a1a 100%);color:#ccc;font-size:15px">'
+    + '<div style="font-size:22px;color:#fff">Legacy Homes</div>'
+    + '<div style="max-width:440px;line-height:1.7;color:#999">A component the dashboard needs could not be downloaded. This is usually the network blocking it. Try again, or switch to a different connection.</div>'
+    + '<button onclick="location.reload()" style="padding:10px 24px;background:#fff;color:#111;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">Reload</button></div>';
+  throw new Error("supabase-js failed to load");
+}
 const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
 });
@@ -764,7 +775,14 @@ async function loadProfilesFromSupabase() {
 }
 
 async function refreshAuthState() {
-  const { data: { session } } = await supabase.auth.getSession();
+  // A connection problem must never look like "you are signed out" - that is what
+  // wiped the sign-in screen for the guys. Fail loudly instead so init() can show
+  // an honest "can't reach the database" message with the Sign In button intact.
+  const _gs = await _withTimeout(supabase.auth.getSession(), 12000, "the sign-in check");
+  if (_gs && _gs.error && !(_gs.data && _gs.data.session)) {
+    throw new Error("NETWORK_TIMEOUT: could not check your sign-in (" + ((_gs.error && _gs.error.message) || "connection problem") + ")");
+  }
+  const session = (_gs && _gs.data && _gs.data.session) || null;
   if (!session) {
     _sessionCache = null;
     _myProfile = null;
@@ -826,7 +844,77 @@ function countActiveForPM(pmName) {
 }
 
 // ===================== INIT =====================
-async function init() {
+// The sign-in screen must NEVER depend on the network. If Supabase is slow or
+// unreachable, people still have to see a working Sign In button instead of a
+// dead page. Everything below is the guard rail that makes that true.
+
+function _withTimeout(p, ms, what){
+  return Promise.race([
+    p,
+    new Promise((_,rej)=>setTimeout(()=>rej(new Error("NETWORK_TIMEOUT: "+(what||"the request")+" timed out")), ms))
+  ]);
+}
+function _isOfflineErr(e){
+  const m=((e&&e.message)||String(e||"")).toLowerCase();
+  return /network_timeout|failed to fetch|networkerror|timed out|aborterror|load failed|fetch/.test(m);
+}
+function _supaRef(){
+  try{ return (SUPABASE_URL.match(/https:\/\/([^.]+)\./)||[])[1]||null; }catch(e){ return null; }
+}
+// Paint something usable the instant the script runs, before any network call.
+function _bootPaint(){
+  let hasToken=false;
+  try{ const r=_supaRef(); hasToken = !!(r && localStorage.getItem("sb-"+r+"-auth-token")); }catch(e){}
+  const db=document.getElementById("dash-body");
+  if(!db) return;
+  if(hasToken){
+    db.innerHTML='<div style="min-height:420px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:#777;font-size:14px;background:linear-gradient(180deg,#111 0%,#1a1a1a 100%)">'
+      +'<div style="width:26px;height:26px;border:3px solid #2a2a2a;border-top-color:#888;border-radius:50%;animation:bootspin 0.9s linear infinite"></div>'
+      +'<div>Loading your dashboard\u2026</div></div>'
+      +'<style>@keyframes bootspin{to{transform:rotate(360deg)}}</style>';
+  } else {
+    try{ renderLoggedOut(); }catch(e){}
+  }
+}
+let _connRetryTimer=null;
+let _bootRetryCount=0;
+function _bootFailed(err){
+  const offline=_isOfflineErr(err);
+  const msg = offline
+    ? "Can\u2019t reach the database right now, so the dashboard can\u2019t load. This is the database being temporarily unavailable \u2014 it is not your internet and it is not your password. This page keeps retrying on its own and will load as soon as the connection comes back."
+    : "Something went wrong loading the dashboard ("+((err&&err.message)||"unknown error")+"). Use Try again below, or refresh the page.";
+  try{
+    renderLoggedOut(msg);
+    const n=document.getElementById("boot-notice");
+    if(n) n.insertAdjacentHTML('beforeend',
+      '<div style="margin-top:12px"><button onclick="_bootRetry()" style="padding:7px 16px;background:#f0c674;color:#241a0a;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">Try again now</button>'
+      +'<span id="boot-retry-note" style="display:block;margin-top:8px;font-size:12px;color:#a08a52">Retrying automatically every 15 seconds\u2026</span></div>');
+  }catch(e){
+    // Absolute last resort: never leave the static placeholder on screen.
+    const db=document.getElementById("dash-body");
+    if(db) db.innerHTML='<div style="padding:60px 24px;text-align:center;color:#ccc;font-family:system-ui"><p>The dashboard could not load. Please refresh the page.</p><button onclick="location.reload()" style="padding:8px 18px;margin-top:10px;cursor:pointer">Refresh</button></div>';
+  }
+  if(offline && !_connRetryTimer){
+    _connRetryTimer=setInterval(()=>{ _bootRetryCount++; init(); }, 15000);
+  }
+}
+function _bootRetry(){
+  const n=document.getElementById("boot-retry-note");
+  if(n) n.textContent="Trying again\u2026";
+  init();
+}
+// The public entry point every caller already uses. It can no longer die silently.
+async function init(){
+  try{
+    await _withTimeout(_initInner(), 25000, "the dashboard");
+    if(_connRetryTimer){ clearInterval(_connRetryTimer); _connRetryTimer=null; }
+  }catch(err){
+    try{ console.error("[boot] init failed:", err); }catch(e){}
+    _bootFailed(err);
+  }
+}
+
+async function _initInner() {
   await refreshAuthState();
   const session = _sessionCache;
   const utilRight = document.getElementById("util-right");
@@ -903,11 +991,11 @@ function renderLoggedOut(noticeMsg) {
   const nav = document.getElementById("nav");
   if (nav) nav.style.display = "none";
   const utilRight = document.getElementById("util-right");
-  utilRight.innerHTML = `
+  if (utilRight) utilRight.innerHTML = `
     <div class="ubtn primary" onclick="openModal('signin-modal')">Sign In with Google</div>
   `;
   const notice = noticeMsg
-    ? `<div style="margin:24px auto 0;max-width:520px;padding:14px 18px;background:#241a0a;border:1px solid #4a3a1a;border-radius:8px;color:#f0c674;font-size:14px;text-align:center">${noticeMsg}</div>`
+    ? `<div id="boot-notice" style="margin:24px auto 0;max-width:520px;padding:14px 18px;background:#241a0a;border:1px solid #4a3a1a;border-radius:8px;color:#f0c674;font-size:14px;text-align:center">${noticeMsg}</div>`
     : "";
   document.getElementById("dash-body").innerHTML = `
     <div style="min-height:500px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:48px 24px;text-align:center;background:linear-gradient(180deg,#111 0%,#1a1a1a 100%)">
@@ -958,11 +1046,22 @@ async function _initGoogleSignIn(currentNonce, hashedNonce) {
     callback: async (resp) => {
       const err = document.getElementById("signin-error");
       if (err) err.style.display = "none";
-      const { error } = await supabase.auth.signInWithIdToken({
-        provider: "google",
-        token: resp.credential,
-        nonce: currentNonce
-      });
+      _signinBusy(true, "Signing you in\u2026");
+      let error = null;
+      try {
+        const r = await _withTimeout(supabase.auth.signInWithIdToken({
+          provider: "google",
+          token: resp.credential,
+          nonce: currentNonce
+        }), 20000, "the sign-in server");
+        error = r && r.error;
+      } catch (e) {
+        error = { message: _isOfflineErr(e)
+          ? "Google verified you, but the Legacy Homes database is not responding, so it can't finish signing you in. This is not your account \u2014 wait a minute and try again."
+          : ((e && e.message) || "Sign-in failed. Please try again.") };
+      } finally {
+        _signinBusy(false);
+      }
       if (error) {
         console.error("signInWithIdToken failed:", error);
         if (err) showErr(err, error.message || "Sign-in failed. Please try again.");
@@ -977,9 +1076,22 @@ async function _initGoogleSignIn(currentNonce, hashedNonce) {
   });
 }
 
-async function _renderGoogleButton() {
+// Shows/clears a "working on it" line inside the sign-in modal so a click is
+// never met with silence.
+function _signinBusy(on, msg){
+  const box=document.getElementById("signin-busy");
+  if(!box) return;
+  box.style.display = on ? "block" : "none";
+  if(on && msg) box.textContent = msg;
+}
+async function _renderGoogleButton(_tries) {
+  _tries = _tries || 0;
   if (!window.google?.accounts?.id) {
-    setTimeout(_renderGoogleButton, 250);
+    // Google's script is on a different network path than our database. Give it a
+    // fair chance, then say plainly that it didn't load instead of spinning forever.
+    if (_tries < 40) { setTimeout(()=>_renderGoogleButton(_tries+1), 250); return; }
+    const err = document.getElementById("signin-error");
+    if (err) showErr(err, "Google's sign-in script didn't load on this connection. Use the email and password box below, or try a different network.");
     return;
   }
   const { nonce, hashedNonce } = await _generateGsiNonce();
@@ -1023,11 +1135,24 @@ async function doPasswordSignIn() {
   if (!email || !pass) { showErr(err, "Enter your email and password."); return; }
   const btn = document.getElementById("login-submit-btn");
   if (btn) { btn.disabled = true; btn.textContent = "Signing in…"; }
-  const { error } = await supabase.auth.signInWithPassword({ email, password: pass });
-  if (btn) { btn.disabled = false; btn.textContent = "Sign in with email"; }
+  // A sign-in must never just sit there. If the server doesn't answer we say so.
+  let error = null;
+  try {
+    const r = await _withTimeout(
+      supabase.auth.signInWithPassword({ email, password: pass }),
+      20000, "the sign-in server");
+    error = r && r.error;
+  } catch (e) {
+    error = { message: _isOfflineErr(e)
+      ? "Can't reach the sign-in server right now. The database is not responding \u2014 this is not your password. Wait a minute and try again."
+      : ((e && e.message) || "Sign-in failed. Please try again.") };
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = "Sign in with email"; }
+  }
   if (error) {
     const m = (error.message || "").toLowerCase();
-    if (m.includes("invalid"))            showErr(err, "Wrong email or password. If your account uses a company Google login, use the Google button above instead.");
+    if (m.includes("reach the sign-in server")) showErr(err, error.message);
+    else if (m.includes("invalid"))       showErr(err, "Wrong email or password. If your account uses a company Google login, use the Google button above instead.");
     else if (m.includes("not confirmed")) showErr(err, "Your email hasn't been confirmed yet. Ask Bruce to confirm your account, then try again.");
     else                                   showErr(err, error.message || "Sign-in failed. Please try again.");
     return;
@@ -14469,6 +14594,8 @@ function renderEditHistory(){
 }
 
 // ===================== BOOT =====================
+// Paint a usable screen before touching the network, then load.
+_bootPaint();
 init();
 // Load the job-role list (falls back to BASE_ROLES if pm_roles isn't created yet)
 // and fill the sign-up role dropdown.
@@ -14489,4 +14616,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-01b tracker-autosave-status -->
+<!-- build: 2026-09-01c boot-resilience-signin -->
