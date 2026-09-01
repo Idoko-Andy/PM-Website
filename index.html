@@ -4750,7 +4750,14 @@ async function _pmSettingsRead(key){
 }
 async function _pmSettingsWrite(key, data){
   try{
-    const { error } = await supabase.from("pm_settings").upsert({ key:key, data:(data||{}) }, { onConflict:'key' });
+    // .select() matters: without it an upsert that writes NOTHING - blocked by row-level
+    // security, or a row that is not visible - comes back with error null, and the app
+    // cheerfully reports "Saved". The property card had this guard; this did not.
+    const { data:_rows, error } = await supabase.from("pm_settings")
+      .upsert({ key:key, data:(data||{}), updated_at:new Date().toISOString() }, { onConflict:'key' })
+      .select("key");
+    if(!error && (!_rows || !_rows.length))
+      return "the database accepted the request but saved nothing - refresh and sign in again";
     if(!error) return null;
     const m = error.message || "";
     if(/row-level security|permission|policy/i.test(m)) return "your account does not have permission to save this yet - tell Bruce";
@@ -9987,8 +9994,64 @@ function _vaPersonView(vaName){
   return _personDashView(vaName,'Virtual Administrative Assistant')+g;
 }
 // ---- Trackers (W-9 / Mowing / Checklists) — persisted in pm_settings key 'trackers'. ----
-async function _trkLoad(){ window._trkLoaded=true; try{ const r=await supabase.from("pm_settings").select("data").eq("key","trackers").maybeSingle(); if(r.error){ window._trkLoadOk=false; window._trkData={}; return; } window._trkLoadOk=true; window._trkData=(r.data&&r.data.data)||{}; }catch(e){ window._trkLoadOk=false; window._trkData={}; } }
-async function _trkSave(){ if(window._trkLoadOk===false){ alert("The trackers could not be loaded a moment ago, so saving now would wipe them. This save was stopped - refresh the page and try again."); return false; } const _err=await _pmSettingsWrite('trackers', window._trkData||{}); if(_err){ alert("THIS TRACKER CHANGE WAS NOT SAVED - "+_err); return false; } return true; }
+async function _trkLoad(){ window._trkLoaded=true; try{ const r=await supabase.from("pm_settings").select("data").eq("key","trackers").maybeSingle(); if(r.error){ window._trkLoadOk=false; window._trkData={}; window._trkBase={}; return; } window._trkLoadOk=true; window._trkData=(r.data&&r.data.data)||{}; window._trkBase=JSON.parse(JSON.stringify(window._trkData)); }catch(e){ window._trkLoadOk=false; window._trkData={}; window._trkBase={}; } }
+// ---- Saving a tracker without wiping out what somebody else just did -----------------
+// All six trackers live in ONE row of the database. Every save used to send that entire
+// object as this browser happened to remember it - so if Jen changed a permit at 9am and
+// Marlo's tab had loaded the trackers at 8:55, Marlo's next save silently put the 8:55
+// version back and Jen's change vanished with no error and no trace. That is exactly what
+// happened to Jen's "Revisions" on the two Livingston permits on 31 Aug.
+//
+// Now a save works out which fields THIS browser actually changed, re-reads the live row,
+// lays only those fields on top, and writes that. Two people editing different permits, or
+// different fields of the same permit, no longer overwrite each other at all.
+function _trkDiff(base, cur, path, out){
+  const plain=(v)=>v && typeof v==='object' && !Array.isArray(v);
+  const keys=new Set([...Object.keys(base||{}), ...Object.keys(cur||{})]);
+  keys.forEach(k=>{
+    const b=(base||{})[k], c=(cur||{})[k];
+    if(!(k in (cur||{}))){ out.push({path:path.concat(k), del:true}); return; }
+    if(plain(b) && plain(c)){ _trkDiff(b, c, path.concat(k), out); return; }
+    if(JSON.stringify(b)!==JSON.stringify(c)) out.push({path:path.concat(k), val:c});
+  });
+  return out;
+}
+function _trkApplyPatch(target, ops){
+  ops.forEach(op=>{
+    let node=target;
+    for(let i=0;i<op.path.length-1;i++){
+      const k=op.path[i];
+      if(!node[k] || typeof node[k]!=='object' || Array.isArray(node[k])) node[k]={};
+      node=node[k];
+    }
+    const last=op.path[op.path.length-1];
+    if(op.del) delete node[last]; else node[last]=op.val;
+  });
+  return target;
+}
+async function _trkSave(){
+  if(window._trkLoadOk===false){ alert("The trackers could not be loaded a moment ago, so saving now would wipe them. This save was stopped - refresh the page and try again."); return false; }
+  const mine=window._trkData||{};
+  const base=window._trkBase||{};
+  const ops=_trkDiff(base, mine, [], []);
+  if(!ops.length) return true;                       // nothing of ours actually changed
+  // Re-read the live row so we lay our changes on top of everybody else's, not over them.
+  let fresh=null;
+  try{
+    const r=await supabase.from("pm_settings").select("data").eq("key","trackers").maybeSingle();
+    if(r.error) throw new Error(r.error.message||"could not re-read the trackers");
+    fresh=(r.data && r.data.data) || {};
+  }catch(e){
+    alert("THIS TRACKER CHANGE WAS NOT SAVED - could not check for other people's edits first ("+((e&&e.message)||"network error")+"). Nothing was overwritten. Try again.");
+    return false;
+  }
+  const merged=_trkApplyPatch(JSON.parse(JSON.stringify(fresh)), ops);
+  const _err=await _pmSettingsWrite('trackers', merged);
+  if(_err){ alert("THIS TRACKER CHANGE WAS NOT SAVED - "+_err); return false; }
+  window._trkData=merged;
+  window._trkBase=JSON.parse(JSON.stringify(merged));  // our edits are now the baseline
+  return true;
+}
 async function _trkToggle(kind,id){ if(_blockIfReadOnly()) return; const d=window._trkData||{}; d[kind]=d[kind]||{}; d[kind][id]=!d[kind][id]; window._trkData=d; await _trkSave(); (window._trkRerender||function(){openVAAdminDashboard('trackers');})(); }
 // Generic field setter for the richer trackers (window / mowing / W-9 detail rows).
 async function _trkSet(kind,id,field,val,rerender){
@@ -14363,4 +14426,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-08-30r stale-guard-and-dash -->
+<!-- build: 2026-09-01a tracker-save-merge -->
