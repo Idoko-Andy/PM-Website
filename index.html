@@ -10005,6 +10005,58 @@ async function _trkLoad(){ window._trkLoaded=true; try{ const r=await supabase.f
 // Now a save works out which fields THIS browser actually changed, re-reads the live row,
 // lays only those fields on top, and writes that. Two people editing different permits, or
 // different fields of the same permit, no longer overwrite each other at all.
+// ---- "All changes saved", the way a Google Doc does it -------------------------------
+// Jen asked for this and she is right: a tracker you fill in all morning has to tell you it
+// is keeping up. One line at the top of every tracker tab, always there, never a popup.
+// Typing into a tracker box saves about a second after you stop, the same as a Google Doc.
+// Before this, a box only saved when you clicked out of it - so typing a note and then
+// closing the tab, or clicking a different tracker tile, threw the note away.
+const _trkTypeTimers={};
+// If she closes the tab or navigates while a debounce is still counting down, flush it now
+// rather than losing the last thing she typed.
+function _trkFlushPending(){
+  const keys=Object.keys(_trkTypeTimers);
+  if(!keys.length) return;
+  keys.forEach(k=>clearTimeout(_trkTypeTimers[k]));
+  try{ _trkSave(); }catch(e){}
+}
+window.addEventListener('beforeunload', ()=>{ _trkFlushPending(); });
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') _trkFlushPending(); });
+
+function _trkType(kind,id,field,val){
+  // Put the keystroke into memory IMMEDIATELY and debounce only the write. If it sat in the
+  // timer instead, closing the tab mid-countdown would flush a save that did not yet contain
+  // what she had just typed - the last line would still be lost, which is the whole thing
+  // this is meant to prevent.
+  const d=window._trkData||{}; d[kind]=d[kind]||{};
+  d[kind][id]=Object.assign({}, d[kind][id]||{});
+  d[kind][id][field]=val; window._trkData=d;
+  const k=kind+'|'+id+'|'+field;
+  _trkStatus('saving');
+  clearTimeout(_trkTypeTimers[k]);
+  _trkTypeTimers[k]=setTimeout(()=>{ delete _trkTypeTimers[k]; _trkSave(); }, 900);
+}
+let _trkStatusTimer=null;
+function _trkStatus(state, detail){
+  window.__trkState={state:state, detail:detail||'', at:new Date()};
+  const el=document.getElementById('trk-status'); if(!el) return;
+  const t=(d)=>d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
+  const dot=(c)=>`<span style="display:inline-block;width:7px;height:7px;border-radius:99px;background:${c};margin-right:7px;vertical-align:middle"></span>`;
+  if(state==='saving'){
+    el.innerHTML=`${dot('#B7791F')}<span style="color:#8a6d1a">Saving\u2026</span>`;
+  } else if(state==='saved'){
+    el.innerHTML=`${dot('#0F7B54')}<span style="color:#5c6470">All changes saved</span>`
+      +`<span style="color:#aab0ba"> \u00b7 ${t(window.__trkState.at)}</span>`;
+  } else if(state==='error'){
+    el.innerHTML=`${dot('#B42318')}<span style="color:#B42318;font-weight:600">NOT saved</span>`
+      +`<span style="color:#B42318"> \u2014 ${_calEsc(detail||'something went wrong')}.</span>`
+      +` <span onclick="_trkRetry()" style="color:#185FA5;cursor:pointer;text-decoration:underline">Try again</span>`;
+  } else {
+    el.innerHTML=`<span style="color:#b6bbc4">Every box saves itself as you go</span>`;
+  }
+}
+// The last save that failed, so "Try again" has something to re-send.
+async function _trkRetry(){ _trkStatus('saving'); const ok=await _trkSave(); if(ok) _trkStatus('saved'); }
 function _trkDiff(base, cur, path, out){
   const plain=(v)=>v && typeof v==='object' && !Array.isArray(v);
   const keys=new Set([...Object.keys(base||{}), ...Object.keys(cur||{})]);
@@ -10030,11 +10082,12 @@ function _trkApplyPatch(target, ops){
   return target;
 }
 async function _trkSave(){
-  if(window._trkLoadOk===false){ alert("The trackers could not be loaded a moment ago, so saving now would wipe them. This save was stopped - refresh the page and try again."); return false; }
+  if(window._trkLoadOk===false){ _trkStatus('error','the trackers could not be loaded, so saving would wipe them - refresh the page'); return false; }
+  _trkStatus('saving');
   const mine=window._trkData||{};
   const base=window._trkBase||{};
   const ops=_trkDiff(base, mine, [], []);
-  if(!ops.length) return true;                       // nothing of ours actually changed
+  if(!ops.length){ _trkStatus('saved'); return true; }   // nothing of ours actually changed
   // Re-read the live row so we lay our changes on top of everybody else's, not over them.
   let fresh=null;
   try{
@@ -10042,14 +10095,15 @@ async function _trkSave(){
     if(r.error) throw new Error(r.error.message||"could not re-read the trackers");
     fresh=(r.data && r.data.data) || {};
   }catch(e){
-    alert("THIS TRACKER CHANGE WAS NOT SAVED - could not check for other people's edits first ("+((e&&e.message)||"network error")+"). Nothing was overwritten. Try again.");
+    _trkStatus('error','could not reach the database ('+((e&&e.message)||'network error')+'). Nothing was overwritten');
     return false;
   }
   const merged=_trkApplyPatch(JSON.parse(JSON.stringify(fresh)), ops);
   const _err=await _pmSettingsWrite('trackers', merged);
-  if(_err){ alert("THIS TRACKER CHANGE WAS NOT SAVED - "+_err); return false; }
+  if(_err){ _trkStatus('error', _err); return false; }
   window._trkData=merged;
   window._trkBase=JSON.parse(JSON.stringify(merged));  // our edits are now the baseline
+  _trkStatus('saved');
   return true;
 }
 async function _trkToggle(kind,id){ if(_blockIfReadOnly()) return; const d=window._trkData||{}; d[kind]=d[kind]||{}; d[kind][id]=!d[kind][id]; window._trkData=d; await _trkSave(); (window._trkRerender||function(){openVAAdminDashboard('trackers');})(); }
@@ -10060,7 +10114,7 @@ async function _trkSet(kind,id,field,val,rerender){
   d[kind][id][field]=val; window._trkData=d;
   const _saved=await _trkSave();
   if(!_saved) return;
-  const ok=document.getElementById('trk-ok'); if(ok){ ok.style.display='inline'; setTimeout(()=>{ok.style.display='none';},1200); }
+
   // A permit moving is not just a cell edit - it drives the property card.
   if(kind==='permits' && typeof _permitAfterChange==='function'){ try{ await _permitAfterChange(id,field); }catch(e){} }
   if(rerender) (window._trkRerender||function(){openVAAdminDashboard('trackers');})();
@@ -10131,7 +10185,12 @@ function _trkClosedSimple(closed, what){
 }
 function _trkTable(title,color,head,rows){ return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:auto;margin-bottom:16px"><div style="padding:10px 14px;border-bottom:0.5px solid #e0e4ec;font-size:14px;font-weight:700;color:${color}">${title}</div><table style="width:100%;border-collapse:collapse;font-size:13.5px;color:#111"><thead><tr style="background:#122A4A;color:#fff">${head}</tr></thead><tbody>${rows}</tbody></table></div>`; }
 // Type-to-filter that keeps your cursor in the box (filters rows in place, no re-render).
-function _trkSearchBox(ph){ return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><input id="trk-search" placeholder="${ph}" oninput="_trkFilter()" style="flex:1;max-width:340px;padding:8px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:13.5px;outline:none"/><span id="trk-ok" style="display:none;font-size:12px;color:#1D9E75">Saved ✓</span></div>`; }
+function _trkSearchBox(ph){
+  // The old "Saved ✓" flash lived here and was gone in 1.2 seconds. The real status now sits
+  // pinned at the top of the tab instead; this just restores it after a redraw.
+  setTimeout(()=>{ const st=window.__trkState; if(st) _trkStatus(st.state, st.detail); },0);
+  return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><input id="trk-search" placeholder="${ph}" oninput="_trkFilter()" style="flex:1;max-width:340px;padding:8px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:13.5px;outline:none"/></div>`;
+}
 function _trkFilter(){
   const q=(document.getElementById('trk-search')||{}).value||'';
   const t=q.trim().toLowerCase();
@@ -10730,8 +10789,8 @@ function _permitTrackerBody(){
     return `<select onchange="_trkSet('permits','${id}','${field}',this.value,true)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:${w||120}px;color:${color?color(cur):"#111"};font-weight:600">${opts.map(o=>`<option ${cur===o?"selected":""}>${_calEsc(o)}</option>`).join("")}</select>`;
   };
   const dt=(id,field,handler)=>ro?(_trkVal("permits",id,field)||"—"):`<input type="date" value="${_trkVal("permits",id,field)}" onchange="${handler||`_trkSet('permits','${id}','${field}',this.value,true)`}" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:126px"/>`;
-  const tx=(id,field,ph,w)=>ro?(_calEsc(_trkVal("permits",id,field))||"—"):`<input value="${_calEsc(_trkVal("permits",id,field))}" placeholder="${ph||""}" onchange="_trkSet('permits','${id}','${field}',this.value,false)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:${w||110}px"/>`;
-  const ta=(id,field,ph,w)=>ro?`<div style="max-width:${w||240}px;white-space:pre-wrap;font-size:12.5px">${_calEsc(_trkVal("permits",id,field))||"—"}</div>`:`<textarea placeholder="${ph||""}" onchange="_trkSet('permits','${id}','${field}',this.value,false)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:${w||240}px;min-height:46px;resize:vertical;font-family:inherit">${_calEsc(_trkVal("permits",id,field))}</textarea>`;
+  const tx=(id,field,ph,w)=>ro?(_calEsc(_trkVal("permits",id,field))||"—"):`<input value="${_calEsc(_trkVal("permits",id,field))}" placeholder="${ph||""}" oninput="_trkType('permits','${id}','${field}',this.value)" onchange="_trkSet('permits','${id}','${field}',this.value,false)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:${w||110}px"/>`;
+  const ta=(id,field,ph,w)=>ro?`<div style="max-width:${w||240}px;white-space:pre-wrap;font-size:12.5px">${_calEsc(_trkVal("permits",id,field))||"—"}</div>`:`<textarea placeholder="${ph||""}" oninput="_trkType('permits','${id}','${field}',this.value)" onchange="_trkSet('permits','${id}','${field}',this.value,false)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:${w||240}px;min-height:46px;resize:vertical;font-family:inherit">${_calEsc(_trkVal("permits",id,field))}</textarea>`;
 
   const head=`<th style="padding:9px 10px;text-align:left;min-width:190px">Address</th>
     <th style="padding:9px;text-align:left">Permit / application #</th>
@@ -10942,7 +11001,7 @@ function _vaTrackers(){
   const chk=(kind,id,on)=> ro?(on?'✅':'⬜'):`<span onclick="_trkToggle('${kind}','${id}')" style="cursor:pointer;font-size:17px">${on?'✅':'⬜'}</span>`;
   const fchk=(kind,id,field)=>{ const on=_trkOn(kind,id,field); return ro?(on?'✅':'⬜'):`<span onclick="_trkSet('${kind}','${id}','${field}',${on?'false':'true'},true)" style="cursor:pointer;font-size:17px">${on?'✅':'⬜'}</span>`; };
   const dt=(kind,id,field,handler)=>ro?(_trkVal(kind,id,field)||'—'):`<input type="date" value="${_trkVal(kind,id,field)}" onchange="${handler||`_trkSet('${kind}','${id}','${field}',this.value,false)`}" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:126px"/>`;
-  const txt=(kind,id,field,ph,w)=>ro?(_trkVal(kind,id,field)||'—'):`<input value="${_calEsc(_trkVal(kind,id,field))}" placeholder="${ph||''}" onchange="_trkSet('${kind}','${id}','${field}',this.value,false)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:${w||100}px"/>`;
+  const txt=(kind,id,field,ph,w)=>ro?(_trkVal(kind,id,field)||'—'):`<input value="${_calEsc(_trkVal(kind,id,field))}" placeholder="${ph||''}" oninput="_trkType('${kind}','${id}','${field}',this.value)" onchange="_trkSet('${kind}','${id}','${field}',this.value,false)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:${w||100}px"/>`;
   const cons=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]);
   const all=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived);
   const active=all.filter(c=>!["Closed","Completed"].includes(c.phase));
@@ -11086,7 +11145,11 @@ function _vaTrackers(){
   const tile=(key,icon,title,n,color)=>`<div onclick="window._trkView='${key}';(window._trkRerender||function(){openVAAdminDashboard('trackers');})()" style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${color};border-radius:10px;padding:13px 15px;cursor:pointer"><div style="display:flex;justify-content:space-between"><div style="font-size:13.5px;font-weight:600;color:#111">${icon} ${title}</div><span style="color:#ccc">›</span></div><div style="font-size:25px;font-weight:600;color:${color};margin-top:5px">${n}</div><div style="font-size:11px;color:#999">outstanding</div></div>`;
   const tiles=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:16px">${tile('w9','🧾','W-9 Tracker',w9out,'#7A3FA8')}${tile('window','🪟','Window Tracker',winout,'#185FA5')}${tile('mow','🌱','Mowing Tracker',mowout,'#3B6D11')}${tile('checklist','✅','Checklist Tracker',clout,'#0B7285')}${tile('util','⚡','Utility Tracker',utilout,'#B7791F')}${tile('permit','📄','Permit Tracker',permitout,'#B03A8B')}</div>`;
   const back=`<div onclick="window._trkView='summary';(window._trkRerender||function(){openVAAdminDashboard('trackers');})()" style="display:inline-flex;align-items:center;gap:5px;font-size:13px;color:#185FA5;cursor:pointer;margin-bottom:10px">‹ Back to Trackers</div>`;
-  const shell=(inner)=>`<div style="padding:20px;max-width:1120px;margin:0 auto"><div style="font-size:16px;font-weight:600;color:#111;margin-bottom:10px">📋 Trackers</div>${tiles}${inner}</div>`;
+  const shell=(inner)=>`<div style="padding:20px;max-width:1120px;margin:0 auto">
+      <div style="position:sticky;top:0;z-index:20;background:#f4f5f7;padding:2px 0 8px;margin:-2px 0 2px;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
+        <div style="font-size:16px;font-weight:600;color:#111">📋 Trackers</div>
+        <div id="trk-status" style="font-size:12.5px;line-height:1.2">${ro?'<span style="color:#b6bbc4">Read only</span>':'<span style="color:#b6bbc4">Every box saves itself as you go</span>'}</div>
+      </div>${tiles}${inner}</div>`;
 
   if(view==='w9') return shell(back+_trkSearchBox('Search a contractor…')+_trkTable('🧾 W-9 Tracker','#7A3FA8','<th style="padding:9px 10px;text-align:left">Contractor</th><th style="padding:9px;text-align:left">Name on W-9</th><th style="padding:9px">On file</th><th style="padding:9px;text-align:left">Notes</th><th style="padding:9px;text-align:left">Email</th><th style="padding:9px;text-align:left">Phone</th>'+(ro?'':'<th style="padding:9px;text-align:right">Jobs</th><th></th>'),w9rows)+`<div style="font-size:12px;color:#999">Ticking "On file" here also marks the contractor in the Contractor Directory.${ro?'':' <b>Remove</b> deletes the whole contractor record — use it on duplicates, and remove the copy with 0 jobs against it.'}</div>`);
   if(view==='mow') return shell(back+_trkSearchBox('Search a property…')+_trkTable('🌱 Mowing Tracker','#3B6D11','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px;text-align:left">Who is mowing</th><th style="padding:9px;text-align:left">How often</th><th style="padding:9px;text-align:left">Cost/mow</th><th style="padding:9px;text-align:left">Contact #</th><th style="padding:9px;text-align:left">PM</th><th style="padding:9px;text-align:left">Payment</th><th style="padding:9px">On route</th><th style="padding:9px">Removed after</th>',mowrows)+_trkClosedSimple(closed,'mowing history'));
@@ -14426,4 +14489,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-01a tracker-save-merge -->
+<!-- build: 2026-09-01b tracker-autosave-status -->
