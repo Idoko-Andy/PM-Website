@@ -1903,6 +1903,7 @@ document.addEventListener("click", () => {
 // ===================== PROJECT DASHBOARD =====================
 function openProjectDashboard(activeTab) {
   activeTab = activeTab || 'main';
+  window._pdTab = activeTab;
   document.querySelectorAll(".dd").forEach(x => x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x => x.classList.remove("on"));
 
@@ -2241,10 +2242,11 @@ function _propCardToRow(p) {
   };
 }
 
+const PROP_SELECT_COLS = "id,addr,phase,type,pm,budget,spent,start_date,end_date,company_cam,drive_url,notes,sub_phases,checklist_market_last,checklists,is_rental,closing_date,vacancy_date,closing_date_sell,closed_date,archived,close_approved,purchase_confirmed,jv_deal,est_profit,goal_arv,listing_agent";
 async function loadPropertiesFromSupabase() {
   const { data, error } = await supabase
     .from("pm_properties")
-    .select("id,addr,phase,type,pm,budget,spent,start_date,end_date,company_cam,drive_url,notes,sub_phases,checklist_market_last,checklists,is_rental,closing_date,vacancy_date,closing_date_sell,closed_date,archived,close_approved,purchase_confirmed,jv_deal,est_profit,goal_arv,listing_agent")
+    .select(PROP_SELECT_COLS)
     .order("created_at", { ascending: true });
   if (error) {
     console.error("loadPropertiesFromSupabase failed:", error);
@@ -14593,6 +14595,63 @@ function renderEditHistory(){
     </div>`;
 }
 
+// ===================== LIVE BOARD REFRESH =====================
+// The scheduled jobs move properties while people have the page open. Before this,
+// a tab opened at 7am still showed the 7am board at 5pm: the listings check moved
+// 4561 Zeller and 272 Markison onto the market at 1pm and every open screen still
+// showed them sitting in Finishes and Punchout. The page now re-reads the board
+// when you come back to the tab, and quietly in the background.
+let _refreshBusy = false, _lastRefresh = 0;
+
+function _boardFingerprint(list){
+  return (list||[]).map(c=>[c.id,c.phase,c.pm,c.type,(c.checklists||{}).timeline_done,
+    c.budget,c.spent,c.estProfit,c.goalArv,c.archived?1:0].join('~')).sort().join('|');
+}
+// Never pull data out from under somebody mid-edit.
+function _refreshBlocked(){
+  if(document.querySelector('.overlay.show')) return 'a window is open';
+  const a=document.activeElement;
+  if(a && (/^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) || a.isContentEditable)) return 'someone is typing';
+  return null;
+}
+async function _boardRefresh(){
+  if(_refreshBusy) return;
+  if(document.visibilityState !== 'visible') return;
+  if(!_sessionCache) return;
+  if(_refreshBlocked()) return;
+  if(Date.now() - _lastRefresh < 20000) return;
+  _refreshBusy = true;
+  try{
+    const before = _boardFingerprint(propCards);
+    const { data, error } = await _withTimeout(
+      supabase.from("pm_properties").select(PROP_SELECT_COLS).order("created_at",{ ascending:true }),
+      15000, "the board refresh");
+    if(error || !data) return;
+    _lastRefresh = Date.now();
+    const fresh = data.map(_propRowToCard);
+    if(_boardFingerprint(fresh) === before) return;   // nothing moved - leave the screen alone
+    const wasPhase = {}; (propCards||[]).forEach(c=>{ wasPhase[c.id]=c.phase; });
+    const moved = fresh.filter(c => wasPhase[c.id] && wasPhase[c.id] !== c.phase);
+    propCards = fresh;
+    if(_refreshBlocked()) return;                     // they started typing while we were reading
+    const y = window.scrollY;
+    try{ if(window._pdTab && document.getElementById('pd-root')) openProjectDashboard(window._pdTab); }catch(e){}
+    window.scrollTo(0, y);
+    if(moved.length===1){
+      _toast(moved[0].addr + ' moved to ' + moved[0].phase);
+    } else if(moved.length>1){
+      _toast(moved.length + ' properties moved \u2014 ' + moved.slice(0,3).map(c=>c.addr).join(', ') + (moved.length>3?'\u2026':''));
+    }
+  }catch(e){ /* slow or offline - the next tick will pick it up */ }
+  finally{ _refreshBusy = false; }
+}
+// Coming back to the tab is exactly when people expect current information.
+document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='visible') _boardRefresh(); });
+window.addEventListener('focus', ()=>{ _boardRefresh(); });
+// A slow background poll so a screen left open all day doesn't drift. Deliberately
+// infrequent: this database is shared with other apps and fell over tonight under load.
+setInterval(_boardRefresh, 300000);
+
 // ===================== BOOT =====================
 // Paint a usable screen before touching the network, then load.
 _bootPaint();
@@ -14616,4 +14675,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-01c boot-resilience-signin -->
+<!-- build: 2026-09-02a live-board-refresh -->
