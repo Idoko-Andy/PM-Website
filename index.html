@@ -5528,6 +5528,113 @@ function _wmMoneyShort(n){
   const s=a>=1000000?('$'+(a/1000000).toFixed(2)+'m'):a>=1000?('$'+Math.round(a/1000)+'k'):('$'+Math.round(a));
   return (n<0?'&minus;':'')+s;
 }
+// ===== MONDAY MEETING - PERMIT STATUS, PULLED LIVE =====================
+// Bruce, 4 Sept: "if a job's permitted, it automatically needs to pull the latest
+// up to date updates from the permit tracker and put it into the meeting tracker.
+// In that way we can remove the note that says IF PERMITS fill in days since
+// drawings/engineer back, days since last touch."
+// So nobody types any of this in the meeting any more. Every figure below is read
+// straight off the Permit Tracker's own rows at the moment the meeting is opened -
+// one place to enter it, every place to see it.
+//
+// "Last touched" is the most recent thing anybody actually DID on that permit -
+// checked the portal, answered the examiner, or sent a revision. It is labelled
+// for what it is rather than as contact with the GC, because the tracker holds no
+// GC contact field; if that is wanted it needs a column of its own.
+function _wmPermTouch(r){
+  const ds=[r.checked, r.responded, r.rev_submitted, r.issued, r.stamped, r.submitted].filter(Boolean).sort();
+  return ds.length?ds[ds.length-1]:null;
+}
+function _wmPermWhat(r, d){
+  if(d===r.checked) return 'portal checked';
+  if(d===r.responded) return 'examiner answered';
+  if(d===r.rev_submitted) return 'revision sent';
+  if(d===r.issued) return 'issued';
+  if(d===r.stamped) return 'engineer stamp back';
+  if(d===r.submitted) return 'submitted';
+  return '';
+}
+function _wmAgo(ds){
+  const n=_permitDaysSince(ds);
+  if(n===null) return null;
+  return n===0?'today':(n===1?'yesterday':(n+' days ago'));
+}
+function _wmPermitBlock(c){
+  if(!c) return '';
+  if(((c.checklists||{}).permitted)!=='yes') return '';
+  const head=`<div style="padding:6px 11px;background:#FBF4F8;border-bottom:0.5px solid #F0E2EA;font-size:10.5px;font-weight:700;color:#72243E;text-transform:uppercase;letter-spacing:.05em">&#128196; Permits &mdash; read live from the Permit Tracker</div>`;
+  const wrap=(inner)=>`<div style="margin-top:9px;border:0.5px solid #EBD8E4;border-radius:9px;overflow:hidden">${head}<div style="padding:9px 11px">${inner}</div></div>`;
+  // An unloaded tracker must say so. Printing "no permits" for a house that has
+  // three of them is the bug that sent people off to re-add rows that existed.
+  if(window._trkLoaded!==true || window._trkLoadOk===false)
+    return wrap(`<div style="font-size:12.5px;color:#B7791F">${window._trkLoadOk===false?'The trackers could not be loaded just now, so permit status is not showing. Refresh the page.':'Checking the Permit Tracker&hellip;'}</div>`);
+  // _pdPermits lives inside openPropDetail, so it is not reachable from here -
+  // do the same join off the globals the tracker itself uses.
+  const rows=(typeof _permitList==='function'?_permitList():[]).filter(r=>{
+    const pr=(typeof _permitProp==='function')?_permitProp(r):null; return pr && pr.id===c.id;
+  });
+  if(!rows.length)
+    return wrap(`<div style="font-size:12.5px;color:#B7791F">This job is marked permitted, but no permits are on the tracker for it yet &mdash; add them on the Permit Tracker and they will appear here by themselves.</div>`);
+
+  const fact=(label,val,tone,sub)=>`<div style="min-width:118px">
+      <div style="font-size:9.5px;color:#aaa;text-transform:uppercase;letter-spacing:.05em">${label}</div>
+      <div style="font-size:12.5px;font-weight:600;color:${tone||'#111'};line-height:1.35">${val}</div>
+      ${sub?`<div style="font-size:10.5px;color:#aaa">${sub}</div>`:''}</div>`;
+
+  const body=rows.map(r=>{
+    const st=String(r.status||'');
+    const stCol=(typeof _permitStatusColor==='function')?_permitStatusColor(st):'#666';
+    const insps=(typeof _permitInsps==='function')?_permitInsps(r):[];
+    const passed=insps.filter(x=>x.done).length;
+    const fails=insps.reduce((a,x)=>a+(parseInt(x.fails,10)||0),0);
+
+    // drawings / engineer back - the first half of the note this replaces
+    const stampAgo=_wmAgo(r.stamped);
+    const stampCell=r.stamped
+      ? fact('Drawings / engineer back', stampAgo, '#0F7B54', _calEsc(r.stamped))
+      : fact('Drawings / engineer back','not back yet','#B7791F','no stamp date on the tracker');
+
+    // last touched - the second half, named honestly
+    const touch=_wmPermTouch(r);
+    const touchDays=_permitDaysSince(touch);
+    const touchCell=touch
+      ? fact('Last touched', _wmAgo(touch), (touchDays!=null&&touchDays>PERMIT_STALE_DAYS)?'#B42318':'#111', _calEsc(_wmPermWhat(r,touch)))
+      : fact('Last touched','never','#B42318','nothing recorded on this permit');
+
+    const subAgo=_wmAgo(r.submitted);
+    const subCell=r.submitted
+      ? fact('Submitted', subAgo, '#111', (r.issued?('issued '+_calEsc(r.issued)):'not issued yet'))
+      : fact('Submitted','no date','#B7791F','');
+
+    const openComment = (r.received && !r.responded);
+    const commentCell = openComment
+      ? fact('Examiner comment', (_wmAgo(r.received)||'open'), '#B42318', 'not answered yet')
+      : fact('Examiner comment', r.received?'answered':'none open', r.received?'#0F7B54':'#999', r.responded?_calEsc(r.responded):'');
+
+    const inspCell = insps.length
+      ? fact('Inspections', passed+' of '+insps.length+' passed', (passed===insps.length)?'#0F7B54':'#B7791F', fails?(fails+' failed attempt'+(fails===1?'':'s')):'')
+      : fact('Inspections','none listed','#999','');
+
+    // The one line that tells the room what this permit is waiting on.
+    const need=(typeof _permitNeeds==='function')?_permitNeeds(r):null;
+
+    return `<div style="padding:8px 0;border-top:0.5px solid #f4f5f7">
+      <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+        <span style="font-size:12.5px;font-weight:700;color:#111">${_calEsc(r.number||'no permit number')}</span>
+        <span style="font-size:11.5px;color:#999">${_calEsc(r.juris||'')}</span>
+        <span style="font-size:11.5px;font-weight:700;color:${stCol}">${_calEsc(st)||'no status'}</span>
+        ${r.priority?`<span style="font-size:10.5px;font-weight:600;color:${_permitPriorityColor(r.priority)}">${_calEsc(r.priority)} priority</span>`:''}
+      </div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap">${subCell}${stampCell}${touchCell}${commentCell}${inspCell}</div>
+      ${need?`<div style="margin-top:6px;font-size:11.5px;color:#B42318">&#9888;&#65039; ${_calEsc(need)}</div>`:''}
+      ${r.comment?`<div style="margin-top:5px;font-size:11.5px;color:#555;background:#F8F9FC;border-radius:6px;padding:5px 8px"><b style="color:#888">Latest from ${_calEsc(r.examiner||'the examiner')}:</b> ${_calEsc(r.comment)}</div>`:''}
+    </div>`;
+  }).join('');
+
+  return wrap(body.replace('border-top:0.5px solid #f4f5f7','border-top:none')+
+    `<div style="font-size:10.5px;color:#bbb;margin-top:7px">Nobody fills this in &mdash; it is the Permit Tracker's own rows. Change it there and it changes here.</div>`);
+}
+
 function _wmDateShort(d){ if(!d) return '&mdash;'; try{ return new Date(d+"T00:00:00").toLocaleDateString(undefined,{day:'numeric',month:'short'}); }catch(e){ return d; } }
 
 // ---- the printable sheet ----------------------------------------------------
@@ -6933,7 +7040,7 @@ function openWeeklyMeeting(kind, week){
           ${fld('Project manager',_pmField(c,'wm'))}
           ${fld('JV deal',ro?(c.jvDeal?'Yes':'No'):`<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" ${c.jvDeal?'checked':''} onchange="_wmDeal('${c.id}','jv_deal',this.checked,this)" style="width:15px;height:15px;cursor:pointer"/> Yes</label>`)}
         </div>
-        ${perm?'<div style="margin-top:9px;font-size:12px;color:#72243E;background:#FBEAF0;border-radius:6px;padding:5px 9px;display:inline-block">IF PERMITS &mdash; fill in: days since drawings/engineer back &middot; days since last touch with GC</div>':''}
+        ${_wmPermitBlock(c)}
 
         ${secWrap(secHead('What was scheduled last week', _wmLabel(lastWk).replace(/^\w+, /,'')+' &rarr; Sun'), lastRows+
           `<div style="border-top:1px dashed #e6e8ee;padding-top:8px;margin-top:6px"><div style="font-size:9.5px;color:#aaa;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Comments on last week</div>${ta2(c.id+'::lastc','Anything about how last week actually went&hellip;',44)}</div>`)}
@@ -15443,4 +15550,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-04b inspections-tab -->
+<!-- build: 2026-09-04c meeting-permit-pull -->
