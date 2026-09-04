@@ -2772,9 +2772,9 @@ async function saveSubPhaseSchedule(id){
     const start=startEl?startEl.value||"":(prev.start||"");
     const due=dueEl?dueEl.value||"":(prev.due||"");
     let taskId=prev.taskId||null;
-    // First Time Access (Start-of-Project Assistant) and approval steps (approvers) never
-    // go on the PM's task calendar — so they never create/keep a mirrored pm_task here.
-    const _pmTaskEligible = name!=="First Time Access Checklist" && !_isPureApproval(name) && _spApplies(name, card) && !_isCardOnlySub(name);
+    // Same single rule the workflow sync uses (_spTaskEligible): the Start-of-Project
+    // Assistant's step, the approvers' steps and record-only steps stay off PM calendars.
+    const _pmTaskEligible = _spTaskEligible(name, card);
     const scheduled = start && due && _pmTaskEligible;
     if(scheduled){
       const payload={ title:name, category:name, assignee:card.pm||null, assignees:card.pm?[card.pm]:[], start_date:start, due_date:due, property_id:id, notes:"Auto-created from "+(card.addr||"property")+" subphase schedule" };
@@ -3036,15 +3036,34 @@ async function _advanceSweep(){
 // A "pure" approval step (e.g. Pending Permit Approval) belongs to the approvers only.
 // Combined steps like "SOW Creation & Approval" are PM creation work and DO go on PM calendars.
 function _isPureApproval(nm){ return /approval/i.test(nm||"") && !/creat/i.test(nm||""); }
+// RECORD-ONLY STEPS. Bruce, 3 Sept: "permit submitted... it's telling me that a permit
+// submitted? Cool. Why is that on my task schedule?" A step that only RECORDS that
+// something already happened is a notification, not a job - nobody can "do" it. It still
+// belongs on the property card as a dated, ticked step (that is the history), but it must
+// never be mirrored onto anybody's task calendar or turn up in the Monday meeting.
+const RECORD_ONLY_SUBS = [/^permit submitted\b/i, /^permit issued\b/i, /^permit received\b/i, /^permit closed\b/i, /^permit stamped\b/i];
+function _isRecordOnlySub(nm){ const s=String(nm||""); return RECORD_ONLY_SUBS.some(re=>re.test(s)); }
+// ONE test for "should this subphase appear on a task calendar", used by BOTH places that
+// mirror subphases into pm_tasks. They used to disagree - the schedule form refused
+// card-only steps while the workflow sync created them - so saving a schedule silently
+// deleted tasks the workflow had just made. One rule, both paths.
+function _spTaskEligible(name, card){
+  if(name==="First Time Access Checklist") return false;   // Start-of-Project Assistant's
+  if(_isPureApproval(name)) return false;                  // the approvers', not the PM's
+  if(_isRecordOnlySub(name)) return false;                 // a fact, not a job
+  if(!_spApplies(name, card)) return false;                // permitted-only steps on unpermitted jobs
+  return true;
+}
 async function _syncSubphaseTasks(propId){
   const card=(typeof propCards!=='undefined'?propCards:[]).find(p=>p.id===propId); if(!card) return;
   const subs=(card.subPhases||[]).map(sp=>({...sp}));
   let changed=false;
   for(const sp of subs){
-    // First Time Access Checklist belongs to the Start-of-Project Assistant, and approval steps
-    // belong to the approvers (Tommy/Bruce) — neither should appear on the PM's task calendar.
-    if(sp.name==="First Time Access Checklist" || _isPureApproval(sp.name)) continue;
-    if(!_spApplies(sp.name, card)) continue; // permitted-only (or non-permitted-only) steps skip cards they don't apply to
+    if(!_spTaskEligible(sp.name, card)) continue;
+    // Already ticked the moment it appeared (a permit the tracker back-filled, a step the PM
+    // finished before it was ever scheduled). There is nothing left to do, so putting it on
+    // a calendar as an OPEN task is exactly the noise this guard exists to stop.
+    if(sp.completed) continue;
     if(sp.start && sp.due && !sp.taskId){
       const ex=await supabase.from("pm_tasks").select("id").eq("property_id",propId).eq("category",sp.name).eq("due_date",sp.due).limit(1);
       if(ex.data && ex.data.length){ sp.taskId=ex.data[0].id; changed=true; continue; }
@@ -3531,6 +3550,19 @@ function openPropDetail(id) {
     const sp=_savedSub(name);
     const board = SUB_PHASE_BOARD[name] || (PERMIT_SUB_RE.test(name)?'Permit Tracker':(INSPECTION_SUB_RE.test(name)?'Permit Tracker · inspection':'This property only'));
     const nEsc = name.replace(/'/g,"\\'");
+    // A record-only step is history, not work: the Permit Tracker writes it, nobody ticks it,
+    // and it never reaches a task calendar. Draw it as the fact it is - no checkbox, no date
+    // boxes to fill in - so it stops reading like something somebody forgot to do.
+    if(_isRecordOnlySub(name)){
+      const when = sp.start ? _wmDateShort(sp.start) : '';
+      return `<div style="padding:8px 0;border-bottom:0.5px solid #f4f5f7;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+        <div style="min-width:150px">
+          <div style="color:#555;font-weight:500;font-size:13px">${name}</div>
+          <div style="font-size:11px;color:#aaa;margin-top:1px">Recorded by the Permit Tracker — nothing to do</div>
+        </div>
+        <span style="font-size:11px;color:#3B6D11;white-space:nowrap">✓ Recorded${when?(' '+when):''}</span>
+      </div>`;
+    }
     const dateInput=(kind,val)=> _ro_sp
       ? `<span style="font-size:12px;color:${val?'#111':'#ccc'}">${val||'—'}</span>`
       : `<input type="date" id="sp-${kind}-${i}" value="${val||''}" style="font-size:12px;padding:3px 5px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none" />`;
@@ -15281,4 +15313,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-03b company-meeting-contrast -->
+<!-- build: 2026-09-04a permit-records-not-tasks -->
