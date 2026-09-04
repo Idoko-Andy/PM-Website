@@ -6523,15 +6523,15 @@ function _compPerfBlock(wk, forPrint){
     const drawCol = g.drawnPct==null?'#999':(g.drawnPct>100?'#B42318':(g.drawnPct>85?'#B7791F':'#0F7B54'));
     return `<tr style="border-bottom:0.5px solid #f1f3f7">
       <td style="padding:7px 9px;font-size:13px;font-weight:600;color:#111">${_calEsc(resolvePMName(g.pm)||g.pm)}</td>
-      <td style="padding:7px 9px;font-size:13px;text-align:center">${g.jobs}</td>
+      <td style="padding:7px 9px;font-size:13px;text-align:center;color:#111">${g.jobs}</td>
       <td style="padding:7px 9px;font-size:13px;text-align:right;font-weight:600;color:#4A1D6E">${money(g.avgRate)}${g.thin?`<span style="font-size:10px;color:#bbb"> · ${g.thin} too new</span>`:''}</td>
-      <td style="padding:7px 9px;font-size:13px;text-align:right">${money(g.budget)}</td>
-      <td style="padding:7px 9px;font-size:13px;text-align:right">${money(g.spent)}</td>
+      <td style="padding:7px 9px;font-size:13px;text-align:right;color:#111">${money(g.budget)}</td>
+      <td style="padding:7px 9px;font-size:13px;text-align:right;color:#111">${money(g.spent)}</td>
       <td style="padding:7px 9px;font-size:13px;text-align:right;font-weight:700;color:${drawCol}">${g.drawnPct==null?'&mdash;':(g.drawnPct+'%')}</td>
       <td style="padding:7px 9px;font-size:13px;text-align:center;color:${g.over?'#B42318':'#bbb'};font-weight:${g.over?'700':'400'}">${g.over||'—'}</td>
     </tr>`;}).join(''):`<tr><td colspan="7" style="padding:14px;text-align:center;color:#bbb;font-size:13px">Nobody has a live project right now.</td></tr>`;
 
-  const perf=`<table style="width:100%;border-collapse:collapse">
+  const perf=`<table style="width:100%;border-collapse:collapse;color:#111">
       <thead><tr style="background:#122A4A">${th('Project manager')}${th('Live jobs','center')}${th('Avg production $/day','right')}${th('Budget','right')}${th('Spent','right')}${th('Drawn','right')}${th('Over','center')}</tr></thead>
       <tbody>${perfRows}</tbody></table>
     <div style="font-size:11px;color:#aaa;margin-top:6px">Production $/day is money spent divided by the days the job has actually been running. Jobs under a week old are left out of the average — a rate off three days is arithmetic, not information.</div>`;
@@ -6550,7 +6550,7 @@ function _compPerfBlock(wk, forPrint){
         `<div style="font-size:12.5px;color:#111;padding:3px 0">${_calEsc(c.addr||'')}<span style="color:#aaa"> · ${_calEsc(c.phase||'')}</span></div>`).join('')+`</div>`
     : `<div style="font-size:12.5px;color:#bbb">No properties in active construction.</div>`;
 
-  const box=(t,inner,note)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:12px 15px;margin-bottom:11px">
+  const box=(t,inner,note)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:12px 15px;margin-bottom:11px;color:#111">
       <div style="font-size:13.5px;font-weight:700;color:#111;margin-bottom:${note?'2px':'7px'}">${t}</div>
       ${note?`<div style="font-size:11px;color:#aaa;margin-bottom:7px">${note}</div>`:''}${inner}</div>`;
 
@@ -15281,4 +15281,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-03a checklists-company-meeting -->
+<!-- build: 2026-09-03b company-meeting-contrast -->
