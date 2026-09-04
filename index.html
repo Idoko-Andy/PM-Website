@@ -11271,6 +11271,138 @@ async function _permitInspRemove(id, insId){
   if(await _trkSave()) _permitRerender();
 }
 
+// ---- INSPECTIONS, ON THEIR OWN TAB -------------------------------------------
+// Bruce, 4 Sept: "have its own tab for the type of inspections for each property,
+// for each permit, that pulls from the permit tracker, but I just wanna keep it
+// cleaner." The permit table keeps a one-glance chip and nothing else; everything
+// you actually DO with an inspection lives here, grouped the way the work is:
+// property, then the permits on it, then the inspections that permit needs.
+// It reads _trkData exactly like the table does - one store, no second copy.
+function _permTab(){ const t=window._permTabSel||'permits'; return (t==='insp')?'insp':'permits'; }
+function _permTabTo(k){ window._permTabSel=k; if(k!=='insp') window._permFocus=null; _permitRerender(); }
+function _permInspGo(pid){ window._permTabSel='insp'; window._permFocus=pid||null; _permitRerender(); }
+function _permInspShow(k){ window._permInspFilter=k; _permitRerender(); }
+function _permInspStats(list){
+  const total=list.length, done=list.filter(x=>!!x.done).length;
+  return {total, done, open:total-done, fails:list.reduce((a,x)=>a+(parseInt(x.fails,10)||0),0)};
+}
+// Every inspection on the board, flattened, so the header can count without
+// walking the groups twice.
+function _permInspAll(){
+  const out=[]; _permitList().forEach(r=>_permitInsps(r).forEach(ins=>out.push(ins))); return out;
+}
+function _permInspSearch(){
+  const q=((document.getElementById('insp-search')||{}).value||'').trim().toLowerCase();
+  document.querySelectorAll('[data-insp]').forEach(el=>{
+    el.style.display = (!q || (el.getAttribute('data-insp')||'').toLowerCase().includes(q)) ? '' : 'none';
+  });
+}
+function _permitInspBody(){
+  const ro=isReadOnly();
+  const filt=window._permInspFilter||'all';
+  const focus=window._permFocus||null;
+  // Group permits under the property they belong to. A permit whose address has
+  // no card still gets a group of its own rather than being dropped.
+  const groups=[], byKey={};
+  _permitList().forEach(r=>{
+    const prop=_permitProp(r);
+    const key=prop?('p:'+prop.id):('x:'+((typeof _permitSlug==='function'?_permitSlug(r.addr):'')||r.id));
+    if(!byKey[key]){ byKey[key]={key, prop, addr:(prop?prop.addr:r.addr)||'(no address)', permits:[]}; groups.push(byKey[key]); }
+    byKey[key].permits.push(r);
+  });
+  groups.sort((a,b)=>String(a.addr||'').localeCompare(String(b.addr||'')));
+
+  const all=_permInspStats(_permInspAll());
+  const tile=(label,val,color)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:9px;padding:9px 14px;min-width:112px">
+    <div style="font-size:10.5px;color:#999;text-transform:uppercase;letter-spacing:.05em">${label}</div>
+    <div style="font-size:19px;font-weight:700;color:${color};line-height:1.25">${val}</div></div>`;
+  const pill=(k,label)=>`<span onclick="_permInspShow('${k}')" style="cursor:pointer;padding:5px 12px;border-radius:7px;font-size:12.5px;font-weight:${filt===k?'600':'400'};background:${filt===k?'#122A4A':'#fff'};color:${filt===k?'#fff':'#444'};border:0.5px solid ${filt===k?'#122A4A':'#d8dce6'}">${label}</span>`;
+
+  const inspRow=(r,ins)=>{
+    const fails=parseInt(ins.fails,10)||0;
+    const hay=(r.addr||'')+' '+(r.number||'')+' '+(r.juris||'')+' '+(ins.name||'')+' '+(ins.when==='after'?'after finishes':'before finishes')+(fails?' failed':'')+(ins.done?' passed':' outstanding');
+    return `<tr data-insp="${_calEsc(hay)}" style="border-top:0.5px solid #f1f3f7">
+      <td style="padding:7px 10px;width:30px;text-align:center">${ro?`<span style="font-size:15px">${ins.done?'✅':'⬜'}</span>`
+        :`<span onclick="_permitInspToggle('${r.id}','${ins.id}')" title="${ins.done?'Reopen this inspection':'Mark this inspection passed'}" style="cursor:pointer;font-size:15px">${ins.done?'✅':'⬜'}</span>`}</td>
+      <td style="padding:7px 10px">
+        <div style="font-size:13px;font-weight:600;color:${ins.done?'#0F7B54':'#111'}">${_calEsc(ins.name||'Inspection')}</div>
+        <div style="font-size:11px;color:#aaa;margin-top:1px">${ins.when==='after'?'After finishes &middot; end of job':'Before finishes &middot; mid-build'}</div>
+      </td>
+      <td style="padding:7px 10px;text-align:center;white-space:nowrap">${ins.done
+        ? `<span style="font-size:11.5px;font-weight:600;color:#0F7B54">Passed${ins.date?(' '+_calEsc(ins.date)):''}</span>`
+        : `<span style="font-size:11.5px;font-weight:600;color:#B7791F">Still to pass</span>`}</td>
+      <td style="padding:7px 10px;text-align:center;white-space:nowrap">
+        ${fails?`<span style="font-size:11.5px;font-weight:700;color:#B42318">failed ${fails}&times;</span>`:`<span style="font-size:11.5px;color:#ccc">no failures</span>`}
+        ${ro?'':`<div style="margin-top:2px"><span onclick="_permitInspFail('${r.id}','${ins.id}',1)" title="Record a failed inspection" style="cursor:pointer;font-size:11px;color:#B42318">+ fail</span>${fails?` <span onclick="_permitInspFail('${r.id}','${ins.id}',-1)" title="Take one back" style="cursor:pointer;font-size:11px;color:#bbb;margin-left:5px">&minus;</span>`:''}</div>`}</td>
+      <td style="padding:7px 10px;text-align:center;width:28px">${ro?'':`<span onclick="_permitInspRemove('${r.id}','${ins.id}')" title="Remove this inspection" style="cursor:pointer;font-size:12px;color:#ddd">&#10005;</span>`}</td>
+    </tr>`;
+  };
+
+  const permitBlock=(r)=>{
+    let list=_permitInsps(r);
+    if(filt==='open') list=list.filter(x=>!x.done);
+    else if(filt==='done') list=list.filter(x=>!!x.done);
+    const st=_permInspStats(_permitInsps(r));
+    const hit=(focus&&focus===r.id);
+    const body=list.length?list.map(ins=>inspRow(r,ins)).join('')
+      :`<tr><td colspan="5" style="padding:11px;text-align:center;font-size:12px;color:#bbb">${st.total?'Nothing in this filter.':'No inspections listed for this permit yet.'}</td></tr>`;
+    const add=ro?'':`<tr style="background:#F8F9FC;border-top:0.5px solid #eef0f6"><td colspan="5" style="padding:8px 10px">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+          <input id="ins-n-${r.id}" placeholder="Framing, electrical rough-in, final occupancy…" style="padding:5px 9px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:270px"/>
+          <select id="ins-w-${r.id}" style="padding:5px 7px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px">${PERMIT_INSP_WHEN.map(w=>`<option value="${w[0]}">${w[1]}</option>`).join('')}</select>
+          <button onclick="_permitInspAdd('${r.id}')" style="padding:5px 13px;border:none;border-radius:6px;background:#122A4A;color:#fff;font-size:12.5px;font-weight:600;cursor:pointer">Add inspection</button>
+        </div></td></tr>`;
+    return `<div style="border:0.5px solid ${hit?'#639922':'#e6e9f0'};border-radius:9px;overflow:hidden;margin-top:10px;${hit?'box-shadow:0 0 0 2px rgba(99,153,34,.16)':''}">
+      <div style="padding:8px 12px;background:#FAFBFD;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <div style="font-size:12.5px;color:#111"><b>${_calEsc(r.number||'no permit number')}</b>
+          <span style="color:#999;font-weight:400"> &middot; ${_calEsc(r.juris||'jurisdiction not set')}</span>
+          ${r.status?`<span style="margin-left:7px;font-size:11px;font-weight:600;color:${_permitStatusColor(r.status)}">${_calEsc(r.status)}</span>`:''}</div>
+        <div style="font-size:11.5px;color:${st.total&&st.done===st.total?'#0F7B54':'#666'}">${st.total?`${st.done} of ${st.total} passed${st.fails?` &middot; <span style="color:#B42318;font-weight:600">${st.fails} failure${st.fails===1?'':'s'}</span>`:''}`:'none listed'}</div>
+      </div>
+      <table style="width:100%;border-collapse:collapse">${body}${add}</table>
+    </div>`;
+  };
+
+  const cards=groups.map(g=>{
+    const flat=[]; g.permits.forEach(r=>_permitInsps(r).forEach(x=>flat.push(x)));
+    const gs=_permInspStats(flat);
+    if(filt==='open' && gs.open===0 && gs.total>0) return '';
+    if(filt==='done' && gs.done===0 && gs.total>0) return '';
+    const head=g.prop
+      ? `<span onclick="openPropDetail('${g.prop.id}')" style="cursor:pointer;color:#185FA5;font-weight:700">${_calEsc(g.addr)}</span><span style="font-size:11.5px;color:#999;font-weight:400;margin-left:8px">${_calEsc(g.prop.phase||'')}${g.prop.pm?(' &middot; '+_calEsc(g.prop.pm)):''}</span>`
+      : `<span style="font-weight:700;color:#111">${_calEsc(g.addr)}</span><span style="font-size:11.5px;color:#c0392b;font-weight:400;margin-left:8px">no property card matched</span>`;
+    return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:13px 15px;margin-bottom:13px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <div style="font-size:14px">${head}</div>
+        <div style="font-size:11.5px;color:${gs.total?(gs.open?'#B7791F':'#0F7B54'):'#bbb'};font-weight:600">${gs.total?(gs.open?(gs.open+' still to pass'):'all passed'):'no inspections yet'}</div>
+      </div>
+      ${g.permits.map(permitBlock).join('')}
+    </div>`;
+  }).join('');
+
+  const bar=`<div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:13px">
+      <input id="insp-search" placeholder="Search an address, permit #, city or inspection…" oninput="_permInspSearch()" style="flex:1;min-width:230px;max-width:340px;padding:8px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:13.5px;outline:none"/>
+      ${pill('all','All')}${pill('open','Still to pass')}${pill('done','Passed')}
+      <div style="flex:1"></div>
+      ${ro?'':`<button onclick="openAddTask('', {cat:'Inspection'})" style="padding:8px 14px;border:none;border-radius:8px;background:#122A4A;color:#fff;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">&#65291; Add task</button>`}
+    </div>`;
+
+  const stats=`<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:13px">
+      ${tile('Still to pass', all.open, all.open?'#B7791F':'#0F7B54')}
+      ${tile('Passed', all.done, '#0F7B54')}
+      ${tile('Failed attempts', all.fails, all.fails?'#B42318':'#bbb')}
+      ${tile('Properties', groups.filter(g=>g.permits.some(r=>_permitInsps(r).length)).length, '#122A4A')}
+    </div>`;
+
+  const foot=`<div style="font-size:12px;color:#999;margin-top:4px">
+    These are the same inspections the Permit Tracker holds &mdash; adding one here puts a matching step on that property's card straight away, and ticking it passed ticks that step too.
+    Label it <b>before finishes</b> for a mid-build inspection (MEPs, before the drywall closes it up) and <b>after finishes</b> for an end-of-job one.
+    <br>Failures are counted per inspection because the End of Project report asks for them by name.
+    </div>`;
+
+  return stats+bar+(cards||`<div style="background:#fff;border:0.5px dashed #d5d9e2;border-radius:11px;padding:26px;text-align:center;color:#bbb;font-size:13px">No inspections match this filter. Add one under any permit.</div>`)+foot;
+}
+
 function _permitStatusColor(s){
   return s==="Issued"?"#1D9E75":s==="Corrections Required"?"#C0392B":s==="Revisions"?"#7A3FA8":
          s==="Under Review"?"#185FA5":s==="Application Submitted"?"#B7791F":"#999";
@@ -11286,6 +11418,13 @@ function _permitPriorityColor(p){
 function _permitTrackerBody(){
   const ro=isReadOnly();
   const arch=(window._permitCtx==="architect");
+  // Two square tabs. Permits is the sheet; Inspections is the same data grouped
+  // by property so nobody has to scroll a 17-column table to book a framing check.
+  const _ptab=_permTab();
+  const _pOpen=_permInspAll().filter(x=>!x.done).length;
+  const _pTabBtn=(k,label)=>`<span onclick="_permTabTo('${k}')" style="cursor:pointer;padding:7px 14px;border-radius:8px;font-size:13px;font-weight:${_ptab===k?'600':'400'};background:${_ptab===k?'#122A4A':'#fff'};color:${_ptab===k?'#fff':'#444'};border:0.5px solid ${_ptab===k?'#122A4A':'#d8dce6'}">${label}</span>`;
+  const _pTabBar=`<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:13px">${_pTabBtn('permits','\ud83d\udcc4 Permits')}${_pTabBtn('insp','\ud83d\udd29 Inspections'+(_pOpen?(' &middot; '+_pOpen+' open'):''))}</div>`;
+  if(_ptab==='insp') return _pTabBar+_permitInspBody();
   const rows=_permitList();
   const jl=_permitJurisdictions();
   const COLS=arch?14:15;
@@ -11313,29 +11452,20 @@ function _permitTrackerBody(){
     <th style="padding:9px;text-align:left">Latest comment</th>
     <th style="padding:9px">Responded</th>
     <th style="padding:9px">Latest revision</th>
-    <th style="padding:9px;text-align:left;min-width:190px">Inspections</th>
+    <th style="padding:9px">Inspections</th>
     ${arch?"":'<th style="padding:9px">Paperwork at warehouse</th>'}
     <th style="padding:9px">Task</th>`;
 
-  const inspCell=(r)=>{
+  // One glance only. Everything you DO with an inspection lives on the Inspections
+  // tab - this table was already 17 columns wide and the inspection cell was the
+  // thing that made it unreadable.
+  const inspChip=(r)=>{
     const list=_permitInsps(r);
-    const prop=_permitProp(r);
-    const rowsHtml=list.length?list.map(ins=>`<div style="display:flex;align-items:flex-start;gap:6px;padding:2px 0">
-        ${ro?`<span style="font-size:14px">${ins.done?"✅":"⬜"}</span>`
-            :`<span onclick="_permitInspToggle('${r.id}','${ins.id}')" title="Mark this inspection passed" style="cursor:pointer;font-size:14px">${ins.done?"✅":"⬜"}</span>`}
-        <div style="min-width:0;flex:1">
-          <div style="font-size:12px;color:${ins.done?"#1D9E75":"#111"}">${_calEsc(ins.name||"")}</div>
-          <div style="font-size:10px;color:#aaa">${ins.when==="after"?"after finishes":"before finishes"}${ins.done&&ins.date?(" · passed "+_calEsc(ins.date)):""}</div>
-          <div style="font-size:10px;margin-top:1px">${(parseInt(ins.fails,10)||0)?`<span style="color:#B42318;font-weight:600">failed ${parseInt(ins.fails,10)}&times;</span>`:`<span style="color:#ccc">no failures</span>`}${ro?"":` <span onclick="_permitInspFail('${r.id}','${ins.id}',1)" title="Record a failed inspection" style="cursor:pointer;color:#B42318;margin-left:4px">+fail</span>${(parseInt(ins.fails,10)||0)?` <span onclick="_permitInspFail('${r.id}','${ins.id}',-1)" title="Take one back" style="cursor:pointer;color:#bbb">&minus;</span>`:''}`}</div>
-        </div>
-        ${ro?"":`<span onclick="_permitInspRemove('${r.id}','${ins.id}')" title="Remove" style="cursor:pointer;font-size:11px;color:#ddd">✕</span>`}
-      </div>`).join(""):`<div style="font-size:11.5px;color:#bbb;padding:2px 0">None yet.</div>`;
-    const add=ro?"":`<div style="display:flex;gap:4px;margin-top:5px;flex-wrap:wrap">
-        <input id="ins-n-${r.id}" placeholder="Framing, final…" style="padding:3px 6px;border:0.5px solid #d8dce6;border-radius:5px;font-size:11.5px;width:108px"/>
-        <select id="ins-w-${r.id}" style="padding:3px 4px;border:0.5px solid #d8dce6;border-radius:5px;font-size:11.5px">${PERMIT_INSP_WHEN.map(w=>`<option value="${w[0]}">${w[1]}</option>`).join("")}</select>
-        <button onclick="_permitInspAdd('${r.id}')" style="padding:3px 8px;border:none;border-radius:5px;background:#122A4A;color:#fff;font-size:11.5px;cursor:pointer">Add</button>
-      </div>${prop?"":`<div style="font-size:10px;color:#c0392b;margin-top:3px">No property card matched — this stays on the permit only.</div>`}`;
-    return rowsHtml+add;
+    if(!list.length) return ro?`<span style="font-size:11.5px;color:#ccc">none</span>`
+      :`<span onclick="_permInspGo('${r.id}')" style="cursor:pointer;font-size:11.5px;color:#185FA5">&#65291; add &rsaquo;</span>`;
+    const st=_permInspStats(list);
+    const allDone=st.done===st.total;
+    return `<span onclick="_permInspGo('${r.id}')" title="Open this permit on the Inspections tab" style="cursor:pointer;display:inline-block;padding:3px 9px;border-radius:999px;font-size:11.5px;font-weight:600;background:${allDone?'#EAF7F1':'#F2F4F9'};color:${allDone?'#0F7B54':'#122A4A'};border:0.5px solid ${allDone?'#BFE5D4':'#dfe3ec'}">${st.done}/${st.total} passed</span>${st.fails?`<div style="font-size:10px;color:#B42318;font-weight:600;margin-top:2px">${st.fails} failure${st.fails===1?'':'s'}</div>`:''}`;
   };
 
   const whCell=(r)=>{
@@ -11395,7 +11525,7 @@ function _permitTrackerBody(){
           ${(r.received&&!r.responded)?`<div style="font-size:10.5px;color:#C0392B;margin-top:2px">open</div>`:""}</td>
         <td style="padding:7px;vertical-align:top;text-align:center">${dt(r.id,"rev_submitted")}
           <div style="font-size:10px;color:#bbb;margin-top:2px">latest revision sent</div></td>
-        <td style="padding:7px;vertical-align:top">${inspCell(r)}</td>
+        <td style="padding:7px;vertical-align:top;text-align:center">${inspChip(r)}</td>
         ${arch?"":`<td style="padding:7px;vertical-align:top;text-align:center">${whCell(r)}</td>`}
         <td style="padding:7px;vertical-align:top;text-align:center">
           ${ro?"—":`<div style="display:flex;flex-direction:column;gap:3px">${PERMIT_OWNERS.map(w=>`<span onclick="_permitAddTask('${r.id}','${_calEsc(w)}')" style="cursor:pointer;font-size:11px;color:#185FA5;white-space:nowrap">＋ ${_calEsc(w.split(" ")[0])}</span>`).join("")}</div>`}</td>
@@ -11430,11 +11560,11 @@ function _permitTrackerBody(){
     Every box saves the moment you click out of it. Scroll the table sideways for the examiner, comment and inspection columns.
     ${arch?`If a permit's portal goes <b>${PERMIT_STALE_DAYS} days</b> without being checked, the app raises a task for ${_calEsc(_permitArchitectName())} by itself — updating the date here closes that task again.`
           :`The warehouse column is yours: it appears the moment a permit is issued and clears when you mark it dropped off.`}
-    <br>Adding an <b>inspection</b> puts a matching subphase on that property's card straight away; ticking it passed here ticks the subphase too. Label it <b>before finishes</b> for a mid-build inspection and <b>after finishes</b> for an end-of-job one.
+    <br>Inspections have their own tab now &mdash; click <b>&#128297; Inspections</b> above, or the chip in the Inspections column, to see every inspection grouped by property and permit.
     <br>Portal logins are deliberately not kept here — those belong in the password manager, not in the website.
     </div>`;
 
-  return banner+addBar+_trkSearchBox("Search an address, permit #, city or examiner…")+
+  return _pTabBar+banner+addBar+_trkSearchBox("Search an address, permit #, city or examiner…")+
     _trkTable("📄 Permit Tracker","#B03A8B",head,body)+foot;
 }
 
@@ -15313,4 +15443,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-04a permit-records-not-tasks -->
+<!-- build: 2026-09-04b inspections-tab -->
