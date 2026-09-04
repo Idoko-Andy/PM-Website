@@ -5259,6 +5259,38 @@ async function _wmTick(wk, itemKey, val){
   if(m[itemKey]===val) delete m[itemKey]; else m[itemKey]=val;
   if(await _wmSetMeta(wk,'team','__done',m)) openWeeklyMeeting('team', wk);
 }
+// ---- Marking it done in the meeting marks it done, full stop ------------------
+// Bruce, 4 Sept: "on the full project meeting we need to be able to mark tasks
+// completed as well, rather it's scheduled last week or scheduled this week."
+// The old Completed tick only wrote a note against the meeting - the task itself
+// stayed open on the calendar, so the same job got ticked twice in two places.
+// This writes through to the real task or the real booking, which is the whole
+// point of "I don't wanna input data twice".
+async function _wmDone(itemKey, on){
+  if(_blockIfReadOnly()) return;
+  const kind=itemKey.slice(0,1), id=itemKey.slice(2);
+  const stamp = on ? new Date().toISOString() : null;
+  if(kind==='t'){
+    const t=(typeof _tasksCache!=='undefined'?_tasksCache:[]).find(x=>x.id===id); if(!t) return;
+    let {data,error}=await supabase.from("pm_tasks").update({status:on?"done":"open", completed_at:stamp}).eq("id",id).select("id");
+    if(error && /completed_at/.test(error.message||"")){
+      ({data,error}=await supabase.from("pm_tasks").update({status:on?"done":"open"}).eq("id",id).select("id"));
+    }
+    // A zero-row update comes back with no error at all, so it has to be caught here
+    // or the meeting would show a tick for something the database never took.
+    if(error||!data||!data.length){ alert("That task was NOT updated — "+((error&&error.message)||"nothing saved, refresh and try again")); return; }
+    _logAudit(on?"completed":"reopened","task", t.title||"", "From the Monday project meeting");
+    await loadTasks();
+  } else {
+    const e=(typeof _calEventsCache!=='undefined'?_calEventsCache:[]).find(x=>x.id===id); if(!e) return;
+    const {data,error}=await supabase.from("pm_calendar_events").update({completed:!!on}).eq("id",id).select("id");
+    if(error||!data||!data.length){ alert("That booking was NOT updated — "+((error&&error.message)||"nothing saved, refresh and try again")); return; }
+    _logAudit(on?"completed":"reopened","calendar", (typeof _locLabel==='function'?_locLabel(e):(e.title||'')), "From the Monday project meeting");
+    await loadCalendarEventsFromSupabase();
+  }
+  openWeeklyMeeting('team', window.__wmLastWeek||undefined);
+}
+
 async function _wmConf(wk, itemKey, field, on){
   const m=Object.assign({}, _wmMeta(wk,'team','__conf'));
   const row=Object.assign({}, m[itemKey]||{});
@@ -6930,15 +6962,20 @@ function openWeeklyMeeting(kind, week){
       const lastItems=_wmItems(c.id,lastR.from,lastR.to);
       const lastRows=lastItems.length?lastItems.map(it=>{
         const st=doneMap[it.key]||(it.done?'yes':'');
-        const tick=(v,label,col)=>roNow
-          ? `<span style="font-size:11.5px;color:${st===v?col:'#ccc'}">${st===v?'&#9745;':'&#9744;'} ${label}</span>`
-          : `<label onclick="_wmTick('${wk}','${it.key}','${v}')" style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:${st===v?col:'#888'};cursor:pointer"><span style="font-size:14px">${st===v?'&#9745;':'&#9744;'}</span>${label}</label>`;
-        return `<div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:0.5px solid #f4f5f7">
+        // "Completed" is the real record - it ticks the task itself, not a note about
+        // the task. "Not completed" is the meeting's own judgement and stays local.
+        const tick=(v,label,col)=>{
+          const on = (v==='yes') ? !!it.done : (st===v);
+          if(roNow) return `<span style="font-size:11.5px;color:${on?col:'#ccc'}">${on?'&#9745;':'&#9744;'} ${label}</span>`;
+          const call = (v==='yes') ? `_wmDone('${it.key}',${on?'false':'true'})` : `_wmTick('${wk}','${it.key}','${v}')`;
+          return `<label onclick="${call}" style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:${on?col:'#888'};cursor:pointer"><span style="font-size:14px">${on?'&#9745;':'&#9744;'}</span>${label}</label>`;
+        };
+        return `<div style="display:flex;gap:10px;align-items:flex-start;padding:${it.done?'5px':'7px'} 0;border-bottom:0.5px solid #f4f5f7;${it.done?'opacity:.62':''}">
           <div style="font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#888;width:74px;flex-shrink:0;padding-top:2px">${dayLbl(it.date)}</div>
           <div style="flex:1;min-width:0">
-            <div style="font-size:13px;color:#111">${kindPill(it.kind,it.kindLabel)}${_calEsc(it.title)}</div>
+            <div style="font-size:13px;color:${it.done?'#0F7B54':'#111'}">${kindPill(it.kind,it.kindLabel)}${_calEsc(it.title)}</div>
             <div style="font-size:11.5px;color:#888;margin-top:1px">${_calEsc(it.sub)}</div>
-            <div style="display:flex;gap:13px;flex-wrap:wrap;align-items:center;margin-top:5px">${tick('yes','Completed','#0F7B54')}${tick('no','Not completed','#B42318')}${rsBtn(it)}</div>
+            <div style="display:flex;gap:13px;flex-wrap:wrap;align-items:center;margin-top:${it.done?'3px':'5px'}">${tick('yes','Completed','#0F7B54')}${it.done?'':tick('no','Not completed','#B42318')+rsBtn(it)}</div>
           </div></div>`;
       }).join(''):'<div style="font-size:12.5px;color:#bbb;padding:8px 0">Nothing was scheduled on this property last week.</div>';
 
@@ -6950,14 +6987,21 @@ function openWeeklyMeeting(kind, week){
           ? `<span style="font-size:11.5px;color:${cf[f]?'#0F7B54':'#ccc'}">${cf[f]?'&#9745;':'&#9744;'} ${label}</span>`
           : `<label style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:#888;cursor:pointer"><input type="checkbox" ${cf[f]?'checked':''} onchange="_wmConf('${wk}','${it.key}','${f}',this.checked)" style="width:14px;height:14px;cursor:pointer"/>${label}</label>`;
         const note=_miItemNoteVal(it.key);
-        return `<div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:0.5px solid #f4f5f7">
+        // Something booked for Thursday can be finished on Tuesday. Without this the
+        // room could only tick it a week later, on the last-week list.
+        const doneBox=(x)=>roNow
+          ? `<span style="font-size:11.5px;font-weight:600;color:${x.done?'#0F7B54':'#ccc'}">${x.done?'&#9745;':'&#9744;'} Completed</span>`
+          : `<label onclick="_wmDone('${x.key}',${x.done?'false':'true'})" style="display:flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;color:${x.done?'#0F7B54':'#888'};cursor:pointer"><span style="font-size:14px">${x.done?'&#9745;':'&#9744;'}</span>Completed</label>`;
+        return `<div style="display:flex;gap:10px;align-items:flex-start;padding:${it.done?'5px':'7px'} 0;border-bottom:0.5px solid #f4f5f7;${it.done?'opacity:.62':''}">
           <div style="font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#888;width:74px;flex-shrink:0;padding-top:2px">${dayLbl(it.date)}</div>
           <div style="flex:1;min-width:0">
-            <div style="font-size:13px;color:#111">${kindPill(it.kind,it.kindLabel)}${_calEsc(it.title)}</div>
+            <div style="font-size:13px;color:${it.done?'#0F7B54':'#111'}">${kindPill(it.kind,it.kindLabel)}${_calEsc(it.title)}${it.done?' <span style="font-size:9.5px;font-weight:700;color:#0F7B54;background:#E6F4ED;padding:1px 6px;border-radius:99px;vertical-align:middle">DONE</span>':''}</div>
             <div style="font-size:11.5px;color:#888;margin-top:1px">${_calEsc(it.sub)}</div>
-            <div style="display:flex;gap:13px;flex-wrap:wrap;align-items:center;margin-top:5px">${box('c','Confirmed starting?')}${box('f','Followed up?')}${box('e','They have everything they need')}${rsBtn(it)}</div>
+            ${it.done
+              ? `<div style="display:flex;gap:13px;flex-wrap:wrap;align-items:center;margin-top:4px">${doneBox(it)}${note?`<span style="font-size:11.5px;color:#aaa">&middot; ${_calEsc(note)}</span>`:''}</div>`
+              : `<div style="display:flex;gap:13px;flex-wrap:wrap;align-items:center;margin-top:5px">${doneBox(it)}${box('c','Confirmed starting?')}${box('f','Followed up?')}${box('e','They have everything they need')}${rsBtn(it)}</div>
             ${roNow?(note?`<div style="font-size:12px;color:#555;margin-top:5px;background:#F7F8FB;border-radius:6px;padding:6px 9px">${_calEsc(note)}</div>`:'')
-              :`<textarea onchange="_miItemNote('${it.key}',this.value)" placeholder="What are we waiting on?" style="width:100%;min-height:30px;margin-top:5px;padding:5px 8px;border:0.5px solid #e6e8ee;border-radius:6px;font-size:12.5px;resize:vertical;font-family:inherit">${_calEsc(note)}</textarea>`}
+              :`<textarea onchange="_miItemNote('${it.key}',this.value)" placeholder="What are we waiting on?" style="width:100%;min-height:30px;margin-top:5px;padding:5px 8px;border:0.5px solid #e6e8ee;border-radius:6px;font-size:12.5px;resize:vertical;font-family:inherit">${_calEsc(note)}</textarea>`}`}
           </div></div>`;
       }).join(''):'<div style="font-size:12.5px;color:#bbb;padding:8px 0">Nothing booked on this property for the next two weeks.</div>';
 
@@ -7042,10 +7086,10 @@ function openWeeklyMeeting(kind, week){
         </div>
         ${_wmPermitBlock(c)}
 
-        ${secWrap(secHead('What was scheduled last week', _wmLabel(lastWk).replace(/^\w+, /,'')+' &rarr; Sun'), lastRows+
+        ${secWrap(secHead('What was scheduled last week', (lastItems.length?(lastItems.filter(x=>x.done).length+' of '+lastItems.length+' done &middot; '):'')+_wmLabel(lastWk).replace(/^\w+, /,'')+' &rarr; Sun'), lastRows+
           `<div style="border-top:1px dashed #e6e8ee;padding-top:8px;margin-top:6px"><div style="font-size:9.5px;color:#aaa;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Comments on last week</div>${ta2(c.id+'::lastc','Anything about how last week actually went&hellip;',44)}</div>`)}
 
-        ${secWrap(secHead('Scheduled this week &amp; next week', fwdR.from+' &rarr; '+fwdR.to+' &middot; in date order'), fwdRows+
+        ${secWrap(secHead('Scheduled this week &amp; next week', (fwdItems.length?(fwdItems.filter(x=>x.done).length+' of '+fwdItems.length+' done &middot; '):'')+fwdR.from+' &rarr; '+fwdR.to+' &middot; in date order'), fwdRows+
           `<div style="border-top:1px dashed #e6e8ee;padding-top:8px;margin-top:6px"><div style="font-size:9.5px;color:#aaa;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Comments on the weeks ahead</div>${ta2(c.id+'::nextc','Anything about what is coming up&hellip;',44)}</div>`)}
 
         ${roNow?'':`<div style="margin-top:11px;display:flex;gap:8px;flex-wrap:wrap;background:#F7F8FB;border:0.5px dashed #d5d9e2;border-radius:9px;padding:9px 12px;align-items:center">
@@ -11302,7 +11346,7 @@ async function _permitRevisionTask(id){
     property_id:prop?prop.id:null, assignee:who, assignees:[who],
     notes:"The "+(r.juris||"jurisdiction")+" examiner has asked for revisions. Redraw and resubmit, then put the date in Latest revision on the Permit Tracker."
   }).select("id").single();
-  if(ins.error||!ins.data) return false;
+  if(ins.error||!ins.data||!ins.data.id) return false;
   d.permits[id]=Object.assign({},r,{rev_task:ins.data.id}); window._trkData=d;
   await _trkSave();
   _logAudit("created","task",(r.addr||"")+" \u2014 revisions to redraw","Raised automatically when the permit went to Revisions");
@@ -11316,8 +11360,98 @@ async function _permitAfterChange(id, field){
   if(field==="status"){
     const st=String((((window._trkData||{}).permits||{})[id]||{}).status||"");
     if(st==="Revisions" || st==="Corrections Required"){ try{ await _permitRevisionTask(id); }catch(e){} }
+    // Approved by the city = Jen's inspection list becomes real work.
+    if(st==="Issued" || st==="Closed"){ try{ await _permitInspSetupTask(id); }catch(e){} }
   }
 }
+// ---- The order the city wants them in ----------------------------------------
+// Bruce, 4 Sept: "once the architect gets the approval from the city, she will
+// then go into the inspections tab for each property and add a checklist of
+// inspections per property IN THE ORDER THAT THEY ARE TO BE IN."
+// So the list is a sequence, not a bag. It is stored in order, numbered in order,
+// and moved with the arrows - no template, because Jen types each house fresh.
+async function _permitInspMove(id, insId, dir){
+  if(_blockIfReadOnly()) return;
+  const d=window._trkData||{}; d.permits=d.permits||{};
+  const rec=Object.assign({},(d.permits||{})[id]||{});
+  const list=(Array.isArray(rec.insps)?rec.insps.map(x=>Object.assign({},x)):[]);
+  const i=list.findIndex(x=>x.id===insId);
+  const j=i+(dir<0?-1:1);
+  if(i<0 || j<0 || j>=list.length) return;
+  const tmp=list[i]; list[i]=list[j]; list[j]=tmp;
+  rec.insps=list; d.permits[id]=rec; window._trkData=d;
+  if(!await _trkSave()) return;
+  _logAudit("updated","permit",(rec.addr||"")+" — inspection order",
+    "Moved “"+String(list[j].name||"")+"” to step "+(j+1)+" of "+list.length);
+  _permitRerender();
+}
+// The first one that has not passed yet. That is the one somebody has to book,
+// and it is the only reason to keep the list in order in the first place.
+function _permitInspNext(list){
+  const arr=Array.isArray(list)?list:[];
+  const i=arr.findIndex(x=>!x.done);
+  return i<0?null:arr[i].id;
+}
+// Passed number 4 while number 2 is still open. That happens on real jobs and it
+// is not an error, but the room should be able to see it rather than assume the
+// sequence held.
+function _permitInspOutOfOrder(list, idx){
+  const arr=Array.isArray(list)?list:[];
+  if(!arr[idx] || !arr[idx].done) return false;
+  for(let k=0;k<idx;k++){ if(!arr[k].done) return true; }
+  return false;
+}
+// ---- "The city approved it - now set the order" -----------------------------
+// A permit going Issued is the moment Jen's inspection list becomes real work.
+// This is a job somebody has to do, so it is a task (unlike "Permit Submitted",
+// which was only ever a record). It raises at most one per permit, and it closes
+// itself the moment the first inspection is added.
+const PERMIT_INSP_SETUP_DAYS = 2;
+function _permitIsApproved(r){ return /^(issued|closed)$/i.test(String((r&&r.status)||"")); }
+async function _permitInspSetupTask(id){
+  const d=window._trkData||{}; d.permits=d.permits||{};
+  const r=d.permits[id]; if(!r) return false;
+  if(!_permitIsApproved(r)) return false;
+  if(_permitInsps(r).length) return false;              // she has already set it
+  if(r.insp_task){
+    try{
+      const ex=await supabase.from("pm_tasks").select("id,status").eq("id",r.insp_task).maybeSingle();
+      if(!ex.error && ex.data && ex.data.status!=="done") return false;   // one open at a time
+    }catch(e){}
+  }
+  const who=_permitArchitectName();
+  const prop=_permitProp(r);
+  const start=(typeof _ymdToday==="function"?_ymdToday():_ymd(new Date()));
+  const due=(typeof _ymdPlus==="function"?_ymdPlus(PERMIT_INSP_SETUP_DAYS):"");
+  const ins=await supabase.from("pm_tasks").insert({
+    title:(r.addr||"Permit")+" — set the inspection order ("+(r.number||"no number")+")",
+    category:PERMIT_TASK_CATEGORY, start_date:start, due_date:due, status:"open",
+    property_id:prop?prop.id:null, assignee:who, assignees:[who],
+    notes:"The "+(r.juris||"city")+" approved this permit, so the inspections it needs can be listed now.\n"
+         +"Open the Permit Tracker → Inspections tab, find "+(r.addr||"this property")+", and add them in the order the city wants them in.\n"
+         +"This task closes itself as soon as the first one is on the list."
+  }).select("id").single();
+  if(ins.error||!ins.data||!ins.data.id) return false;
+  d.permits[id]=Object.assign({},r,{insp_task:ins.data.id}); window._trkData=d;
+  await _trkSave();
+  _logAudit("created","task",(r.addr||"")+" — set the inspection order","Raised automatically when the permit was issued");
+  if(typeof loadTasks==="function") await loadTasks();
+  return true;
+}
+// Called the moment an inspection is added: the job the task asked for is done.
+async function _permitInspSetupClose(id){
+  const d=window._trkData||{}; d.permits=d.permits||{};
+  const r=d.permits[id]; if(!r || !r.insp_task) return false;
+  try{
+    await supabase.from("pm_tasks").update({status:"done", completed_at:new Date().toISOString()}).eq("id",r.insp_task);
+  }catch(e){}
+  const rec=Object.assign({},r); delete rec.insp_task;
+  d.permits[id]=rec; window._trkData=d;
+  await _trkSave();
+  if(typeof loadTasks==="function") await loadTasks();
+  return true;
+}
+
 async function _permitInspAdd(id){
   if(_blockIfReadOnly()) return;
   const nameEl=document.getElementById("ins-n-"+id), whenEl=document.getElementById("ins-w-"+id);
@@ -11333,6 +11467,8 @@ async function _permitInspAdd(id){
   if(!await _trkSave()) return;
   const onCard=await _permitInspSubphase(rec, ins, false);
   _logAudit("created","permit",(rec.addr||"")+" — "+_permitInspLabel(ins), onCard?"Added to the property's subphases too":"No property card matched, so it lives on the permit only");
+  // The "set the inspection order" task asked for exactly this, so it is finished.
+  try{ await _permitInspSetupClose(id); }catch(e){}
   if(nameEl) nameEl.value="";
   _permitRerender();
 }
@@ -11425,15 +11561,24 @@ function _permitInspBody(){
     <div style="font-size:19px;font-weight:700;color:${color};line-height:1.25">${val}</div></div>`;
   const pill=(k,label)=>`<span onclick="_permInspShow('${k}')" style="cursor:pointer;padding:5px 12px;border-radius:7px;font-size:12.5px;font-weight:${filt===k?'600':'400'};background:${filt===k?'#122A4A':'#fff'};color:${filt===k?'#fff':'#444'};border:0.5px solid ${filt===k?'#122A4A':'#d8dce6'}">${label}</span>`;
 
-  const inspRow=(r,ins)=>{
+  const inspRow=(r,ins,idx,full)=>{
     const fails=parseInt(ins.fails,10)||0;
-    const hay=(r.addr||'')+' '+(r.number||'')+' '+(r.juris||'')+' '+(ins.name||'')+' '+(ins.when==='after'?'after finishes':'before finishes')+(fails?' failed':'')+(ins.done?' passed':' outstanding');
-    return `<tr data-insp="${_calEsc(hay)}" style="border-top:0.5px solid #f1f3f7">
-      <td style="padding:7px 10px;width:30px;text-align:center">${ro?`<span style="font-size:15px">${ins.done?'✅':'⬜'}</span>`
+    const step=idx+1, last=full.length;
+    const isNext=(_permitInspNext(full)===ins.id);
+    const ooo=_permitInspOutOfOrder(full, idx);
+    const hay=(r.addr||'')+' '+(r.number||'')+' '+(r.juris||'')+' '+(ins.name||'')+' '+(ins.when==='after'?'after finishes':'before finishes')+(fails?' failed':'')+(ins.done?' passed':' outstanding')+(isNext?' next up':'');
+    const arrow=(dir,label,disabled)=>disabled
+      ? `<span style="display:block;font-size:9px;color:#e8eaef;line-height:1.15">${label}</span>`
+      : `<span onclick="_permitInspMove('${r.id}','${ins.id}',${dir})" title="Move this ${dir<0?'earlier':'later'} in the order" style="display:block;cursor:pointer;font-size:9px;color:#9aa3b2;line-height:1.15">${label}</span>`;
+    return `<tr data-insp="${_calEsc(hay)}" style="border-top:0.5px solid #f1f3f7;${isNext?'background:#FAFCF6':''}">
+      <td style="padding:7px 0 7px 8px;width:22px;text-align:center;vertical-align:middle">${ro?'':`<div>${arrow(-1,'&#9650;',idx===0)}${arrow(1,'&#9660;',idx===last-1)}</div>`}</td>
+      <td style="padding:7px 4px;width:22px;text-align:center;vertical-align:middle">
+        <span style="display:inline-block;min-width:18px;padding:1px 0;border-radius:5px;font-size:10.5px;font-weight:700;color:${ins.done?'#fff':'#5b6474'};background:${ins.done?'#1D9E75':'#EDEFF4'}">${step}</span></td>
+      <td style="padding:7px 8px;width:30px;text-align:center">${ro?`<span style="font-size:15px">${ins.done?'✅':'⬜'}</span>`
         :`<span onclick="_permitInspToggle('${r.id}','${ins.id}')" title="${ins.done?'Reopen this inspection':'Mark this inspection passed'}" style="cursor:pointer;font-size:15px">${ins.done?'✅':'⬜'}</span>`}</td>
       <td style="padding:7px 10px">
-        <div style="font-size:13px;font-weight:600;color:${ins.done?'#0F7B54':'#111'}">${_calEsc(ins.name||'Inspection')}</div>
-        <div style="font-size:11px;color:#aaa;margin-top:1px">${ins.when==='after'?'After finishes &middot; end of job':'Before finishes &middot; mid-build'}</div>
+        <div style="font-size:13px;font-weight:600;color:${ins.done?'#0F7B54':'#111'}">${_calEsc(ins.name||'Inspection')}${isNext?' <span style="font-size:9.5px;font-weight:700;color:#3B6D11;background:#EDF5E0;padding:1px 6px;border-radius:99px;vertical-align:middle;letter-spacing:.04em">NEXT UP</span>':''}</div>
+        <div style="font-size:11px;color:#aaa;margin-top:1px">Step ${step} of ${last} &middot; ${ins.when==='after'?'after finishes':'before finishes'}${ooo?' &middot; <span style="color:#B7791F">passed out of order</span>':''}</div>
       </td>
       <td style="padding:7px 10px;text-align:center;white-space:nowrap">${ins.done
         ? `<span style="font-size:11.5px;font-weight:600;color:#0F7B54">Passed${ins.date?(' '+_calEsc(ins.date)):''}</span>`
@@ -11451,13 +11596,17 @@ function _permitInspBody(){
     else if(filt==='done') list=list.filter(x=>!!x.done);
     const st=_permInspStats(_permitInsps(r));
     const hit=(focus&&focus===r.id);
-    const body=list.length?list.map(ins=>inspRow(r,ins)).join('')
-      :`<tr><td colspan="5" style="padding:11px;text-align:center;font-size:12px;color:#bbb">${st.total?'Nothing in this filter.':'No inspections listed for this permit yet.'}</td></tr>`;
-    const add=ro?'':`<tr style="background:#F8F9FC;border-top:0.5px solid #eef0f6"><td colspan="5" style="padding:8px 10px">
+    // Row numbers are the position in the REAL list, not in the filtered view, so
+    // "step 4 of 6" still means step 4 when you are only looking at what is open.
+    const fullList=_permitInsps(r);
+    const body=list.length?list.map(ins=>inspRow(r,ins,fullList.findIndex(x=>x.id===ins.id),fullList)).join('')
+      :`<tr><td colspan="7" style="padding:11px;text-align:center;font-size:12px;color:#bbb">${st.total?'Nothing in this filter.':(ro?'No inspections listed for this permit yet.':'No inspections listed yet — add them below, in the order the city wants them in.')}</td></tr>`;
+    const add=ro?'':`<tr style="background:#F8F9FC;border-top:0.5px solid #eef0f6"><td colspan="7" style="padding:8px 10px">
         <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
           <input id="ins-n-${r.id}" placeholder="Framing, electrical rough-in, final occupancy…" style="padding:5px 9px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:270px"/>
           <select id="ins-w-${r.id}" style="padding:5px 7px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px">${PERMIT_INSP_WHEN.map(w=>`<option value="${w[0]}">${w[1]}</option>`).join('')}</select>
           <button onclick="_permitInspAdd('${r.id}')" style="padding:5px 13px;border:none;border-radius:6px;background:#122A4A;color:#fff;font-size:12.5px;font-weight:600;cursor:pointer">Add inspection</button>
+          <span style="font-size:11px;color:#aaa">added as step ${_permitInsps(r).length+1} &mdash; reorder with the arrows</span>
         </div></td></tr>`;
     return `<div style="border:0.5px solid ${hit?'#639922':'#e6e9f0'};border-radius:9px;overflow:hidden;margin-top:10px;${hit?'box-shadow:0 0 0 2px rgba(99,153,34,.16)':''}">
       <div style="padding:8px 12px;background:#FAFBFD;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
@@ -11504,6 +11653,7 @@ function _permitInspBody(){
   const foot=`<div style="font-size:12px;color:#999;margin-top:4px">
     These are the same inspections the Permit Tracker holds &mdash; adding one here puts a matching step on that property's card straight away, and ticking it passed ticks that step too.
     Label it <b>before finishes</b> for a mid-build inspection (MEPs, before the drywall closes it up) and <b>after finishes</b> for an end-of-job one.
+    <br>The list is a <b>sequence</b>: number 1 is the first inspection the city wants, and the first one still open is marked <b>NEXT UP</b>. Add them in order and nudge them with the arrows.
     <br>Failures are counted per inspection because the End of Project report asks for them by name.
     </div>`;
 
@@ -15550,4 +15700,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-04c meeting-permit-pull -->
+<!-- build: 2026-09-04d inspection-order-and-meeting-done -->
