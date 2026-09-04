@@ -209,6 +209,13 @@ body.mobile-on .overlay{z-index:6000 !important;}
 .m-btn{width:100%;padding:13px;background:#111;color:#fff;border:none;border-radius:10px;font-size:16px;font-weight:600;margin-top:14px;cursor:pointer;}
 .m-btn-lite{background:#fff;color:#111;border:1px solid #d7dbe0;}
 .m-seg{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;margin-bottom:12px;-webkit-overflow-scrolling:touch;}
+/* The trackers are far wider than the screen. macOS hides scrollbars until you
+   scroll, which left people with no visible handle to grab, so force them on. */
+.trk-xbar::-webkit-scrollbar{height:12px;-webkit-appearance:none}
+.trk-xbar::-webkit-scrollbar-track{background:#eef1f6;border-radius:7px}
+.trk-xbar::-webkit-scrollbar-thumb{background:#b9c2d0;border-radius:7px;border:2px solid #eef1f6}
+.trk-xbar::-webkit-scrollbar-thumb:hover{background:#98a4b6}
+.trk-xtop{height:14px;margin-bottom:5px;overflow-x:auto;overflow-y:hidden}
 .m-seg button{flex-shrink:0;padding:8px 14px;border-radius:99px;border:1px solid #d7dbe0;background:#fff;font-size:14px;color:#555;cursor:pointer;}
 .m-seg button.on{background:#111;color:#fff;border-color:#111;}
 .m-row{padding:12px 0;border-bottom:0.5px solid #f1f3f7;}
@@ -954,7 +961,14 @@ async function _initInner() {
       loadMonthlyReportsFromSupabase(),
       loadTasks(),
       loadCalendarEventsFromSupabase(),
-      loadSavedAddresses()
+      loadSavedAddresses(),
+      // The property cards read the trackers to show permits, mowing, windows,
+      // the checklist and utilities. Until now the trackers were only fetched when
+      // somebody opened the Trackers tab, so on a fresh load every card reported
+      // "no permits on the tracker for this house" and "not on the route" for houses
+      // that plainly had both. Load them up front with everything else.
+      _trkLoad(),
+      _chkLoad()
     ]);
     // A house sitting vacant with the checklist unfinished must always have somebody
     // on it. Checked on every load, so it self-heals no matter how the house got there.
@@ -3643,9 +3657,28 @@ function _pdLinked(c){
       <div style="font-size:11.5px;font-weight:600;flex-shrink:0;color:${col}">${_calEsc(st)||'&mdash;'}</div>
     </div>`;
   }).join('');
+  // "Not on the route" and "no permits" are statements of fact about this house. If the
+  // trackers have not actually been read yet, we do not know either way - and saying no
+  // is worse than saying nothing, because it sends somebody off to re-add a house that
+  // is already on the list. So an unloaded tracker says so, plainly.
+  const _trkUp = (window._trkLoaded===true && window._trkLoadOk!==false);
+  const _trkUnknown = (window._trkLoadOk===false)
+    ? 'could not load the trackers'
+    : 'checking…';
+  // Any path that reached a property card without startup having run pulls them now,
+  // so the next card opened is right even if this one was early.
+  if(window._trkLoaded!==true && !window.__trkLazyLoad){
+    window.__trkLazyLoad=true;
+    try{ _trkLoad().then(()=>{ window.__trkLazyLoad=false; }).catch(()=>{ window.__trkLazyLoad=false; }); }
+    catch(e){ window.__trkLazyLoad=false; }
+  }
+
   const perPanel=wrap('&#128196; Permits',
     pers.length?`&mdash; ${pers.length}`:'',
-    'No permits on the permit tracker for this house.',
+    _trkUp ? 'No permits on the permit tracker for this house.'
+           : ((window._trkLoadOk===false)
+              ? 'The permit tracker could not be loaded, so this is not a reliable answer — refresh the page.'
+              : 'Reading the permit tracker…'),
     perRows,
     `openVAAdminDashboard('trackers')`);
 
@@ -3654,13 +3687,13 @@ function _pdLinked(c){
   const on=(k)=>!!((d[k]||{})[c.id]);
   const mowWho=(typeof _mowName==='function')?_mowName(c.id):'';
   const bits=[];
-  bits.push(['&#127793; Mowing', mowWho?('on the route \u2014 '+mowWho):(on('mow')?'on the route':'not on the route'), mowWho||on('mow')?'#0F7B54':'#bbb']);
+  bits.push(['&#127793; Mowing', !_trkUp?_trkUnknown:(mowWho?('on the route \u2014 '+mowWho):(on('mow')?'on the route':'not on the route')), !_trkUp?'#bbb':((mowWho||on('mow'))?'#0F7B54':'#bbb')]);
   const winRec=((d.win||{})[c.id])||{};
   const winTxt = winRec.installed?'installed' : (winRec.ordered?'ordered' : (winRec.measured?'measured' : (winRec.needed?'requested':'nothing requested')));
-  bits.push(['&#129525; Windows', winTxt, winRec.needed?'#B7791F':'#bbb']);
-  bits.push(['&#9989; Checklist', on('checklist')?'done':'outstanding', on('checklist')?'#0F7B54':'#B7791F']);
+  bits.push(['&#129525; Windows', !_trkUp?_trkUnknown:winTxt, (!_trkUp||!winRec.needed)?'#bbb':'#B7791F']);
+  bits.push(['&#9989; Checklist', !_trkUp?_trkUnknown:(on('checklist')?'done':'outstanding'), !_trkUp?'#bbb':(on('checklist')?'#0F7B54':'#B7791F')]);
   const uCount=((d.ulog||{})[c.id]||[]).length;
-  bits.push(['&#9889; Utilities', uCount?(uCount+' log entr'+(uCount===1?'y':'ies')):'nothing logged', uCount?'#0F7B54':'#bbb']);
+  bits.push(['&#9889; Utilities', !_trkUp?_trkUnknown:(uCount?(uCount+' log entr'+(uCount===1?'y':'ies')):'nothing logged'), (!_trkUp||!uCount)?'#bbb':'#0F7B54']);
   const trkPanel=wrap('&#128203; Trackers', '', '',
     `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;padding-top:6px">
       ${bits.map(b=>`<div style="background:#fafbfc;border:0.5px solid #eef0f6;border-radius:7px;padding:8px 10px">
@@ -3669,12 +3702,31 @@ function _pdLinked(c){
     </div>`,
     `openVAAdminDashboard('trackers')`);
 
+  // --- the three checklists, opened from the card itself ----------------------------
+  // Collapsed by default so the card is not a wall of tick boxes; the header carries
+  // the count so a PM can see at a glance whether anything is outstanding.
+  let chkPanel='';
+  if(_chkApplies(c)){
+    const totals=CHK_KINDS.map(k=>_chkCounts(c.id,k.key)).reduce((a,n)=>({done:a.done+n.done,total:a.total+n.total}),{done:0,total:0});
+    const left=totals.total-totals.done;
+    window._chkRerender=()=>{ try{ if(document.getElementById('pd-chk-open')) openPropDetail(c.id); }catch(e){} };
+    chkPanel=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden;margin-top:12px">
+      <details id="pd-chk-open" ${window.__chkCardOpen?'open':''} ontoggle="window.__chkCardOpen=this.open">
+        <summary style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;list-style:none">
+          <span style="font-size:13px;font-weight:500;color:#111">&#128203; Checklists
+            <span style="font-size:12px;color:#aaa;font-weight:400">${totals.total?('&mdash; '+totals.done+' of '+totals.total+' done'):''}</span></span>
+          <span style="font-size:12px;font-weight:600;color:${left?'#B7791F':'#0F7B54'}">${totals.total?(left?(left+' left'):'all done'):'no steps yet'}</span>
+        </summary>
+        <div style="padding:0 12px 4px">${_chkCardTab(c)}</div>
+      </details></div>`;
+  }
   return `<div style="margin-top:16px">
     <div style="font-size:12px;color:#999;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">Everything on this house</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
       <div>${taskPanel}${perPanel}</div>
       <div>${evPanel}${trkPanel}</div>
     </div>
+    ${chkPanel}
   </div>`;
 }
 // Quick-submit forms (below Notes): drop a construction event or a task straight
@@ -4337,7 +4389,7 @@ function _pmBoardDrill(pmName,key){
   const items=_pdnList.map((n,i)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:8px 10px;margin-bottom:6px;display:flex;gap:8px;align-items:flex-start"><span onclick="_pdnToggle('${pmQ}','${key}',${i})" style="cursor:pointer;font-size:16px;line-height:1.2">${n.done?'✅':'⬜'}</span><div style="flex:1;font-size:12.5px;color:${n.done?'#aaa':'#333'};${n.done?'text-decoration:line-through;':''}">${_calEsc(n.t)}<div style="font-size:10.5px;color:#bbb">${_calEsc(n.at||'')}</div></div><span onclick="_pdnDel('${pmQ}','${key}',${i})" style="cursor:pointer;color:#c0392b;font-size:13px">✕</span></div>`).join('')||'<div style="color:#bbb;font-size:13px;padding:8px 0">No notes yet.</div>';
   const thirdHead='Comments & Notes';
   const thirdBody=`${isReadOnly()?'':`<div style="display:flex;gap:6px;margin-bottom:8px"><input id="pdn-new" placeholder="Feedback, ideas, follow-ups…" style="flex:1;min-width:0;padding:7px 9px;border:0.5px solid #ddd;border-radius:6px;font-size:13px"/><button onclick="_pdnAdd('${pmQ}','${key}')" style="padding:7px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer">Add</button></div>`}${items}
-    <div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin:16px 0 8px">Upcoming, by date</div>${upRows}`;
+    <div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin:16px 0 8px">Checklists outstanding</div>${_chkBoardColumn(cards)}`;
   el.innerHTML=`<div style="padding:20px">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px"><button onclick="_pmBoardBack('${_argEsc(pmName)}')" style="font-size:13px;padding:6px 12px;border:0.5px solid #cdd7e6;border-radius:6px;background:#fff;color:#185FA5;cursor:pointer">‹ Back</button><div style="font-size:16px;font-weight:600;color:#111">${g.title} — ${_calEsc(resolvePMName(pmName))}</div></div>
     <div style="display:grid;grid-template-columns:1.2fr 1.2fr 1fr;gap:16px;align-items:start">
@@ -4687,7 +4739,10 @@ function _wmWeekKey(){
   const now=new Date();
   const d=new Date(now); d.setHours(0,0,0,0);
   const day=d.getDay();                                  // 0 Sun … 6 Sat
-  const rolled = (day>4) || (day===0) || (day===4 && now.getHours()>=12);   // Thu noon onward, Fri, Sat, Sun
+  // Bruce, 2 Sep: the Monday meeting sheet should roll to next week on THURSDAY MORNING,
+  // not Thursday lunchtime - so next week's template is already prepared and waiting when
+  // people sit down Thursday. Thursday through Sunday all belong to the week ahead.
+  const rolled = (day>=4) || (day===0);   // Thu, Fri, Sat, Sun -> next week's sheet
   const back=(day===0?6:day-1);                          // days since this week's Monday
   const thisMon=new Date(d.getTime()-back*86400000);
   return _ymd(rolled ? new Date(thisMon.getTime()+7*86400000) : thisMon);
@@ -4705,6 +4760,16 @@ function _wmMonday(dateStr){ const d=new Date(dateStr+"T00:00:00"); const day=d.
 // Thursday-noon roll that suits the Monday meeting.
 window.__mktPrefilled_ = window.__mktPrefilled_ || {};
 function _wmWeekKeyFor(kind){
+  // The full company meeting is Tuesday 8:45am, but Bruce sends the PDF to Suzette on
+  // Sunday night - so the new week has to be sitting there ready on SATURDAY morning.
+  if(kind==='company'){
+    const d=new Date(); d.setHours(0,0,0,0);
+    const day=d.getDay();                       // 0 Sun ... 6 Sat
+    const back=(day===0?6:day-1);
+    const thisMon=new Date(d.getTime()-back*86400000);
+    const rolled=(day===6 || day===0);          // Saturday and Sunday belong to the week ahead
+    return _ymd(rolled ? new Date(thisMon.getTime()+7*86400000) : thisMon);
+  }
   if(kind!=='market') return _wmWeekKey();
   const d=new Date(); d.setHours(0,0,0,0);
   const day=d.getDay();                       // 0 Sun ... 6 Sat
@@ -5772,6 +5837,49 @@ async function _mktPrefillWeek(wk){
     return Object.keys(patch).length;
   } finally { _mktPrefilling=false; }
 }
+// The Monday project team meeting gets the same treatment as the On the Market sheet:
+// next week's template is prepared from this week's, so nobody opens a blank page on
+// Thursday. Only the standing answers carry - anything that is a report on the week
+// just gone stays behind, or the room would read last week's news as if it were new.
+const WM_TEAM_CARRY = [
+  'nextc',    // "Comments on the weeks ahead" - still true next week until someone changes it
+  'money'     // "on or off budget, and why" - a standing position, not a weekly event
+];
+// Deliberately NOT carried: 'wins' (explicitly "wins this week") and 'lastc'
+// ("comments on last week"), which would be a week out of date the moment they moved.
+let _wmPrefilling=false;
+window.__wmPrefilled_ = window.__wmPrefilled_ || {};
+async function _wmPrefillWeek(wk){
+  if(_wmPrefilling) return 0;
+  if(typeof isReadOnly==='function' && isReadOnly()) return 0;
+  if(window._wmLoadOk===false) return 0;          // never write over a failed load
+  const d=window._wmData||{};
+  const cur=((d[wk]||{}).team)||{};
+  const prev=((d[_wmPrevWeek(wk)]||{}).team)||{};
+  if(!Object.keys(prev).length) return 0;
+  const patch={};
+  for(const k in prev){
+    if(k.indexOf('::')<0) continue;               // skip __closed / __done / __conf metadata
+    const f=k.split('::')[1];
+    if(WM_TEAM_CARRY.indexOf(f)<0) continue;
+    if(String(cur[k]==null?'':cur[k]).trim()) continue;      // never overwrite an answer already given
+    if(!String(prev[k]==null?'':prev[k]).trim()) continue;
+    patch[k]=prev[k];
+  }
+  if(!Object.keys(patch).length) return 0;
+  _wmPrefilling=true;
+  try{
+    d[wk]=d[wk]||{}; d[wk].team=Object.assign({}, d[wk].team||{}, patch);
+    window._wmData=d;
+    const err=await _pmSettingsWrite('meeting_notes', d);
+    if(err){ delete d[wk].team; return 0; }
+    const n=Object.keys(patch).length;
+    if(typeof _logAudit==='function') _logAudit('updated','settings','Project team meeting',
+      'Prefilled '+n+' answer'+(n===1?'':'s')+' for the week of '+wk+
+      ' from the week before, so the sheet is ready before Monday.');
+    return n;
+  } finally { _wmPrefilling=false; }
+}
 function _mktMeetingBody(wk, kind, notes, prevNotes, roNow){
   const tab=_mktTab();
   const V=(pid,f)=>notes[pid+'::'+f]||'';
@@ -5987,25 +6095,6 @@ function _kickZillow(pid, i){
   const q=v || (c?c.addr:'') || '';
   window.open('https://www.zillow.com/homes/'+encodeURIComponent(q)+'_rb/','_blank');
 }
-// Picking the PM here is the decision - so it lands on the property card too,
-// rather than being a note about a decision somebody still has to action.
-async function _kickSetPM(pid, name, el){
-  if(_blockIfReadOnly()) return;
-  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return;
-  const prev=c.pm||'';
-  const { data, error } = await supabase.from("pm_properties").update({ pm:name||null }).eq("id",pid).select("id");
-  if(error || !data || !data.length){
-    alert("That project manager was NOT saved onto the property card"+(error&&error.message?(" - "+error.message):"")+".");
-    if(el) el.value=prev;
-    return;
-  }
-  c.pm=name||'';
-  _logAudit("updated","property", c.addr||"", "Project manager set to "+(name||"nobody")+" in the kickoff meeting"+(prev?(" (was "+prev+")"):""));
-  if(el){
-    const ok=el.parentNode&&el.parentNode.querySelector('.kick-pm-ok');
-    if(ok){ ok.style.display='inline'; setTimeout(()=>{ok.style.display='none';},1800); }
-  }
-}
 
 function _kickMeetingBody(wk, notes, prevNotes, roNow){
   const cards=_kickCards();
@@ -6060,8 +6149,6 @@ function _kickMeetingBody(wk, notes, prevNotes, roNow){
         ${ta(c.id,n[0],n[2])}
       </div>`).join('');
 
-    const pmNames=(function(){ const l=[''].concat(teamMembers()); if(c.pm && l.indexOf(c.pm)<0) l.push(c.pm); return l; })();
-
     return `<details data-wm-prop="${c.id}" ${_wmIsOpen(c.id)?'open':''} ontoggle="_wmToggleOpen('${c.id}',this.open)" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;margin-bottom:9px;color:#111">
       <summary style="cursor:pointer;padding:11px 14px 11px 4px;outline:none">
         <div style="display:inline-flex;width:calc(100% - 26px);vertical-align:middle;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
@@ -6070,8 +6157,14 @@ function _kickMeetingBody(wk, notes, prevNotes, roNow){
         </div>
       </summary>
       <div style="padding:0 16px 14px">
-        <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:8px">
-          <span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-size:13px;color:#185FA5">Open the property card ›</span>
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+          <span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-size:13px;color:#185FA5">Open the property card ›</span>
+            <span style="display:flex;align-items:center;gap:6px">
+              <span style="font-size:10.5px;color:#999;text-transform:uppercase;letter-spacing:.04em">Project manager</span>
+              ${_pmField(c,'kick')}
+            </span>
+          </span>
           <span style="font-size:12px;color:#666">${_calEsc(c.type||'no type set')}${(c.checklists&&c.checklists.permitted)==='yes'?' · 🏛 Permitted':''}${(c.checklists&&c.checklists.acqBudget)?(' · ACQ budget '+_calEsc(c.checklists.acqBudget)):''}</span>
         </div>
         <div style="font-size:12.5px;color:#8a6d1a;background:#FFF7E0;border-radius:7px;padding:7px 10px;margin-bottom:11px">Run the room in this order: comps → the three target prices → demo and clean out → buy-and-list scope → budget → rehab scope → timeline → who is running it.</div>
@@ -6086,13 +6179,8 @@ function _kickMeetingBody(wk, notes, prevNotes, roNow){
         ${noteSecs}
 
         <div style="margin-top:13px;padding-top:11px;border-top:0.5px solid #eef0f6">
-          <div style="font-size:11.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em">Project manager running the job</div>
-          <div style="font-size:10.5px;color:#aaa;margin-bottom:5px">Choosing here assigns them on the property card straight away.</div>
-          <div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap">
-            ${roNow?roShow(c.pm||'')
-              :`<select onchange="_kickSetPM('${c.id}',this.value,this)" style="${box};min-width:210px;font-weight:600">${pmNames.map(n=>`<option ${c.pm===n?'selected':''}>${_calEsc(n)}</option>`).join('')}</select>
-                <span class="kick-pm-ok" style="display:none;font-size:12px;color:#1D9E75">Assigned on the property card ✓</span>`}
-          </div>
+          <div style="font-size:11.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em">What the project manager committed to</div>
+          <div style="font-size:10.5px;color:#aaa;margin-bottom:5px">${c.pm?('Running the job: '+_calEsc(c.pm)+' — change it up top if that is wrong.'):'Nobody assigned yet — pick them up top, next to the property card link.'}</div>
           <div style="margin-top:7px">${ta(c.id,'pm_notes','What did they commit to?',44)}</div>
         </div>
 
@@ -6371,7 +6459,146 @@ function _eopMeetingBody(wk, notes, prevNotes, roNow){
 // the kick-offs - plus the live board. If a section here looks empty, the answer is
 // not to type into it: it is that the meeting it comes from has not been held yet.
 function _compFrom(wk, kind){ return (((window._wmData||{})[wk]||{})[kind])||{}; }
+// ===================== FULL COMPANY MEETING — PERFORMANCE =====================
+// Bruce, 3 Sep: the company meeting is short and performance-based. It pulls the same
+// Project Team Overview numbers the PMs already work to - production $/day and how much
+// of the budget has been drawn - rolled up per person, plus what actually moved this
+// week. The PDF goes to Suzette on Sunday night, so the week has to be ready Saturday.
+const COMP_WINDOW_DAYS = 7;
+function _compMoney(v){ const n=parseFloat(String(v||'').replace(/[^0-9.\-]/g,'')); return isNaN(n)?null:n; }
+function _compDaysAgo(d){
+  if(!d) return null;
+  try{ return Math.round((_dParse(_ymd(new Date())) - _dParse(d))/86400000); }catch(e){ return null; }
+}
+// Everyone with live projects, and how their jobs are actually running.
+function _compByPM(){
+  const all=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived);
+  const live=all.filter(c=>ACTIVE_PHASES_FULL ? ACTIVE_PHASES_FULL.includes(c.phase) : ACTIVE_PHASES.includes(c.phase));
+  const by={};
+  live.forEach(c=>{
+    const pm=c.pm||'Unassigned';
+    const m=_wmCalc(c);
+    by[pm]=by[pm]||{pm:pm, jobs:0, rates:[], budget:0, spent:0, over:0, thin:0};
+    const g=by[pm];
+    g.jobs++;
+    // A rate off two or three days is arithmetic, not information - keep it out of the average.
+    if(m.rate!=null && !m.prodThin) g.rates.push(m.rate); else if(m.rate!=null) g.thin++;
+    if(m.b!=null) g.budget+=m.b;
+    if(m.s!=null) g.spent+=m.s;
+    if(m.b!=null && m.s!=null && m.b>0 && m.s>m.b) g.over++;
+  });
+  return Object.values(by).map(g=>{
+    g.avgRate = g.rates.length ? Math.round(g.rates.reduce((a,b)=>a+b,0)/g.rates.length) : null;
+    g.drawnPct = g.budget>0 ? Math.round(g.spent/g.budget*100) : null;
+    return g;
+  }).sort((a,b)=>b.jobs-a.jobs || String(a.pm).localeCompare(String(b.pm)));
+}
+// What moved in the last seven days, in the three shapes the other departments care about.
+function _compMovement(){
+  const all=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived);
+  const within=(d)=>{ const n=_compDaysAgo(d); return n!=null && n>=0 && n<=COMP_WINDOW_DAYS; };
+  const listedDate=(c)=>((c.checklists||{}).timeline_done)||null;
+  return {
+    listed: all.filter(c=>within(listedDate(c)) &&
+             ['Listed on the Market','Listed on the Market / Final Inspections','In Contract'].includes(c.phase))
+            .map(c=>({c:c, d:listedDate(c)})),
+    sold:   all.filter(c=>c.phase==='Closed' && within(c.closedDate||c.closingDateSell))
+            .map(c=>({c:c, d:c.closedDate||c.closingDateSell})),
+    started: all.filter(c=>within(_consStart(c)) && !listedDate(c))
+            .map(c=>({c:c, d:_consStart(c)})),
+    ongoing: all.filter(c=>ACTIVE_PHASES.includes(c.phase))
+  };
+}
+// The performance block that goes on screen and into the PDF.
+function _compPerfBlock(wk, forPrint){
+  // Autosave picks up any element whose id starts with wm- , so the shout-out box
+  // needs no handler of its own; _wmAutoWire binds it under kind 'company'.
+  const cnotes=(((window._wmData||{})[wk]||{})['company'])||{};
+  const shoutVal=cnotes['__shout']||'';
+  const rows=_compByPM();
+  const mv=_compMovement();
+  const money=(n)=>n==null?'&mdash;':('$'+Math.round(n).toLocaleString());
+  const th=(t,a)=>`<th style="padding:7px 9px;text-align:${a||'left'};font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:#fff;font-weight:600">${t}</th>`;
+  const perfRows=rows.length?rows.map(g=>{
+    const drawCol = g.drawnPct==null?'#999':(g.drawnPct>100?'#B42318':(g.drawnPct>85?'#B7791F':'#0F7B54'));
+    return `<tr style="border-bottom:0.5px solid #f1f3f7">
+      <td style="padding:7px 9px;font-size:13px;font-weight:600;color:#111">${_calEsc(resolvePMName(g.pm)||g.pm)}</td>
+      <td style="padding:7px 9px;font-size:13px;text-align:center">${g.jobs}</td>
+      <td style="padding:7px 9px;font-size:13px;text-align:right;font-weight:600;color:#4A1D6E">${money(g.avgRate)}${g.thin?`<span style="font-size:10px;color:#bbb"> · ${g.thin} too new</span>`:''}</td>
+      <td style="padding:7px 9px;font-size:13px;text-align:right">${money(g.budget)}</td>
+      <td style="padding:7px 9px;font-size:13px;text-align:right">${money(g.spent)}</td>
+      <td style="padding:7px 9px;font-size:13px;text-align:right;font-weight:700;color:${drawCol}">${g.drawnPct==null?'&mdash;':(g.drawnPct+'%')}</td>
+      <td style="padding:7px 9px;font-size:13px;text-align:center;color:${g.over?'#B42318':'#bbb'};font-weight:${g.over?'700':'400'}">${g.over||'—'}</td>
+    </tr>`;}).join(''):`<tr><td colspan="7" style="padding:14px;text-align:center;color:#bbb;font-size:13px">Nobody has a live project right now.</td></tr>`;
+
+  const perf=`<table style="width:100%;border-collapse:collapse">
+      <thead><tr style="background:#122A4A">${th('Project manager')}${th('Live jobs','center')}${th('Avg production $/day','right')}${th('Budget','right')}${th('Spent','right')}${th('Drawn','right')}${th('Over','center')}</tr></thead>
+      <tbody>${perfRows}</tbody></table>
+    <div style="font-size:11px;color:#aaa;margin-top:6px">Production $/day is money spent divided by the days the job has actually been running. Jobs under a week old are left out of the average — a rate off three days is arithmetic, not information.</div>`;
+
+  const listRows=(arr,emptyTxt,dateLabel)=>arr.length
+    ? arr.sort((a,b)=>String(b.d||'').localeCompare(String(a.d||''))).map(x=>
+        `<div style="display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px">
+          <div style="min-width:0;color:#111">${_calEsc(x.c.addr||'')}<span style="color:#aaa;font-size:11.5px"> · ${_calEsc(x.c.pm||'no PM')}</span></div>
+          <div style="color:#888;font-size:12px;white-space:nowrap">${dateLabel} ${_calEsc(x.d||'')}</div>
+        </div>`).join('')
+    : `<div style="font-size:12.5px;color:#bbb;padding:5px 0">${emptyTxt}</div>`;
+
+  const ongoing=mv.ongoing.length
+    ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:5px">`+
+      mv.ongoing.sort((a,b)=>String(a.pm||'').localeCompare(String(b.pm||''))).map(c=>
+        `<div style="font-size:12.5px;color:#111;padding:3px 0">${_calEsc(c.addr||'')}<span style="color:#aaa"> · ${_calEsc(c.phase||'')}</span></div>`).join('')+`</div>`
+    : `<div style="font-size:12.5px;color:#bbb">No properties in active construction.</div>`;
+
+  const box=(t,inner,note)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:12px 15px;margin-bottom:11px">
+      <div style="font-size:13.5px;font-weight:700;color:#111;margin-bottom:${note?'2px':'7px'}">${t}</div>
+      ${note?`<div style="font-size:11px;color:#aaa;margin-bottom:7px">${note}</div>`:''}${inner}</div>`;
+
+  const shout = forPrint
+    ? box('&#127942; Top performer / shout out', `<div style="font-size:13px;color:#111;white-space:pre-wrap;min-height:34px">${_calEsc(shoutVal)||'<span style="color:#bbb">(not filled in)</span>'}</div>`)
+    : box('&#127942; Top performer / shout out',
+        `<textarea id="wm-__shout" placeholder="Who had a great week, and why? This is read out at the meeting…" style="width:100%;min-height:56px;padding:9px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:13.5px;color:#222;resize:vertical;font-family:inherit">${_calEsc(shoutVal)}</textarea>`,
+        'Saves itself as you type.');
+
+  return shout
+    + box('&#128202; Project team performance', perf, 'Live jobs only, straight off the property cards — nothing is typed in here.')
+    + box('&#127959;&#65039; Ongoing projects &mdash; '+mv.ongoing.length, ongoing)
+    + box('&#127991;&#65039; Recently listed on the market', listRows(mv.listed,'Nothing newly listed in the last 7 days.','listed'))
+    + box('&#128176; Recently sold', listRows(mv.sold,'Nothing closed in the last 7 days.','closed'))
+    + box('&#128296; Recently started active construction', listRows(mv.started,'No new starts in the last 7 days.','started'));
+}
+
+// Open the company meeting as a printable page - this is what goes to Suzette.
+function _compOpenPDF(wk){
+  const html=_compPrintHtml(wk);
+  const w=window.open('','_blank');
+  if(!w){ alert("Your browser blocked the PDF window. Allow pop-ups for this site and try again."); return; }
+  w.document.open(); w.document.write(html); w.document.close();
+}
+function _compPrintHtml(wk){
+  const when=(()=>{ try{ return new Date(wk+'T00:00:00').toLocaleDateString(undefined,{month:'long',day:'numeric',year:'numeric'}); }catch(e){ return wk; } })();
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Full Company Meeting — week of ${wk}</title>
+    <style>
+      *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+      body{background:#fff;color:#111;padding:26px 30px}
+      h1{font-size:21px;font-weight:700;margin-bottom:2px}
+      .sub{font-size:12.5px;color:#888;margin-bottom:16px}
+      table{width:100%;border-collapse:collapse}
+      .noprint{margin-bottom:14px}
+      button{padding:8px 16px;background:#111;color:#fff;border:none;border-radius:7px;font-size:13px;cursor:pointer}
+      @media print{ .noprint{display:none} body{padding:0} }
+    </style></head><body>
+    <div class="noprint"><button onclick="window.print()">&#8595; Save as PDF / Print</button></div>
+    <h1>Legacy Homes &mdash; Full Company Meeting</h1>
+    <div class="sub">Week of ${when} &middot; performance for the last ${COMP_WINDOW_DAYS} days &middot; generated ${new Date().toLocaleString()}</div>
+    ${_compPerfBlock(wk, true)}
+    </body></html>`;
+}
 function _compMeetingBody(wk){
+  const perfTop=`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+      <div style="font-size:12.5px;color:#888">Short and performance-based. Everything below is live off the property cards.</div>
+      <button onclick="_compOpenPDF('${wk}')" style="padding:7px 14px;background:#122A4A;color:#fff;border:none;border-radius:7px;font-size:12.5px;font-weight:600;cursor:pointer">&#8595; Build the PDF for Suzette</button>
+    </div>`+_compPerfBlock(wk,false);
   const team=_compFrom(wk,'team'), mkt=_compFrom(wk,'market'), kick=_compFrom(wk,'kickoff');
   const D=_wmSummaryData(wk);
   const all=(typeof propCards!=='undefined'?propCards:[]);
@@ -6452,7 +6679,7 @@ function _compMeetingBody(wk){
 
   const winRows=D.wins.length?D.wins.map(x=>line(addr(x.c)+' — '+_calEsc(x.t),'')).join(''):none('No wins written up in Monday’s meeting yet.');
 
-  return `<div style="background:#EEF4FB;border:0.5px solid #cfe0f2;border-radius:12px;padding:12px 15px;margin-bottom:14px">
+  return perfTop+`<div style="background:#EEF4FB;border:0.5px solid #cfe0f2;border-radius:12px;padding:12px 15px;margin-bottom:14px">
       <div style="font-size:13.5px;color:#1c3f66"><b>Nobody fills this one in.</b> Every line below is pulled from the meetings that already happened this week and from the live board. If a section is thin, the meeting it comes from has not been held yet.</div>
       <div style="margin-top:8px">${src}</div>
     </div>
@@ -6518,6 +6745,12 @@ function openWeeklyMeeting(kind, week){
     const confMap=_wmMeta(wk,'team','__conf');
     const coveredMap=_wmMeta(wk,'team','__covered');
     const closedRec=_wmMeta(wk,'team','__closed');
+    // Carry the standing answers into this week's sheet the first time anybody opens it,
+    // then redraw so they are actually on screen and not just in the saved data.
+    if(!isPast && !closedRec.at && !isReadOnly() && !window.__wmPrefilled_[wk]){
+      window.__wmPrefilled_[wk]=true;
+      _wmPrefillWeek(wk).then(n=>{ if(n && window.__wmLastKind==='team') openWeeklyMeeting('team', week); });
+    }
     const isClosed=!!closedRec.at;
     const roNow=isReadOnly()||isClosed||isPast;
     // A plain box with no "last week" panel above it, for the things that are
@@ -6665,6 +6898,7 @@ function openWeeklyMeeting(kind, week){
           ${fld('Est. profit',inp('est_profit',c.estProfit||'','$0'))}
           ${fld('Goal ARV',inp('goal_arv',c.goalArv||'','$0'))}
           ${fld('Listing on the market',_wmAgentField(c))}
+          ${fld('Project manager',_pmField(c,'wm'))}
           ${fld('JV deal',ro?(c.jvDeal?'Yes':'No'):`<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" ${c.jvDeal?'checked':''} onchange="_wmDeal('${c.id}','jv_deal',this.checked,this)" style="width:15px;height:15px;cursor:pointer"/> Yes</label>`)}
         </div>
         ${perm?'<div style="margin-top:9px;font-size:12px;color:#72243E;background:#FBEAF0;border-radius:6px;padding:5px 9px;display:inline-block">IF PERMITS &mdash; fill in: days since drawings/engineer back &middot; days since last touch with GC</div>':''}
@@ -8790,6 +9024,67 @@ function _pmTabNames(){
 // Options for a "who is the PM on this property" dropdown. The roster comes
 // first; everybody else on the team is offered underneath so a project can be
 // handed to somebody temporarily without changing their job role.
+// ===================== PROJECT MANAGER SELECTOR =====================
+// One PM per property, living on the property card. Both meeting templates read it
+// from there and write straight back, so setting it in Monday's meeting updates the
+// kickoff doc, the board, and the PM's own dashboard. Options come from the same
+// list the property card uses, so a PM added in Admin is selectable everywhere.
+function _pmField(c, where){
+  if(isReadOnly()) return `<span style="font-size:13px;color:#111">${_calEsc(c.pm||'')||'—'}</span>`;
+  return `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+    <select id="pmsel-${where}-${c.id}" onchange="_pmPick('${c.id}',this,'${where}')" style="padding:5px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px;font-weight:600;max-width:190px;background:#fff;color:#111">
+      <option value="">— Assign —</option>${_pmAssignOptions(c.pm||'')}
+    </select>
+  </div>`;
+}
+async function _pmPick(pid, el, where){
+  if(_blockIfReadOnly()) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return;
+  const prev=c.pm||'';
+  const name=(el?el.value:'')||'';
+  if(name===prev) return;
+  const { data, error } = await supabase.from("pm_properties").update({ pm:name||null }).eq("id",pid).select("id");
+  // A zero-row update returns error null - that is what a row blocked by row-level
+  // security looks like - so never call it saved without seeing a row come back.
+  if(error || !data || !data.length){
+    _wmFlash(el,false, error?(error.message||''):'nothing was saved — refresh and try again');
+    if(el) el.value=prev;
+    return;
+  }
+  c.pm=name||'';
+  _logAudit("updated","property", c.addr||"", "Project manager set to "+(name||"nobody")
+    +(where==='kick'?" in the kickoff meeting":" in the Monday project team meeting")
+    +(prev?(" (was "+prev+")"):""));
+  // Any other copy of this property's picker on screen has to agree with it.
+  try{
+    document.querySelectorAll('select[id^="pmsel-"]').forEach(s=>{
+      if(s!==el && s.id.endsWith('-'+pid)) s.value=name;
+    });
+  }catch(e){}
+  _wmFlash(el,true);
+  if(name) _pmNotifyAssigned(c, name, prev);
+}
+// Tell the incoming PM the house is theirs instead of waiting for someone to mention it.
+async function _pmNotifyAssigned(card, newPM, prevPM){
+  try{
+    const who=(typeof _pmFullName==='function'?_pmFullName(newPM):'')||newPM;
+    if(!who) return;
+    const title=(card.addr||'Property')+' — assigned to you';
+    const ex=await supabase.from('pm_tasks').select('id')
+      .eq('property_id',card.id).eq('title',title).eq('assignee',who).eq('status','open').limit(1);
+    if(ex.error || (ex.data||[]).length) return;   // they have already been told
+    const today=_ymd(new Date());
+    const r=await supabase.from('pm_tasks').insert({
+      title:title, category:'Phase Move', status:'open',
+      start_date:today, due_date:today,
+      property_id:card.id, assignee:who, assignees:[who],
+      notes:'You are the project manager on '+(card.addr||'this property')+' as of today'
+           +(prevPM?(' — it was '+prevPM+' before.'):'.')
+           +' Open the property card and check the next steps have dates on them.'
+    }).select('id');
+    if(!r.error && typeof loadTasks==='function') await loadTasks();
+  }catch(e){ /* the assignment itself is saved; a missed notice must not undo it */ }
+}
 function _pmAssignOptions(cur){
   const roster=(typeof PM_MANAGERS!=='undefined'?PM_MANAGERS:[]).slice();
   const low=roster.map(n=>String(n).toLowerCase());
@@ -9830,7 +10125,7 @@ function openAdminDashboard(activeTab) {
     case 'marlo':        content=_marloTab(); break;
     case 'trackers':
       if(!(_viewUser()&&(_viewUser().isSuperAdmin||hasPerm(_viewUser(),'trk_all')))){ content='<div class="empty-state"><div class="icon">&#128274;</div><p style="color:#888;font-size:16px;font-weight:500">Trackers</p><p style="color:#555;font-size:14px;margin-top:6px">Ask Bruce to turn Trackers on for your account in Settings &rarr; Permissions.</p></div>'; break; }
-      window._trkRerender=()=>openAdminDashboard('trackers'); window._trkCtx='admin'; content=_vaTrackers(); break;
+      window._trkRerender=()=>_trkKeepScroll(()=>openAdminDashboard('trackers')); window._trkCtx='admin'; content=_vaTrackers(); break;
     case 'property':     content=renderPropertyBoard(); break;
     case 'construction': content=renderConstructionCalendar(); break;
     case 'taskcal':      content=renderTaskCalendar(); break;
@@ -10069,7 +10364,7 @@ function openVAAdminDashboard(activeTab) {
   switch(activeTab){
     case 'va':           content=_vaPersonView(vaName); break;
     case 'utilities':    content=_utilitiesDashboard(); break;
-    case 'trackers':     window._trkRerender=()=>openVAAdminDashboard('trackers'); window._trkCtx='va'; content=_vaTrackers(); break;
+    case 'trackers':     window._trkRerender=()=>_trkKeepScroll(()=>openVAAdminDashboard('trackers')); window._trkCtx='va'; content=_vaTrackers(); break;
     case 'property':     content=renderPropertyBoard(); break;
     case 'construction': content=renderConstructionCalendar(); break;
     case 'taskcal':      content=renderTaskCalendar(); break;
@@ -10310,7 +10605,59 @@ function _trkClosedSimple(closed, what){
         <td style="padding:7px;text-align:right"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;color:#185FA5;font-size:12px">Open the card &rsaquo;</span></td>
       </tr>`, '#888');
 }
-function _trkTable(title,color,head,rows){ return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:auto;margin-bottom:16px"><div style="padding:10px 14px;border-bottom:0.5px solid #e0e4ec;font-size:14px;font-weight:700;color:${color}">${title}</div><table style="width:100%;border-collapse:collapse;font-size:13.5px;color:#111"><thead><tr style="background:#122A4A;color:#fff">${head}</tr></thead><tbody>${rows}</tbody></table></div>`; }
+// These tables run well past the right edge of the screen, and the only way across
+// used to be the scrollbar underneath - which on a long tracker means scrolling to
+// the bottom of the page first just to move sideways. So there is a second, linked
+// scrollbar sitting on top of the table. Drag either one; both move together.
+// The key is derived from the title so it survives a redraw and the scroll position
+// can be put back exactly where it was.
+function _trkTable(title,color,head,rows){
+  const key='trkx-'+String(title).replace(/[^a-zA-Z0-9]+/g,'-').replace(/^-|-$/g,'').toLowerCase();
+  setTimeout(_trkSyncScrollbars,0);
+  return `<div style="margin-bottom:16px">
+    <div class="trk-xbar trk-xtop" data-trk-xtop="${key}"><div data-trk-xspacer="${key}" style="height:1px"></div></div>
+    <div class="trk-xbar" data-trk-scroll="${key}" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:auto"><div style="padding:10px 14px;border-bottom:0.5px solid #e0e4ec;font-size:14px;font-weight:700;color:${color}">${title}</div><table style="width:100%;border-collapse:collapse;font-size:13.5px;color:#111"><thead><tr style="background:#122A4A;color:#fff">${head}</tr></thead><tbody>${rows}</tbody></table></div>
+  </div>`;
+}
+// Match the top bar's width to the table and keep the two in step.
+function _trkSyncScrollbars(){
+  document.querySelectorAll('[data-trk-xtop]').forEach(top=>{
+    const key=top.getAttribute('data-trk-xtop');
+    const body=document.querySelector('[data-trk-scroll="'+key+'"]');
+    const spacer=top.querySelector('[data-trk-xspacer]');
+    if(!body||!spacer) return;
+    spacer.style.width=body.scrollWidth+'px';
+    // Nothing to drag if the table already fits - don't show a dead bar.
+    top.style.display=(body.scrollWidth>body.clientWidth+1)?'block':'none';
+    if(!top._trkWired){
+      top._trkWired=true;
+      let lock=false;
+      top.addEventListener('scroll',()=>{ if(lock)return; lock=true; body.scrollLeft=top.scrollLeft; lock=false; });
+      body.addEventListener('scroll',()=>{ if(lock)return; lock=true; top.scrollLeft=body.scrollLeft; lock=false; });
+    }
+    top.scrollLeft=body.scrollLeft;
+  });
+}
+window.addEventListener('resize',()=>{ try{ _trkSyncScrollbars(); }catch(e){} });
+// Redrawing the tracker used to throw you back to the top of the page and back to
+// the first column - so changing a status on row 20 meant scrolling all the way
+// down and across again. Hold both positions across the redraw.
+function _trkKeepScroll(fn){
+  const y=window.scrollY;
+  const xs={};
+  document.querySelectorAll('[data-trk-scroll]').forEach(el=>{ xs[el.getAttribute('data-trk-scroll')]=el.scrollLeft; });
+  fn();
+  requestAnimationFrame(()=>{
+    try{
+      document.querySelectorAll('[data-trk-scroll]').forEach(el=>{
+        const v=xs[el.getAttribute('data-trk-scroll')];
+        if(v!=null) el.scrollLeft=v;
+      });
+      window.scrollTo(0,y);
+      _trkSyncScrollbars();
+    }catch(e){}
+  });
+}
 // Type-to-filter that keeps your cursor in the box (filters rows in place, no re-render).
 function _trkSearchBox(ph){
   // The old "Saved ✓" flash lived here and was gone in 1.2 seconds. The real status now sits
@@ -11308,7 +11655,7 @@ function _vaTrackers(){
     return shell(back+bar+_trkSearchBox('Search a property, provider or account #…')+_trkTable(`${u.icon} ${u.label} Tracker`,u.color,uHead(u),rows)+`<div style="font-size:12px;color:#999;margin-top:-8px">Every box saves the moment you leave it. Scroll the table sideways for the payment columns, or click <b>📜 open</b> on a row for that property's full payment history and call log.</div>`+_trkClosedSimple(closed,'utility history'));
   }
   if(view==='permit') return shell(back+_permitTrackerBody());
-  if(view==='checklist') return shell(back+_trkSearchBox('Search a property…')+_trkTable('✅ Checklist Tracker','#0B7285','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">First Time Access</th><th style="padding:9px">Punch Out</th>',clrows)+_trkClosedSimple(closed,'checklist history'));
+  if(view==='checklist') return shell(back+_chkTrackerBody()+_trkClosedSimple(closed,'checklist history'));
 
   const li=(txt)=>`<div style="font-size:12.5px;color:#333;padding:4px 0;border-bottom:0.5px solid #f1f3f7">• ${txt}</div>`;
   const sum=(title,color,items)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 14px"><div style="font-size:13.5px;font-weight:700;color:${color};margin-bottom:4px">${title}</div>${items.length?items.slice(0,6).map(li).join('')+(items.length>6?`<div style="font-size:11.5px;color:#999;padding-top:4px">+ ${items.length-6} more — click the tile</div>`:''):'<div style="font-size:12px;color:#1D9E75;padding:4px 0">All caught up ✅</div>'}</div>`;
@@ -11523,7 +11870,7 @@ function openArchitectDashboard(activeTab) {
   let content;
   switch(activeTab){
     case 'jenn':         content=_jennTab(); break;
-    case 'permits':      window._permitCtx='architect'; content=`<div style="padding:20px;max-width:1240px;margin:0 auto"><div style="font-size:16px;font-weight:600;color:#111;margin-bottom:10px">📄 Permit Tracker</div>${_permitTrackerBody()}</div>`; break;
+    case 'permits':      window._permitCtx='architect'; window._trkRerender=()=>_trkKeepScroll(()=>openArchitectDashboard('permits')); content=`<div style="padding:20px;max-width:1240px;margin:0 auto"><div style="font-size:16px;font-weight:600;color:#111;margin-bottom:10px">📄 Permit Tracker</div>${_permitTrackerBody()}</div>`; break;
     case 'property':     content=renderPropertyBoard(); break;
     case 'construction': content=renderConstructionCalendar(); break;
     case 'taskcal':      content=renderTaskCalendar(); break;
@@ -13745,6 +14092,7 @@ const _AUTOMATIONS = [
   {cat:"\ud83d\udce1 Slack \u2192 property cards", items:[
     {name:"Vacancy updates sync", desc:"Reads #vacancy-updates and works out when each house is coming vacant from what Sammy, her VA and Legacy Alerts post \u2014 \"occupied until 8/31\", \"expected vacant\", \"vacant, set up a lockbox\". Writes the vacancy date onto the property card. Nothing else in the system sets that date.", trigger:"Automatic \u2014 5\u00d7 a day", status:"active"},
     {name:"Company closings sync", desc:"Reads #company-closings for takedowns and sales, and keeps the buying and selling closing dates on the cards in step.", trigger:"Automatic \u2014 5\u00d7 a day", status:"active"},
+    {name:"Contract timelines", desc:"Reads #listings-closings, opens the closing-timeline PDF the realtor attaches, and pulls out the in-contract date and the closing date. Moves the house to In Contract and sets the Us Selling date. Nothing read that channel before 3 Sep \u2014 1184 Dutton sat in Listed on the Market for three weeks after it went under contract. It never creates a card, never touches the buying date, and refuses to write a selling date that matches the buying date.", trigger:"Automatic \u2014 daily, 8am", status:"active"},
     {name:"Slack material orders \u2192 Marlo", desc:"Pulls material orders posted in #material-lists onto Marlo's Admin dashboard.", trigger:"Automatic \u2014 hourly, 8am\u20137pm", status:"active"},
   ]},
   {cat:"\ud83d\udd14 Deadline alerts", items:[
@@ -13774,7 +14122,10 @@ const _AUTOMATIONS = [
     {name:"Drive folder auto-link on create", desc:"New property cards automatically find and link their Google Drive folder by job-site address.", trigger:"Automatic \u2014 on property creation", status:"planned"},
     {name:"CompanyCam auto-link on create", desc:"Auto-links the CompanyCam folder by address, retrying within 48 hours if not found yet.", trigger:"Automatic \u2014 on creation + 48h retry", status:"planned"},
   ]},
-  {cat:"\u2709\ufe0f Notifications", items:[
+    {cat:"\ud83e\uddf9 Housekeeping", items:[
+    {name:"Edit History clean-up", desc:"Removes Edit History entries once they are more than thirty days old, so the log stays quick to read and the database does not grow forever. It is the only thing allowed to delete history, and it can never touch anything newer than thirty days. Runs in the database itself, so it works whether or not anybody has the site open.", trigger:"Automatic \u2014 nightly, 11:10pm", status:"active"},
+  ]},
+{cat:"\u2709\ufe0f Notifications", items:[
     {name:"PM & closing emails", desc:"Emails the assigned PM when a property auto-advances, and Marlo + Patience when a property closes (utilities removal).", trigger:"Automatic \u2014 on advance / close", status:"pending"},
   ]},
 ];
@@ -14652,6 +15003,261 @@ window.addEventListener('focus', ()=>{ _boardRefresh(); });
 // infrequent: this database is shared with other apps and fell over tonight under load.
 setInterval(_boardRefresh, 300000);
 
+// ===================== PROPERTY CHECKLISTS =====================
+// Three checklists ride on every property: before construction starts, while it is
+// running, and once it is finished. The wording lives in ONE place - three templates
+// edited in the Checklist Tracker - and each property keeps only its own ticks. That
+// way changing a step changes it everywhere, and no property carries a stale copy.
+const CHK_KINDS=[
+  {key:'pre',    label:'Pre-Construction',    icon:'\u{1F4CB}', color:'#185FA5'},
+  {key:'active', label:'Active Construction', icon:'\u{1F528}', color:'#B7791F'},
+  {key:'post',   label:'Post-Construction',   icon:'✅',    color:'#0F7B54'}
+];
+// Bruce, 3 Sep: every house that has not started framing yet gets these. Anything
+// already framing or later keeps whatever ticks it has but is not newly enrolled.
+const CHK_PRE_FRAMING=["Upcoming Takedowns","Occupied / Closed","Vacant / On Standby","Pre Construction","Waiting Permits"];
+function _chkApplies(c){
+  if(!c) return false;
+  if(CHK_PRE_FRAMING.indexOf(c.phase)>=0) return true;
+  // A house that has already been worked on keeps its checklist wherever it gets to.
+  const p=((window._chkProg||{})[c.id])||{};
+  return CHK_KINDS.some(k=>Object.keys(p[k.key]||{}).length>0);
+}
+function _chkSteps(kind){ return (((window._chkTpl||{})[kind])||[]).filter(i=>i&&i.t); }
+function _chkTicks(pid,kind){ return (((window._chkProg||{})[pid]||{})[kind])||{}; }
+function _chkDone(pid,kind,itemId){ return !!(_chkTicks(pid,kind)[itemId]||{}).done; }
+function _chkCounts(pid,kind){
+  const items=_chkSteps(kind);
+  const done=items.filter(i=>_chkDone(pid,kind,i.id)).length;
+  return {done:done, total:items.length, left:items.length-done};
+}
+// Everything still outstanding for one property, across all three lists.
+function _chkOutstanding(pid){
+  const out=[];
+  CHK_KINDS.forEach(k=>_chkSteps(k.key).forEach(i=>{ if(!_chkDone(pid,k.key,i.id)) out.push({kind:k.key,label:k.label,color:k.color,item:i}); }));
+  return out;
+}
+let _chkLoadedOk=null;
+async function _chkLoad(){
+  window._chkLoaded=true;
+  try{
+    const r=await supabase.from("pm_settings").select("key,data").in("key",["checklist_templates","checklist_progress"]);
+    if(r.error){ window._chkLoadOk=false; window._chkTpl=window._chkTpl||{}; window._chkProg=window._chkProg||{}; return; }
+    const by={}; (r.data||[]).forEach(row=>{ by[row.key]=row.data||{}; });
+    window._chkTpl = by.checklist_templates || {pre:[],active:[],post:[]};
+    window._chkProg = by.checklist_progress || {};
+    window._chkTplBase = JSON.parse(JSON.stringify(window._chkTpl));
+    window._chkProgBase = JSON.parse(JSON.stringify(window._chkProg));
+    window._chkLoadOk=true;
+  }catch(e){ window._chkLoadOk=false; window._chkTpl=window._chkTpl||{}; window._chkProg=window._chkProg||{}; }
+}
+// Same read-merge-write as the trackers: only send what THIS browser changed, so two
+// people ticking different properties can never wipe each other out.
+async function _chkSave(which){
+  if(window._chkLoadOk===false){
+    alert("The checklists could not be loaded a moment ago, so saving now would overwrite them with a blank set. Nothing was saved - refresh the page and try again.");
+    return false;
+  }
+  const key = which==='tpl' ? 'checklist_templates' : 'checklist_progress';
+  const mine = which==='tpl' ? (window._chkTpl||{}) : (window._chkProg||{});
+  const base = which==='tpl' ? (window._chkTplBase||{}) : (window._chkProgBase||{});
+  const ops=_trkDiff(base, mine, [], []);
+  if(!ops.length) return true;
+  let fresh={};
+  try{
+    const r=await supabase.from("pm_settings").select("data").eq("key",key).maybeSingle();
+    if(r.error) throw new Error(r.error.message||"could not re-read the checklists");
+    fresh=(r.data && r.data.data) || {};
+  }catch(e){
+    alert("NOT SAVED - could not reach the database ("+((e&&e.message)||"network error")+"). Nothing was overwritten; try again in a moment.");
+    return false;
+  }
+  const merged=_trkApplyPatch(JSON.parse(JSON.stringify(fresh)), ops);
+  const err=await _pmSettingsWrite(key, merged);
+  if(err){ alert("NOT SAVED - "+err); return false; }
+  if(which==='tpl'){ window._chkTpl=merged; window._chkTplBase=JSON.parse(JSON.stringify(merged)); }
+  else { window._chkProg=merged; window._chkProgBase=JSON.parse(JSON.stringify(merged)); }
+  return true;
+}
+function _chkNewId(){ return 'c'+Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
+// ---- ticking an item on a property -------------------------------------------------
+async function _chkToggle(pid, kind, itemId, el){
+  if(_blockIfReadOnly()) return;
+  const p=window._chkProg=window._chkProg||{};
+  p[pid]=p[pid]||{}; p[pid][kind]=Object.assign({}, p[pid][kind]||{});
+  const now=!_chkDone(pid,kind,itemId);
+  const who=(typeof currentUser==='function' && currentUser()) ? ((currentUser().firstName||'')+' '+(currentUser().lastName||'')).trim() : '';
+  if(now) p[pid][kind][itemId]={done:true, at:_ymd(new Date()), by:who};
+  else delete p[pid][kind][itemId];
+  window._chkProg=p;
+  const ok=await _chkSave('prog');
+  if(!ok){ // put the screen back to the truth
+    if(now) delete p[pid][kind][itemId]; else p[pid][kind][itemId]={done:true};
+    window._chkProg=p;
+  } else {
+    const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
+    const it=_chkSteps(kind).find(i=>i.id===itemId);
+    _logAudit("updated","property",(c&&c.addr)||"", (now?"Ticked off":"Un-ticked")+" “"+((it&&it.t)||itemId)+"” on the "+
+      ((CHK_KINDS.find(k=>k.key===kind)||{}).label||kind)+" checklist.");
+  }
+  if(window._chkRerender) try{ window._chkRerender(); }catch(e){}
+}
+// ---- the checklist as it appears inside a property card ----------------------------
+function _chkCardTab(c){
+  if(!(window._chkLoaded===true) || window._chkLoadOk===false){
+    return `<div style="padding:18px;font-size:13px;color:#999">${window._chkLoadOk===false?'The checklists could not be loaded — refresh the page.':'Loading the checklists…'}</div>`;
+  }
+  const empty=CHK_KINDS.every(k=>_chkSteps(k.key).length===0);
+  if(empty) return `<div style="padding:18px;font-size:13px;color:#999">No checklist steps have been written yet. An admin can add them under <b>Trackers → Checklist Tracker</b>, and they will appear here on every property straight away.</div>`;
+  const ro=isReadOnly();
+  const blocks=CHK_KINDS.map(k=>{
+    const items=_chkSteps(k.key);
+    if(!items.length) return '';
+    const n=_chkCounts(c.id,k.key);
+    const rows=items.map(i=>{
+      const done=_chkDone(c.id,k.key,i.id);
+      const rec=_chkTicks(c.id,k.key)[i.id]||{};
+      return `<div style="display:flex;gap:9px;align-items:flex-start;padding:7px 0;border-bottom:0.5px solid #f4f5f7">
+        <span ${ro?'':`onclick="_chkToggle('${c.id}','${k.key}','${i.id}',this)"`} style="font-size:15px;line-height:1.2;cursor:${ro?'default':'pointer'};user-select:none;color:${done?'#0F7B54':'#c8ced8'}">${done?'☑':'☐'}</span>
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13px;color:${done?'#8a9099':'#111'};text-decoration:${done?'line-through':'none'}">${_calEsc(i.t)}</div>
+          ${done&&rec.at?`<div style="font-size:10.5px;color:#aaa;margin-top:1px">${_calEsc(rec.by||'')}${rec.by?' · ':''}${_calEsc(rec.at)}</div>`:''}
+        </div></div>`;
+    }).join('');
+    const pct=n.total?Math.round(n.done/n.total*100):0;
+    return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:9px;margin-bottom:12px;overflow:hidden">
+      <div style="padding:9px 13px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <div style="font-size:13.5px;font-weight:600;color:${k.color}">${k.icon} ${k.label}</div>
+        <div style="font-size:12px;color:${n.left?'#B7791F':'#0F7B54'};font-weight:600">${n.done} of ${n.total}${n.left?'':' — done'}</div>
+      </div>
+      <div style="height:3px;background:#eef0f6"><div style="height:3px;width:${pct}%;background:${k.color}"></div></div>
+      <div style="padding:2px 13px 10px">${rows}</div></div>`;
+  }).join('');
+  return `<div style="padding:14px 2px">${blocks}</div>`;
+}
+// ---- the three templates, edited in the Checklist Tracker --------------------------
+async function _chkTplAdd(kind){
+  if(_blockIfReadOnly()) return;
+  const el=document.getElementById('chk-new-'+kind);
+  const t=el?String(el.value||'').trim():'';
+  if(!t) return;
+  const d=window._chkTpl=window._chkTpl||{};
+  d[kind]=(d[kind]||[]).slice();
+  d[kind].push({id:_chkNewId(), t:t});
+  window._chkTpl=d;
+  if(await _chkSave('tpl')){
+    _logAudit("updated","settings","Checklist templates","Added “"+t+"” to the "+((CHK_KINDS.find(k=>k.key===kind)||{}).label||kind)+" checklist. It now shows on every property using that list.");
+    if(el) el.value='';
+  }
+  if(window._trkRerender) window._trkRerender();
+}
+async function _chkTplEdit(kind, id){
+  if(_blockIfReadOnly()) return;
+  const d=window._chkTpl||{}; const list=(d[kind]||[]); const it=list.find(x=>x.id===id); if(!it) return;
+  const next=prompt("Edit this step:", it.t);
+  if(next===null) return;
+  const t=String(next).trim(); if(!t) return;
+  const prev=it.t;
+  d[kind]=list.map(x=>x.id===id?{id:x.id,t:t}:x); window._chkTpl=d;
+  if(await _chkSave('tpl')) _logAudit("updated","settings","Checklist templates","Reworded “"+prev+"” to “"+t+"”. Ticks already made against it are kept.");
+  if(window._trkRerender) window._trkRerender();
+}
+async function _chkTplDel(kind, id){
+  if(_blockIfReadOnly()) return;
+  const d=window._chkTpl||{}; const it=(d[kind]||[]).find(x=>x.id===id); if(!it) return;
+  // How many houses have already ticked this? People should know before it disappears.
+  let ticked=0;
+  Object.keys(window._chkProg||{}).forEach(pid=>{ if(_chkDone(pid,kind,id)) ticked++; });
+  if(!_confirmDelete('the step “'+it.t+'”',
+      'It will disappear from every property that uses this checklist'+(ticked?(', including '+ticked+' where it has already been ticked off'):'')+'.')) return;
+  d[kind]=(d[kind]||[]).filter(x=>x.id!==id); window._chkTpl=d;
+  if(await _chkSave('tpl')) _logAudit("deleted","settings","Checklist templates","Removed “"+it.t+"” from the "+((CHK_KINDS.find(k=>k.key===kind)||{}).label||kind)+" checklist"+(ticked?(" — it had been ticked on "+ticked+" propert"+(ticked===1?"y":"ies")):"")+".");
+  if(window._trkRerender) window._trkRerender();
+}
+async function _chkTplMove(kind, id, dir){
+  if(_blockIfReadOnly()) return;
+  const d=window._chkTpl||{}; const list=(d[kind]||[]).slice();
+  const i=list.findIndex(x=>x.id===id); const j=i+dir;
+  if(i<0||j<0||j>=list.length) return;
+  const tmp=list[i]; list[i]=list[j]; list[j]=tmp;
+  d[kind]=list; window._chkTpl=d;
+  await _chkSave('tpl');
+  if(window._trkRerender) window._trkRerender();
+}
+// The right-hand column on a PM's board tab: what is still un-ticked across the
+// properties on that board. Replaced "Upcoming, by date", which only repeated what
+// the Needs completed column already said.
+function _chkBoardColumn(cards){
+  if(!(window._chkLoaded===true)) return `<div style="font-size:12.5px;color:#bbb">Loading the checklists…</div>`;
+  if(window._chkLoadOk===false) return `<div style="font-size:12.5px;color:#B42318">The checklists could not be loaded — refresh the page.</div>`;
+  const inScope=(cards||[]).filter(c=>_chkApplies(c));
+  if(!inScope.length) return `<div style="font-size:12.5px;color:#bbb">No properties on this board use the checklists.</div>`;
+  const rows=inScope.map(c=>{
+    const out=_chkOutstanding(c.id);
+    if(!out.length) return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:8px 12px;margin-bottom:6px">
+        <div style="font-size:13px;color:#185FA5;cursor:pointer" onclick="openPropDetail('${c.id}')">${_calEsc(c.addr||'')}</div>
+        <div style="font-size:11.5px;color:#0F7B54;margin-top:2px">Everything ticked off ✓</div></div>`;
+    const show=out.slice(0,4).map(o=>`<div style="display:flex;gap:6px;align-items:flex-start;padding:3px 0">
+        <span style="font-size:13px;color:#c8ced8;line-height:1.15">☐</span>
+        <span style="flex:1;min-width:0;font-size:12px;color:#444">${_calEsc(o.item.t)}</span>
+        <span style="font-size:9.5px;color:${o.color};text-transform:uppercase;letter-spacing:.04em;flex-shrink:0;padding-top:2px">${o.kind}</span>
+      </div>`).join('');
+    return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:8px 12px;margin-bottom:6px">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">
+        <div style="font-size:13px;color:#185FA5;cursor:pointer" onclick="openPropDetail('${c.id}')">${_calEsc(c.addr||'')}</div>
+        <div style="font-size:11px;color:#B7791F;font-weight:600;flex-shrink:0">${out.length} left</div></div>
+      <div style="margin-top:3px">${show}</div>
+      ${out.length>4?`<div style="font-size:11px;color:#aaa;margin-top:3px;cursor:pointer" onclick="openPropDetail('${c.id}')">+ ${out.length-4} more ›</div>`:''}
+    </div>`;
+  }).join('');
+  return rows;
+}
+function _chkTrackerBody(){
+  const ro=isReadOnly();
+  if(!(window._chkLoaded===true)) return `<div style="padding:20px;color:#999;font-size:13px">Loading the checklists…</div>`;
+  if(window._chkLoadOk===false) return `<div style="padding:20px;color:#B42318;font-size:13px">The checklists could not be loaded. Refresh the page before editing anything, or you risk saving over them.</div>`;
+  const inScope=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && _chkApplies(c));
+  const cols=CHK_KINDS.map(k=>{
+    const items=_chkSteps(k.key);
+    const rows=items.map((i,idx)=>`<div style="display:flex;gap:7px;align-items:flex-start;padding:6px 0;border-bottom:0.5px solid #f4f5f7">
+        <span style="font-size:11px;color:#ccc;min-width:16px;padding-top:2px">${idx+1}.</span>
+        <div style="flex:1;min-width:0;font-size:13px;color:#111">${_calEsc(i.t)}</div>
+        ${ro?'':`<span style="display:flex;gap:5px;flex-shrink:0">
+          <span onclick="_chkTplMove('${k.key}','${i.id}',-1)" title="Move up" style="cursor:pointer;color:#c3cad6;font-size:12px">▲</span>
+          <span onclick="_chkTplMove('${k.key}','${i.id}',1)" title="Move down" style="cursor:pointer;color:#c3cad6;font-size:12px">▼</span>
+          <span onclick="_chkTplEdit('${k.key}','${i.id}')" title="Edit" style="cursor:pointer;color:#185FA5;font-size:12px">Edit</span>
+          <span onclick="_chkTplDel('${k.key}','${i.id}')" title="Remove" style="cursor:pointer;color:#B42318;font-size:12px">✕</span>
+        </span>`}
+      </div>`).join('');
+    return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${k.color};border-radius:10px;padding:13px 15px">
+      <div style="font-size:13.5px;font-weight:700;color:${k.color};margin-bottom:2px">${k.icon} ${k.label}</div>
+      <div style="font-size:11px;color:#aaa;margin-bottom:8px">${items.length} step${items.length===1?'':'s'} · shows on ${inScope.length} propert${inScope.length===1?'y':'ies'}</div>
+      ${rows||`<div style="font-size:12.5px;color:#bbb;padding:8px 0">Nothing here yet — add the first step below.</div>`}
+      ${ro?'':`<div style="display:flex;gap:6px;margin-top:9px">
+        <input id="chk-new-${k.key}" placeholder="Add a step…" onkeydown="if(event.key==='Enter')_chkTplAdd('${k.key}')" style="flex:1;min-width:0;padding:6px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12.5px"/>
+        <button onclick="_chkTplAdd('${k.key}')" style="padding:6px 12px;background:#122A4A;color:#fff;border:none;border-radius:7px;font-size:12.5px;cursor:pointer;font-weight:600">Add</button></div>`}
+    </div>`;
+  }).join('');
+  // How every property is getting on, so nobody has to open 40 cards to find out.
+  const prog=inScope.map(c=>{
+    const bits=CHK_KINDS.map(k=>{ const n=_chkCounts(c.id,k.key); return n.total?`<span style="font-size:11.5px;color:${n.left?'#B7791F':'#0F7B54'};font-weight:600">${k.icon} ${n.done}/${n.total}</span>`:''; }).filter(Boolean).join('<span style="color:#e0e4ec">|</span>');
+    return `<tr data-trk="${_calEsc((c.addr||'')+' '+(c.pm||''))}" style="border-bottom:0.5px solid #f1f3f7">
+      <td style="padding:8px 10px;font-size:13px;color:#185FA5;cursor:pointer" onclick="openPropDetail('${c.id}')">${_calEsc(c.addr||'')}</td>
+      <td style="padding:8px;font-size:12.5px;color:#666">${_calEsc(c.pm||'—')}</td>
+      <td style="padding:8px;font-size:12.5px;color:#666">${_calEsc(c.phase||'')}</td>
+      <td style="padding:8px;display:flex;gap:9px;align-items:center;flex-wrap:wrap">${bits||'<span style="font-size:11.5px;color:#ccc">no steps written yet</span>'}</td></tr>`;
+  }).join('');
+  return `<div style="font-size:12.5px;color:#666;background:#F7F8FB;border:0.5px dashed #d5d9e2;border-radius:9px;padding:10px 13px;margin-bottom:14px">
+      These three lists are the master copy. Every property that has not started framing shows them on its own card, and each house keeps its own ticks.
+      Add or reword a step and it appears everywhere at once — ticks already made are kept.
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-bottom:16px">${cols}</div>
+    ${_trkSearchBox('Search a property or project manager…')}
+    ${_trkTable('✅ Where every property is up to','#0B7285',
+      '<th style="padding:9px 10px;text-align:left;min-width:200px">Property</th><th style="padding:9px;text-align:left">PM</th><th style="padding:9px;text-align:left">Phase</th><th style="padding:9px;text-align:left;min-width:220px">Progress</th>',
+      prog||`<tr><td colspan="4" style="padding:16px;color:#bbb;text-align:center">No properties are using these checklists yet.</td></tr>`)}`;
+}
+
 // ===================== BOOT =====================
 // Paint a usable screen before touching the network, then load.
 _bootPaint();
@@ -14675,4 +15281,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-02a live-board-refresh -->
+<!-- build: 2026-09-03a checklists-company-meeting -->
