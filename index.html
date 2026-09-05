@@ -6715,28 +6715,31 @@ function _compPerfBlock(wk, forPrint){
         </div>`).join('')
     : `<div style="font-size:12.5px;color:#bbb;padding:5px 0">${emptyTxt}</div>`;
 
-  const ongoing=mv.ongoing.length
-    ? `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:5px">`+
-      mv.ongoing.sort((a,b)=>String(a.pm||'').localeCompare(String(b.pm||''))).map(c=>
-        `<div style="font-size:12.5px;color:#111;padding:3px 0">${_calEsc(c.addr||'')}<span style="color:#aaa"> · ${_calEsc(c.phase||'')}</span></div>`).join('')+`</div>`
-    : `<div style="font-size:12.5px;color:#bbb">No properties in active construction.</div>`;
-
   const box=(t,inner,note)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:12px 15px;margin-bottom:11px;color:#111">
       <div style="font-size:13.5px;font-weight:700;color:#111;margin-bottom:${note?'2px':'7px'}">${t}</div>
       ${note?`<div style="font-size:11px;color:#aaa;margin-bottom:7px">${note}</div>`:''}${inner}</div>`;
 
   const shout = forPrint
-    ? box('&#127942; Top performer / shout out', `<div style="font-size:13px;color:#111;white-space:pre-wrap;min-height:34px">${_calEsc(shoutVal)||'<span style="color:#bbb">(not filled in)</span>'}</div>`)
-    : box('&#127942; Top performer / shout out',
-        `<textarea id="wm-__shout" placeholder="Who had a great week, and why? This is read out at the meeting…" style="width:100%;min-height:56px;padding:9px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:13.5px;color:#222;resize:vertical;font-family:inherit">${_calEsc(shoutVal)}</textarea>`,
+    ? box('&#127942; Shout out / appreciation', `<div style="font-size:13px;color:#111;white-space:pre-wrap;min-height:34px">${_calEsc(shoutVal)||'<span style="color:#bbb">(not filled in)</span>'}</div>`)
+    : box('&#127942; Shout out / appreciation',
+        `<textarea id="wm-__shout" placeholder="Who are we shouting out this week — on the project team or anywhere else in the company — and why?…" style="width:100%;min-height:56px;padding:9px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:13.5px;color:#222;resize:vertical;font-family:inherit">${_calEsc(shoutVal)}</textarea>`,
         'Saves itself as you type.');
 
-  return shout
-    + box('&#128202; Project team performance', perf, 'Live jobs only, straight off the property cards — nothing is typed in here.')
-    + box('&#127959;&#65039; Ongoing projects &mdash; '+mv.ongoing.length, ongoing)
-    + box('&#127991;&#65039; Recently listed on the market', listRows(mv.listed,'Nothing newly listed in the last 7 days.','listed'))
-    + box('&#128176; Recently sold', listRows(mv.sold,'Nothing closed in the last 7 days.','closed'))
-    + box('&#128296; Recently started active construction', listRows(mv.started,'No new starts in the last 7 days.','started'));
+  // Company jobs with no property behind them - the only work in the building no
+  // other meeting on this app reports on.
+  const nct=_compNonConstructionTasks();
+  const nctRows=nct.length
+    ? nct.map(t=>`<div style="display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px">
+        <div style="min-width:0;color:${t.status==='done'?'#0F7B54':'#111'}">${t.status==='done'?'&#10003; ':''}${_calEsc(t.title||'')}<span style="color:#aaa;font-size:11.5px"> &middot; ${_calEsc((typeof taskAssignees==='function'?taskAssignees(t).join(', '):'')||'nobody on it')}${t.category?(' &middot; '+_calEsc(t.category)):''}</span></div>
+        <div style="color:#888;font-size:12px;white-space:nowrap">${_calEsc(t.due_date||'')}</div>
+      </div>`).join('')
+    : `<div style="font-size:12.5px;color:#bbb;padding:5px 0">Nothing outside construction in the last ${COMP_WINDOW_DAYS} days.</div>`;
+
+  return box('&#128202; Project team performance', perf, 'Live jobs only, straight off the property cards — nothing is typed in here.')
+    + box('&#127991;&#65039; Listed on the market &mdash; last '+COMP_WINDOW_DAYS+' days', listRows(mv.listed,'Nothing newly listed in the last '+COMP_WINDOW_DAYS+' days.','listed'))
+    + box('&#128296; Started active construction &mdash; last '+COMP_WINDOW_DAYS+' days', listRows(mv.started,'No new starts in the last '+COMP_WINDOW_DAYS+' days.','started'))
+    + shout
+    + box('&#128188; Non-construction tasks &mdash; last '+COMP_WINDOW_DAYS+' days', nctRows, 'Company work with no property behind it — training, the warehouse, the website, workshops.');
 }
 
 // Open the company meeting as a printable page - this is what goes to Suzette.
@@ -6765,116 +6768,36 @@ function _compPrintHtml(wk){
     ${_compPerfBlock(wk, true)}
     </body></html>`;
 }
+// Bruce, 4 Sept: "on the full company meeting template, all I wanna see is the
+// employee specific performance stats, properties listed on the market in the
+// last seven days, properties that have went into active construction in the
+// last seven days, and then the fourth category will be a shout out or
+// appreciation post... and then non-related construction tasks."
+//
+// Everything else that used to be here - unassigned tasks, upcoming properties,
+// in contract, on the market, lag-time items, timelines moved, over budget,
+// needs a person - came off. Those all live in the meetings that own them; a
+// company meeting that repeats them is a meeting nobody listens to.
+//
+// "Non-construction tasks" are the company jobs with no property behind them -
+// training, the warehouse, the website, workshops. They are the only work in
+// the building that no other meeting on this app reports.
+function _compNonConstructionTasks(){
+  const from=_ymd(new Date(Date.now()-COMP_WINDOW_DAYS*86400000));
+  const to=_ymd(new Date());
+  return (typeof _tasksCache!=='undefined'?_tasksCache:[])
+    .filter(t=>!t.property_id)
+    .filter(t=>{ const d=t.due_date||''; return d && d>=from && d<=to; })
+    .sort((a,b)=>String(a.due_date||'').localeCompare(String(b.due_date||'')));
+}
 function _compMeetingBody(wk){
   const perfTop=`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
-      <div style="font-size:12.5px;color:#888">Short and performance-based. Everything below is live off the property cards.</div>
+      <div style="font-size:12.5px;color:#888">Short and performance-based &mdash; the last ${COMP_WINDOW_DAYS} days. Everything below is live off the property cards and the task calendar.</div>
       <button onclick="_compOpenPDF('${wk}')" style="padding:7px 14px;background:#122A4A;color:#fff;border:none;border-radius:7px;font-size:12.5px;font-weight:600;cursor:pointer">&#8595; Build the PDF for Suzette</button>
-    </div>`+_compPerfBlock(wk,false);
-  const team=_compFrom(wk,'team'), mkt=_compFrom(wk,'market'), kick=_compFrom(wk,'kickoff');
-  const D=_wmSummaryData(wk);
-  const all=(typeof propCards!=='undefined'?propCards:[]);
-  const money=(v)=>{const n=parseFloat(String(v||'').replace(/[^0-9.\-]/g,''));return isNaN(n)?null:n;};
-  const leftover=(D.tb!=null&&D.ts!=null)?(D.tb-D.ts):null;
-  const closedOf=(k)=>{ const r=_wmMeta(wk,k,'__closed'); return r&&r.at?r:null; };
-  const openedOf=(k)=>{ const r=_wmMeta(wk,k,'__opened'); return r&&r.first?r:null; };
-
-  const kpi=(k,v,s,color)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:11px 13px">
-      <div style="font-size:10.5px;color:#999;text-transform:uppercase;letter-spacing:.05em">${k}</div>
-      <div style="font-size:21px;font-weight:700;color:${color||'#111'};margin-top:2px">${v}</div>
-      <div style="font-size:11px;color:#aaa">${s||''}</div></div>`;
-
-  const card=(title,sub,inner)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:13px 16px;margin-bottom:12px">
-      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap">
-        <div style="font-size:14px;font-weight:700;color:#111">${title}</div>
-        <div style="font-size:11.5px;color:#aaa">${sub||''}</div>
-      </div><div style="margin-top:8px">${inner}</div></div>`;
-  const none=(t)=>`<div style="font-size:12.5px;color:#bbb;padding:6px 0">${t}</div>`;
-  const line=(l,r)=>`<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px"><div style="min-width:0">${l}</div><div style="color:#888;white-space:nowrap;font-size:12px">${r||''}</div></div>`;
-  const addr=(c)=>`<span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span>`;
-
-  // --- where each source meeting stands ---
-  // Each pill opens the meeting it is reporting on. This screen summarises the other three
-  // and used to be a dead end - you could see that the Monday walk-through had not been
-  // closed out, but not get to it.
-  const src=[['team','Monday walk-through'],['market','On the Market'],['kickoff','Kick-offs']].map(x=>{
-    const c=closedOf(x[0]), o=openedOf(x[0]);
-    const st=c?['closed '+_wmWhen(c.at),'#0F7B54','#E6F4ED']
-             :(o?['open, not closed out','#B7791F','#FBF3E2']
-                :['not held yet','#B42318','#FBEAE8']);
-    return `<span onclick="openWeeklyMeeting('${x[0]}','${wk}')" title="Open the ${_calEsc(x[1])} meeting" style="font-size:11.5px;padding:3px 9px;border-radius:99px;font-weight:600;color:${st[1]};background:${st[2]};margin-right:6px;cursor:pointer">${x[1]}: ${st[0]} &rsaquo;</span>`;
-  }).join('');
-
-  // --- construction: over budget, timelines pushed ---
-  const overRows=D.over.length?D.over.map(x=>line(addr(x.c)+' <span style="color:#B42318;font-weight:600">'+_wmMoneyShort(Math.abs(x.m.left))+' over</span>'+(x.note?'<div style="font-size:12px;color:#888;margin-top:1px">'+_calEsc(x.note)+'</div>':''), _calEsc(x.c.pm)||'no PM')).join(''):none('Nothing is over budget.');
-  const movedRows=D.moved.length?D.moved.map(x=>line(addr(x.c)+' — moved to <b>'+_calEsc(x.p.to||'')+'</b>'+(x.p.why?'<div style="font-size:12px;color:#888;margin-top:1px">'+_calEsc(x.p.why)+'</div>':''), _wmDateShort(x.p.at))).join(''):none('No finish date moved this week.');
-
-  // --- on the market ---
-  const act=_mktCards('active'), ctr=_mktCards('contract'), soon=_mktCards('soon');
-  const actRows=act.length?act.map(c=>{
-    const listed=mkt[c.id+'::date_listed']||((c.checklists||{}).timeline_done)||'';
-    const dom=_mktDom(listed);
-    const lp=mkt[c.id+'::list_price']||'';
-    const s7=mkt[c.id+'::sh_7']||'';
-    const fb=(mkt[c.id+'::feedback']||'').trim();
-    return line(addr(c)+(lp?' — <b>'+_calEsc(lp)+'</b>':'')+(fb?'<div style="font-size:12px;color:#888;margin-top:1px">'+_calEsc(fb.slice(0,160))+(fb.length>160?'…':'')+'</div>':''),
-                (dom!=null?dom+' DOM':'')+(s7?' · '+_calEsc(s7)+' showings/7d':''));
-  }).join(''):none('Nothing is on the market.');
-  const ctrRows=ctr.length?ctr.map(c=>{
-    const cp=mkt[c.id+'::contract_price']||'';
-    const cd=mkt[c.id+'::close_date']||c.closingDateSell||'';
-    const rem=(mkt[c.id+'::rem_done']==='Yes')?'remedies done':(mkt[c.id+'::rem_started']==='Yes'?'remedies started':'');
-    const lag=(mkt[c.id+'::lag']||'').trim();
-    return line(addr(c)+(cp?' — <b>'+_calEsc(cp)+'</b>':'')+(lag?'<div style="font-size:12px;color:#B7791F;margin-top:1px">'+_calEsc(lag.slice(0,160))+(lag.length>160?'…':'')+'</div>':''),
-                (cd?('closes '+_wmDateShort(cd)):'no close date')+(rem?' · '+rem:''));
-  }).join(''):none('Nothing is in contract.');
-  const soonRows=soon.length?soon.map(c=>{
-    const sp=mkt[c.id+'::sugg_price']||'', ld=mkt[c.id+'::list_date']||'';
-    return line(addr(c)+(sp?' — suggested <b>'+_calEsc(sp)+'</b>':''), ld?('list by '+_wmDateShort(ld)):'no target list date');
-  }).join(''):none('Nothing is queued to be listed.');
-
-  // --- kick-offs ---
-  const kickRows=_kickCards().length?_kickCards().map(c=>{
-    const prices=KICK_PRICES.map(pr=>kick[c.id+'::'+pr[0]]).filter(Boolean);
-    const nComps=(function(){ let n=0; for(let i=1;i<=30;i++) if((kick[c.id+'::comp'+i]||'').trim()) n++; return n; })();
-    return line(addr(c)+(prices.length?' — '+prices.map(x=>'<b>'+_calEsc(x)+'</b>').join(' / '):' <span style="color:#B42318">no target price yet</span>'),
-                (c.pm?('PM '+_calEsc(c.pm)):'no PM yet')+' · '+nComps+' comp'+(nComps===1?'':'s'));
-  }).join(''):none('Nothing is queued to start.');
-
-  // --- what needs a person ---
-  const qRows=D.qs.length?D.qs.map(x=>{ const c=all.find(p=>p.id===x.pid);
-    return line((c?addr(c)+' — ':'')+_calEsc(x.text), _miAgeLabel(x.raised)); }).join(''):none('Nothing is waiting on Bruce or Tommy.');
-  const lagRows=D.lag.length?D.lag.map(x=>{ const c=all.find(p=>p.id===x.pid);
-    return line((c?addr(c)+' — ':'')+_calEsc(x.text), _miAgeLabel(x.raised)); }).join(''):none('No lag-time items open.');
-  const unRows=D.unassigned.length?D.unassigned.slice(0,10).map(t=>line(_calEsc(t.title||''), t.due_date?('due '+_wmDateShort(t.due_date)):'no due date')).join('')
-    +(D.unassigned.length>10?`<div style="font-size:12px;color:#999;padding-top:5px">+ ${D.unassigned.length-10} more.</div>`:''):none('Every open task has somebody on it.');
-
-  const winRows=D.wins.length?D.wins.map(x=>line(addr(x.c)+' — '+_calEsc(x.t),'')).join(''):none('No wins written up in Monday’s meeting yet.');
-
-  return perfTop+`<div style="background:#EEF4FB;border:0.5px solid #cfe0f2;border-radius:12px;padding:12px 15px;margin-bottom:14px">
-      <div style="font-size:13.5px;color:#1c3f66"><b>Nobody fills this one in.</b> Every line below is pulled from the meetings that already happened this week and from the live board. If a section is thin, the meeting it comes from has not been held yet.</div>
-      <div style="margin-top:8px">${src}</div>
-    </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px">
-      ${kpi('Properties in construction', D.cards.length, 'vacant → pre-list')}
-      ${kpi('On the market', act.length, ctr.length+' in contract')}
-      ${kpi('Budgeted', _wmMoneyShort(D.tb||null), 'across construction')}
-      ${kpi('Spent', _wmMoneyShort(D.ts||null), D.tb?Math.round((D.ts/D.tb)*100)+'% of budget':'')}
-      ${kpi('Leftover', _wmMoneyShort(leftover), D.over.length+' over budget', leftover!=null&&leftover<0?'#B42318':'#0F7B54')}
-      ${kpi('Past committed finish', D.late.length, 'of '+D.cards.length, D.late.length?'#B7791F':'#111')}
-    </div>
-    ${card('⚡ Needs a person', D.qs.length+' question'+(D.qs.length===1?'':'s'), qRows)}
-    ${card('🏗 Over budget', D.over.length+' propert'+(D.over.length===1?'y':'ies'), overRows)}
-    ${card('📅 Timelines moved this week', D.moved.length+' pushed', movedRows)}
-    ${card('⏳ Lag-time items still open', D.lag.length+' open', lagRows)}
-    ${card('🏡 On the market', act.length+' listed', actRows)}
-    ${card('🤝 In contract', ctr.length+' under contract', ctrRows)}
-    ${card('⏳ Coming soon', soon.length+' about to list', soonRows)}
-    ${card('🚀 Kicking off', _kickCards().length+' queued to start', kickRows)}
-    ${card('🙋 Unassigned tasks', D.unassigned.length+' with nobody on them', unRows)}
-    ${card('🎉 Wins this week', '', winRows)}
-    <div style="font-size:12px;color:#999;margin-top:4px">Built ${_calEsc(_wmWhen(new Date().toISOString()))} from the live board and this week’s meeting notes.</div>`;
+    </div>`;
+  return perfTop+_compPerfBlock(wk,false)
+    +`<div style="font-size:12px;color:#999;margin-top:4px">Built ${_calEsc(_wmWhen(new Date().toISOString()))} from the live board. Nothing on this page is typed in except the shout out.</div>`;
 }
-
 function openWeeklyMeeting(kind, week){
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
@@ -7594,6 +7517,15 @@ function _computePMMetrics(name){
   const todayStr=_ymd(today);
   const cards=(typeof propCards!=='undefined'?propCards:[]);
   const mine=cards.filter(c=>_sameAssignee(c.pm,name));
+  // Bruce, 4 Sept: "when I click last seven days, last three months, all the numbers
+  // after you filter through them end up just staying the same."
+  // They did. The picker only ever reached ONE figure ($/day), and even that quietly
+  // fell back to year-to-date whenever the window reached past our spend history - so
+  // 30 days, 3 months, 6 months and YTD all printed the same number. Every figure on
+  // the card now honours the window, and where the data cannot cover it the card says
+  // so instead of showing a number that means something else.
+  const _W=(typeof _tovWindow==='function')?_tovWindow():{key:'ytd',from:null,to:todayStr,label:'Year to date'};
+  const _inW=(d)=>{ if(_W.key==='all') return !!d; if(!d) return false; return (!_W.from || d>=_W.from) && (!_W.to || d<=_W.to); };
   // Match the finished phases exactly. A loose /closed/i also caught
   // "Occupied / Closed" (a house we own that still has a tenant in it) and
   // "RTR Completed (Pending Closing)", scoring both as finished flips.
@@ -7601,9 +7533,15 @@ function _computePMMetrics(name){
   const isDone=(ph)=>_FINISHED.includes(ph||"") || /archiv/i.test(ph||"");
   // The card field is isRental, not rental. `c.rental` was always undefined, so
   // every rental counted as a flip and Rental Hand Offs always read 0.
-  const flips=mine.filter(c=>isDone(c.phase) && !c.isRental).length;
-  const handoffs=mine.filter(c=>c.isRental && (isDone(c.phase) || /rental handoff|^RTR /i.test(c.phase||""))).length;
-  const tasks=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>_taskHasAssignee(t,name));
+  // When a job actually finished, so "flips completed" can answer "in this window".
+  const _finishedOn=(c)=>((c.checklists||{}).timeline_done)||c.closedDate||c.closingDateSell||c.end||null;
+  const _doneInW=(c)=>_W.key==='all' ? true : _inW(_finishedOn(c));
+  const flips=mine.filter(c=>isDone(c.phase) && !c.isRental && _doneInW(c)).length;
+  const handoffs=mine.filter(c=>c.isRental && (isDone(c.phase) || /rental handoff|^RTR /i.test(c.phase||"")) && _doneInW(c)).length;
+  const tasksAll=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>_taskHasAssignee(t,name));
+  // Scored on the tasks that were DUE in the window - that is what "how did they do
+  // over the last seven days" means. Whole project keeps everything.
+  const tasks=(_W.key==='all')?tasksAll:tasksAll.filter(t=>_inW(t.due_date));
   const total=tasks.length;
   const done=tasks.filter(t=>t.status==="done").length;
   const taskPct= total? _taskPctFor(tasks) : "--";
@@ -7619,6 +7557,8 @@ function _computePMMetrics(name){
   let _tlOn=0,_tlOff=0;
   mine.forEach(c=>{
     if(!c.end || c.archived) return;
+    // Scored against the window the room is looking at, by the date it was due to finish.
+    if(_W.key!=='all' && !_inW(c.end)) return;
     // A same-day start/finish pair is the import placeholder, not a date anybody agreed to.
     // Scoring a manager late against it is the single most unfair number on the board.
     if(typeof _datesArePlaceholder==='function' && _datesArePlaceholder(c)) return;
@@ -7660,20 +7600,22 @@ function _computePMMetrics(name){
   const _spentAll=mine.reduce((a,c)=>{const v=parseFloat(String(c.spent||"").replace(/[^0-9.\-]/g,""));return a+(isNaN(v)?0:v);},0);
   const dollarsYTD= _spentAll? Math.round(_spentAll/_daysYTD) : null;
   // $/day over whatever period the Team Overview is currently set to (defaults to YTD).
-  let dollarsRange=null, rangeShort=false, rangeDays=null;
+  let dollarsRange=null, rangeShort=false, rangeDays=null, rangeFrom=null;
   try{
-    const w=(typeof _tovWindow==='function')?_tovWindow():null;
-    if(w && w.from){ const r=_dollarsDayWindow(mine,w.from,w.to); if(r){ dollarsRange=r.rate; rangeShort=r.short; rangeDays=r.days; } }
-    else if(w && w.key==='ytd'){ dollarsRange=dollarsYTD; }
+    const w=_W;
+    const r=_dollarsDayWindow(mine, w.from||null, w.to||todayStr);
+    if(r){ dollarsRange=r.rate; rangeShort=r.short; rangeDays=r.days; rangeFrom=r.from; }
   }catch(e){}
-  // Only fall back to year-to-date when there is genuinely no snapshot history at all,
-  // not merely because the requested window reaches further back than our records.
-  if(dollarsRange==null){ dollarsRange=dollarsYTD; rangeShort=false; }
+  // The old code fell back to the year-to-date figure whenever the window reached past
+  // our spend snapshots. That is what made every long window print the same number and
+  // look broken. Now the figure is whatever the snapshots can honestly support, and
+  // rangeShort/rangeFrom tell the card to say how far back that really goes.
+  if(dollarsRange==null && _W.key==='ytd'){ dollarsRange=dollarsYTD; rangeShort=false; }
   // Rescheduled % over the last 7 days.
   const ago7=_ymd(new Date(today.getTime()-7*86400000));
   const t7=tasks.filter(t=>t.due_date && t.due_date>=ago7 && t.due_date<=todayStr);
   const resched7= t7.length? Math.round(t7.filter(t=>(t.reschedule_count||0)>0).length/t7.length*100) : "--";
-  return { avgDailyWork:perDay, dollarsPerDayYear:dollarsDay, dollarsPerDay7:dollars7, dollarsPerDay7Short:dollars7Short, dollarsPerDay7Days:dollars7Days, dollarsPerDayYTD:dollarsYTD, dollarsPerDayRange:dollarsRange, dollarsPerDayRangeShort:rangeShort, dollarsPerDayRangeDays:rangeDays, reschedulePct7:resched7, budgetPct:{on:"--",over:"--"}, timelinePct:{on:onTime,over:overTime}, flipsCompleted:flips, rentalHandoffs:handoffs, taskCompletionPct:taskPct, reschedulePct:reschedPct };
+  return { avgDailyWork:perDay, dollarsPerDayYear:dollarsDay, dollarsPerDay7:dollars7, dollarsPerDay7Short:dollars7Short, dollarsPerDay7Days:dollars7Days, dollarsPerDayYTD:dollarsYTD, dollarsPerDayRange:dollarsRange, dollarsPerDayRangeShort:rangeShort, dollarsPerDayRangeDays:rangeDays, dollarsPerDayRangeFrom:rangeFrom, reschedulePct7:resched7, budgetPct:{on:"--",over:"--"}, timelinePct:{on:onTime,over:overTime}, flipsCompleted:flips, rentalHandoffs:handoffs, taskCompletionPct:taskPct, reschedulePct:reschedPct, taskCount:total, windowLabel:_W.label, windowKey:_W.key };
 }
 // Team Overview period picker — the $/day figure on every PM card follows this.
 function _tovWindow(){
@@ -7694,7 +7636,7 @@ function _tovPicker(){
   const st=window._tovS=window._tovS||{key:'ytd'};
   const b=(v,l)=>`<span onclick="_tovSet('${v}')" style="display:inline-block;padding:5px 11px;margin:0 6px 6px 0;border-radius:99px;font-size:12px;cursor:pointer;border:1px solid ${st.key===v?'#5dade2':'#2e4070'};background:${st.key===v?'#1a2744':'transparent'};color:${st.key===v?'#5dade2':'#8da4c8'}">${l}</span>`;
   return `<div style="margin-bottom:14px">
-    <div style="font-size:11px;color:#556;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">$ / day period</div>
+    <div style="font-size:11px;color:#556;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">Period &mdash; every figure on these cards follows it</div>
     ${b('7','Last 7 days')}${b('30','Last 30 days')}${b('90','Last 3 months')}${b('180','Last 6 months')}${b('ytd','Year to date')}${b('all','Whole project')}${b('custom','Custom…')}
     ${st.key==='custom'?`<div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap"><input type="date" id="tov-from" value="${st.from||''}" style="padding:5px 8px;border:1px solid #2e4070;background:#111;color:#ddd;border-radius:6px;font-size:12.5px"/><span style="color:#556;font-size:12px">to</span><input type="date" id="tov-to" value="${st.to||''}" style="padding:5px 8px;border:1px solid #2e4070;background:#111;color:#ddd;border-radius:6px;font-size:12.5px"/><button onclick="_tovCustom()" style="padding:5px 12px;background:#5dade2;color:#06182b;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Apply</button></div>`:''}
   </div>`;
@@ -7718,42 +7660,42 @@ function pmCard(name, d, liveName) {
         <div class="pm-stat-card ${c}" style="margin:0">
           <div class="pm-stat-label">Avg. $ of Work Completed / Day</div>
           <div class="pm-stat-value">${d.dollarsPerDayRange!=null?('$'+d.dollarsPerDayRange.toLocaleString()):'—'}</div>
-          <div class="pm-stat-sub">${(typeof _tovWindow==='function')?_tovWindow().label:'Year to date'}</div>
+          <div class="pm-stat-sub">${_calEsc(d.windowLabel||'Year to date')}${d.dollarsPerDayRange==null?' &middot; no spend history yet':(d.dollarsPerDayRangeShort?(' &middot; only since '+_calEsc(d.dollarsPerDayRangeFrom||'')):'')}</div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div class="pm-stat-card green" style="margin:0">
             <div class="pm-stat-label">In Budget</div>
-            <div class="pm-stat-value" style="font-size:21px">${d.budgetPct.on}%</div>
+            <div class="pm-stat-value" style="font-size:21px">${d.budgetPct.on}${d.budgetPct.on==='--'?'':'%'}</div>
             <div class="pm-stat-sub">Awaits cost data</div>
           </div>
           <div class="pm-stat-card blue" style="margin:0">
             <div class="pm-stat-label">On Timeline</div>
-            <div class="pm-stat-value" style="font-size:21px">${d.timelinePct.on}%</div>
-            <div class="pm-stat-sub">Reached handoff/listed by finish date</div>
+            <div class="pm-stat-value" style="font-size:21px">${d.timelinePct.on}${d.timelinePct.on==='--'?'':'%'}</div>
+            <div class="pm-stat-sub">Due to finish in ${_calEsc((d.windowLabel||'').toLowerCase())}</div>
           </div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div class="pm-stat-card purple" style="margin:0">
             <div class="pm-stat-label">Flips Completed</div>
             <div class="pm-stat-value" style="font-size:23px">${d.flipsCompleted}</div>
-            <div class="pm-stat-sub">All time</div>
+            <div class="pm-stat-sub">${d.windowKey==='all'?'All time':_calEsc(d.windowLabel||'')}</div>
           </div>
           <div class="pm-stat-card green" style="margin:0">
             <div class="pm-stat-label">Rental Hand Offs</div>
             <div class="pm-stat-value" style="font-size:23px">${d.rentalHandoffs}</div>
-            <div class="pm-stat-sub">All time</div>
+            <div class="pm-stat-sub">${d.windowKey==='all'?'All time':_calEsc(d.windowLabel||'')}</div>
           </div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
           <div class="pm-stat-card blue" style="margin:0">
             <div class="pm-stat-label">Task Completion</div>
             <div class="pm-stat-value" style="font-size:21px">${d.taskCompletionPct===undefined||d.taskCompletionPct==="--"?"--":d.taskCompletionPct+"%"}</div>
-            <div class="pm-stat-sub">Done vs assigned</div>
+            <div class="pm-stat-sub">${d.taskCount?(d.taskCount+' task'+(d.taskCount===1?'':'s')+' due'):'nothing due'} &middot; ${_calEsc((d.windowLabel||'').toLowerCase())}</div>
           </div>
           <div class="pm-stat-card amber" style="margin:0">
             <div class="pm-stat-label">Rescheduled</div>
             <div class="pm-stat-value" style="font-size:21px">${d.reschedulePct===undefined||d.reschedulePct==="--"?"--":d.reschedulePct+"%"}</div>
-            <div class="pm-stat-sub">Tasks moved ≥1×</div>
+            <div class="pm-stat-sub">Moved &ge;1&times; &middot; ${_calEsc((d.windowLabel||'').toLowerCase())}</div>
           </div>
         </div>
       </div>
@@ -15700,4 +15642,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-04d inspection-order-and-meeting-done -->
+<!-- build: 2026-09-04e team-overview-period-and-company-meeting -->
