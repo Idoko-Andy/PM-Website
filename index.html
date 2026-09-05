@@ -3509,6 +3509,146 @@ function _goPropBack(){
   if (k.indexOf('role:') === 0)  return openPMAssistantDashboard(k.slice(5)); // e.g. "role:sop"
   return openProjectDashboard('trello');
 }
+// ===================== SIDE QUESTS ============================================
+// Bruce, 5 Sept: "something that I want to stick with each property card... in
+// order from preconstruction to active construction to postconstruction, little
+// side labels in a lighter gray. Something you can build tasks or reminders that
+// don't essentially need a due date, but you can have an option of when you want
+// to be notified of the reminder on the website if you want."
+//
+// So: deliberately NOT tasks. A task has a date, an owner and a place on
+// somebody's calendar. These are the things you notice on a walk-through and do
+// not want to lose - "ask the neighbour about the fence line", "the basement
+// smells damp when it rains". They stay with the house, they never land on
+// anybody's schedule, and they never turn into the kind of noise that put
+// "Permit Submitted" on Bruce's calendar.
+//
+// The notify date is optional and does exactly one thing: when it arrives, the
+// reminder starts showing as ready to look at on the card and in the card's own
+// counter. It still does not become a task.
+const SQ_PHASES = [
+  { id:'pre',    label:'Pre Construction'    },
+  { id:'active', label:'Active Construction' },
+  { id:'post',   label:'Post Construction'   }
+];
+function _sqList(c){ const a=((c&&c.checklists)||{}).sq; return Array.isArray(a)?a:[]; }
+function _sqPhaseOf(x){ return SQ_PHASES.some(p=>p.id===x.ph) ? x.ph : 'pre'; }
+// Ready to look at: it asked to be surfaced on a date, that date has arrived,
+// and nobody has ticked it off yet.
+function _sqDue(x){
+  if(!x || x.done || !x.at) return false;
+  return String(x.at) <= _ymd(new Date());
+}
+function _sqCounts(c){
+  const l=_sqList(c);
+  return { total:l.length, open:l.filter(x=>!x.done).length, due:l.filter(_sqDue).length };
+}
+async function _sqWrite(pid, mut){
+  if(_blockIfReadOnly()) return false;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return false;
+  const arr=_sqList(c).map(x=>Object.assign({},x));
+  mut(arr);
+  // _wmChecklistPatch merges into checklists and catches a zero-row update, so a
+  // save that the database refused can never look like it worked.
+  const ok=await _wmChecklistPatch(pid, { sq:arr });
+  return ok;
+}
+async function _sqAdd(pid){
+  const tEl=document.getElementById('sq-t-'+pid), pEl=document.getElementById('sq-p-'+pid), dEl=document.getElementById('sq-d-'+pid);
+  const text=((tEl&&tEl.value)||'').trim();
+  if(!text){ alert("Write the reminder first — “ask the neighbour about the fence line”, “check the basement after heavy rain”…"); return; }
+  const ph=(pEl&&pEl.value)||'pre';
+  const at=(dEl&&dEl.value)||'';
+  const me=(typeof _myProfile!=='undefined' && _myProfile && _myProfile.firstName)?_myProfile.firstName:'';
+  const ok=await _sqWrite(pid, arr=>arr.push({
+    id:Date.now().toString(36)+Math.random().toString(36).slice(2,5),
+    ph:ph, t:text, done:false, at:at, by:me, made:new Date().toISOString()
+  }));
+  if(!ok) return;
+  const c=propCards.find(x=>x.id===pid);
+  _logAudit('created','property',(c&&c.addr)||'', 'Side quest: '+text+(at?(' — remind on '+at):' — no reminder date'));
+  if(tEl) tEl.value=''; if(dEl) dEl.value='';
+  openPropDetail(pid);
+}
+async function _sqToggle(pid, id){
+  const ok=await _sqWrite(pid, arr=>{ const x=arr.find(y=>y.id===id); if(x){ x.done=!x.done; x.doneAt=x.done?_ymd(new Date()):''; } });
+  if(ok) openPropDetail(pid);
+}
+async function _sqWhen(pid, id, val){
+  await _sqWrite(pid, arr=>{ const x=arr.find(y=>y.id===id); if(x) x.at=val||''; });
+  openPropDetail(pid);
+}
+async function _sqPhase(pid, id, val){
+  await _sqWrite(pid, arr=>{ const x=arr.find(y=>y.id===id); if(x) x.ph=val; });
+  openPropDetail(pid);
+}
+async function _sqDel(pid, id){
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
+  const x=_sqList(c).find(y=>y.id===id);
+  if(!_confirmDelete('the reminder “'+((x&&x.t)||'')+'”','It is gone from this property for good.')) return;
+  if(await _sqWrite(pid, arr=>{ const i=arr.findIndex(y=>y.id===id); if(i>=0) arr.splice(i,1); })) openPropDetail(pid);
+}
+function _sqBody(c){
+  const ro=(typeof isReadOnly==='function')?isReadOnly():false;
+  const list=_sqList(c);
+  const cnt=_sqCounts(c);
+  const row=(x)=>{
+    const due=_sqDue(x);
+    return `<div style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:0.5px solid #f6f7f9">
+      ${ro?`<span style="font-size:14px;flex-shrink:0">${x.done?'&#9989;':'&#11036;'}</span>`
+         :`<span onclick="_sqToggle('${c.id}','${x.id}')" title="${x.done?'Put it back on the list':'Mark it handled'}" style="cursor:pointer;font-size:14px;flex-shrink:0">${x.done?'&#9989;':'&#11036;'}</span>`}
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;color:${x.done?'#9aa3b2':'#111'};${x.done?'text-decoration:line-through':''};white-space:pre-wrap">${_calEsc(x.t||'')}</div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:2px">
+          ${due?'<span style="font-size:10px;font-weight:700;color:#B7791F;background:#FBF3E2;padding:1px 6px;border-radius:99px">READY TO LOOK AT</span>':''}
+          ${ro
+            ? `<span style="font-size:11px;color:#aaa">${x.at?('remind '+_calEsc(x.at)):'no reminder date'}</span>`
+            : `<span style="font-size:11px;color:#aaa">remind me</span><input type="date" value="${_calEsc(x.at||'')}" onchange="_sqWhen('${c.id}','${x.id}',this.value)" style="padding:2px 5px;border:0.5px solid #e2e6ee;border-radius:5px;font-size:11px;color:#666"/>`}
+          ${x.by?`<span style="font-size:11px;color:#ccc">added by ${_calEsc(x.by)}</span>`:''}
+        </div>
+      </div>
+      ${ro?'':`<span onclick="_sqDel('${c.id}','${x.id}')" title="Remove" style="cursor:pointer;font-size:11px;color:#ddd;flex-shrink:0">&#10005;</span>`}
+    </div>`;
+  };
+  // Three groups, always in build order, each with its own quiet side label.
+  const groups=SQ_PHASES.map(p=>{
+    const mine=list.filter(x=>_sqPhaseOf(x)===p.id);
+    const open=mine.filter(x=>!x.done).length;
+    return `<div style="display:flex;gap:12px;padding:9px 0;border-top:0.5px solid #f1f3f7">
+      <div style="width:104px;flex-shrink:0;padding-top:2px">
+        <div style="font-size:10.5px;color:#b6bcc7;text-transform:uppercase;letter-spacing:.05em;line-height:1.3">${p.label}</div>
+        ${mine.length?`<div style="font-size:10.5px;color:#d2d7df;margin-top:1px">${open?(open+' open'):'all handled'}</div>`:''}
+      </div>
+      <div style="flex:1;min-width:0">
+        ${mine.length?mine.map(row).join(''):'<div style="font-size:12px;color:#ccc;padding:5px 0">Nothing here yet.</div>'}
+      </div>
+    </div>`;
+  }).join('');
+
+  const adder=ro?'':`<div style="border-top:0.5px solid #eef0f6;padding:10px 14px;background:#FAFBFD">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <input id="sq-t-${c.id}" placeholder="Ask the neighbour about the fence line…" style="flex:1;min-width:210px;padding:6px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px"/>
+        <select id="sq-p-${c.id}" style="padding:6px 7px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12.5px">${SQ_PHASES.map(p=>`<option value="${p.id}">${p.label}</option>`).join('')}</select>
+        <input type="date" id="sq-d-${c.id}" title="Optional — when should this come back up?" style="padding:5px 7px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12.5px;color:#666"/>
+        <button onclick="_sqAdd('${c.id}')" style="padding:6px 13px;border:none;border-radius:7px;background:#122A4A;color:#fff;font-size:13px;font-weight:600;cursor:pointer">Add</button>
+      </div>
+      <div style="font-size:11px;color:#aaa;margin-top:5px">No due date needed. The date is optional &mdash; set it only if you want this to come back up on a particular day. Either way it never lands on anybody's task calendar.</div>
+    </div>`;
+
+  return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden;margin-top:12px">
+      <div style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+        <div style="font-size:13px;font-weight:500;color:#111">&#129517; Side Quests
+          <span style="font-size:11.5px;color:#aaa;font-weight:400">&mdash; reminders that stay with this house</span></div>
+        <div style="display:flex;gap:6px;align-items:center">
+          ${cnt.due?`<span style="font-size:10.5px;font-weight:700;color:#B7791F;background:#FBF3E2;padding:2px 8px;border-radius:99px">${cnt.due} ready to look at</span>`:''}
+          <span style="font-size:11.5px;color:#aaa">${cnt.open} open${cnt.total!==cnt.open?(' &middot; '+(cnt.total-cnt.open)+' handled'):''}</span>
+        </div>
+      </div>
+      <div style="padding:2px 14px 8px">${groups}</div>
+      ${adder}
+    </div>`;
+}
+
 function openPropDetail(id) {
   const c = propCards.find(x => x.id === id);
   if (!c) return;
@@ -3915,6 +4055,7 @@ function _pdLinked(c){
           <div style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;font-size:13px;font-weight:500;color:#111">Notes</div>
           <div style="padding:10px 14px;font-size:14px;color:#888;line-height:1.6">${c.notes||'No notes added yet.'}</div>
         </div>
+        ${_sqBody(c)}
         ${_pdLinked(c)}
         ${quickAddForms}
         <div style="display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-top:12px">
@@ -15939,4 +16080,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-05a permit-dashboard-and-zoning -->
+<!-- build: 2026-09-05b side-quests -->
