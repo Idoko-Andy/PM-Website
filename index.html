@@ -257,6 +257,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
     <div class="dd" id="pd-d">
       <div class="ddl">Project Director / CEO</div>
       <div class="ddi" onclick="openDirectorCEODashboard()">🏛 Director / CEO Dashboard</div>
+      <div class="ddi" onclick="openPermitDashboard()">📄 Permit Dashboard</div>
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
       <div class="ddi" onclick="openTVDashboard()">📺 TV Dashboard</div>
@@ -270,6 +271,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openTVDashboard()">📺 TV Dashboard</div>
       <div class="ddi" onclick="openPMAssistantDashboard()">🗂 PM Assistant Dashboard</div>
       <div class="ddi" onclick="openAdminDashboard('trackers')">📋 Trackers</div>
+      <div class="ddi" onclick="openPermitDashboard()">📄 Permit Dashboard</div>
     </div>
   </div>
   <div class="ni has-dd" id="am-t">👤 Asst. Manager ▾
@@ -280,12 +282,14 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
       <div class="ddi" onclick="openTVDashboard()">📺 TV Dashboard</div>
       <div class="ddi" onclick="openAdminDashboard('trackers')">📋 Trackers</div>
+      <div class="ddi" onclick="openPermitDashboard()">📄 Permit Dashboard</div>
     </div>
   </div>
   <div class="ni has-dd" id="adm-t">🏢 Admin. Mgr ▾
     <div class="dd" id="adm-d">
       <div class="ddl">Administrative Manager</div>
       <div class="ddi" onclick="openAdminDashboard()">🏛 Admin Dashboard</div>
+      <div class="ddi" onclick="openPermitDashboard()">📄 Permit Dashboard</div>
       <div class="ddi" onclick="openPMAssistantDashboard()">🗂 PM Assistant Dashboard</div>
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
@@ -297,6 +301,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddl">VA Assistants</div>
       <div class="ddi" onclick="openSeniorVADashboard()">💼 Senior VA Dashboard</div>
       <div class="ddi" onclick="openVAAdminDashboard()">🖥 VA Admin Dashboard</div>
+      <div class="ddi" onclick="openPermitDashboard()">📄 Permit Dashboard</div>
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
       <div class="ddi" onclick="openTVDashboard()">📺 TV Dashboard</div>
@@ -314,6 +319,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
     <div class="dd" id="arch-d">
       <div class="ddl">Architect</div>
       <div class="ddi" onclick="openArchitectDashboard()">📐 Architect Dashboard</div>
+      <div class="ddi" onclick="openPermitDashboard()">📄 Permit Dashboard</div>
       <div class="ddi" onclick="openPMAssistantDashboard()">🗂 PM Assistant Dashboard</div>
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
@@ -3226,7 +3232,7 @@ async function _snapshotSpentDaily(){
 // Stay on the same page across browser refreshes: remember the last view opened and
 // re-open it once the app (and its data) has loaded, instead of dumping back to home.
 (function(){
-  const NAVS=["openProjectDashboard","openPMDashboard","openPMAssistantDashboard","openDirectorCEODashboard","openAdminDashboard","openVAAdminDashboard","openArchitectDashboard","openTaskDataHousing","openDollarsDayHousing","openSettings","openStartOfProjectDashboard","openEndOfProjectDashboard","openSeniorVADashboard","openPropDetail","openWeeklyMeeting","openDailyReports","openEndOfDayReports"];
+  const NAVS=["openProjectDashboard","openPMDashboard","openPMAssistantDashboard","openDirectorCEODashboard","openAdminDashboard","openVAAdminDashboard","openArchitectDashboard","openPermitDashboard","openTaskDataHousing","openDollarsDayHousing","openSettings","openStartOfProjectDashboard","openEndOfProjectDashboard","openSeniorVADashboard","openPropDetail","openWeeklyMeeting","openDailyReports","openEndOfDayReports"];
   setTimeout(()=>{ // wrap after all functions are defined
     NAVS.forEach(fn=>{
       const orig=window[fn];
@@ -11076,6 +11082,9 @@ async function _permitRemove(id){
   _permitRerender();
 }
 function _permitRerender(){
+  if(window._permitCtx==="dashboard" && typeof openPermitDashboard==="function"){
+    openPermitDashboard(window._permTabSel==='insp'?'insp':'tracker'); return;
+  }
   if(window._permitCtx==="architect" && typeof openArchitectDashboard==="function"){ openArchitectDashboard("permits"); return; }
   (window._trkRerender||function(){ openVAAdminDashboard("trackers"); })();
 }
@@ -11465,7 +11474,12 @@ async function _permitInspRemove(id, insId){
 // It reads _trkData exactly like the table does - one store, no second copy.
 function _permTab(){ const t=window._permTabSel||'permits'; return (t==='insp')?'insp':'permits'; }
 function _permTabTo(k){ window._permTabSel=k; if(k!=='insp') window._permFocus=null; _permitRerender(); }
-function _permInspGo(pid){ window._permTabSel='insp'; window._permFocus=pid||null; _permitRerender(); }
+function _permInspGo(pid){
+  window._permTabSel='insp'; window._permFocus=pid||null;
+  // On the Permit Dashboard, "inspections" is a page tab, not an inner one.
+  if(window._permitCtx==='dashboard' && typeof openPermitDashboard==='function'){ openPermitDashboard('insp'); return; }
+  _permitRerender();
+}
 function _permInspShow(k){ window._permInspFilter=k; _permitRerender(); }
 function _permInspStats(list){
   const total=list.length, done=list.filter(x=>!!x.done).length;
@@ -11622,8 +11636,11 @@ function _permitTrackerBody(){
   const _ptab=_permTab();
   const _pOpen=_permInspAll().filter(x=>!x.done).length;
   const _pTabBtn=(k,label)=>`<span onclick="_permTabTo('${k}')" style="cursor:pointer;padding:7px 14px;border-radius:8px;font-size:13px;font-weight:${_ptab===k?'600':'400'};background:${_ptab===k?'#122A4A':'#fff'};color:${_ptab===k?'#fff':'#444'};border:0.5px solid ${_ptab===k?'#122A4A':'#d8dce6'}">${label}</span>`;
-  const _pTabBar=`<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:13px">${_pTabBtn('permits','\ud83d\udcc4 Permits')}${_pTabBtn('insp','\ud83d\udd29 Inspections'+(_pOpen?(' &middot; '+_pOpen+' open'):''))}</div>`;
-  if(_ptab==='insp') return _pTabBar+_permitInspBody();
+  // On the Permit Dashboard the tabs at the top of the page already do this, so a
+  // second row of tabs saying the same thing is just noise.
+  const _inDash=(window._permitCtx==='dashboard');
+  const _pTabBar=_inDash?'':`<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:13px">${_pTabBtn('permits','\ud83d\udcc4 Permits')}${_pTabBtn('insp','\ud83d\udd29 Inspections'+(_pOpen?(' &middot; '+_pOpen+' open'):''))}</div>`;
+  if(_ptab==='insp' && !_inDash) return _pTabBar+_permitInspBody();
   const rows=_permitList();
   const jl=_permitJurisdictions();
   const COLS=arch?14:15;
@@ -12015,7 +12032,14 @@ function _vaTrackers(){
     const rows=active.length?active.map(uRow(u)).join(''):uEmpty(u.key==='g'?16:14);
     return shell(back+bar+_trkSearchBox('Search a property, provider or account #…')+_trkTable(`${u.icon} ${u.label} Tracker`,u.color,uHead(u),rows)+`<div style="font-size:12px;color:#999;margin-top:-8px">Every box saves the moment you leave it. Scroll the table sideways for the payment columns, or click <b>📜 open</b> on a row for that property's full payment history and call log.</div>`+_trkClosedSimple(closed,'utility history'));
   }
-  if(view==='permit') return shell(back+_permitTrackerBody());
+  // Bruce, 5 Sept: permits moved out of Trackers and into their own dashboard.
+  // This route stays alive and forwards, so an old link or a restored nav state
+  // lands in the right place instead of on a dead page.
+  if(view==='permit'){
+    if(typeof openPermitDashboard==='function'){ setTimeout(()=>openPermitDashboard('tracker'),0);
+      return shell(`<div style="padding:26px;text-align:center;color:#888;font-size:13px">Permits have their own dashboard now &mdash; opening it&hellip;</div>`); }
+    return shell(back+_permitTrackerBody());
+  }
   if(view==='checklist') return shell(back+_chkTrackerBody()+_trkClosedSimple(closed,'checklist history'));
 
   const li=(txt)=>`<div style="font-size:12.5px;color:#333;padding:4px 0;border-bottom:0.5px solid #f1f3f7">• ${txt}</div>`;
@@ -12026,7 +12050,11 @@ function _vaTrackers(){
   const wi=active.filter(_winInQueue).map(c=>{const a=_winNextAction(c); return a?(nm(c)+' — '+a):null;}).filter(Boolean);
   const ci=active.filter(c=>c.phase==="Vacant / On Standby").filter(c=>{const subs=c.subPhases||[];const f=subs.find(s=>s.name==="First Time Access Checklist");return !(f&&f.completed);}).map(c=>nm(c)+' — First Time Access still to fill in')
     .concat(active.filter(c=>{const subs=c.subPhases||[];const po=subs.find(x=>/punch/i.test(x.name||'')); return !!(po && !po.completed && (po.start||po.due));}).map(c=>nm(c)+' — Punch Out scheduled, still to fill in'));
-  return shell(`<div style="font-size:12.5px;color:#888;margin:-6px 0 10px">What's outstanding right now — click a tile to open the full tracker.</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">${sum('🧾 W-9s needed','#7A3FA8',w9i)}${sum('🪟 Windows','#185FA5',wi)}${sum('🌱 Mowing','#3B6D11',mi)}${sum('✅ Checklists','#0B7285',ci)}${_utilSummaryCard(sum,utilOutList,nm)}${sum('📄 Permits — paperwork for the warehouse','#B03A8B',_permitWarehouseDue().map(r=>_calEsc(r.addr||'')+' — approved, print it and take it over'))}</div>`);
+  return shell(`<div style="font-size:12.5px;color:#888;margin:-6px 0 10px">What's outstanding right now — click a tile to open the full tracker.</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">${sum('🧾 W-9s needed','#7A3FA8',w9i)}${sum('🪟 Windows','#185FA5',wi)}${sum('🌱 Mowing','#3B6D11',mi)}${sum('✅ Checklists','#0B7285',ci)}${_utilSummaryCard(sum,utilOutList,nm)}${sum('📄 Permits — paperwork for the warehouse','#B03A8B',_permitWarehouseDue().map(r=>_calEsc(r.addr||'')+' — approved, print it and take it over'))}</div>
+    <div onclick="openPermitDashboard('tracker')" style="margin-top:12px;background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid #B03A8B;border-radius:10px;padding:12px 15px;cursor:pointer">
+      <div style="font-size:13.5px;font-weight:700;color:#111">📄 Permits moved to their own dashboard</div>
+      <div style="font-size:12.5px;color:#888;margin-top:3px">The permit tracker, the inspection tracker and the zoning guidelines all live together now, under every role's menu. <span style="color:#185FA5">Open the Permit Dashboard &rsaquo;</span></div>
+    </div>`);
 }
 // ---- Architect Main Dashboard -----------------------------------------------
 // Built the same way as the Administrative Overview: squares first, and every
@@ -12216,6 +12244,275 @@ function _jennTab(){
       ${card('📄 Permit Tracker', `<div onclick="openArchitectDashboard('permits')" style="padding:12px 0;font-size:13.5px;color:#555;cursor:pointer">Every permit, every jurisdiction, every inspection.<div style="margin-top:8px;color:#185FA5;font-weight:600">Open the Permit Tracker &rsaquo;</div></div>`, 1, '', '#B03A8B')}
     </div>
   </div>`;
+}
+
+// ===================== ZONING INFORMATION =====================================
+// Bruce, 5 Sept, with Jen's sheet: a reference grid, not a per-property tracker.
+// Rows are the guideline (front setback, lot coverage...), columns are the
+// jurisdiction and its zoning classification. Jen adds a column when we start
+// working in a new city and a row when a city regulates something the others do
+// not, so both axes are editable - hard-coding either would guarantee it goes
+// stale the first time she needs a new one.
+//
+// It lives in the same trackers blob as everything else, so it saves through
+// _trkSave() with the same merge-on-write protection and the same saved status.
+const ZONING_SEED = {
+  note: "Some of the guidelines below will vary depending on the zoning classification.",
+  cols: [
+    { id:'ua-r1',    name:'Upper Arlington (R-1)',                 link:'', linkLabel:'UA UDO' },
+    { id:'gvh-int',  name:'Grandview Heights (RS-2) — Interior Lot', link:'', linkLabel:'GVH Design Guidelines' },
+    { id:'gvh-cor',  name:'Grandview Heights (RS-2) — Corner Lot',   link:'', linkLabel:'GVH Design Guidelines' }
+  ],
+  rows: [
+    { id:'stories', name:'Maximum Number of Stories' },
+    { id:'front',   name:'Front Setback' },
+    { id:'side',    name:'Side Yard Setback' },
+    { id:'rear',    name:'Rear Yard Setback' },
+    { id:'detach',  name:'Detached Accessory Setbacks' },
+    { id:'cover',   name:'Lot Coverage Limit' },
+    { id:'drive',   name:'Driveway / Alley' },
+    { id:'design',  name:'Design Guidelines' }
+  ],
+  cells: {
+    'stories|ua-r1':'1 to 2.5',
+    'stories|gvh-int':"2.5 stories, not to exceed 35'",
+    'stories|gvh-cor':"2.5 stories not to exceed 35'",
+    'front|ua-r1':"20% variation max relative to neighboring home frontages (must respect platted setbacks); excludes front porches. R1-C calls out 40' in the UDO guidelines.",
+    'front|gvh-int':'30 feet',
+    'front|gvh-cor':'30 feet',
+    'side|ua-r1':">75' lot width = 10' setback\n<75' lot width = 8' setback\nadditions must step back 1.25x farther from the side property line than the ground floor if the lot is more than 75' wide.",
+    'side|gvh-int':'12 ft; 6 ft minimum per side',
+    'side|gvh-cor':"20' for lots over 50'; 15' for lots 41'-50'; 10' for lots under 41'.",
+    'rear|ua-r1':'30 ft to 40 ft minimum depending on R-1 subdistrict',
+    'rear|gvh-int':'20% of lot depth (capped at 30 feet)',
+    'rear|gvh-cor':'20% of lot depth (capped at 30 feet)',
+    'detach|ua-r1':'5 ft. minimum from side and rear lot lines',
+    'detach|gvh-int':'3 ft. minimum from side and rear lot lines',
+    'detach|gvh-cor':'5 ft. farther than principle structure is allowed',
+    'cover|ua-r1':'40% maximum for total structure / impervious footprint',
+    'cover|gvh-int':'40% maximum for total structure / impervious footprint',
+    'cover|gvh-cor':'40% maximum for total structure / impervious footprint',
+    'drive|ua-r1':'No cap for rear yard, but impervious footprint applies',
+    'drive|gvh-int':'45% max rear yard coverage for driveways / parking',
+    'drive|gvh-cor':'45% max rear yard coverage for driveways / parking',
+    'design|ua-r1':"Garage bays facing street cannot exceed (3)\nSecond story must step back 1.25x farther from the side property lines than the ground floor if the lot is more than 75' wide\nNot more than 25% of the required\nAvoiding box like structures\nRoof pitch minimum 5:12",
+    'design|gvh-int':'Avoiding box like structures\nAdditions to non-conforming structures must step back minimum 8" and can encroach into required setback a maximum of 2\'-0"',
+    'design|gvh-cor':'Avoiding box like structures'
+  }
+};
+function _zonData(){
+  const d=window._trkData||{};
+  const z=d.zoning||{};
+  return { note:(z.note!=null?z.note:ZONING_SEED.note),
+           cols:Array.isArray(z.cols)?z.cols:[],
+           rows:Array.isArray(z.rows)?z.rows:[],
+           cells:(z.cells&&typeof z.cells==='object')?z.cells:{} };
+}
+// Seeded once, from Jen's sheet, so the tab is useful the first time it is opened.
+// Never re-seeds: the flag is stored beside the data, so an emptied grid stays empty.
+async function _zonSeedIfEmpty(){
+  const d=window._trkData||{};
+  if(d.zoning_seeded) return false;
+  if(window._trkLoadOk===false) return false;
+  if(typeof isReadOnly==='function' && isReadOnly()) return false;
+  if(!d.zoning) d.zoning=JSON.parse(JSON.stringify(ZONING_SEED));
+  d.zoning_seeded=true; window._trkData=d;
+  await _trkSave();
+  return true;
+}
+function _zonId(p){ return p+'-'+Date.now().toString(36)+Math.random().toString(36).slice(2,5); }
+async function _zonWrite(mut){
+  if(_blockIfReadOnly()) return false;
+  const d=window._trkData||{};
+  const z=JSON.parse(JSON.stringify(_zonData()));
+  mut(z);
+  d.zoning=z; window._trkData=d;
+  if(!await _trkSave()) return false;
+  return true;
+}
+async function _zonCell(rowId, colId, val){
+  await _zonWrite(z=>{ z.cells[rowId+'|'+colId]=val; });
+}
+function _zonType(rowId, colId, val){
+  // Mirror the tracker's save-as-you-type: keep the in-memory copy current so a
+  // redraw never throws away what somebody is halfway through typing.
+  const d=window._trkData||{}; const z=d.zoning||(d.zoning=JSON.parse(JSON.stringify(_zonData())));
+  z.cells=z.cells||{}; z.cells[rowId+'|'+colId]=val; window._trkData=d;
+}
+async function _zonRowAdd(){
+  const el=document.getElementById('zon-new-row'); const name=((el&&el.value)||'').trim();
+  if(!name){ alert('Name the guideline first — front setback, lot coverage, roof pitch…'); return; }
+  if(await _zonWrite(z=>{ z.rows.push({id:_zonId('r'), name:name}); })){
+    _logAudit('created','zoning',name,'Added a guideline row');
+    if(el) el.value=''; _zonRerender();
+  }
+}
+async function _zonColAdd(){
+  const el=document.getElementById('zon-new-col'); const name=((el&&el.value)||'').trim();
+  if(!name){ alert('Name the jurisdiction first — "Upper Arlington (R-1)", "Hilliard (R-2)"…'); return; }
+  if(await _zonWrite(z=>{ z.cols.push({id:_zonId('c'), name:name, link:'', linkLabel:''}); })){
+    _logAudit('created','zoning',name,'Added a jurisdiction column');
+    if(el) el.value=''; _zonRerender();
+  }
+}
+async function _zonRowDel(id){
+  const z=_zonData(); const r=z.rows.find(x=>x.id===id); if(!r) return;
+  if(!_confirmDelete('the guideline “'+(r.name||'')+'”','Every jurisdiction’s answer for that row goes with it.')) return;
+  if(await _zonWrite(zz=>{ zz.rows=zz.rows.filter(x=>x.id!==id);
+      Object.keys(zz.cells).forEach(k=>{ if(k.split('|')[0]===id) delete zz.cells[k]; }); })){
+    _logAudit('deleted','zoning',r.name||'','Removed a guideline row'); _zonRerender();
+  }
+}
+async function _zonColDel(id){
+  const z=_zonData(); const c=z.cols.find(x=>x.id===id); if(!c) return;
+  if(!_confirmDelete('the column “'+(c.name||'')+'”','Every guideline recorded for that jurisdiction goes with it.')) return;
+  if(await _zonWrite(zz=>{ zz.cols=zz.cols.filter(x=>x.id!==id);
+      Object.keys(zz.cells).forEach(k=>{ if(k.split('|')[1]===id) delete zz.cells[k]; }); })){
+    _logAudit('deleted','zoning',c.name||'','Removed a jurisdiction column'); _zonRerender();
+  }
+}
+async function _zonRowMove(id, dir){
+  if(await _zonWrite(z=>{
+    const i=z.rows.findIndex(x=>x.id===id), j=i+(dir<0?-1:1);
+    if(i<0||j<0||j>=z.rows.length) return;
+    const t=z.rows[i]; z.rows[i]=z.rows[j]; z.rows[j]=t;
+  })) _zonRerender();
+}
+async function _zonRowName(id, val){ await _zonWrite(z=>{ const r=z.rows.find(x=>x.id===id); if(r) r.name=val; }); }
+async function _zonColName(id, val){ await _zonWrite(z=>{ const c=z.cols.find(x=>x.id===id); if(c) c.name=val; }); }
+async function _zonColLink(id, field, val){ await _zonWrite(z=>{ const c=z.cols.find(x=>x.id===id); if(c) c[field]=val; }); }
+async function _zonNote(val){ await _zonWrite(z=>{ z.note=val; }); }
+function _zonRerender(){ (window._trkRerender||function(){ openPermitDashboard('zoning'); })(); }
+
+function _zonBody(){
+  const ro=isReadOnly();
+  if(window._trkLoaded!==true || window._trkLoadOk===false){
+    return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:22px;text-align:center;font-size:13px;color:${window._trkLoadOk===false?'#B42318':'#999'}">
+      ${window._trkLoadOk===false?'The trackers could not be loaded, so the zoning grid is not showing. Refresh the page.':'Loading the zoning guidelines&hellip;'}</div>`;
+  }
+  const z=_zonData();
+  if(!z.cols.length && !z.rows.length){
+    return `<div style="background:#fff;border:0.5px dashed #d5d9e2;border-radius:11px;padding:26px;text-align:center;color:#999;font-size:13px">
+      Nothing here yet. Add a jurisdiction column and a guideline row below.</div>`+_zonAdders(ro);
+  }
+  // Every row is sized to the LONGEST cell in it, so the columns line up and no
+  // guideline is half-hidden behind a scrollbar.
+  const rowH={};
+  z.rows.forEach(r=>{
+    let h=52;
+    z.cols.forEach(c=>{
+      const v=String((z.cells[r.id+'|'+c.id])||'');
+      const lines=v.split('\n').reduce((a,l)=>a+Math.max(1,Math.ceil(l.length/30)),0);
+      h=Math.max(h, Math.min(230, lines*19+18));
+    });
+    rowH[r.id]=h;
+  });
+  const cellBox=(r,c)=>{
+    const v=(z.cells[r.id+'|'+c.id])||'';
+    if(ro) return `<div style="font-size:12.5px;color:${v?'#111':'#ccc'};white-space:pre-wrap;line-height:1.45">${_calEsc(v)||'—'}</div>`;
+    return `<textarea oninput="_zonType('${r.id}','${c.id}',this.value)" onchange="_zonCell('${r.id}','${c.id}',this.value)"
+      placeholder="—" style="width:100%;height:${rowH[r.id]}px;padding:6px 8px;border:0.5px solid #e2e6ee;border-radius:6px;font-size:12.5px;line-height:1.45;color:#111;resize:vertical;font-family:inherit;background:#fff">${_calEsc(v)}</textarea>`;
+  };
+  const head=z.cols.map(c=>`<th style="padding:9px 10px;text-align:left;vertical-align:top;min-width:230px;border-left:0.5px solid #24406e">
+      ${ro?`<div style="font-size:12.5px;font-weight:700;color:#fff">${_calEsc(c.name||'')}</div>`
+          :`<input value="${_calEsc(c.name||'')}" onchange="_zonColName('${c.id}',this.value)" style="width:100%;padding:4px 6px;border:0.5px solid #3d5b8c;border-radius:5px;background:#0d1d38;color:#fff;font-size:12.5px;font-weight:700"/>`}
+      <div style="margin-top:4px">${
+        c.link ? `<a href="${_calEsc(c.link)}" target="_blank" rel="noopener noreferrer" style="font-size:11px;color:#8fc4f5;text-decoration:underline">${_calEsc(c.linkLabel||'code / guidelines')} &#8599;</a>`
+               : `<span style="font-size:11px;color:#7d92b5">no link yet</span>`}</div>
+      ${ro?'':`<div style="display:flex;gap:4px;margin-top:4px">
+        <input value="${_calEsc(c.linkLabel||'')}" onchange="_zonColLink('${c.id}','linkLabel',this.value)" placeholder="Link label" style="width:38%;padding:3px 5px;border:0.5px solid #3d5b8c;border-radius:5px;background:#0d1d38;color:#cfe0f5;font-size:10.5px"/>
+        <input value="${_calEsc(c.link||'')}" onchange="_zonColLink('${c.id}','link',this.value)" placeholder="https://…" style="flex:1;padding:3px 5px;border:0.5px solid #3d5b8c;border-radius:5px;background:#0d1d38;color:#cfe0f5;font-size:10.5px"/>
+        <span onclick="_zonColDel('${c.id}')" title="Remove this jurisdiction" style="cursor:pointer;color:#7d92b5;font-size:11px;padding:3px">&#10005;</span>
+      </div>`}
+    </th>`).join('');
+  const body=z.rows.map((r,i)=>`<tr style="border-top:0.5px solid #eef0f6">
+      <td style="padding:8px 10px;vertical-align:top;background:#FAFBFD;min-width:236px;position:sticky;left:0">
+        <div style="display:flex;align-items:flex-start;gap:5px">
+          ${ro?'':`<div style="flex-shrink:0">
+            ${i===0?'<span style="display:block;font-size:9px;color:#e8eaef;line-height:1.15">&#9650;</span>':`<span onclick="_zonRowMove('${r.id}',-1)" title="Move up" style="display:block;cursor:pointer;font-size:9px;color:#9aa3b2;line-height:1.15">&#9650;</span>`}
+            ${i===z.rows.length-1?'<span style="display:block;font-size:9px;color:#e8eaef;line-height:1.15">&#9660;</span>':`<span onclick="_zonRowMove('${r.id}',1)" title="Move down" style="display:block;cursor:pointer;font-size:9px;color:#9aa3b2;line-height:1.15">&#9660;</span>`}
+          </div>`}
+          <div style="flex:1;min-width:0">${ro?`<div style="font-size:12.5px;font-weight:600;color:#111">${_calEsc(r.name||'')}</div>`
+            :`<input value="${_calEsc(r.name||'')}" onchange="_zonRowName('${r.id}',this.value)" style="width:100%;padding:4px 6px;border:0.5px solid #e2e6ee;border-radius:5px;font-size:12.5px;font-weight:600;color:#111"/>`}</div>
+          ${ro?'':`<span onclick="_zonRowDel('${r.id}')" title="Remove this guideline" style="cursor:pointer;color:#ddd;font-size:11px;flex-shrink:0">&#10005;</span>`}
+        </div>
+      </td>
+      ${z.cols.map(c=>`<td style="padding:7px 9px;vertical-align:top;border-left:0.5px solid #f1f3f7">${cellBox(r,c)}</td>`).join('')}
+    </tr>`).join('');
+
+  const note=ro
+    ? (z.note?`<div style="font-size:12.5px;color:#8a6d1a;background:#FFF7E0;border:1px solid #EAD9A8;border-radius:8px;padding:8px 12px;margin-bottom:12px">&#9888;&#65039; ${_calEsc(z.note)}</div>`:'')
+    : `<div style="margin-bottom:12px"><div style="font-size:10.5px;color:#999;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Note at the top of the sheet</div>
+       <input value="${_calEsc(z.note||'')}" onchange="_zonNote(this.value)" style="width:100%;max-width:760px;padding:7px 10px;border:0.5px solid #EAD9A8;border-radius:8px;background:#FFF7E0;font-size:12.5px;color:#8a6d1a"/></div>`;
+
+  return note
+    + _trkTable('&#128506;&#65039; Zoning Guidelines','#0B7285',
+        `<th style="padding:9px 10px;text-align:left;min-width:236px;position:sticky;left:0;background:#0B7285">Guideline</th>`+head, body)
+    + _zonAdders(ro)
+    + `<div style="font-size:12px;color:#999;margin-top:6px">
+        Every box saves the moment you click out of it. This is a reference sheet, not a per-property tracker &mdash; it answers "what does this city allow", and the answer is the same for every house in that jurisdiction.
+        <br>Add a column when we start working in a new city, and a row when a city regulates something the others do not.
+      </div>`;
+}
+function _zonAdders(ro){
+  if(ro) return '';
+  return `<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">
+    <div style="background:#fff;border:0.5px dashed #d5d9e2;border-radius:10px;padding:10px 13px;display:flex;gap:7px;align-items:center;flex-wrap:wrap">
+      <span style="font-size:12.5px;color:#666">Add a guideline:</span>
+      <input id="zon-new-row" placeholder="Roof pitch, fence height…" style="padding:6px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px;width:210px"/>
+      <button onclick="_zonRowAdd()" style="padding:6px 13px;border:none;border-radius:7px;background:#122A4A;color:#fff;font-size:13px;font-weight:600;cursor:pointer">Add row</button>
+    </div>
+    <div style="background:#fff;border:0.5px dashed #d5d9e2;border-radius:10px;padding:10px 13px;display:flex;gap:7px;align-items:center;flex-wrap:wrap">
+      <span style="font-size:12.5px;color:#666">Add a jurisdiction:</span>
+      <input id="zon-new-col" placeholder="Hilliard (R-2)…" style="padding:6px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px;width:210px"/>
+      <button onclick="_zonColAdd()" style="padding:6px 13px;border:none;border-radius:7px;background:#0B7285;color:#fff;font-size:13px;font-weight:600;cursor:pointer">Add column</button>
+    </div>
+  </div>`;
+}
+
+// ===================== PERMIT DASHBOARD =======================================
+// Bruce, 5 Sept: "I want to create a permit dashboard that goes under everybody's
+// job role dashboard... so when somebody's looking for permits, it'll be under
+// that dashboard. The tabs will be permit tracker, inspection tracker, and
+// zoning info."
+//
+// Everything here is a VIEW of data that already exists. The permit tracker and
+// the inspection tracker are the same _trkData.permits rows the Architect
+// dashboard and the property cards read - opening them from a third place cannot
+// create a fourth copy. Zoning is the one genuinely new sheet.
+const PERMIT_DASH_TABS = [
+  { id:'tracker', label:'Permit Tracker',     icon:'📄' },
+  { id:'insp',    label:'Inspection Tracker', icon:'🔩' },
+  { id:'zoning',  label:'Zoning Info',        icon:'🗺️' }
+];
+function openPermitDashboard(activeTab){
+  activeTab = PERMIT_DASH_TABS.some(t=>t.id===activeTab) ? activeTab : 'tracker';
+  // Re-render through this dashboard, keeping the horizontal scroll position, so
+  // editing a cell does not throw the table back to the far left.
+  window._permitCtx = 'dashboard';
+  window._trkRerender = ()=>_trkKeepScroll(()=>openPermitDashboard(activeTab));
+  const wrap=(inner)=>`<div style="padding:20px;max-width:1420px;margin:0 auto">${inner}</div>`;
+  let content;
+  if(activeTab==='insp'){
+    window._permTabSel='insp';
+    content=wrap(`<div style="font-size:16px;font-weight:600;color:#111;margin-bottom:10px">&#128297; Inspection Tracker</div>`+_permitInspBody());
+  } else if(activeTab==='zoning'){
+    content=wrap(`<div style="font-size:16px;font-weight:600;color:#111;margin-bottom:10px">&#128506;&#65039; Zoning Info</div>`+_zonBody());
+  } else {
+    window._permTabSel='permits';
+    content=wrap(`<div style="font-size:16px;font-weight:600;color:#111;margin-bottom:10px">&#128196; Permit Tracker</div>`+_permitTrackerBody());
+  }
+  _execShell('openPermitDashboard', PERMIT_DASH_TABS, activeTab, content);
+  // The permits live in the trackers blob; pull it on first open and seed the
+  // zoning grid from Jen's sheet, then redraw once with the real data.
+  if(!window._trkLoaded){
+    _trkLoad()
+      .then(()=>_permitSeedIfEmpty())
+      .then(()=>_zonSeedIfEmpty())
+      .then(()=>openPermitDashboard(activeTab));
+  } else if(activeTab==='zoning' && !(window._trkData||{}).zoning_seeded){
+    _zonSeedIfEmpty().then(ok=>{ if(ok) openPermitDashboard(activeTab); });
+  }
 }
 
 function openArchitectDashboard(activeTab) {
@@ -15642,4 +15939,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-04e team-overview-period-and-company-meeting -->
+<!-- build: 2026-09-05a permit-dashboard-and-zoning -->
