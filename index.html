@@ -3532,6 +3532,15 @@ const SQ_PHASES = [
   { id:'post',   label:'Post Construction'   }
 ];
 function _sqList(c){ const a=((c&&c.checklists)||{}).sq; return Array.isArray(a)?a:[]; }
+// Bruce, 7 Sept: "I need to be able to add side quests to each property card from
+// the full project meeting tab." Same panel, same data - so the only thing that
+// changes is which screen redraws afterwards. Redrawing the property card from
+// inside a meeting would throw the room out of the meeting mid-sentence.
+function _sqInMeeting(){ return !!document.querySelector('details[data-wm-prop]') && !!window.__wmLastKind; }
+function _sqRerender(pid){
+  if(_sqInMeeting()){ openWeeklyMeeting(window.__wmLastKind, window.__wmLastWeek||undefined); return; }
+  openPropDetail(pid);
+}
 function _sqPhaseOf(x){ return SQ_PHASES.some(p=>p.id===x.ph) ? x.ph : 'pre'; }
 // Ready to look at: it asked to be surfaced on a date, that date has arrived,
 // and nobody has ticked it off yet.
@@ -3568,27 +3577,27 @@ async function _sqAdd(pid){
   const c=propCards.find(x=>x.id===pid);
   _logAudit('created','property',(c&&c.addr)||'', 'Side quest: '+text+(at?(' — remind on '+at):' — no reminder date'));
   if(tEl) tEl.value=''; if(dEl) dEl.value='';
-  openPropDetail(pid);
+  _sqRerender(pid);
 }
 async function _sqToggle(pid, id){
   const ok=await _sqWrite(pid, arr=>{ const x=arr.find(y=>y.id===id); if(x){ x.done=!x.done; x.doneAt=x.done?_ymd(new Date()):''; } });
-  if(ok) openPropDetail(pid);
+  if(ok) _sqRerender(pid);
 }
 async function _sqWhen(pid, id, val){
   await _sqWrite(pid, arr=>{ const x=arr.find(y=>y.id===id); if(x) x.at=val||''; });
-  openPropDetail(pid);
+  _sqRerender(pid);
 }
 async function _sqPhase(pid, id, val){
   await _sqWrite(pid, arr=>{ const x=arr.find(y=>y.id===id); if(x) x.ph=val; });
-  openPropDetail(pid);
+  _sqRerender(pid);
 }
 async function _sqDel(pid, id){
   const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
   const x=_sqList(c).find(y=>y.id===id);
   if(!_confirmDelete('the reminder “'+((x&&x.t)||'')+'”','It is gone from this property for good.')) return;
-  if(await _sqWrite(pid, arr=>{ const i=arr.findIndex(y=>y.id===id); if(i>=0) arr.splice(i,1); })) openPropDetail(pid);
+  if(await _sqWrite(pid, arr=>{ const i=arr.findIndex(y=>y.id===id); if(i>=0) arr.splice(i,1); })) _sqRerender(pid);
 }
-function _sqBody(c){
+function _sqBody(c, compact){
   const ro=(typeof isReadOnly==='function')?isReadOnly():false;
   const list=_sqList(c);
   const cnt=_sqCounts(c);
@@ -3635,9 +3644,9 @@ function _sqBody(c){
       <div style="font-size:11px;color:#aaa;margin-top:5px">No due date needed. The date is optional &mdash; set it only if you want this to come back up on a particular day. Either way it never lands on anybody's task calendar.</div>
     </div>`;
 
-  return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden;margin-top:12px">
-      <div style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
-        <div style="font-size:13px;font-weight:500;color:#111">&#129517; Side Quests
+  return `<div style="background:#fff;border:0.5px solid ${compact?'#eef0f6':'#e0e4ec'};border-radius:8px;overflow:hidden;margin-top:${compact?'11px':'12px'}">
+      <div style="padding:9px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+        <div style="font-size:${compact?'11.5px':'13px'};font-weight:${compact?'700':'500'};color:#111;${compact?'text-transform:uppercase;letter-spacing:.04em':''}">&#129517; Side Quests
           <span style="font-size:11.5px;color:#aaa;font-weight:400">&mdash; reminders that stay with this house</span></div>
         <div style="display:flex;gap:6px;align-items:center">
           ${cnt.due?`<span style="font-size:10.5px;font-weight:700;color:#B7791F;background:#FBF3E2;padding:2px 8px;border-radius:99px">${cnt.due} ready to look at</span>`:''}
@@ -4032,6 +4041,7 @@ function _pdLinked(c){
                 <span style="color:#888;display:flex;align-items:center;gap:5px">🗓 Closing Date <span style="font-size:10px;background:#E6F1FB;color:#185FA5;padding:1px 5px;border-radius:4px">Us Buying</span>${c.purchaseConfirmed?` <span style="font-size:10px;background:#EAF3DE;color:#173404;padding:1px 5px;border-radius:4px">Owned ✓</span>`:''}</span>
                 ${_ro_sp ? `<span style="color:#111;font-weight:500">${c.closingDate||'—'}</span>` : `<span style="display:flex;gap:6px;align-items:center"><input type="date" id="pd-closing-date" value="${c.closingDate||''}" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"/><button onclick="saveClosingDate('${c.id}')" style="font-size:12px;padding:3px 9px;border-radius:5px;background:#111;color:#fff;border:none;cursor:pointer">Save date</button></span>`}
               </div>
+              ${_kickCardRow(c)}
               <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:0.5px solid #f4f5f7;font-size:14px">
                 <span style="color:#888;display:flex;align-items:center;gap:5px">🏠 Vacancy Date</span>
                 ${_ro_sp ? `<span style="color:#111;font-weight:500">${c.vacancyDate||'—'}</span>` : `<span style="display:flex;gap:6px;align-items:center"><input type="date" id="pd-vacancy-date" value="${c.vacancyDate||''}" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"/><button onclick="saveVacancyDate('${c.id}')" style="font-size:12px;padding:3px 9px;border-radius:5px;background:#111;color:#fff;border:none;cursor:pointer">Save date</button></span>`}
@@ -6945,6 +6955,218 @@ function _compMeetingBody(wk){
   return perfTop+_compPerfBlock(wk,false)
     +`<div style="font-size:12px;color:#999;margin-top:4px">Built ${_calEsc(_wmWhen(new Date().toISOString()))} from the live board. Nothing on this page is typed in except the shout out.</div>`;
 }
+// ===================== KICKOFF NOTES, AS A PDF ================================
+// Bruce, 7 Sept: "once a kickoff meeting has been completed we need the demo and
+// clean out review notes, buy and list, scope review notes... that PDF copy of
+// that property attached to the property card... so when the assistant is going
+// to do his first time access checklist and he pulls up the mobile app, he can
+// click kickoff notes PDF and read what he can get started on for the demo and
+// clean out."
+//
+// It is BUILT from the kickoff meeting rather than stored as a file. A saved PDF
+// is a photograph of what the room said once; this is the room's actual notes, so
+// if somebody corrects the scope on Tuesday the assistant reads the correction on
+// Wednesday instead of the version that was wrong. Same click, same page, and the
+// field app can open the very same view when it is built.
+function _kickWeeksWithNotes(pid){
+  const all=window._wmData||{};
+  const out=[];
+  Object.keys(all).forEach(wk=>{
+    const k=(all[wk]||{})['kickoff']; if(!k) return;
+    const has=Object.keys(k).some(key=>key.indexOf(pid+'::')===0 && String(k[key]||'').trim());
+    if(has) out.push(wk);
+  });
+  return out.sort();          // oldest first
+}
+// The kickoff we should be reading: the most recent week that has anything in it
+// for this property. A closed meeting wins over an open one from the same week.
+function _kickNotesFor(pid){
+  const wks=_kickWeeksWithNotes(pid);
+  if(!wks.length) return null;
+  const wk=wks[wks.length-1];
+  const k=((window._wmData||{})[wk]||{})['kickoff']||{};
+  const notes={};
+  Object.keys(k).forEach(key=>{ if(key.indexOf(pid+'::')===0) notes[key.slice((pid+'::').length)]=k[key]; });
+  const closed=_wmMeta(wk,'kickoff','__closed');
+  return { wk:wk, closed:!!(closed&&closed.at), closedAt:(closed&&closed.at)||'', notes:notes, weeks:wks };
+}
+function _kickComps(notes){
+  const out=[];
+  for(let i=1;i<=30;i++){ const v=String(notes['comp'+i]||'').trim(); if(v) out.push(v); }
+  return out;
+}
+function _kickOpenPDF(pid){
+  const html=_kickPdfHtml(pid);
+  if(!html) return;
+  const w=window.open('','_blank');
+  if(!w){ alert("Your browser blocked the window. Allow pop-ups for this site and try again."); return; }
+  w.document.open(); w.document.write(html); w.document.close();
+}
+function _kickPdfHtml(pid){
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
+  if(!c){ alert("That property could not be found."); return ''; }
+  const k=_kickNotesFor(pid);
+  if(!k){ alert("No kickoff notes for "+(c.addr||"this property")+" yet.\n\nRun the Kickoff meeting on it first and the notes will appear here."); return ''; }
+  const N=k.notes;
+  const esc=(v)=>_calEsc(String(v==null?'':v));
+  const when=(()=>{ try{ return new Date(k.wk+'T00:00:00').toLocaleDateString(undefined,{month:'long',day:'numeric',year:'numeric'}); }catch(e){ return k.wk; } })();
+  const comps=_kickComps(N);
+  const priceRow=KICK_PRICES.map(pr=>`<div class="pc">
+      <div class="pl">${esc(pr[1])}</div>
+      <div class="pv">${esc(N[pr[0]])||'&mdash;'}</div>
+      <div class="ps">${esc(pr[2])}</div></div>`).join('');
+  // Demo and clean out first, deliberately: that is what the assistant standing in
+  // the doorway on day one actually needs off this page.
+  const secs=KICK_NOTES.map(n=>{
+    const v=String(N[n[0]]||'').trim();
+    return `<div class="sec">
+      <h2>${esc(n[1])}</h2>
+      <div class="hint">${esc(n[2])}</div>
+      <div class="body ${v?'':'empty'}">${v?esc(v):'Not filled in at the kickoff meeting.'}</div>
+    </div>`;
+  }).join('');
+  const commit=String(N['commit']||'').trim();
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Kickoff notes — ${esc(c.addr||'')}</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+    body{background:#fff;color:#111;padding:26px 30px;max-width:820px;margin:0 auto;line-height:1.5}
+    h1{font-size:22px;font-weight:700}
+    .sub{font-size:12.5px;color:#888;margin-bottom:4px}
+    .meta{display:flex;gap:16px;flex-wrap:wrap;margin:12px 0 18px;padding:11px 0;border-top:1px solid #e6e8ee;border-bottom:1px solid #e6e8ee}
+    .m{min-width:110px}
+    .mk{font-size:9.5px;color:#aaa;text-transform:uppercase;letter-spacing:.05em}
+    .mv{font-size:13px;font-weight:600}
+    .pc{background:#f7f8fb;border-radius:8px;padding:9px 12px}
+    .pl{font-size:10.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em}
+    .pv{font-size:17px;font-weight:700;margin:2px 0}
+    .ps{font-size:10.5px;color:#aaa}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:9px;margin-bottom:16px}
+    .sec{margin-bottom:16px;page-break-inside:avoid}
+    .sec h2{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#122A4A}
+    .hint{font-size:11px;color:#aaa;margin-bottom:4px}
+    .body{font-size:13.5px;white-space:pre-wrap;background:#fafbfd;border-left:3px solid #e0e4ec;border-radius:0 6px 6px 0;padding:9px 12px}
+    .body.empty{color:#bbb;font-style:italic}
+    ul{margin:0 0 16px 18px;font-size:13.5px}
+    .noprint{margin-bottom:14px}
+    button{padding:8px 16px;background:#111;color:#fff;border:none;border-radius:7px;font-size:13px;cursor:pointer}
+    .foot{font-size:11px;color:#aaa;margin-top:22px;border-top:1px solid #e6e8ee;padding-top:9px}
+    @media print{ .noprint{display:none} body{padding:0} }
+  </style></head><body>
+  <div class="noprint"><button onclick="window.print()">Save as PDF / Print</button></div>
+  <h1>${esc(c.addr||'Property')}</h1>
+  <div class="sub">Kickoff notes &mdash; meeting of ${esc(when)}${k.closed?' &middot; meeting closed':' &middot; meeting still open'}</div>
+  <div class="meta">
+    <div class="m"><div class="mk">Phase</div><div class="mv">${esc(c.phase||'—')}</div></div>
+    <div class="m"><div class="mk">Project manager</div><div class="mv">${esc(c.pm||'not assigned')}</div></div>
+    <div class="m"><div class="mk">Type</div><div class="mv">${esc(c.type||'not set')}</div></div>
+    <div class="m"><div class="mk">Permitted</div><div class="mv">${((c.checklists||{}).permitted)==='yes'?'Yes':'No'}</div></div>
+    <div class="m"><div class="mk">Closing &mdash; us buying</div><div class="mv">${esc(c.closingDate||'not set')}</div></div>
+    <div class="m"><div class="mk">Vacancy date</div><div class="mv">${esc(c.vacancyDate||'not set')}</div></div>
+  </div>
+  <div class="sec"><h2>Target listing price &mdash; the three ways this could go</h2>
+    <div class="grid">${priceRow}</div></div>
+  ${comps.length?`<div class="sec"><h2>Comps</h2><ul>${comps.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`:''}
+  ${secs}
+  ${commit?`<div class="sec"><h2>What the project manager committed to</h2><div class="body">${esc(commit)}</div></div>`:''}
+  <div class="foot">Built ${esc(_wmWhen(new Date().toISOString()))} from the Kickoff meeting of ${esc(when)}. Nothing on this page is typed twice &mdash; correct it in the Kickoff meeting and this page changes with it.</div>
+  </body></html>`;
+}
+// The row that goes on the property card, next to CompanyCam and the Drive folder.
+function _kickCardRow(c){
+  const k=_kickNotesFor(c.id);
+  return `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:0.5px solid #f4f5f7;font-size:14px">
+      <span style="color:#888;display:flex;align-items:center;gap:5px">&#128196; Kickoff Notes${k?`<span style="font-size:10px;background:${k.closed?'#EAF3DE':'#FBF3E2'};color:${k.closed?'#173404':'#8a6d1a'};padding:1px 5px;border-radius:4px">${k.closed?'meeting closed':'in progress'}</span>`:''}</span>
+      ${k
+        ? `<span onclick="_kickOpenPDF('${c.id}')" style="cursor:pointer;color:#185FA5;font-size:13px;font-weight:600">Open PDF &#8599;</span>`
+        : `<span style="color:#bbb;font-size:12.5px">no kickoff run yet</span>`}
+    </div>`;
+}
+
+// ===================== MONDAY MEETING — UPCOMING TAKEDOWNS ====================
+// Bruce, 7 Sept: "there also needs to be a tab for property cards in the upcoming
+// takedowns... that way we can review those properties in the meeting as well as
+// in the kickoff meeting, but the kickoff meeting will be going over the stuff
+// that's on that meeting."
+//
+// So this is the light pass: what is coming, when we take it down, when it goes
+// vacant, who is on it, and anything anybody wants to flag. The pricing, the
+// comps and the line-by-line scope stay in the Kickoff meeting - repeating them
+// here would only give the room two places to disagree with itself.
+const WM_TAKEDOWN_PHASES=["Upcoming Takedowns","Occupied / Closed"];
+function _wmTakedownCards(){
+  const _n=(a)=>{ const m=String(a||'').match(/\d+/); return m?parseInt(m[0],10):999999; };
+  return (typeof propCards!=='undefined'?propCards:[])
+    .filter(c=>!c.archived && WM_TAKEDOWN_PHASES.includes(c.phase))
+    .sort((a,b)=>String(a.closingDate||'9999').localeCompare(String(b.closingDate||'9999'))
+               || _n(a.addr)-_n(b.addr));
+}
+function _wmTeamTab(){ return (window._wmTeamTabSel==='takedowns')?'takedowns':'construction'; }
+function _wmTeamTabTo(k){ window._wmTeamTabSel=k; openWeeklyMeeting('team', window.__wmLastWeek||undefined); }
+// Days until we own it - the only number that decides whether this is a
+// conversation for today or for three weeks' time.
+function _wmDaysTo(ds){
+  if(!ds) return null;
+  try{ return Math.round((Date.parse(ds+"T00:00:00Z") - Date.parse(_ymd(new Date())+"T00:00:00Z"))/86400000); }catch(e){ return null; }
+}
+function _wmTakedownBody(wk, notes, prevNotes, roNow, ta2){
+  const cards=_wmTakedownCards();
+  if(!cards.length) return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:26px;text-align:center;color:#bbb;font-size:13.5px">Nothing on the takedown list right now.</div>`;
+  const kick=_kickCards?null:null;
+  const fact=(label,val,tone,sub)=>`<div style="min-width:112px">
+      <div style="font-size:9.5px;color:#aaa;text-transform:uppercase;letter-spacing:.05em">${label}</div>
+      <div style="font-size:13px;font-weight:600;color:${tone||'#111'};line-height:1.35">${val}</div>
+      ${sub?`<div style="font-size:10.5px;color:#aaa">${sub}</div>`:''}</div>`;
+  const blocks=cards.map(c=>{
+    const dTo=_wmDaysTo(c.closingDate);
+    const vTo=_wmDaysTo(c.vacancyDate);
+    const soon=(dTo!=null && dTo<=14);
+    // Has the kickoff meeting actually been run on this one yet?
+    const kn=(typeof _kickNotesFor==='function')?_kickNotesFor(c.id):null;
+    const sq=_sqCounts(c);
+    return `<details data-wm-prop="${c.id}" ${_wmIsOpen(c.id)?'open':''} ontoggle="_wmToggleOpen('${c.id}',this.open)" style="background:#fff;border:0.5px solid ${soon?'#EAD9A8':'#e0e4ec'};border-radius:12px;margin-bottom:9px;color:#111">
+      <summary style="cursor:pointer;padding:11px 14px 11px 4px;outline:none">
+        <div style="display:inline-flex;width:calc(100% - 26px);vertical-align:middle;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <span style="font-size:15px;font-weight:700;color:#185FA5">${_calEsc(c.addr||'')}${c.jvDeal?' <span style="font-size:11px;background:#EEEDFE;color:#3C3489;padding:1px 7px;border-radius:99px;vertical-align:middle">JV</span>':''}</span>
+          <span style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">
+            ${dTo!=null?`<span style="font-size:10.5px;font-weight:600;color:${soon?'#8a6d1a':'#555'};background:${soon?'#FBF3E2':'#F1F2F6'};padding:1px 8px;border-radius:99px">${dTo<0?('closed '+Math.abs(dTo)+'d ago'):(dTo===0?'closes today':('closes in '+dTo+'d'))}</span>`:'<span style="font-size:10.5px;color:#B42318;background:#FBEAE8;padding:1px 8px;border-radius:99px">no closing date</span>'}
+            ${kn?`<span style="font-size:10.5px;font-weight:600;color:#0F7B54;background:#E6F4ED;padding:1px 8px;border-radius:99px">kickoff done</span>`:`<span style="font-size:10.5px;font-weight:600;color:#8a6d1a;background:#FBF3E2;padding:1px 8px;border-radius:99px">kickoff not run</span>`}
+            ${sq.due?`<span style="font-size:10.5px;font-weight:600;color:#B7791F;background:#FBF3E2;padding:1px 8px;border-radius:99px">${sq.due} to look at</span>`:''}
+            <span style="font-size:11.5px;color:#888;margin-left:4px">${_calEsc(c.phase||'')} &middot; ${_calEsc(c.pm)||'no PM'}</span>
+          </span>
+        </div>
+      </summary>
+      <div style="padding:0 16px 14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:9px">
+          <span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-size:13px;color:#185FA5">Open the property card &rsaquo;</span>
+          <span style="display:flex;align-items:center;gap:6px">
+            <span style="font-size:10.5px;color:#999;text-transform:uppercase;letter-spacing:.04em">Project manager</span>${_pmField(c,'td')}
+          </span>
+        </div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;padding:9px 0;border-top:0.5px solid #eef0f6;border-bottom:0.5px solid #eef0f6">
+          ${fact('Closing &mdash; us buying', c.closingDate?_calEsc(c.closingDate):'not set', c.closingDate?(soon?'#8a6d1a':'#111'):'#B42318', dTo!=null?(dTo<0?'already ours':(dTo+' days away')):'nobody has put the date in')}
+          ${fact('Vacancy date', c.vacancyDate?_calEsc(c.vacancyDate):'not set', c.vacancyDate?'#111':'#B7791F', vTo!=null?(vTo<0?'vacant already':(vTo+' days away')):'unknown')}
+          ${fact('Type', _calEsc(c.type||'not set'), c.type?'#111':'#B7791F', (c.checklists&&c.checklists.permitted)==='yes'?'permitted':'')}
+          ${fact('ACQ budget', (c.checklists&&c.checklists.acqBudget)?_calEsc(c.checklists.acqBudget):'&mdash;','#111','')}
+          ${fact('Kickoff', kn?('run '+_calEsc(kn.wk)):'not run yet', kn?'#0F7B54':'#8a6d1a', kn?(kn.closed?'meeting closed':'notes started'):'price and scope not agreed')}
+        </div>
+        ${kn?`<div style="margin-top:9px"><button onclick="_kickOpenPDF('${c.id}')" style="padding:6px 13px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">&#128196; Kickoff notes PDF</button></div>`:''}
+        ${secWrapTd('What we need to know before we take it down', ta2(c.id+'::tdnotes','Access, tenants, utilities, anything the room needs to line up before day one&hellip;',52))}
+        ${_sqBody(c, true)}
+      </div>
+    </details>`;
+  }).join('');
+  const soonN=cards.filter(c=>{const d=_wmDaysTo(c.closingDate); return d!=null&&d<=14;}).length;
+  const noKick=cards.filter(c=>!(typeof _kickNotesFor==='function'&&_kickNotesFor(c.id))).length;
+  const bar=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:9px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <div style="font-size:13px;color:#555"><b>${cards.length}</b> coming down${soonN?` &middot; <b style="color:#8a6d1a">${soonN} inside two weeks</b>`:''}${noKick?` &middot; <b style="color:#8a6d1a">${noKick} with no kickoff yet</b>`:''}</div>
+      <div style="font-size:12px;color:#999">Ordered by closing date. The price, comps and scope belong in the Kickoff meeting.</div>
+    </div>`;
+  return bar+blocks;
+}
+function secWrapTd(title, inner){
+  return `<div style="margin-top:11px"><div style="font-size:11.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">${title}</div>${inner}</div>`;
+}
+
 function openWeeklyMeeting(kind, week){
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
@@ -7169,6 +7391,8 @@ function openWeeklyMeeting(kind, week){
           <button onclick="openPropDetail('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #e6e8ee;border-radius:7px;font-size:12.5px;color:#777;cursor:pointer">Open card</button>
         </div>`}
 
+        ${_sqBody(c, true)}
+
         ${secWrap(secHead('Timeline check','asked every Monday'), pace+trail)}
         ${secWrap(secHead('Lag-time items','carried until they close'), lagRows+lagAdd)}
         ${secWrap(secHead('Questions for Bruce / Tommy','carried until answered'), qRows+qAdd)}
@@ -7196,6 +7420,11 @@ function openWeeklyMeeting(kind, week){
       </div>`;
     }).join('');
 
+    // Bruce, 7 Sept: takedowns get reviewed here too, on their own tab.
+    const _tdCards=_wmTakedownCards();
+    const _teamTab=_wmTeamTab();
+    const _ttBtn=(k,label,n)=>`<span onclick="_wmTeamTabTo('${k}')" style="cursor:pointer;padding:7px 14px;border-radius:8px;font-size:13px;font-weight:${_teamTab===k?'600':'400'};background:${_teamTab===k?'#122A4A':'#fff'};color:${_teamTab===k?'#fff':'#444'};border:0.5px solid ${_teamTab===k?'#122A4A':'#d8dce6'}">${label}${n!=null?(' &middot; '+n):''}</span>`;
+    const _teamTabBar=`<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:13px">${_ttBtn('construction','\ud83d\udd28 Construction',cards.length)}${_ttBtn('takedowns','\ud83d\udce6 Upcoming Takedowns',_tdCards.length)}</div>`;
     const covN=cards.filter(c=>coveredMap[c.id]).length;
     const walkBar=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:9px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
       <div style="font-size:13px;color:#555"><b>${covN} of ${cards.length}</b> covered &middot; every property starts closed &mdash; click one to open it</div>
@@ -7203,8 +7432,14 @@ function openWeeklyMeeting(kind, week){
         <button onclick="_wmExpandAll(true)" style="padding:5px 12px;border:0.5px solid #cdd7e6;border-radius:7px;background:#fff;font-size:12.5px;color:#185FA5;cursor:pointer">Expand all</button>
         <button onclick="_wmExpandAll(false)" style="padding:5px 12px;border:0.5px solid #e6e8ee;border-radius:7px;background:#fff;font-size:12.5px;color:#777;cursor:pointer">Collapse all</button>
       </div></div>`;
-    body=`
+    body = (_teamTab==='takedowns')
+      ? `${_wmClosedBanner(wk, closedRec, 'team')}
+      ${_teamTabBar}
+      ${_wmTakedownBody(wk, notes, prevNotes, roNow, ta2)}
+      ${_wmCloseBar(wk, closedRec, isPast, 'team')}`
+      : `
       ${_wmClosedBanner(wk, closedRec, 'team')}
+      ${_teamTabBar}
       ${cards.length?walkBar:''}
       ${blocks || '<div style="color:#bbb;font-size:14px;padding:20px 0">No construction properties right now.</div>'}
       ${_wmOpenQuestionsPanel(cards)}
@@ -16080,4 +16315,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-05b side-quests -->
+<!-- build: 2026-09-07a takedowns-tab-and-kickoff-pdf -->
