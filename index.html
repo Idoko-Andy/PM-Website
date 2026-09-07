@@ -5423,6 +5423,17 @@ async function _wmCovered(wk, pid){
   _wmToggleOpen(pid,false);
   if(await _wmSetMeta(wk,'team','__covered',m)) openWeeklyMeeting('team', wk);
 }
+// Bruce, 7 Sept: "the PDF needs to appear on the property card once the kickoff
+// for that property has been marked completed." The kickoff meeting had no way to
+// mark a single property done - only the whole meeting could be closed - so there
+// was nothing to gate the PDF on. This is the same control the Monday meeting has,
+// kept per property because a kickoff room does one house and moves on.
+async function _kickCovered(wk, pid){
+  const m=Object.assign({}, _wmMeta(wk,'kickoff','__covered'));
+  if(m[pid]) delete m[pid]; else m[pid]=true;
+  _wmToggleOpen(pid,false);
+  if(await _wmSetMeta(wk,'kickoff','__covered',m)) openWeeklyMeeting('kickoff', wk);
+}
 async function _wmTick(wk, itemKey, val){
   const m=Object.assign({}, _wmMeta(wk,'team','__done'));
   if(m[itemKey]===val) delete m[itemKey]; else m[itemKey]=val;
@@ -6448,6 +6459,7 @@ function _kickMeetingBody(wk, notes, prevNotes, roNow){
     const notesFilled=KICK_NOTES.filter(n=>V(c.id,n[0])).length;
     const chip=(txt,col,bg)=>`<span style="font-size:10.5px;font-weight:600;color:${col};background:${bg};padding:1px 7px;border-radius:99px;white-space:nowrap">${txt}</span>`;
     const chips=[
+      (_kickIsDone(c.id,wk)?chip('&#10003; completed','#0F7B54','#E6F4ED'):''),
       chip(compsFilled+' comp'+(compsFilled===1?'':'s'), compsFilled?'#0F7B54':'#888', compsFilled?'#E6F4ED':'#F1F2F6'),
       chip(filled+'/3 prices', filled===3?'#0F7B54':'#B7791F', filled===3?'#E6F4ED':'#FBF3E2'),
       chip(notesFilled+'/'+KICK_NOTES.length+' reviewed', notesFilled===KICK_NOTES.length?'#0F7B54':'#888', notesFilled===KICK_NOTES.length?'#E6F4ED':'#F1F2F6'),
@@ -6519,6 +6531,11 @@ function _kickMeetingBody(wk, notes, prevNotes, roNow){
           <button onclick="_wmAddEvent('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#639922;cursor:pointer;font-weight:600">＋ Schedule contractor</button>
           <button onclick="_miAddQuick('q','${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#B7791F;cursor:pointer;font-weight:600">＋ Question for Bruce / Tommy</button>
         </div>`}
+        <div style="margin-top:12px;padding-top:11px;border-top:0.5px solid #eef0f6;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          ${roNow?`<span style="font-size:12.5px;color:${_kickIsDone(c.id,wk)?'#0F7B54':'#aaa'}">${_kickIsDone(c.id,wk)?'&#10003; Kickoff completed':'Kickoff not marked completed'}</span>`
+            :`<button onclick="_kickCovered('${wk}','${c.id}')" style="padding:7px 15px;background:${_kickIsDone(c.id,wk)?'#fff':'#0F7B54'};border:${_kickIsDone(c.id,wk)?'0.5px solid #cdd7e6':'none'};border-radius:8px;font-size:13px;font-weight:600;color:${_kickIsDone(c.id,wk)?'#777':'#fff'};cursor:pointer">${_kickIsDone(c.id,wk)?'Reopen this kickoff':'&#10003; Kickoff complete &mdash; publish the notes'}</button>`}
+          <span style="font-size:11.5px;color:#aaa">${_kickIsDone(c.id,wk)?'The Kickoff Notes PDF is on this property card.':'Marking it complete puts the Kickoff Notes PDF on the property card for the field.'}</span>
+        </div>
       </div>
     </details>`;
   }).join('');
@@ -6982,6 +6999,15 @@ function _kickWeeksWithNotes(pid){
 }
 // The kickoff we should be reading: the most recent week that has anything in it
 // for this property. A closed meeting wins over an open one from the same week.
+// Marked completed for this property, in this week - or the whole kickoff meeting
+// closed, which finishes every property that was in it.
+function _kickIsDone(pid, wk){
+  if(!wk) return false;
+  const cov=_wmMeta(wk,'kickoff','__covered')||{};
+  if(cov[pid]) return true;
+  const cl=_wmMeta(wk,'kickoff','__closed');
+  return !!(cl && cl.at);
+}
 function _kickNotesFor(pid){
   const wks=_kickWeeksWithNotes(pid);
   if(!wks.length) return null;
@@ -6990,7 +7016,10 @@ function _kickNotesFor(pid){
   const notes={};
   Object.keys(k).forEach(key=>{ if(key.indexOf(pid+'::')===0) notes[key.slice((pid+'::').length)]=k[key]; });
   const closed=_wmMeta(wk,'kickoff','__closed');
-  return { wk:wk, closed:!!(closed&&closed.at), closedAt:(closed&&closed.at)||'', notes:notes, weeks:wks };
+  // "done" is the gate the property card and the field app read. Notes existing is
+  // not the same as the room having finished with the house.
+  return { wk:wk, closed:!!(closed&&closed.at), closedAt:(closed&&closed.at)||'',
+           done:_kickIsDone(pid, wk), notes:notes, weeks:wks };
 }
 function _kickComps(notes){
   const out=[];
@@ -7009,6 +7038,7 @@ function _kickPdfHtml(pid){
   if(!c){ alert("That property could not be found."); return ''; }
   const k=_kickNotesFor(pid);
   if(!k){ alert("No kickoff notes for "+(c.addr||"this property")+" yet.\n\nRun the Kickoff meeting on it first and the notes will appear here."); return ''; }
+  if(!k.done){ alert("The kickoff for "+(c.addr||"this property")+" has not been marked completed yet.\n\nOpen the Kickoff meeting, finish the house and press \u201cKickoff complete \u2014 publish the notes\u201d. The PDF appears on the property card the moment you do."); return ''; }
   const N=k.notes;
   const esc=(v)=>_calEsc(String(v==null?'':v));
   const when=(()=>{ try{ return new Date(k.wk+'T00:00:00').toLocaleDateString(undefined,{month:'long',day:'numeric',year:'numeric'}); }catch(e){ return k.wk; } })();
@@ -7076,11 +7106,15 @@ function _kickPdfHtml(pid){
 // The row that goes on the property card, next to CompanyCam and the Drive folder.
 function _kickCardRow(c){
   const k=_kickNotesFor(c.id);
+  // Bruce's rule: the PDF appears once the kickoff for THAT property is marked
+  // completed. Half-written notes are not something to hand a man on a job site.
+  const ready=!!(k && k.done);
   return `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:0.5px solid #f4f5f7;font-size:14px">
-      <span style="color:#888;display:flex;align-items:center;gap:5px">&#128196; Kickoff Notes${k?`<span style="font-size:10px;background:${k.closed?'#EAF3DE':'#FBF3E2'};color:${k.closed?'#173404':'#8a6d1a'};padding:1px 5px;border-radius:4px">${k.closed?'meeting closed':'in progress'}</span>`:''}</span>
-      ${k
+      <span style="color:#888;display:flex;align-items:center;gap:5px">&#128196; Kickoff Notes${k?`<span style="font-size:10px;background:${ready?'#EAF3DE':'#FBF3E2'};color:${ready?'#173404':'#8a6d1a'};padding:1px 5px;border-radius:4px">${ready?'completed':'in progress'}</span>`:''}</span>
+      ${ready
         ? `<span onclick="_kickOpenPDF('${c.id}')" style="cursor:pointer;color:#185FA5;font-size:13px;font-weight:600">Open PDF &#8599;</span>`
-        : `<span style="color:#bbb;font-size:12.5px">no kickoff run yet</span>`}
+        : (k ? `<span style="color:#bbb;font-size:12.5px">kickoff not finished yet</span>`
+             : `<span style="color:#bbb;font-size:12.5px">no kickoff run yet</span>`)}
     </div>`;
 }
 
@@ -7131,7 +7165,9 @@ function _wmTakedownBody(wk, notes, prevNotes, roNow, ta2){
           <span style="font-size:15px;font-weight:700;color:#185FA5">${_calEsc(c.addr||'')}${c.jvDeal?' <span style="font-size:11px;background:#EEEDFE;color:#3C3489;padding:1px 7px;border-radius:99px;vertical-align:middle">JV</span>':''}</span>
           <span style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">
             ${dTo!=null?`<span style="font-size:10.5px;font-weight:600;color:${soon?'#8a6d1a':'#555'};background:${soon?'#FBF3E2':'#F1F2F6'};padding:1px 8px;border-radius:99px">${dTo<0?('closed '+Math.abs(dTo)+'d ago'):(dTo===0?'closes today':('closes in '+dTo+'d'))}</span>`:'<span style="font-size:10.5px;color:#B42318;background:#FBEAE8;padding:1px 8px;border-radius:99px">no closing date</span>'}
-            ${kn?`<span style="font-size:10.5px;font-weight:600;color:#0F7B54;background:#E6F4ED;padding:1px 8px;border-radius:99px">kickoff done</span>`:`<span style="font-size:10.5px;font-weight:600;color:#8a6d1a;background:#FBF3E2;padding:1px 8px;border-radius:99px">kickoff not run</span>`}
+            ${(kn&&kn.done)?`<span style="font-size:10.5px;font-weight:600;color:#0F7B54;background:#E6F4ED;padding:1px 8px;border-radius:99px">kickoff completed</span>`
+              :(kn?`<span style="font-size:10.5px;font-weight:600;color:#8a6d1a;background:#FBF3E2;padding:1px 8px;border-radius:99px">kickoff in progress</span>`
+                  :`<span style="font-size:10.5px;font-weight:600;color:#8a6d1a;background:#FBF3E2;padding:1px 8px;border-radius:99px">kickoff not run</span>`)}
             ${sq.due?`<span style="font-size:10.5px;font-weight:600;color:#B7791F;background:#FBF3E2;padding:1px 8px;border-radius:99px">${sq.due} to look at</span>`:''}
             <span style="font-size:11.5px;color:#888;margin-left:4px">${_calEsc(c.phase||'')} &middot; ${_calEsc(c.pm)||'no PM'}</span>
           </span>
@@ -7149,18 +7185,18 @@ function _wmTakedownBody(wk, notes, prevNotes, roNow, ta2){
           ${fact('Vacancy date', c.vacancyDate?_calEsc(c.vacancyDate):'not set', c.vacancyDate?'#111':'#B7791F', vTo!=null?(vTo<0?'vacant already':(vTo+' days away')):'unknown')}
           ${fact('Type', _calEsc(c.type||'not set'), c.type?'#111':'#B7791F', (c.checklists&&c.checklists.permitted)==='yes'?'permitted':'')}
           ${fact('ACQ budget', (c.checklists&&c.checklists.acqBudget)?_calEsc(c.checklists.acqBudget):'&mdash;','#111','')}
-          ${fact('Kickoff', kn?('run '+_calEsc(kn.wk)):'not run yet', kn?'#0F7B54':'#8a6d1a', kn?(kn.closed?'meeting closed':'notes started'):'price and scope not agreed')}
+          ${fact('Kickoff', (kn&&kn.done)?('completed '+_calEsc(kn.wk)):(kn?('started '+_calEsc(kn.wk)):'not run yet'), (kn&&kn.done)?'#0F7B54':'#8a6d1a', (kn&&kn.done)?'notes published to the card':(kn?'not finished — no PDF yet':'price and scope not agreed'))}
         </div>
-        ${kn?`<div style="margin-top:9px"><button onclick="_kickOpenPDF('${c.id}')" style="padding:6px 13px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">&#128196; Kickoff notes PDF</button></div>`:''}
+        ${(kn&&kn.done)?`<div style="margin-top:9px"><button onclick="_kickOpenPDF('${c.id}')" style="padding:6px 13px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">&#128196; Kickoff notes PDF</button></div>`:''}
         ${secWrapTd('What we need to know before we take it down', ta2(c.id+'::tdnotes','Access, tenants, utilities, anything the room needs to line up before day one&hellip;',52))}
         ${_sqBody(c, true)}
       </div>
     </details>`;
   }).join('');
   const soonN=cards.filter(c=>{const d=_wmDaysTo(c.closingDate); return d!=null&&d<=14;}).length;
-  const noKick=cards.filter(c=>!(typeof _kickNotesFor==='function'&&_kickNotesFor(c.id))).length;
+  const noKick=cards.filter(c=>{ const k=(typeof _kickNotesFor==='function')?_kickNotesFor(c.id):null; return !(k&&k.done); }).length;
   const bar=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:9px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-      <div style="font-size:13px;color:#555"><b>${cards.length}</b> coming down${soonN?` &middot; <b style="color:#8a6d1a">${soonN} inside two weeks</b>`:''}${noKick?` &middot; <b style="color:#8a6d1a">${noKick} with no kickoff yet</b>`:''}</div>
+      <div style="font-size:13px;color:#555"><b>${cards.length}</b> coming down${soonN?` &middot; <b style="color:#8a6d1a">${soonN} inside two weeks</b>`:''}${noKick?` &middot; <b style="color:#8a6d1a">${noKick} without a completed kickoff</b>`:''}</div>
       <div style="font-size:12px;color:#999">Ordered by closing date. The price, comps and scope belong in the Kickoff meeting.</div>
     </div>`;
   return bar+blocks;
@@ -16329,4 +16365,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-07c permits-trimmed-and-contractors-load -->
+<!-- build: 2026-09-07d kickoff-pdf-on-completion -->
