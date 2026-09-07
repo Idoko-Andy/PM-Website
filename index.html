@@ -974,7 +974,13 @@ async function _initInner() {
       // "no permits on the tracker for this house" and "not on the route" for houses
       // that plainly had both. Load them up front with everything else.
       _trkLoad(),
-      _chkLoad()
+      _chkLoad(),
+      // The contractor directory is read by the construction calendar, the Monday
+      // meeting's "Schedule contractor", the mowing tracker and the W-9 tracker -
+      // but it was only ever fetched when somebody opened the directory itself. So
+      // "Select from saved contractors" showed an empty list to anybody who had not
+      // been to that screen first. 120 rows: load it with everything else.
+      loadContractorsFromSupabase()
     ]);
     // A house sitting vacant with the checklist unfinished must always have somebody
     // on it. Checked on every load, so it self-heals no matter how the house got there.
@@ -5110,8 +5116,14 @@ function _wmAddTask(pid){
   openAddTask(_ymd(new Date()));
   setTimeout(()=>{ const el=document.getElementById('task-prop'); if(el){ el.value=pid; if(typeof _taskPropChange==='function') _taskPropChange(); } },60);
 }
-function _wmAddEvent(pid){
+async function _wmAddEvent(pid){
   if(typeof openAddCalEvent!=='function') return;
+  // If the directory has not landed yet, get it before drawing the picker - an empty
+  // "saved contractors" list reads as "we have not got them", which is how duplicates
+  // get typed in.
+  if(typeof _contractorsCache==='undefined' || !(_contractorsCache||[]).length){
+    try{ await loadContractorsFromSupabase(); }catch(e){}
+  }
   openAddCalEvent(_ymd(new Date()));
   setTimeout(()=>{ const el=document.getElementById('cal-prop'); if(el){ el.value=pid; if(typeof _calAddrToggle==='function') _calAddrToggle('cal'); } },60);
 }
@@ -5730,19 +5742,6 @@ function _wmMoneyShort(n){
 // checked the portal, answered the examiner, or sent a revision. It is labelled
 // for what it is rather than as contact with the GC, because the tracker holds no
 // GC contact field; if that is wanted it needs a column of its own.
-function _wmPermTouch(r){
-  const ds=[r.checked, r.responded, r.rev_submitted, r.issued, r.stamped, r.submitted].filter(Boolean).sort();
-  return ds.length?ds[ds.length-1]:null;
-}
-function _wmPermWhat(r, d){
-  if(d===r.checked) return 'portal checked';
-  if(d===r.responded) return 'examiner answered';
-  if(d===r.rev_submitted) return 'revision sent';
-  if(d===r.issued) return 'issued';
-  if(d===r.stamped) return 'engineer stamp back';
-  if(d===r.submitted) return 'submitted';
-  return '';
-}
 function _wmAgo(ds){
   const n=_permitDaysSince(ds);
   if(n===null) return null;
@@ -5765,63 +5764,66 @@ function _wmPermitBlock(c){
   if(!rows.length)
     return wrap(`<div style="font-size:12.5px;color:#B7791F">This job is marked permitted, but no permits are on the tracker for it yet &mdash; add them on the Permit Tracker and they will appear here by themselves.</div>`);
 
-  const fact=(label,val,tone,sub)=>`<div style="min-width:118px">
-      <div style="font-size:9.5px;color:#aaa;text-transform:uppercase;letter-spacing:.05em">${label}</div>
-      <div style="font-size:12.5px;font-weight:600;color:${tone||'#111'};line-height:1.35">${val}</div>
-      ${sub?`<div style="font-size:10.5px;color:#aaa">${sub}</div>`:''}</div>`;
-
+  // Bruce, 7 Sept: "we don't need to see all of that stuff. We only need to see
+  // what's scheduled and what's due." So this is no longer a stats panel. One line
+  // per permit saying what it IS, and under it only the things somebody has to act
+  // on - an unanswered examiner comment, an inspection still to pass, a portal that
+  // has gone stale, drawings that have not come back. A permit with nothing
+  // outstanding says exactly that, in one line, and takes up no more room.
   const body=rows.map(r=>{
     const st=String(r.status||'');
     const stCol=(typeof _permitStatusColor==='function')?_permitStatusColor(st):'#666';
     const insps=(typeof _permitInsps==='function')?_permitInsps(r):[];
-    const passed=insps.filter(x=>x.done).length;
-    const fails=insps.reduce((a,x)=>a+(parseInt(x.fails,10)||0),0);
+    const openInsps=insps.filter(x=>!x.done);
+    const issued=_permitIsApproved(r);
 
-    // drawings / engineer back - the first half of the note this replaces
-    const stampAgo=_wmAgo(r.stamped);
-    const stampCell=r.stamped
-      ? fact('Drawings / engineer back', stampAgo, '#0F7B54', _calEsc(r.stamped))
-      : fact('Drawings / engineer back','not back yet','#B7791F','no stamp date on the tracker');
+    // Everything with a date on it that has not been dealt with.
+    const due=[];
+    if(r.received && !r.responded)
+      due.push({ t:'Examiner comment not answered', d:r.received, tone:'#B42318',
+                 sub:(_wmAgo(r.received)||'')+(r.examiner?(' · '+_calEsc(r.examiner)):'') });
+    if(!issued && !r.stamped)
+      due.push({ t:'Drawings / engineer stamp not back', d:'', tone:'#B7791F', sub:'nothing recorded on the tracker' });
+    if(!issued){
+      const dd=_permitDaysSince(r.checked);
+      if(dd===null) due.push({ t:'Portal never checked', d:'', tone:'#B7791F', sub:'' });
+      else if(dd>PERMIT_STALE_DAYS) due.push({ t:'Portal not checked', d:r.checked, tone:'#B7791F', sub:dd+' days ago' });
+    }
+    openInsps.forEach((x,i)=>{
+      const fails=parseInt(x.fails,10)||0;
+      due.push({ t:_calEsc(x.name||'Inspection')+' inspection'+(i===0?' — next up':''), d:'', tone:i===0?'#B7791F':'#666',
+                 sub:(x.when==='after'?'after finishes':'before finishes')+(fails?(' · failed '+fails+'×'):'') });
+    });
 
-    // last touched - the second half, named honestly
-    const touch=_wmPermTouch(r);
-    const touchDays=_permitDaysSince(touch);
-    const touchCell=touch
-      ? fact('Last touched', _wmAgo(touch), (touchDays!=null&&touchDays>PERMIT_STALE_DAYS)?'#B42318':'#111', _calEsc(_wmPermWhat(r,touch)))
-      : fact('Last touched','never','#B42318','nothing recorded on this permit');
+    const dueRows = due.length
+      ? due.map(x=>`<div style="display:flex;justify-content:space-between;gap:10px;padding:3px 0;font-size:12.5px">
+          <div style="color:${x.tone};min-width:0">&bull; ${x.t}</div>
+          <div style="color:#aaa;font-size:11.5px;white-space:nowrap">${x.d?_calEsc(x.d):''}${x.sub?((x.d?' · ':'')+x.sub):''}</div>
+        </div>`).join('')
+      : `<div style="font-size:12.5px;color:#0F7B54;padding:3px 0">&bull; Nothing outstanding on this permit.</div>`;
 
-    const subAgo=_wmAgo(r.submitted);
-    const subCell=r.submitted
-      ? fact('Submitted', subAgo, '#111', (r.issued?('issued '+_calEsc(r.issued)):'not issued yet'))
-      : fact('Submitted','no date','#B7791F','');
+    // Status and the issue date belong together: a permit whose status says Issued
+    // but has no date read "not issued yet" underneath, which is the sort of thing
+    // that stops a room trusting the screen.
+    const dateBit = issued
+      ? (r.issued ? ('issued '+_calEsc(r.issued)) : 'issued — no date on the tracker')
+      : (r.submitted ? ('submitted '+(_wmAgo(r.submitted)||_calEsc(r.submitted))) : 'no submitted date');
 
-    const openComment = (r.received && !r.responded);
-    const commentCell = openComment
-      ? fact('Examiner comment', (_wmAgo(r.received)||'open'), '#B42318', 'not answered yet')
-      : fact('Examiner comment', r.received?'answered':'none open', r.received?'#0F7B54':'#999', r.responded?_calEsc(r.responded):'');
-
-    const inspCell = insps.length
-      ? fact('Inspections', passed+' of '+insps.length+' passed', (passed===insps.length)?'#0F7B54':'#B7791F', fails?(fails+' failed attempt'+(fails===1?'':'s')):'')
-      : fact('Inspections','none listed','#999','');
-
-    // The one line that tells the room what this permit is waiting on.
-    const need=(typeof _permitNeeds==='function')?_permitNeeds(r):null;
-
-    return `<div style="padding:8px 0;border-top:0.5px solid #f4f5f7">
-      <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+    return `<div style="padding:7px 0;border-top:0.5px solid #f4f5f7">
+      <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">
         <span style="font-size:12.5px;font-weight:700;color:#111">${_calEsc(r.number||'no permit number')}</span>
         <span style="font-size:11.5px;color:#999">${_calEsc(r.juris||'')}</span>
         <span style="font-size:11.5px;font-weight:700;color:${stCol}">${_calEsc(st)||'no status'}</span>
         ${r.priority?`<span style="font-size:10.5px;font-weight:600;color:${_permitPriorityColor(r.priority)}">${_calEsc(r.priority)} priority</span>`:''}
+        <span style="font-size:11.5px;color:#aaa">${dateBit}</span>
       </div>
-      <div style="display:flex;gap:16px;flex-wrap:wrap">${subCell}${stampCell}${touchCell}${commentCell}${inspCell}</div>
-      ${need?`<div style="margin-top:6px;font-size:11.5px;color:#B42318">&#9888;&#65039; ${_calEsc(need)}</div>`:''}
-      ${r.comment?`<div style="margin-top:5px;font-size:11.5px;color:#555;background:#F8F9FC;border-radius:6px;padding:5px 8px"><b style="color:#888">Latest from ${_calEsc(r.examiner||'the examiner')}:</b> ${_calEsc(r.comment)}</div>`:''}
+      <div style="margin-top:3px">${dueRows}</div>
+      ${(r.comment && r.received && !r.responded)?`<div style="margin-top:4px;font-size:11.5px;color:#555;background:#F8F9FC;border-radius:6px;padding:5px 8px"><b style="color:#888">${_calEsc(r.examiner||'The examiner')}:</b> ${_calEsc(r.comment)}</div>`:''}
     </div>`;
   }).join('');
 
   return wrap(body.replace('border-top:0.5px solid #f4f5f7','border-top:none')+
-    `<div style="font-size:10.5px;color:#bbb;margin-top:7px">Nobody fills this in &mdash; it is the Permit Tracker's own rows. Change it there and it changes here.</div>`);
+    `<div style="font-size:10.5px;color:#bbb;margin-top:7px">Only what is still outstanding. Nobody fills this in &mdash; it is the Permit Tracker's own rows, so change it there and it changes here.</div>`);
 }
 
 function _wmDateShort(d){ if(!d) return '&mdash;'; try{ return new Date(d+"T00:00:00").toLocaleDateString(undefined,{day:'numeric',month:'short'}); }catch(e){ return d; } }
@@ -13720,6 +13722,18 @@ async function saveContractor(){
   const name=g("ct-name"), phone=g("ct-phone"), trade=g("ct-trade");
   const business_name=g("ct-biz"), email=g("ct-email");
   if(!name && !business_name){ alert("Enter a name or a business name."); return; }
+  // Bruce, 7 Sept: "make sure we don't have duplicates of people." The directory
+  // feeds the calendar, the mowing route and the W-9 tracker, so one person entered
+  // twice becomes three wrong lists. Catch it at the door - by name OR by phone,
+  // because "Brady Pack" and "Brady Packs" on the same number is the same man.
+  const _norm=(v)=>String(v||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+  const _dig=(v)=>String(v||'').replace(/[^0-9]/g,'');
+  const _nk=_norm(name||business_name), _pk=_dig(phone);
+  const _hit=(_contractorsCache||[]).find(c=>
+      (_nk && (_norm(c.name)===_nk || _norm(c.business_name)===_nk)) ||
+      (_pk.length>=10 && _dig(c.phone)===_pk));
+  if(_hit && !confirm('"'+(_hit.name||_hit.business_name||'')+'"'+(_hit.trade?(' ('+_hit.trade+')'):'')+(_hit.phone?(' '+_hit.phone):'')
+      +' is already in the directory.\n\nAdd this as a SECOND record anyway?\n\nSay no if it is the same person — use the existing one so the calendar, the mowing route and the W-9 tracker all point at one record.')) return;
   const { error } = await supabase.from("pm_contractors").insert({name:name||business_name, business_name, phone, email, trade});
   if(error){ alert("Failed to add contractor: "+(error.message||"unknown error")); return; }
   _logAudit("created","contractor", name, "Added to contractor directory");
@@ -16315,4 +16329,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-07a takedowns-tab-and-kickoff-pdf -->
+<!-- build: 2026-09-07c permits-trimmed-and-contractors-load -->
