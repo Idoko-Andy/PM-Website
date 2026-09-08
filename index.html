@@ -9880,9 +9880,37 @@ function _pmHasWork(name){
   const all=(typeof propCards!=='undefined'?propCards:[]);
   return all.some(c=>!c.archived && c.phase!=='Closed' && String(c.pm||'').trim().toLowerCase()===k);
 }
+// Who is allowed to look at everybody. Same three roles the nav already trusts with
+// every dropdown - they run the whole board and have to see all of it.
+// _viewUser, not currentUser: it honours "preview as user" in the Admin Panel, so
+// Bruce can look at the board exactly as a PM or a realtor sees it.
+function _seesEveryone(u){
+  u = u || (typeof _viewUser==='function'?_viewUser():(typeof currentUser==='function'?currentUser():null));
+  if(!u) return true;                      // signed out / still loading - never blank the page
+  if(u.isSuperAdmin) return true;
+  return (typeof NAV_SUPER_ROLES!=='undefined') && NAV_SUPER_ROLES.indexOf(u.role)>=0;
+}
+function _myFullName(u){
+  u = u || (typeof _viewUser==='function'?_viewUser():(typeof currentUser==='function'?currentUser():null));
+  if(!u) return '';
+  if(u.__preview) return String((typeof _previewPerms!=='undefined'&&_previewPerms&&_previewPerms.name)||u.firstName||'').trim();
+  return ((u.firstName||'')+' '+(u.lastName||'')).trim();
+}
 function _pmTabNames(){
   const roster=(typeof PM_MANAGERS!=='undefined'?PM_MANAGERS:[]).slice();
   const all=(typeof propCards!=='undefined'?propCards:[]);
+  // A project manager gets one tab: their own. Standing on somebody else's board all
+  // day is how you end up working somebody else's house by accident.
+  if(!_seesEveryone()){
+    const me=_myFullName();
+    if(me){
+      const mine=roster.filter(n=>String(n).toLowerCase()===me.toLowerCase());
+      if(mine.length) return mine;
+      // Not on the roster but running houses anyway (a temporary cover) - still their tab.
+      if(all.some(c=>!c.archived && String(c.pm||'').trim().toLowerCase()===me.toLowerCase())) return [me];
+      return [];
+    }
+  }
   // Before the properties have loaded, filtering would blank the whole strip and
   // look like a broken page. Show the full roster until there is data to judge on.
   if(!all.length) return roster;
@@ -11712,7 +11740,7 @@ function _trkSearchBox(ph){
 function _trkFilter(){
   const q=(document.getElementById('trk-search')||{}).value||'';
   const t=q.trim().toLowerCase();
-  document.querySelectorAll('tr[data-trk]').forEach(r=>{ r.style.display = (!t || (r.getAttribute('data-trk')||'').toLowerCase().includes(t)) ? '' : 'none'; });
+  document.querySelectorAll('[data-trk]').forEach(r=>{ r.style.display = (!t || (r.getAttribute('data-trk')||'').toLowerCase().includes(t)) ? '' : 'none'; });
 }
 // ===================== UTILITY TRACKER =====================
 // Mirrors the company's Utility Tracker workbook: one sheet per utility
@@ -12564,47 +12592,43 @@ function _permitTrackerBody(){
   };
   const dt=(id,field,handler)=>ro?(_trkVal("permits",id,field)||"—"):`<input type="date" value="${_trkVal("permits",id,field)}" onchange="${handler||`_trkSet('permits','${id}','${field}',this.value,true)`}" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:126px"/>`;
   const tx=(id,field,ph,w)=>ro?(_calEsc(_trkVal("permits",id,field))||"—"):`<input value="${_calEsc(_trkVal("permits",id,field))}" placeholder="${ph||""}" oninput="_trkType('permits','${id}','${field}',this.value)" onchange="_trkSet('permits','${id}','${field}',this.value,false)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:${w||110}px"/>`;
-  const ta=(id,field,ph,w)=>ro?`<div style="max-width:${w||240}px;white-space:pre-wrap;font-size:12.5px">${_calEsc(_trkVal("permits",id,field))||"—"}</div>`:`<textarea placeholder="${ph||""}" oninput="_trkType('permits','${id}','${field}',this.value)" onchange="_trkSet('permits','${id}','${field}',this.value,false)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:${w||240}px;min-height:46px;resize:vertical;font-family:inherit">${_calEsc(_trkVal("permits",id,field))}</textarea>`;
+  const _w=(w,d)=>{ const v=(w===undefined||w===null)?d:w; return (typeof v==='string'&&/[%a-z]$/i.test(v))?v:(v+'px'); };
+  const ta=(id,field,ph,w)=>ro?`<div style="max-width:${_w(w,240)};white-space:pre-wrap;font-size:12.5px">${_calEsc(_trkVal("permits",id,field))||"—"}</div>`:`<textarea placeholder="${ph||""}" oninput="_trkType('permits','${id}','${field}',this.value)" onchange="_trkSet('permits','${id}','${field}',this.value,false)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:${_w(w,240)};box-sizing:border-box;min-height:44px;resize:vertical;font-family:inherit">${_calEsc(_trkVal("permits",id,field))}</textarea>`;
 
-  const head=`<th style="padding:9px 10px;text-align:left;min-width:190px">Address</th>
-    <th style="padding:9px;text-align:left">Permit / application #</th>
-    <th style="padding:9px">Submitted</th>
-    <th style="padding:9px">Issued</th>
-    <th style="padding:9px">Engineer stamp</th>
-    <th style="padding:9px">Priority</th>
-    <th style="padding:9px">Status</th>
-    <th style="padding:9px">TV house</th>
-    <th style="padding:9px">Portal checked</th>
-    <th style="padding:9px;text-align:left">General notes</th>
-    <th style="padding:9px;text-align:left">Examiner / inspector</th>
-    <th style="padding:9px">Comment in</th>
-    <th style="padding:9px;text-align:left">Latest comment</th>
-    <th style="padding:9px">Responded</th>
-    <th style="padding:9px">Latest revision</th>
-    <th style="padding:9px">Inspections</th>
-    ${arch?"":'<th style="padding:9px">Paperwork at warehouse</th>'}
-    <th style="padding:9px">Task</th>`;
+  // Bruce, 8 Sept, after showing Jen the mockup: "change the permit dashboard to the
+  // example PDF we sent Jen." So the 17-column table is gone. Same permits, same
+  // fields, same saves - one permit per card, read left to right and down, and you
+  // scroll DOWN through houses instead of sideways through columns.
+  const fld=(label,inner,note)=>`<div style="padding:7px 12px;border-right:0.5px solid #eef0f4;border-bottom:0.5px solid #eef0f4;min-width:0">
+      <div style="font-size:9.5px;text-transform:uppercase;letter-spacing:.055em;color:#98a2b3;font-weight:700;margin-bottom:3px">${label}</div>
+      <div style="font-size:13px;color:#111">${inner}</div>
+      ${note?`<div style="font-size:10.5px;color:#a3aab6;margin-top:2px">${note}</div>`:''}
+    </div>`;
+  const wide=(label,inner)=>`<div style="padding:7px 12px;border-bottom:0.5px solid #eef0f4">
+      <div style="font-size:9.5px;text-transform:uppercase;letter-spacing:.055em;color:#98a2b3;font-weight:700;margin-bottom:3px">${label}</div>
+      <div style="font-size:13px;color:#111">${inner}</div>
+    </div>`;
 
-  // One glance only. Everything you DO with an inspection lives on the Inspections
-  // tab - this table was already 17 columns wide and the inspection cell was the
-  // thing that made it unreadable.
   const inspChip=(r)=>{
     const list=_permitInsps(r);
-    if(!list.length) return ro?`<span style="font-size:11.5px;color:#ccc">none</span>`
-      :`<span onclick="_permInspGo('${r.id}')" style="cursor:pointer;font-size:11.5px;color:#185FA5">&#65291; add &rsaquo;</span>`;
+    if(!list.length) return ro?`<span style="font-size:12px;color:#c4c9d2">none listed yet</span>`
+      :`<span onclick="_permInspGo('${r.id}')" style="cursor:pointer;font-size:12.5px;color:#185FA5">&#65291; set the order &rsaquo;</span>`;
     const st=_permInspStats(list);
     const allDone=st.done===st.total;
-    return `<span onclick="_permInspGo('${r.id}')" title="Open this permit on the Inspections tab" style="cursor:pointer;display:inline-block;padding:3px 9px;border-radius:999px;font-size:11.5px;font-weight:600;background:${allDone?'#EAF7F1':'#F2F4F9'};color:${allDone?'#0F7B54':'#122A4A'};border:0.5px solid ${allDone?'#BFE5D4':'#dfe3ec'}">${st.done}/${st.total} passed</span>${st.fails?`<div style="font-size:10px;color:#B42318;font-weight:600;margin-top:2px">${st.fails} failure${st.fails===1?'':'s'}</div>`:''}`;
+    const nxt=list.filter(x=>!x.done)[0];
+    return `<span onclick="_permInspGo('${r.id}')" title="Open this permit on the Inspections tab" style="cursor:pointer;display:inline-block;padding:3px 10px;border-radius:999px;font-size:11.5px;font-weight:700;background:${allDone?'#EAF7F1':'#F2F4F9'};color:${allDone?'#0F7B54':'#122A4A'};border:0.5px solid ${allDone?'#BFE5D4':'#dfe3ec'}">${st.done}/${st.total} passed</span>`
+      + (nxt?`<span style="font-size:11.5px;color:#8a93a5;margin-left:8px">next up: ${_calEsc(nxt.name||'')}</span>`:'')
+      + (st.fails?`<span style="font-size:11.5px;color:#B42318;font-weight:600;margin-left:8px">${st.fails} failure${st.fails===1?'':'s'}</span>`:'');
   };
 
   const whCell=(r)=>{
-    if((r.status||"")!=="Issued") return `<span style="font-size:11.5px;color:#ccc">not issued yet</span>`;
+    if((r.status||"")!=="Issued") return `<span style="font-size:12px;color:#c4c9d2">not issued yet</span>`;
     const cur=r.warehouse||"";
-    if(ro) return `<span style="font-size:12px;font-weight:600;color:${cur==="Yes"?"#1D9E75":"#C0392B"}">${_calEsc(cur)||"No"}</span>`;
+    if(ro) return `<span style="font-size:12.5px;font-weight:600;color:${cur==="Yes"?"#1D9E75":"#C0392B"}">${_calEsc(cur)||"No"}</span>`;
     return `<select onchange="_trkSet('permits','${r.id}','warehouse',this.value,true)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:78px;font-weight:600;color:${cur==="Yes"?"#1D9E75":"#C0392B"}">
         <option value="" ${cur===""?"selected":""}>No</option>
         <option ${cur==="Yes"?"selected":""}>Yes</option>
-      </select>${cur!=="Yes"?`<div style="font-size:10px;color:#C0392B;margin-top:2px">print &amp; take to the warehouse</div>`:""}`;
+      </select>${cur!=="Yes"?`<div style="font-size:10.5px;color:#C0392B;margin-top:2px">print &amp; take it over</div>`:""}`;
   };
 
   let body="";
@@ -12613,55 +12637,68 @@ function _permitTrackerBody(){
     if(!mine.length) return;
     const openN=arch?mine.filter(r=>!!_permitNeeds(r)).length:mine.filter(r=>(r.status||"")==="Issued"&&(r.warehouse||"")!=="Yes").length;
     const openLbl=arch?(openN?(openN+" need action"):"nothing outstanding"):(openN?(openN+" to take to the warehouse"):"warehouse is up to date");
-    body+=`<tr style="background:#F2F4F9"><td colspan="${COLS+1}" style="padding:8px 10px;font-size:12.5px;font-weight:700;color:#122A4A;letter-spacing:0.04em;text-transform:uppercase">${_calEsc(j)}
-      <span style="font-weight:500;text-transform:none;letter-spacing:0;color:${openN?"#C0392B":"#1D9E75"};margin-left:8px">${openLbl}</span></td></tr>`;
+    body+=`<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin:18px 0 9px">
+        <span style="font-size:12.5px;font-weight:700;color:#122A4A;letter-spacing:.05em;text-transform:uppercase">${_calEsc(j)}</span>
+        <span style="font-size:12px;color:${openN?"#C0392B":"#1D9E75"}">${openLbl}</span>
+        <span style="flex:1;height:1px;background:#e6e9f0;min-width:30px"></span>
+        <span style="font-size:11.5px;color:#b6bcc7">${mine.length} permit${mine.length===1?'':'s'}</span>
+      </div>`;
     mine.forEach(r=>{
       const need=_permitNeeds(r);
       const prop=_permitProp(r);
       const stale=_permitDaysSince(r.checked);
       const flag=arch?need:(((r.status||"")==="Issued"&&(r.warehouse||"")!=="Yes")?"paperwork still to go to the warehouse":null);
       const addrCell=prop
-        ? `<span onclick="openPropDetail('${prop.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(r.addr||"")}</span>`
-        : `<span style="font-weight:600;color:#111">${_calEsc(r.addr||"")}</span>`;
-      body+=`<tr data-trk="${_calEsc((r.addr||"")+" "+(r.number||"")+" "+j+" "+(r.examiner||""))}" style="border-top:0.5px solid #eef0f6;${flag?"background:#FFFBF7":""}">
-        <td style="padding:7px 10px;vertical-align:top">${addrCell}
-          ${prop?`<div style="font-size:11px;color:#999">${_calEsc(prop.phase||"")}</div>`:`<div style="font-size:11px;color:#bbb">no property card</div>`}
-          ${flag?`<div style="font-size:11px;color:#C0392B;margin-top:3px">⚠️ ${_calEsc(flag)}</div>`:""}
-          ${(arch&&r.chk_task)?`<div style="font-size:10.5px;color:#B7791F;margin-top:2px">a check-the-portal task is out</div>`:""}
-          ${ro?"":`<div style="margin-top:4px"><span onclick="_permitRemove('${r.id}')" style="font-size:11px;color:#bbb;cursor:pointer">remove</span></div>`}</td>
-        <td style="padding:7px;vertical-align:top">${tx(r.id,"number","Permit #",140)}</td>
-        <td style="padding:7px;vertical-align:top;text-align:center">${dt(r.id,"submitted")}</td>
-        <td style="padding:7px;vertical-align:top;text-align:center">${dt(r.id,"issued")}
-          ${(r.submitted&&r.issued)?`<div style="font-size:10.5px;color:#0F7B54;margin-top:2px">${_pdhDays(r.submitted,r.issued)} days</div>`
-            :((/issued|closed/i.test(String(r.status||""))&&!r.issued)?'<div style="font-size:10.5px;color:#B7791F;margin-top:2px">needs a date</div>':"")}</td>
-        <td style="padding:7px;vertical-align:top;text-align:center">${dt(r.id,"stamped")}</td>
-        <td style="padding:7px;vertical-align:top;text-align:center">${sel(r.id,"priority",[""].concat(PERMIT_PRIORITIES),98,_permitPriorityColor)}</td>
-        <td style="padding:7px;vertical-align:top;text-align:center">${sel(r.id,"status",[""].concat(PERMIT_STATUSES),168,_permitStatusColor)}</td>
-        <td style="padding:7px;vertical-align:top;text-align:center">${sel(r.id,"tv",["","Y","N"],62)}</td>
-        <td style="padding:7px;vertical-align:top;text-align:center">${dt(r.id,"checked",`_permitCheckedSet('${r.id}',this.value)`)}
-          ${stale!==null?`<div style="font-size:10.5px;color:${stale>PERMIT_STALE_DAYS?"#B7791F":"#bbb"};margin-top:2px">${stale===0?"today":(stale+" days ago")}</div>`:""}</td>
-        <td style="padding:7px;vertical-align:top">${ta(r.id,"notes","General notes",240)}</td>
-        <td style="padding:7px;vertical-align:top">${tx(r.id,"examiner","Name",130)}
-          <div style="margin-top:3px">${tx(r.id,"phone","Phone",130)}</div>
-          <div style="margin-top:3px">${tx(r.id,"email","Email",170)}</div>
-          <div style="margin-top:2px;display:flex;gap:8px">
-            ${r.email?`<a href="mailto:${_calEsc(r.email)}" style="font-size:11px;color:#185FA5;text-decoration:none">✉️ email</a>`:""}
-            ${r.phone?`<a href="tel:${_calEsc(String(r.phone).replace(/[^0-9+]/g,""))}" style="font-size:11px;color:#185FA5;text-decoration:none">📞 call</a>`:""}
-          </div></td>
-        <td style="padding:7px;vertical-align:top;text-align:center">${dt(r.id,"received")}</td>
-        <td style="padding:7px;vertical-align:top">${ta(r.id,"comment","Latest comment from the examiner",260)}</td>
-        <td style="padding:7px;vertical-align:top;text-align:center">${dt(r.id,"responded")}
-          ${(r.received&&!r.responded)?`<div style="font-size:10.5px;color:#C0392B;margin-top:2px">open</div>`:""}</td>
-        <td style="padding:7px;vertical-align:top;text-align:center">${dt(r.id,"rev_submitted")}
-          <div style="font-size:10px;color:#bbb;margin-top:2px">latest revision sent</div></td>
-        <td style="padding:7px;vertical-align:top;text-align:center">${inspChip(r)}</td>
-        ${arch?"":`<td style="padding:7px;vertical-align:top;text-align:center">${whCell(r)}</td>`}
-        <td style="padding:7px;vertical-align:top;text-align:center">
-          ${ro?"—":`<div style="display:flex;flex-direction:column;gap:3px">${PERMIT_OWNERS.map(w=>`<span onclick="_permitAddTask('${r.id}','${_calEsc(w)}')" style="cursor:pointer;font-size:11px;color:#185FA5;white-space:nowrap">＋ ${_calEsc(w.split(" ")[0])}</span>`).join("")}</div>`}</td>
-      </tr>`;
+        ? `<span onclick="openPropDetail('${prop.id}')" style="cursor:pointer;font-weight:700;color:#fff;font-size:15px;text-decoration:underline;text-decoration-color:rgba(255,255,255,.35)">${_calEsc(r.addr||"")}</span>`
+        : `<span style="font-weight:700;color:#fff;font-size:15px">${_calEsc(r.addr||"")}</span>`;
+      const turn=(r.submitted&&r.issued)?(_pdhDays(r.submitted,r.issued)+" days to issue")
+              :(r.submitted?`<b>${_permitDaysSince(r.submitted)} days, still out</b>`:'—');
+      const ckNote = stale===null?'' : (stale===0?'today':(stale===1?'yesterday':(stale+' days ago')));
+
+      body+=`<div data-trk="${_calEsc((r.addr||"")+" "+(r.number||"")+" "+j+" "+(r.examiner||""))}" style="background:#fff;border:0.5px solid ${flag?'#f0d9c2':'#dfe3ec'};border-radius:11px;overflow:hidden;margin-bottom:11px">
+        <div style="background:#122A4A;padding:8px 13px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+          <div style="min-width:0">${addrCell}
+            ${prop?`<div style="font-size:11.5px;color:#9fb0c9">${_calEsc(_phLabel(prop.phase))}</div>`:`<div style="font-size:11.5px;color:#7d8ca3">no property card</div>`}</div>
+          <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+            ${sel(r.id,"status",[""].concat(PERMIT_STATUSES),160,_permitStatusColor)}
+            ${sel(r.id,"priority",[""].concat(PERMIT_PRIORITIES),96,_permitPriorityColor)}
+          </div>
+        </div>
+        ${flag?`<div style="background:#FFF7F1;border-bottom:0.5px solid #f0d9c2;padding:6px 13px;font-size:12px;color:#B42318">&#9888;&#65039; ${_calEsc(flag)}</div>`:''}
+        ${(arch&&r.chk_task)?`<div style="background:#FFFBF0;border-bottom:0.5px solid #EAD9A8;padding:5px 13px;font-size:11.5px;color:#8a6d1a">a check-the-portal task is out</div>`:''}
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr))">
+          ${fld('Permit / application #', tx(r.id,"number","Permit #",150))}
+          ${fld('Submitted', dt(r.id,"submitted"))}
+          ${fld('Issued', dt(r.id,"issued"), (/issued|closed/i.test(String(r.status||""))&&!r.issued)?'needs a date':'')}
+          ${fld('Turnaround', turn)}
+          ${fld('Engineer stamp', dt(r.id,"stamped"))}
+          ${fld('Portal checked', dt(r.id,"checked",`_permitCheckedSet('${r.id}',this.value)`), ckNote)}
+          ${fld('Examiner / inspector', tx(r.id,"examiner","Name",150)
+              +`<div style="margin-top:4px">${tx(r.id,"phone","Phone",150)}</div>`
+              +`<div style="margin-top:4px">${tx(r.id,"email","Email",180)}</div>`
+              +`<div style="margin-top:3px;display:flex;gap:9px">`
+              +(r.email?`<a href="mailto:${_calEsc(r.email)}" style="font-size:11.5px;color:#185FA5;text-decoration:none">&#9993;&#65039; email</a>`:'')
+              +(r.phone?`<a href="tel:${_calEsc(String(r.phone).replace(/[^0-9+]/g,""))}" style="font-size:11.5px;color:#185FA5;text-decoration:none">&#128222; call</a>`:'')
+              +`</div>`)}
+          ${fld('Comment in', dt(r.id,"received"))}
+          ${fld('Responded', dt(r.id,"responded"), (r.received&&!r.responded)?'still open':'')}
+          ${fld('Latest revision sent', dt(r.id,"rev_submitted"))}
+          ${fld('TV house', sel(r.id,"tv",["","Y","N"],62))}
+          ${arch?fld('&nbsp;','&nbsp;'):fld('Paperwork at warehouse', whCell(r))}
+        </div>
+        ${wide('Examiner comment', ta(r.id,"comment","Latest comment from the examiner","100%"))}
+        ${wide('General notes', ta(r.id,"notes","General notes","100%"))}
+        ${wide('Inspections, in order', inspChip(r))}
+        <div style="padding:7px 13px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;background:#FAFBFD">
+          <div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap">
+            ${ro?'<span style="font-size:11.5px;color:#c4c9d2">read only</span>':`<span style="font-size:11.5px;color:#8a93a5">Raise a task:</span>`+PERMIT_OWNERS.map(w=>`<span onclick="_permitAddTask('${r.id}','${_calEsc(w)}')" style="cursor:pointer;font-size:12px;color:#185FA5;white-space:nowrap">&#65291; ${_calEsc(w.split(" ")[0])}</span>`).join("")}
+          </div>
+          ${ro?'':`<span onclick="_permitRemove('${r.id}')" style="font-size:11.5px;color:#c4c9d2;cursor:pointer">remove this permit</span>`}
+        </div>
+      </div>`;
     });
   });
-  if(!body) body=`<tr><td colspan="${COLS+1}" style="padding:16px;color:#bbb;text-align:center">No permits yet — add the first one below.</td></tr>`;
+  if(!body) body=`<div style="background:#fff;border:0.5px dashed #d5d9e2;border-radius:11px;padding:26px;color:#bbb;text-align:center;font-size:13.5px">No permits yet — add the first one above.</div>`;
 
   const addBar=ro?"":`<div style="background:#fff;border:0.5px dashed #d5d9e2;border-radius:10px;padding:11px 14px;margin-bottom:14px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
     <span style="font-size:12.5px;color:#666">Add a permit:</span>
@@ -12686,15 +12723,14 @@ function _permitTrackerBody(){
   }
 
   const foot=`<div style="font-size:12px;color:#999;margin-top:-8px">
-    Every box saves the moment you click out of it. Scroll the table sideways for the examiner, comment and inspection columns.
+    Every box saves the moment you click out of it. One card per permit — read it left to right, and scroll down for the next house.
     ${arch?`If a permit's portal goes <b>${PERMIT_STALE_DAYS} days</b> without being checked, the app raises a task for ${_calEsc(_permitArchitectName())} by itself — updating the date here closes that task again.`
           :`The warehouse column is yours: it appears the moment a permit is issued and clears when you mark it dropped off.`}
     <br>Inspections have their own tab now &mdash; click <b>&#128297; Inspections</b> above, or the chip in the Inspections column, to see every inspection grouped by property and permit.
     <br>Portal logins are deliberately not kept here — those belong in the password manager, not in the website.
     </div>`;
 
-  return _pTabBar+banner+addBar+_trkSearchBox("Search an address, permit #, city or examiner…")+
-    _trkTable("📄 Permit Tracker","#B03A8B",head,body)+foot;
+  return _pTabBar+banner+addBar+_trkSearchBox("Search an address, permit #, city or examiner…")+body+foot;
 }
 
 // ---------- Mowing: the mower is a contractor, not a typed name ----------
@@ -16849,4 +16885,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-08b field-app-signup -->
+<!-- build: 2026-09-08c permit-cards-and-role-scoping -->
