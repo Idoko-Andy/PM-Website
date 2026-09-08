@@ -15967,6 +15967,10 @@ function _mLoginHTML(){
       <button class="m-btn" id="m-login-btn" style="margin-top:2px" onclick="doMobilePasswordSignIn()">Sign in with email</button>
       <div id="m-login-err" style="display:none;color:#c0392b;font-size:13px;margin-top:2px"></div>
     </div>
+    <div style="width:100%;max-width:280px;margin-top:22px;padding:14px 12px;border:1px solid #d7dbe0;border-radius:12px;background:#F7FBF2">
+      <div style="font-size:13px;color:#3B6D11;margin-bottom:9px">First time here? Make an account before you sign in.</div>
+      <button class="m-btn" style="background:#639922" onclick="openModal('register-modal')">Create an account</button>
+    </div>
   </div>`;
 }
 async function doMobilePasswordSignIn(){
@@ -15977,7 +15981,11 @@ async function doMobilePasswordSignIn(){
   const btn=document.getElementById("m-login-btn"); if(btn){btn.disabled=true;btn.textContent="Signing in…";}
   const { error }=await supabase.auth.signInWithPassword({ email, password: pass });
   if(btn){btn.disabled=false;btn.textContent="Sign in with email";}
-  if(error){ if(err){ const m=(error.message||"").toLowerCase(); err.textContent=m.includes("invalid")?"Wrong email or password. If your account uses the company Google login, use the Google button above.":(error.message||"Sign-in failed."); err.style.display="block"; } return; }
+  if(error){ if(err){ const m=(error.message||"").toLowerCase();
+    err.textContent = m.includes("invalid")
+      ? "That did not match an account. If you have not made one yet, use Create an account below — any email works. If your account uses the company Google login, use the Google button above."
+      : (error.message||"Sign-in failed.");
+    err.style.display="block"; } return; }
   // onAuthStateChange -> init() takes over (enforces the approval gate).
 }
 function _mRender(){
@@ -16841,4 +16849,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-08a meeting-fixes-notifications-realtor -->
+<!-- build: 2026-09-08b field-app-signup -->
