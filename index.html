@@ -245,6 +245,8 @@ body.mobile-on .overlay{z-index:6000 !important;}
     <input type="text" id="site-search" placeholder="Search..." onkeydown="if(event.key==='Enter')doSearch()" />
     <button class="brand-search-btn" onclick="doSearch()">🔍</button>
   </div>
+  <div id="nf-box" onclick="event.stopPropagation();_nfToggle()" title="Notifications" style="display:none;position:relative;margin-left:10px;width:38px;height:34px;align-items:center;justify-content:center;border:1px solid #2a2a2a;border-radius:6px;cursor:pointer;background:#1a1a1a;flex-shrink:0;font-size:16px" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='#1a1a1a'">🔔<span id="nf-count" style="display:none;position:absolute;top:-6px;right:-6px;min-width:18px;height:18px;padding:0 5px;border-radius:99px;background:#B42318;color:#fff;font-size:11px;font-weight:700;line-height:18px;text-align:center;box-sizing:border-box">0</span>
+    <div id="nf-panel" style="display:none;position:absolute;top:42px;right:0;width:370px;max-height:440px;overflow-y:auto;background:#fff;border:0.5px solid #d3d8e3;border-radius:12px;box-shadow:0 12px 34px rgba(15,25,45,.22);z-index:8000;cursor:default;text-align:left" onclick="event.stopPropagation()"></div></div>
   <div id="confirm-box" onclick="openConfirmations()" title="Confirmations needed" style="display:none;margin-left:10px;height:34px;align-items:center;gap:5px;padding:0 11px;border:1px solid #7d2018;border-radius:6px;cursor:pointer;background:#B42318;color:#fff;flex-shrink:0;font-size:13px;font-weight:700" onmouseover="this.style.background='#8f1c13'" onmouseout="this.style.background='#B42318'">⚑ <span id="confirm-count">0</span></div>
   <div id="hist-box" onclick="openEditHistory()" title="Edit History" style="display:none;margin-left:10px;width:38px;height:34px;align-items:center;justify-content:center;border:1px solid #2a2a2a;border-radius:6px;cursor:pointer;background:#1a1a1a;flex-shrink:0;font-size:16px" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='#1a1a1a'">📜</div>
   <div id="auto-box" onclick="openAutomations()" title="Automations" style="display:none;margin-left:8px;width:38px;height:34px;align-items:center;justify-content:center;border:1px solid #2a2a2a;border-radius:6px;cursor:pointer;background:#1a1a1a;flex-shrink:0;font-size:16px" onmouseover="this.style.background='#2a2a2a'" onmouseout="this.style.background='#1a1a1a'">⚙️</div>
@@ -260,7 +262,6 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openPermitDashboard()">📄 Permit Dashboard</div>
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
-      <div class="ddi" onclick="openTVDashboard()">📺 TV Dashboard</div>
     </div>
   </div>
   <div class="ni has-dd" id="pm-t">🏗 Proj. Manager ▾
@@ -268,7 +269,6 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddl">Project Manager</div>
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
-      <div class="ddi" onclick="openTVDashboard()">📺 TV Dashboard</div>
       <div class="ddi" onclick="openPMAssistantDashboard()">🗂 PM Assistant Dashboard</div>
       <div class="ddi" onclick="openAdminDashboard('trackers')">📋 Trackers</div>
       <div class="ddi" onclick="openPermitDashboard()">📄 Permit Dashboard</div>
@@ -280,7 +280,6 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openPMAssistantDashboard()">🗂 PM Assistant Dashboard</div>
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
-      <div class="ddi" onclick="openTVDashboard()">📺 TV Dashboard</div>
       <div class="ddi" onclick="openAdminDashboard('trackers')">📋 Trackers</div>
       <div class="ddi" onclick="openPermitDashboard()">📄 Permit Dashboard</div>
     </div>
@@ -293,7 +292,6 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openPMAssistantDashboard()">🗂 PM Assistant Dashboard</div>
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
-      <div class="ddi" onclick="openTVDashboard()">📺 TV Dashboard</div>
     </div>
   </div>
   <div class="ni has-dd" id="va-t">💻 VA Assistants ▾
@@ -304,15 +302,12 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openPermitDashboard()">📄 Permit Dashboard</div>
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
-      <div class="ddi" onclick="openTVDashboard()">📺 TV Dashboard</div>
     </div>
   </div>
   <div class="ni has-dd" id="rlt-t">🔑 Realtor ▾
     <div class="dd" id="rlt-d" style="min-width:230px">
       <div class="ddl">Realtor</div>
       <div class="ddi" onclick="openRealtorDashboard()">🔑 Realtor Dashboard</div>
-      <div class="ddi" onclick="openWeeklyMeeting('market')">🏡 On the Market Meeting</div>
-      <div class="ddi" onclick="openProjectDashboard('trello')">🏠 Property Dashboard</div>
     </div>
   </div>
   <div class="ni has-dd" id="arch-t">📐 Architect ▾
@@ -323,7 +318,6 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openPMAssistantDashboard()">🗂 PM Assistant Dashboard</div>
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
-      <div class="ddi" onclick="openTVDashboard()">📺 TV Dashboard</div>
     </div>
   </div>
   <div class="ni has-dd" id="data-t">💾 Data Dash ▾
@@ -354,7 +348,6 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openDailyReports()">📝 Daily Reports and Huddles</div>
       <div class="ddi" onclick="openEndOfDayReports()">🌙 End of Day Reports</div>
       <div class="ddl" style="margin-top:4px">Reports</div>
-      <div class="ddi" onclick="_notBuiltYet('Biweekly Reports')">🗓 Biweekly Reports</div>
       <div class="ddi" onclick="openMonthlyReports()">📅 Monthly Reports</div>
       <div class="ddi" onclick="_notBuiltYet('Yearly Reports')">📆 Yearly Reports</div>
       <div class="ddi" onclick="openWeeklyMeeting('eop')">🏁 End of Project Reports</div>
@@ -535,7 +528,10 @@ body.mobile-on .overlay{z-index:6000 !important;}
     <button class="btn-full" id="login-submit-btn" onclick="doPasswordSignIn()">Sign in with email</button>
     <div style="text-align:center;margin-top:10px"><a onclick="doForgotPassword()" style="font-size:13px;color:#7aa7d8;cursor:pointer;text-decoration:underline">Forgot password?</a></div>
     <p style="font-size:12px;color:#666;margin-top:14px;text-align:center;line-height:1.5">Team members with a company Google account can use the Google button above. Outside collaborators sign in with the email &amp; password they created (use <b>Create account</b> first if you haven't).<br/>New accounts start in <i>pending</i> status and require admin approval.</p>
-    <div class="form-switch" style="text-align:center;margin-top:10px">Don't have an account? <a onclick="switchModal('signin-modal','register-modal')">Create account</a></div>
+    <div style="margin-top:14px;padding:12px;border:1px solid #2f4a2a;background:#16210f;border-radius:8px;text-align:center">
+      <div style="font-size:13px;color:#bcd3a8;margin-bottom:8px">First time here? You need to make an account before you can sign in.</div>
+      <button onclick="switchModal('signin-modal','register-modal')" style="padding:10px 22px;background:#639922;color:#fff;border:none;border-radius:7px;font-size:14px;font-weight:600;cursor:pointer">Create an account</button>
+    </div>
   </div>
 </div>
 
@@ -568,7 +564,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
     <div class="form-row"><label>Email</label><input type="email" id="reg-email" placeholder="you@example.com" /></div>
     <div class="form-row"><label>Phone number</label><input type="tel" id="reg-phone" placeholder="(614) 555-0100" /></div>
     <div class="form-row">
-      <label>Job role</label>
+      <label>Job role <span style="font-size:11px;color:#888">— required</span></label>
       <select id="reg-role">
         <option value="">— Select your role —</option>
         <option value="Architect">Architect</option>
@@ -584,8 +580,8 @@ body.mobile-on .overlay{z-index:6000 !important;}
         <option value="Assistant / Intern">Assistant / Intern</option>
       </select>
     </div>
-    <div class="form-row"><label>Password</label><input type="password" id="reg-pass" placeholder="Min. 8 characters" /></div>
-    <div class="form-row"><label>Confirm password</label><input type="password" id="reg-pass2" placeholder="Repeat password" /></div>
+    <div class="form-row"><label>Password <span style="font-size:11px;color:#888">— at least 8 characters</span></label><input type="password" id="reg-pass" placeholder="Min. 8 characters" /></div>
+    <div class="form-row"><label>Confirm password</label><input type="password" id="reg-pass2" placeholder="Repeat password" onkeydown="if(event.key==='Enter')doRegister()" /></div>
     <button class="btn-full" onclick="doRegister()">Submit for Approval</button>
     <div class="form-switch">Already have an account? <a onclick="switchModal('register-modal','signin-modal')">Sign in</a></div>
   </div>
@@ -980,7 +976,8 @@ async function _initInner() {
       // but it was only ever fetched when somebody opened the directory itself. So
       // "Select from saved contractors" showed an empty list to anybody who had not
       // been to that screen first. 120 rows: load it with everything else.
-      loadContractorsFromSupabase()
+      loadContractorsFromSupabase(),
+      _nfLoad()
     ]);
     // A house sitting vacant with the checklist unfinished must always have somebody
     // on it. Checked on every load, so it self-heals no matter how the house got there.
@@ -1014,6 +1011,10 @@ supabase.auth.onAuthStateChange((event, session) => {
 });
 
 function renderLoggedOut(noticeMsg) {
+  // Nobody signed in means nothing is waiting on anybody - hide the bell outright
+  // rather than leaving a stale count on the sign-in screen.
+  const _nb=document.getElementById("nf-box"); if(_nb) _nb.style.display="none";
+  if(typeof _nfClose==='function') _nfClose();
   const nav = document.getElementById("nav");
   if (nav) nav.style.display = "none";
   const utilRight = document.getElementById("util-right");
@@ -1037,12 +1038,14 @@ function renderLoggedOut(noticeMsg) {
       ${notice}
       <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:${noticeMsg ? '24px' : '0'}">
         <button onclick="doGoogleSignIn()" style="padding:12px 32px;background:#fff;color:#111;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;letter-spacing:0.02em;display:inline-flex;align-items:center;gap:10px"><svg width="16" height="16" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg"><path fill="#4285F4" d="M16.51 8H8.98v3h4.3c-.18 1-.74 1.85-1.58 2.41v2h2.55c1.49-1.37 2.35-3.4 2.35-5.81 0-.56-.05-1.1-.14-1.6z"/><path fill="#34A853" d="M8.98 17c2.15 0 3.95-.71 5.27-1.93l-2.55-2c-.71.48-1.62.76-2.72.76-2.09 0-3.86-1.41-4.5-3.3H1.85v2.07C3.16 14.99 5.85 17 8.98 17z"/><path fill="#FBBC05" d="M4.48 10.53a5.4 5.4 0 0 1 0-3.46V5H1.85a8 8 0 0 0 0 7.07l2.63-2.07z"/><path fill="#EA4335" d="M8.98 3.85c1.18 0 2.24.4 3.07 1.21l2.3-2.3C12.93 1.4 11.12.7 8.98.7 5.85.7 3.16 2.71 1.85 5.93l2.63 2.07c.64-1.89 2.41-4.15 4.5-4.15z"/></svg>Sign in with Google</button>
+        <button onclick="openModal('register-modal')" style="padding:12px 32px;background:transparent;color:#ddd;border:1px solid #3a3a3a;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;letter-spacing:0.02em">Create an account</button>
       </div>
+      <div style="margin-top:14px;font-size:13px;color:#666">Already have a password? <a onclick="openModal('signin-modal')" style="color:#7aa7d8;cursor:pointer;text-decoration:underline">Sign in with email</a></div>
       <div style="margin-top:48px;display:grid;grid-template-columns:repeat(2,1fr);gap:16px;max-width:720px;width:100%;align-items:start">
         <img src="team_dinner.jpg" alt="Legacy Homes team" loading="lazy" style="width:100%;height:auto;border-radius:12px;display:block;box-shadow:0 4px 18px rgba(0,0,0,0.5)"/>
         <img src="friday_favorites.jpg" alt="Legacy Homes Projects Team" loading="lazy" style="width:100%;height:auto;border-radius:12px;display:block;box-shadow:0 4px 18px rgba(0,0,0,0.5)"/>
       </div>
-      <div style="margin-top:40px;font-size:12px;color:#333">Access is restricted to @legacyohiohomes.com team members only.</div>
+      <div style="margin-top:40px;font-size:12px;color:#555;max-width:430px;line-height:1.6">Team members with a <b style="color:#777">@legacyohiohomes.com</b> account sign in with Google. Everybody else &mdash; realtors, architects, contractors we work with &mdash; creates an account with any email address. Either way, Bruce approves it before it opens.</div>
     </div>
   `;
 }
@@ -1178,7 +1181,16 @@ async function doPasswordSignIn() {
   if (error) {
     const m = (error.message || "").toLowerCase();
     if (m.includes("reach the sign-in server")) showErr(err, error.message);
-    else if (m.includes("invalid"))       showErr(err, "Wrong email or password. If your account uses a company Google login, use the Google button above instead.");
+    else if (m.includes("invalid")) {
+      // The commonest cause is not a typo - it is that there is no account yet.
+      // Saying only "wrong email or password" is what sent Katie and Will away.
+      err.innerHTML = 'That email and password did not match an account. Three things it could be:<div style="margin-top:7px;line-height:1.65">'
+        + '&bull; <b>You have not created an account yet.</b> <a onclick="switchModal(\'signin-modal\',\'register-modal\')" style="color:#7aa7d8;cursor:pointer;text-decoration:underline">Create one here</a> &mdash; any email address works.<br/>'
+        + '&bull; Your account uses the company Google login &mdash; use the Google button above.<br/>'
+        + '&bull; You have an account and mistyped the password &mdash; <a onclick="doForgotPassword()" style="color:#7aa7d8;cursor:pointer;text-decoration:underline">reset it</a>.'
+        + '</div>';
+      err.style.display = "block";
+    }
     else if (m.includes("not confirmed")) showErr(err, "Your email hasn't been confirmed yet. Ask Bruce to confirm your account, then try again.");
     else                                   showErr(err, error.message || "Sign-in failed. Please try again.");
     return;
@@ -1277,6 +1289,8 @@ async function doRegister() {
     const m = (error.message || "").toLowerCase();
     if (m.includes("registered") || m.includes("already")) {
       showErr(err, "An account with this email already exists. Try signing in instead.");
+    } else if (m.includes("signup") || m.includes("not allowed") || m.includes("disabled")) {
+      showErr(err, "The site is not accepting new accounts at the moment. That is a setting on our side, not anything you did — send Bruce a message at bruce@legacyohiohomes.com and he can let you in.");
     } else {
       showErr(err, error.message || "Could not create your account. Please try again.");
     }
@@ -1362,7 +1376,6 @@ function changePassword() {
 const PERM_ITEMS = [
   { key:"dash_project",     label:"Project Dashboard",       group:"Dashboards" },
   { key:"dash_design",      label:"Design Dashboard",        group:"Dashboards" },
-  { key:"dash_tv",          label:"TV Dashboard",            group:"Dashboards" },
   { key:"dash_pmassistant", label:"PM Assistant Dashboard",  group:"Dashboards" },
   { key:"dash_admin",       label:"Admin Dashboard",         group:"Dashboards" },
   { key:"dash_seniorva",    label:"Senior VA Dashboard",     group:"Dashboards" },
@@ -1393,8 +1406,8 @@ const PERM_ALL = PERM_ITEMS.map(p => p.key);
 const ROLE_DEFAULTS = {
   "CEO":                                       PERM_ALL.slice(),
   "Project Director":                          PERM_ALL.slice(),
-  "Administrative Manager":                    ["dash_project","dash_design","dash_tv","dash_pmassistant","dash_admin","data_pmoverview","rep_all","edit_history","sops_view"],
-  "Project Manager":                           ["dash_project","dash_design","dash_tv","dash_pmassistant","data_pmoverview","rep_all","edit_history","sops_view"],
+  "Administrative Manager":                    ["dash_project","dash_design","dash_pmassistant","dash_admin","data_pmoverview","rep_all","edit_history","sops_view"],
+  "Project Manager":                           ["dash_project","dash_design","dash_pmassistant","data_pmoverview","rep_all","edit_history","sops_view"],
   "PM Assistant":                              ["dash_project","dash_pmassistant","sops_view"],
   "Senior Virtual Administrative Assistant":   ["dash_project","dash_pmassistant","dash_seniorva","dash_vaadmin","data_pmoverview","data_teamspent","rep_all","sops_view"],
   "Virtual Administrative Assistant":          ["dash_project","dash_pmassistant","dash_vaadmin","data_pmoverview","sops_view"],
@@ -1443,7 +1456,6 @@ const ONCLICK_PERM = [
   ["openWeeklyMeeting('company')",     "rep_company"],
   ["openProjectDashboard",      "dash_project"],
   ["openDesignDashboard",       "dash_design"],
-  ["openTVDashboard",           "dash_tv"],
   ["openPMAssistantDashboard",  "dash_pmassistant"],
   ["openClosedByYear",          "data_closed"],
   ["openTaskDataHousing",       "data_pmoverview"],
@@ -3130,6 +3142,16 @@ async function approveSubPhase(propId, name){
 }
 
 function phInfo(name){ return PROP_PHASES.find(p=>p.name===name)||{bg:"#f4f5f7",text:"#555",cnt:"#aaa",dot:"#aaa"}; }
+// Bruce, 8 Sept: "on our property dashboard where it says Request a Remedy Completed
+// (pending closing), update that to Cleared to Close (remedies completed)."
+// The STORED name is deliberately left alone - 54 property cards, every board list,
+// every saved meeting key and every report groups on that exact string. Only what a
+// person reads changes. _phLabel is the one place that translation happens.
+const PHASE_LABELS={
+  "RTR In Process":"Request a Remedy (In Process)",
+  "RTR Completed (Pending Closing)":"Cleared to Close (Remedies Completed)"
+};
+function _phLabel(n){ return PHASE_LABELS[n]||n||''; }
 
 // ===================== MAIN DASHBOARD 5 BOARDS =====================
 // Combined team stats for the Main Dashboard (all PMs + assistants).
@@ -3405,7 +3427,7 @@ function renderPropertyBoard() {
     const pc = propCards.filter(c => c.phase === ph.name && !c.archived && _pmMatch(c));
     return `<div style="width:155px;flex-shrink:0">
       <div style="padding:7px 10px;border-radius:6px 6px 0 0;margin-bottom:6px;background:${ph.bg};display:flex;align-items:center;justify-content:space-between">
-        <span style="font-size:11.5px;font-weight:500;color:${ph.text};line-height:1.3">${ph.name}</span>
+        <span style="font-size:11.5px;font-weight:500;color:${ph.text};line-height:1.3">${_phLabel(ph.name)}</span>
         <span style="display:flex;align-items:center;gap:3px;flex-shrink:0;margin-left:3px">
           ${isReadOnly()?'':`<span onclick="event.stopPropagation();addPropToPhase('${ph.name.replace(/'/g,"\\'")}')" title="Add a property to ${ph.name.replace(/"/g,'&quot;')}" style="cursor:pointer;font-size:15px;line-height:1;color:${ph.text};opacity:0.75;padding:0 1px">＋</span>`}
           <span style="font-size:11px;padding:1px 5px;border-radius:99px;background:${ph.cnt};color:${ph.text}">${pc.length}</span>
@@ -3515,7 +3537,9 @@ function _goPropBack(){
   if (k.indexOf('role:') === 0)  return openPMAssistantDashboard(k.slice(5)); // e.g. "role:sop"
   return openProjectDashboard('trello');
 }
-// ===================== SIDE QUESTS ============================================
+// ===================== SIDE TASKS =============================================
+// Renamed from "side quests" on 8 Sept - Bruce: "it's not a side quest, it's a
+// side task." Same thing, plainer word.
 // Bruce, 5 Sept: "something that I want to stick with each property card... in
 // order from preconstruction to active construction to postconstruction, little
 // side labels in a lighter gray. Something you can build tasks or reminders that
@@ -3574,15 +3598,33 @@ async function _sqAdd(pid){
   if(!text){ alert("Write the reminder first — “ask the neighbour about the fence line”, “check the basement after heavy rain”…"); return; }
   const ph=(pEl&&pEl.value)||'pre';
   const at=(dEl&&dEl.value)||'';
+  const cEl=document.getElementById('sq-c-'+pid);
+  const wantCal=!!(cEl&&cEl.checked);
   const me=(typeof _myProfile!=='undefined' && _myProfile && _myProfile.firstName)?_myProfile.firstName:'';
+  const c=propCards.find(x=>x.id===pid);
+  // Bruce, 8 Sept: "adding a date doesn't pop up on your task calendar unless you check
+  // a box that says put it on my task calendar for that date too. If not, it's just a
+  // date for you to reference." A side task only becomes a real task if you say so.
+  let tid=null;
+  if(wantCal){
+    if(!at){ alert("Pick the date first — a task on the calendar has to land on a day."); return; }
+    const full=(typeof _myProfile!=='undefined'&&_myProfile)?(((_myProfile.firstName||'')+' '+(_myProfile.lastName||'')).trim()):'';
+    const ins=await supabase.from("pm_tasks").insert({
+      title:text, category:'Side Task', assignee:full||null, assignees:full?[full]:[],
+      start_date:at, due_date:at, property_id:pid, status:'open',
+      notes:'Side task from '+((c&&c.addr)||'the property card')
+    }).select("id").single();
+    if(ins.error||!ins.data||!ins.data.id){ alert("Couldn't put it on your calendar: "+((ins.error&&ins.error.message)||"nothing was saved")); return; }
+    tid=ins.data.id;
+    if(typeof loadTasks==='function'){ try{ await loadTasks(); }catch(e){} }
+  }
   const ok=await _sqWrite(pid, arr=>arr.push({
     id:Date.now().toString(36)+Math.random().toString(36).slice(2,5),
-    ph:ph, t:text, done:false, at:at, by:me, made:new Date().toISOString()
+    ph:ph, t:text, done:false, at:at, by:me, made:new Date().toISOString(), tid:tid
   }));
   if(!ok) return;
-  const c=propCards.find(x=>x.id===pid);
-  _logAudit('created','property',(c&&c.addr)||'', 'Side quest: '+text+(at?(' — remind on '+at):' — no reminder date'));
-  if(tEl) tEl.value=''; if(dEl) dEl.value='';
+  _logAudit('created','property',(c&&c.addr)||'', 'Side task: '+text+(at?(' — remind on '+at+(tid?' and put on the task calendar':'')):' — no reminder date'));
+  if(tEl) tEl.value=''; if(dEl) dEl.value=''; if(cEl) cEl.checked=false;
   _sqRerender(pid);
 }
 async function _sqToggle(pid, id){
@@ -3617,17 +3659,22 @@ function _sqBody(c, compact){
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:2px">
           ${due?'<span style="font-size:10px;font-weight:700;color:#B7791F;background:#FBF3E2;padding:1px 6px;border-radius:99px">READY TO LOOK AT</span>':''}
           ${ro
-            ? `<span style="font-size:11px;color:#aaa">${x.at?('remind '+_calEsc(x.at)):'no reminder date'}</span>`
-            : `<span style="font-size:11px;color:#aaa">remind me</span><input type="date" value="${_calEsc(x.at||'')}" onchange="_sqWhen('${c.id}','${x.id}',this.value)" style="padding:2px 5px;border:0.5px solid #e2e6ee;border-radius:5px;font-size:11px;color:#666"/>`}
+            ? `<span style="font-size:11px;color:#aaa">${x.at?('remind '+_calEsc(x.at)):'no reminder date'}</span>`+(x.tid?'<span style="font-size:11px;color:#185FA5"> &middot; on your task calendar</span>':'')
+            : `<span style="font-size:11px;color:#aaa">remind me</span><input type="date" value="${_calEsc(x.at||'')}" onchange="_sqWhen('${c.id}','${x.id}',this.value)" style="padding:2px 5px;border:0.5px solid #e2e6ee;border-radius:5px;font-size:11px;color:#666"/>${x.tid?'<span style="font-size:11px;color:#185FA5">&middot; on your task calendar</span>':''}`}
           ${x.by?`<span style="font-size:11px;color:#ccc">added by ${_calEsc(x.by)}</span>`:''}
         </div>
       </div>
       ${ro?'':`<span onclick="_sqDel('${c.id}','${x.id}')" title="Remove" style="cursor:pointer;font-size:11px;color:#ddd;flex-shrink:0">&#10005;</span>`}
     </div>`;
   };
-  // Three groups, always in build order, each with its own quiet side label.
+  // Bruce, 8 Sept: "that whole box needs shrunk down. It just says nothing here yet,
+  // nothing here yet, nothing here yet. I would like it to only have something there
+  // if something is scheduled, and then still give us the option to put that stuff in."
+  // So an empty phase draws nothing at all; the three side labels appear as the house
+  // actually collects things. The adder is always there.
   const groups=SQ_PHASES.map(p=>{
     const mine=list.filter(x=>_sqPhaseOf(x)===p.id);
+    if(!mine.length) return '';
     const open=mine.filter(x=>!x.done).length;
     return `<div style="display:flex;gap:12px;padding:9px 0;border-top:0.5px solid #f1f3f7">
       <div style="width:104px;flex-shrink:0;padding-top:2px">
@@ -3635,7 +3682,7 @@ function _sqBody(c, compact){
         ${mine.length?`<div style="font-size:10.5px;color:#d2d7df;margin-top:1px">${open?(open+' open'):'all handled'}</div>`:''}
       </div>
       <div style="flex:1;min-width:0">
-        ${mine.length?mine.map(row).join(''):'<div style="font-size:12px;color:#ccc;padding:5px 0">Nothing here yet.</div>'}
+        ${mine.map(row).join('')}
       </div>
     </div>`;
   }).join('');
@@ -3645,21 +3692,22 @@ function _sqBody(c, compact){
         <input id="sq-t-${c.id}" placeholder="Ask the neighbour about the fence line…" style="flex:1;min-width:210px;padding:6px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px"/>
         <select id="sq-p-${c.id}" style="padding:6px 7px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12.5px">${SQ_PHASES.map(p=>`<option value="${p.id}">${p.label}</option>`).join('')}</select>
         <input type="date" id="sq-d-${c.id}" title="Optional — when should this come back up?" style="padding:5px 7px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12.5px;color:#666"/>
+        <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:#777;cursor:pointer;white-space:nowrap"><input type="checkbox" id="sq-c-${c.id}" style="cursor:pointer"/> put it on my task calendar too</label>
         <button onclick="_sqAdd('${c.id}')" style="padding:6px 13px;border:none;border-radius:7px;background:#122A4A;color:#fff;font-size:13px;font-weight:600;cursor:pointer">Add</button>
       </div>
-      <div style="font-size:11px;color:#aaa;margin-top:5px">No due date needed. The date is optional &mdash; set it only if you want this to come back up on a particular day. Either way it never lands on anybody's task calendar.</div>
+      <div style="font-size:11px;color:#aaa;margin-top:5px">No due date needed. The date is just for you to look back at &mdash; it stays off everybody's task calendar unless you tick the box.</div>
     </div>`;
 
   return `<div style="background:#fff;border:0.5px solid ${compact?'#eef0f6':'#e0e4ec'};border-radius:8px;overflow:hidden;margin-top:${compact?'11px':'12px'}">
       <div style="padding:9px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
-        <div style="font-size:${compact?'11.5px':'13px'};font-weight:${compact?'700':'500'};color:#111;${compact?'text-transform:uppercase;letter-spacing:.04em':''}">&#129517; Side Quests
+        <div style="font-size:${compact?'11.5px':'13px'};font-weight:${compact?'700':'500'};color:#111;${compact?'text-transform:uppercase;letter-spacing:.04em':''}">&#129517; Side Tasks
           <span style="font-size:11.5px;color:#aaa;font-weight:400">&mdash; reminders that stay with this house</span></div>
         <div style="display:flex;gap:6px;align-items:center">
           ${cnt.due?`<span style="font-size:10.5px;font-weight:700;color:#B7791F;background:#FBF3E2;padding:2px 8px;border-radius:99px">${cnt.due} ready to look at</span>`:''}
           <span style="font-size:11.5px;color:#aaa">${cnt.open} open${cnt.total!==cnt.open?(' &middot; '+(cnt.total-cnt.open)+' handled'):''}</span>
         </div>
       </div>
-      <div style="padding:2px 14px 8px">${groups}</div>
+      ${groups?`<div style="padding:2px 14px 8px">${groups}</div>`:''}
       ${adder}
     </div>`;
 }
@@ -3702,7 +3750,7 @@ function openPropDetail(id) {
   const moveBar = _ro_sp ? '' : `<div style="display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap">
       <span style="font-size:12px;color:#888">Move to phase:</span>
       <select onchange="if(this.value)movePropertyToPhase('${c.id}',this.value)" style="font-size:13px;padding:6px 10px;border:0.5px solid #cdd7e6;border-radius:6px;background:#fff;color:#111;cursor:pointer;max-width:240px">
-        ${PROP_PHASES.map(pp=>`<option value="${pp.name.replace(/"/g,'&quot;')}" ${pp.name===c.phase?'selected':''}>${pp.name}</option>`).join('')}
+        ${PROP_PHASES.map(pp=>`<option value="${pp.name.replace(/"/g,'&quot;')}" ${pp.name===c.phase?'selected':''}>${_phLabel(pp.name)}</option>`).join('')}
       </select>
     </div>`;
   const _savedSub = (name)=> (c.subPhases||[]).find(sp=>sp.name===name) || {};
@@ -3972,7 +4020,7 @@ function _pdLinked(c){
       <div style="padding:16px 20px;border-bottom:0.5px solid #e0e4ec">
         <div style="font-size:18px;font-weight:500;color:#111;margin-bottom:8px">${c.addr}</div>
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-          <span style="font-size:12px;padding:3px 10px;border-radius:99px;background:${p.bg};color:${p.text};font-weight:500">${c.phase}</span>
+          <span style="font-size:12px;padding:3px 10px;border-radius:99px;background:${p.bg};color:${p.text};font-weight:500">${_phLabel(c.phase)}</span>
           ${c.type ? `<span style="font-size:12px;padding:3px 10px;border-radius:99px;font-weight:500;${typeStyle}">${c.type}</span>` : ''}
           ${c.isRental ? `<span style="font-size:12px;padding:3px 10px;border-radius:99px;font-weight:600;background:#E1F5EE;color:#0B5A46">🏠 Rental</span>` : ''}
           ${c.pm ? `<span style="font-size:13px;color:#888;display:flex;align-items:center;gap:4px"><div style="width:16px;height:16px;border-radius:50%;background:${pmColor};color:#fff;font-size:10px;font-weight:500;display:flex;align-items:center;justify-content:center">${c.pm[0]}</div>${c.pm}</span>` : ''}
@@ -4018,7 +4066,7 @@ function _pdLinked(c){
             <div style="padding:10px 14px">
               <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px"><span style="color:#888">Project Manager</span>${_ro_sp?`<span style="color:#111;font-weight:500">${c.pm||'—'}</span>`:`<select id="pi-pm" onchange="savePropInfo('${c.id}',true)" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"><option value="">— Assign —</option>${_pmAssignOptions(c.pm)}</select>`}</div>
               <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px"><span style="color:#888">Property Type</span>${_ro_sp?`<span style="color:#111;font-weight:500">${c.type||'—'}</span>`:`<select id="pi-type" onchange="savePropInfo('${c.id}',true)" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"><option value="">— Type —</option>${PROP_TYPES.map(t=>`<option ${c.type===t?'selected':''}>${_calEsc(t)}</option>`).join('')}</select>`}</div>
-              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px"><span style="color:#888">Main Phase</span>${_ro_sp?`<span style="color:#111;font-weight:500">${c.phase||'—'}</span>`:`<select id="pi-phase" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none">${PROP_PHASES.map(p=>`<option ${c.phase===p.name?'selected':''}>${_calEsc(p.name)}</option>`).join('')}</select>`}</div>
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px"><span style="color:#888">Main Phase</span>${_ro_sp?`<span style="color:#111;font-weight:500">${_phLabel(c.phase)||'—'}</span>`:`<select id="pi-phase" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none">${PROP_PHASES.map(p=>`<option value="${_calEsc(p.name)}" ${c.phase===p.name?'selected':''}>${_calEsc(_phLabel(p.name))}</option>`).join('')}</select>`}</div>
               <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px">
                 <span style="color:#888">🏗 Permitted?</span>
                 ${_ro_sp ? `<span style="color:#111;font-weight:500">${(c.checklists&&c.checklists.permitted)==='yes'?'Yes':((c.checklists&&c.checklists.permitted)==='no'?'No':'—')}</span>` : `<span style="display:inline-flex;gap:4px">
@@ -4226,7 +4274,7 @@ function openPropModal(mode, id) {
         <label style="display:block;font-size:12px;color:#888;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Main Phase</label>
         <select id="pm-phase" style="width:100%;padding:7px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:14px;color:#111;background:#fff;outline:none">
           <option value="">— Select —</option>
-          ${PROP_PHASES.map(p=>`<option ${c&&c.phase===p.name?'selected':''}>${p.name}</option>`).join('')}
+          ${PROP_PHASES.map(p=>`<option value="${_calEsc(p.name)}" ${c&&c.phase===p.name?'selected':''}>${_calEsc(_phLabel(p.name))}</option>`).join('')}
         </select>
       </div>
       <div>
@@ -5113,11 +5161,13 @@ function _wmAgentPick(pid, sel){
 }
 function _wmAddTask(pid){
   if(typeof openAddTask!=='function') return;
+  _wmMarkReturn();
   openAddTask(_ymd(new Date()));
   setTimeout(()=>{ const el=document.getElementById('task-prop'); if(el){ el.value=pid; if(typeof _taskPropChange==='function') _taskPropChange(); } },60);
 }
 async function _wmAddEvent(pid){
   if(typeof openAddCalEvent!=='function') return;
+  _wmMarkReturn();
   // If the directory has not landed yet, get it before drawing the picker - an empty
   // "saved contractors" list reads as "we have not got them", which is how duplicates
   // get typed in.
@@ -5193,7 +5243,7 @@ async function _wmAutoSave(kind, key, week){
   if(d[wk][kind][key]===val) return;                // nothing actually changed
   d[wk][kind][key]=val;
   _wmFlag(key,'saving');
-  const err=await _pmSettingsWrite('meeting_notes',d);
+  const err=await _wmWriteField(wk, kind, key, val);
   _wmFlag(key, err?'failed':'saved');
   if(!err) _wmStampOpened(kind, wk);
 }
@@ -5257,7 +5307,7 @@ function _sepBoard(title, subtitle, phases){
     .sort((a,b)=>phases.indexOf(a.phase)-phases.indexOf(b.phase)||String(a.addr).localeCompare(String(b.addr)));
   const rows=cards.length ? cards.map(c=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 15px;border-bottom:0.5px solid #f4f5f7">
       <div style="min-width:0"><div style="font-size:14px;color:#111;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_calEsc(c.addr)}</div>
-      <div style="font-size:12px;color:#aaa">${_calEsc(c.phase)} &middot; ${_calEsc(c.pm||'no PM assigned')}</div></div>
+      <div style="font-size:12px;color:#aaa">${_calEsc(_phLabel(c.phase))} &middot; ${_calEsc(c.pm||'no PM assigned')}</div></div>
       <div style="font-size:12px;color:#aaa;flex-shrink:0">${_calEsc(c.end||'')}</div>
     </div>`).join('') : '<div style="padding:26px;text-align:center;color:#bbb;font-size:13.5px">Nothing sitting in these stages right now.</div>';
   document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div style="padding:24px;max-width:820px;margin:0 auto">
@@ -5397,9 +5447,7 @@ function _wmMeta(wk, kind, key){ return ((((window._wmData||{})[wk]||{})[kind]||
 async function _wmSetMeta(wk, kind, key, obj){
   if(_blockIfReadOnly()) return false;
   if(window._wmLoadOk===false){ alert("This week's meeting could not be loaded a moment ago. Saving now would overwrite the real record with a blank one, so this save was stopped."); return false; }
-  const d=window._wmData=window._wmData||{};
-  d[wk]=d[wk]||{}; d[wk][kind]=d[wk][kind]||{}; d[wk][kind][key]=obj;
-  const err=await _pmSettingsWrite('meeting_notes', d);
+  const err=await _wmWriteField(wk, kind, key, obj);
   if(err){ alert("THAT WAS NOT SAVED — "+err); return false; }
   return true;
 }
@@ -6079,14 +6127,23 @@ function _wmOpenQuestionsPanel(cards){
 // the live card. Everything the room has to say is a box that saves itself.
 const MKT_PHASES={
   active:  ["Listed on the Market","Listed on the Market / Final Inspections"],
-  contract:["In Contract","RTR In Process","RTR Completed (Pending Closing)"],
+  contract:["In Contract"],
+  rtr:     ["RTR In Process"],
+  ctc:     ["RTR Completed (Pending Closing)"],
   soon:    ["Rental Handoff Process","Pre List / Punchout Process"]
 };
+// Bruce, 8 Sept: "Coming Soon needs to be all the way on the left, then Active
+// Listings, then In Contract, then Request a Remedy, then Clear to Close, then
+// Suggested Listing Doc." That is the order a house actually moves through, left to
+// right, so the tab you want next is always the one to the right of the one you are on.
+// Request a Remedy and Cleared to Close used to be buried inside In Contract.
 const MKT_TABS=[
-  ["active",  "🏡 Active Listings",   "On the market right now"],
-  ["contract","🤝 In Contract",       "Under contract through to closing"],
-  ["soon",    "⏳ Coming Soon",             "About to be listed, or being handed to rentals"],
-  ["doc",     "📄 Suggested Listing Doc","Comps behind the number we are going to ask"]
+  ["soon",    "⏳ Coming Soon",           "About to be listed, or being handed to rentals"],
+  ["active",  "🏡 Active Listings",       "On the market right now"],
+  ["contract","🤝 In Contract",           "Under contract, before the remedy list"],
+  ["rtr",     "🛠 Request a Remedy",      "Inspection remedies being worked through"],
+  ["ctc",     "✅ Cleared to Close",      "Remedies completed — waiting on the closing table"],
+  ["doc",     "📄 Suggested Listing Doc", "Comps behind the number we are going to ask"]
 ];
 // The selected tab lives in _mktTabSel, NOT _mktTab.
 // `function _mktTab()` is a top-level declaration, so it is also window._mktTab. Writing
@@ -6251,7 +6308,7 @@ function _mktMeetingBody(wk, kind, notes, prevNotes, roNow){
 
   const head=(c,extra)=>`<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:8px">
       <span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-size:15.5px;font-weight:700;color:#185FA5">${_calEsc(c.addr||'')}</span>
-      <span style="font-size:12px;color:#666">${_calEsc(c.phase||'')} · PM: ${_calEsc(c.pm||'—')}${extra||''}</span>
+      <span style="font-size:12px;color:#666">${_calEsc(_phLabel(c.phase))} · PM: ${_calEsc(c.pm||'—')}${extra||''}</span>
     </div>`;
   const wrap=(inner)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:14px 16px;margin-bottom:12px">${inner}</div>`;
   const none=(t)=>`<div style="color:#bbb;font-size:14px;padding:22px 0">${t}</div>`;
@@ -6291,9 +6348,20 @@ function _mktMeetingBody(wk, kind, notes, prevNotes, roNow){
     }).join('') : none('Nothing is on the market right now.');
   }
 
-  else if(tab==='contract'){
-    const cards=_mktCards('contract');
-    body = cards.length ? cards.map(c=>{
+  // In Contract, Request a Remedy and Cleared to Close are the same house at three
+  // points on the same road, so they share one card. What changes is which houses are
+  // on the tab and what the tab says when it is empty.
+  else if(tab==='contract'||tab==='rtr'||tab==='ctc'){
+    const cards=_mktCards(tab);
+    const _emptyMsg = tab==='rtr' ? 'No remedy lists are being worked right now.'
+                    : tab==='ctc' ? 'Nothing is cleared to close right now.'
+                    : 'Nothing is in contract right now.';
+    const _intro = tab==='rtr'
+      ? `<div style="background:#FFF9EE;border:0.5px solid #EAD9A8;border-radius:10px;padding:11px 14px;margin-bottom:12px;font-size:13px;color:#633806">The full request-a-remedy process is being built here next &mdash; Bruce is sending the write-up we use today so it can be lifted onto this tab rather than retyped. For now this is the same card as In Contract with the remedy list front and centre.</div>`
+      : tab==='ctc'
+      ? `<div style="background:#F4F3FE;border:0.5px solid #CECBF6;border-radius:10px;padding:11px 14px;margin-bottom:12px;font-size:13px;color:#26215C">Remedies are done on these. What is left is the closing table &mdash; keep the close date and the closing notes current.</div>`
+      : '';
+    body = cards.length ? _intro+cards.map(c=>{
       const margin=_mktMargin(V(c.id,'contract_price'), c);
       const remDue=V(c.id,'rem_due'), remDone=V(c.id,'rem_done')==='Yes';
       const late=remDue && !remDone && remDue < _ymd(new Date());
@@ -6327,7 +6395,7 @@ function _mktMeetingBody(wk, kind, notes, prevNotes, roNow){
             <button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">＋ Add task</button>
             <button onclick="_miAddQuick('q','${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#B7791F;cursor:pointer;font-weight:600">＋ Question for Bruce / Tommy</button>
           </div>`);
-    }).join('') : none('Nothing is in contract right now.');
+    }).join('') : none(_emptyMsg);
   }
 
   else if(tab==='soon'){
@@ -6495,7 +6563,7 @@ function _kickMeetingBody(wk, notes, prevNotes, roNow){
       <summary style="cursor:pointer;padding:11px 14px 11px 4px;outline:none">
         <div style="display:inline-flex;width:calc(100% - 26px);vertical-align:middle;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
           <span style="font-size:15px;font-weight:700;color:#185FA5">${_calEsc(c.addr||'')}</span>
-          <span style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">${chips}<span style="font-size:11.5px;color:#888;margin-left:4px">${_calEsc(c.phase||'')}</span></span>
+          <span style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">${chips}<span style="font-size:11.5px;color:#888;margin-left:4px">${_calEsc(_phLabel(c.phase))}</span></span>
         </div>
       </summary>
       <div style="padding:0 16px 14px">
@@ -7169,7 +7237,7 @@ function _wmTakedownBody(wk, notes, prevNotes, roNow, ta2){
               :(kn?`<span style="font-size:10.5px;font-weight:600;color:#8a6d1a;background:#FBF3E2;padding:1px 8px;border-radius:99px">kickoff in progress</span>`
                   :`<span style="font-size:10.5px;font-weight:600;color:#8a6d1a;background:#FBF3E2;padding:1px 8px;border-radius:99px">kickoff not run</span>`)}
             ${sq.due?`<span style="font-size:10.5px;font-weight:600;color:#B7791F;background:#FBF3E2;padding:1px 8px;border-radius:99px">${sq.due} to look at</span>`:''}
-            <span style="font-size:11.5px;color:#888;margin-left:4px">${_calEsc(c.phase||'')} &middot; ${_calEsc(c.pm)||'no PM'}</span>
+            <span style="font-size:11.5px;color:#888;margin-left:4px">${_calEsc(_phLabel(c.phase))} &middot; ${_calEsc(c.pm)||'no PM'}</span>
           </span>
         </div>
       </summary>
@@ -7205,6 +7273,212 @@ function secWrapTd(title, inner){
   return `<div style="margin-top:11px"><div style="font-size:11.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">${title}</div>${inner}</div>`;
 }
 
+
+// ===================== TYPE-AHEAD PICKER ======================================
+// Bruce, 8 Sept: "when I'm adding a contractor to the construction calendar it just
+// pulls up an extremely large list. I need to start to type out names and only names
+// with those letters pop up... Hector's company name is HDH Property Services and his
+// name is Hector Diaz - either one needs to pull up the same contractor."
+// One control, two uses (contractor, task header). It keeps a hidden input carrying
+// the SAME id the old <select> had, so every save path underneath is untouched.
+window._TA = window._TA || {};
+function _taEsc(x){ return (typeof _calEsc==='function')?_calEsc(x):String(x==null?'':x); }
+function _taNorm(x){ return String(x||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim(); }
+function _taField(id, opts){
+  opts=opts||{};
+  window._TA[id]={ items:opts.items||[], free:!!opts.free, onPick:opts.onPick||null };
+  return '<div style="position:relative">'
+    + '<input type="hidden" id="'+id+'" value="'+_taEsc(opts.value||'')+'" />'
+    + '<input type="text" id="'+id+'-q" autocomplete="off" placeholder="'+_taEsc(opts.placeholder||'Start typing…')+'" value="'+_taEsc(opts.label||'')+'"'
+    + ' oninput="_taInput(\''+id+'\')" onfocus="_taInput(\''+id+'\')" onkeydown="_taKey(\''+id+'\',event)" onblur="_taBlur(\''+id+'\')"'
+    + ' style="width:100%;padding:9px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:14px;font-family:inherit;box-sizing:border-box" />'
+    + '<div id="'+id+'-list" style="display:none;position:absolute;z-index:60;left:0;right:0;top:100%;margin-top:3px;background:#fff;border:0.5px solid #d3d8e3;border-radius:9px;box-shadow:0 8px 22px rgba(20,30,50,.13);max-height:250px;overflow-y:auto"></div>'
+    + '<div id="'+id+'-hint" style="font-size:11.5px;color:#aaa;margin-top:4px">'+_taEsc(opts.hint||'')+'</div>'
+    + '</div>';
+}
+// Every word you type has to appear somewhere in the name, the company, the phone or
+// the trade. "hdh prop" finds Hector; so does "diaz"; so does "614".
+function _taMatches(id, q){
+  const st=window._TA[id]||{items:[]};
+  const n=_taNorm(q);
+  if(!n) return st.items.slice(0,14);
+  const words=n.split(' ').filter(Boolean);
+  const out=[];
+  st.items.forEach(function(it){
+    const hay=_taNorm(it.s||it.l||'');
+    for(let i=0;i<words.length;i++){ if(hay.indexOf(words[i])<0) return; }
+    out.push({it:it, score:(hay.indexOf(words[0])===0?0:1)});
+  });
+  out.sort(function(a,b){ return a.score-b.score; });
+  return out.slice(0,14).map(function(x){ return x.it; });
+}
+function _taInput(id){
+  const st=window._TA[id]; if(!st) return;
+  const qEl=document.getElementById(id+'-q'); const q=(qEl&&qEl.value)||'';
+  if(st.free){ const h=document.getElementById(id); if(h) h.value=q.trim(); }
+  const box=document.getElementById(id+'-list'); if(!box) return;
+  const ms=_taMatches(id,q); st._ms=ms; st._hi=-1;
+  if(!ms.length){
+    box.innerHTML = st.free
+      ? '<div style="padding:10px 12px;font-size:12.5px;color:#999">No header close to that yet — <b style="color:#111">'+_taEsc(q.trim())+'</b> will be saved as a new one.</div>'
+      : '<div style="padding:10px 12px;font-size:12.5px;color:#999">Nobody in the directory matches “'+_taEsc(q)+'”.</div>';
+    box.style.display = q?'block':'none'; return;
+  }
+  box.innerHTML=ms.map(function(it,i){
+    return '<div data-i="'+i+'" onmousedown="event.preventDefault();_taPick(\''+id+'\','+i+')" style="padding:8px 12px;font-size:13.5px;cursor:pointer;border-bottom:0.5px solid #f2f4f8;display:flex;justify-content:space-between;gap:10px;align-items:center">'
+      + '<span>'+(it.h||_taEsc(it.l))+'</span>'
+      + (it.r?('<span style="font-size:11.5px;color:#aaa;white-space:nowrap">'+_taEsc(it.r)+'</span>'):'')
+      + '</div>';
+  }).join('');
+  box.style.display='block';
+}
+function _taHi(id){
+  const box=document.getElementById(id+'-list'); const st=window._TA[id]; if(!box||!st) return;
+  Array.prototype.forEach.call(box.children,function(el,i){ el.style.background=(i===st._hi)?'#F1F5FB':'#fff'; });
+  if(st._hi>=0 && box.children[st._hi]) box.children[st._hi].scrollIntoView({block:'nearest'});
+}
+function _taKey(id, e){
+  const st=window._TA[id]; if(!st||!st._ms||!st._ms.length) return;
+  if(e.key==='ArrowDown'){ e.preventDefault(); st._hi=Math.min((st._hi<0?-1:st._hi)+1, st._ms.length-1); _taHi(id); }
+  else if(e.key==='ArrowUp'){ e.preventDefault(); st._hi=Math.max(st._hi-1,0); _taHi(id); }
+  else if(e.key==='Enter'){ if(st._hi>=0){ e.preventDefault(); _taPick(id, st._hi); } }
+  else if(e.key==='Escape'){ const b=document.getElementById(id+'-list'); if(b) b.style.display='none'; }
+}
+function _taPick(id, i){
+  const st=window._TA[id]; if(!st) return;
+  const it=(st._ms||[])[i]; if(!it) return;
+  const h=document.getElementById(id); const q=document.getElementById(id+'-q');
+  if(h) h.value=it.v; if(q) q.value=it.l;
+  const box=document.getElementById(id+'-list'); if(box) box.style.display='none';
+  const hint=document.getElementById(id+'-hint'); if(hint) hint.textContent=it.hint||'';
+  if(st.onPick && typeof window[st.onPick]==='function'){ try{ window[st.onPick](it.v); }catch(e){} }
+}
+function _taSet(id, value, label){
+  const h=document.getElementById(id); const q=document.getElementById(id+'-q');
+  if(h) h.value=value||''; if(q) q.value=label||'';
+  const box=document.getElementById(id+'-list'); if(box) box.style.display='none';
+}
+function _taBlur(id){ setTimeout(function(){ const b=document.getElementById(id+'-list'); if(b) b.style.display='none'; },140); }
+// One contractor, however you happen to think of them.
+function _taContractorItems(){
+  const list=(typeof _contractorsCache!=='undefined'?_contractorsCache:[])||[];
+  return list.map(function(c){
+    const biz=c.business_name||'';
+    return {
+      v:c.id,
+      l:c.name+(biz?(' — '+biz):''),
+      h:(c.red_flag?'<span style="color:#B42318;font-weight:700">🚩 DO NOT HIRE — </span>':'')+_taEsc(c.name)+(biz?(' <span style="color:#8a93a5">— '+_taEsc(biz)+'</span>'):''),
+      r:c.trade||'',
+      s:[c.name,biz,c.phone,c.trade].filter(Boolean).join(' '),
+      hint:(c.phone?('☎ '+c.phone):'')
+    };
+  });
+}
+function _taHeaderItems(){
+  const cats=(typeof _taskCategories==='function')?_taskCategories():[];
+  return cats.map(function(x){ return {v:x, l:x, s:x}; });
+}
+function _calNewContractor(){
+  _taSet('cal-contractor','__new','');
+  const q=document.getElementById('cal-contractor-q'); if(q) q.placeholder='Adding a new contractor below…';
+  const n=document.getElementById('cal-newc'); if(n) n.style.display='';
+  const nm=document.getElementById('cal-newc-name'); if(nm) nm.focus();
+}
+
+// ===================== STAYING PUT IN THE MEETING =============================
+// Bruce, 8 Sept: "when we're in the meeting doc and we're adding a construction
+// calendar or a task, once we click add it takes us to that dashboard and takes us
+// out of the meeting doc."
+// The meeting and the calendar draw into the SAME #pd-content, so saving an event
+// simply painted the calendar over the meeting. Now the meeting gets redrawn instead.
+window.__wmReturn=null;
+function _wmMarkReturn(){
+  window.__wmReturn = window.__wmLastKind ? {kind:window.__wmLastKind, week:window.__wmLastWeek||undefined} : null;
+}
+function _wmReturnOrRerender(){
+  const r=window.__wmReturn; window.__wmReturn=null;
+  const inMeeting=!!document.querySelector('[data-wm-prop]');
+  if(r && inMeeting && typeof openWeeklyMeeting==='function'){ openWeeklyMeeting(r.kind, r.week); return true; }
+  if(typeof _calRerender==='function') _calRerender();
+  return false;
+}
+// ---- Nobody loses their place -------------------------------------------------
+// Bruce, 8 Sept: "when 'done with this one' it shoots you down to the bottom of all
+// the address lists." Every tick in the meeting redraws the whole screen, which threw
+// the page back to wherever the new, shorter document happened to put it.
+const _wmOpenRaw = openWeeklyMeeting;
+openWeeklyMeeting = function(kind, week){
+  const same = (window.__wmLastKind===kind) && ((window.__wmLastWeek||null)===(week||null));
+  const y = same ? (window.pageYOffset||document.documentElement.scrollTop||0) : 0;
+  const r = _wmOpenRaw.apply(this, arguments);
+  if(same && y>0){
+    const back=function(){ window.scrollTo(0,y); };
+    back(); requestAnimationFrame(back); setTimeout(back,0); setTimeout(back,70);
+  }
+  _wmPollStart();
+  return r;
+};
+// ---- Two people in the same document ------------------------------------------
+// Bruce, 8 Sept: "Andrew was making notes on the meeting doc and I had the website
+// pulled up on my screen sharing, and his notes weren't updating even after I
+// refreshed my page."
+// Cause: every save wrote the WHOLE meeting_notes record from the copy this browser
+// happened to be holding, so the last person to type wiped out everything the other
+// person had written since their page loaded. A save now re-reads the record and puts
+// back only the one box that actually changed - the same rule the trackers got on
+// 1 Sept - and the open meeting pulls fresh notes in every few seconds.
+async function _wmWriteField(wk, kind, key, val){
+  const fresh=await _pmSettingsRead('meeting_notes');
+  const base=(fresh && typeof fresh==='object') ? fresh : (window._wmData||{});
+  base[wk]=base[wk]||{}; base[wk][kind]=base[wk][kind]||{};
+  base[wk][kind][key]=val;
+  const err=await _pmSettingsWrite('meeting_notes', base);
+  if(!err) window._wmData=base;
+  return err;
+}
+const WM_POLL_MS=9000;
+let _wmPollTimer=null;
+function _wmPollStart(){ if(!_wmPollTimer) _wmPollTimer=setInterval(_wmPollTick, WM_POLL_MS); }
+function _wmLiveFlash(el){
+  if(!el) return;
+  const was=el.style.boxShadow;
+  el.style.transition='box-shadow .35s'; el.style.boxShadow='0 0 0 3px rgba(29,158,117,.35)';
+  setTimeout(function(){ el.style.boxShadow=was||''; },1500);
+}
+function _wmLiveBanner(n){
+  let b=document.getElementById('wm-live-banner');
+  if(!b){
+    b=document.createElement('div'); b.id='wm-live-banner';
+    b.style.cssText='position:fixed;left:50%;transform:translateX(-50%);bottom:22px;z-index:9000;background:#0F7B54;color:#fff;padding:9px 17px;border-radius:99px;font-size:13px;font-weight:600;box-shadow:0 6px 20px rgba(0,0,0,.2)';
+    document.body.appendChild(b);
+  }
+  b.textContent = n===1 ? 'A note somebody else is typing just came in' : (n+' notes from other people just came in');
+  b.style.display='block';
+  clearTimeout(window.__wmBannerT);
+  window.__wmBannerT=setTimeout(function(){ if(b) b.style.display='none'; },3200);
+}
+async function _wmPollTick(){
+  if(!document.querySelector('[data-wm-prop]')){ clearInterval(_wmPollTimer); _wmPollTimer=null; return; }
+  const kind=window.__wmLastKind; if(!kind) return;
+  const fresh=await _pmSettingsRead('meeting_notes');
+  if(!fresh || typeof fresh!=='object') return;
+  const wk=window.__wmLastWeek||(typeof _wmWeekKeyFor==='function'?_wmWeekKeyFor(kind):null);
+  if(!wk) return;
+  const mine=(((window._wmData||{})[wk]||{})[kind])||{};
+  const theirs=((fresh[wk]||{})[kind])||{};
+  window._wmData=fresh;
+  let changed=0, structural=false;
+  Object.keys(theirs).forEach(function(k){
+    if(mine[k]===theirs[k]) return;
+    if(k.indexOf('__')===0){ structural=true; return; }
+    const el=document.getElementById('wm-'+k);
+    if(!el){ return; }
+    if(document.activeElement===el) return;      // never yank the box somebody is typing in
+    el.value=theirs[k]; _wmLiveFlash(el); changed++;
+  });
+  if(structural){ openWeeklyMeeting(kind, window.__wmLastWeek||undefined); return; }
+  if(changed) _wmLiveBanner(changed);
+}
 function openWeeklyMeeting(kind, week){
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
@@ -7389,13 +7663,13 @@ function openWeeklyMeeting(kind, week){
         <summary style="cursor:pointer;padding:11px 14px 11px 4px;outline:none">
           <div style="display:inline-flex;width:calc(100% - 26px);vertical-align:middle;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
             <span style="font-size:15px;font-weight:700;color:#185FA5">${isCov?'<span style="color:#1D9E75">&#10003; </span>':''}${_calEsc(c.addr||'')}${c.jvDeal?' <span style="font-size:11px;background:#EEEDFE;color:#3C3489;padding:1px 7px;border-radius:99px;vertical-align:middle">JV</span>':''}</span>
-            <span style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">${summaryChips}<span style="font-size:11.5px;color:#888;margin-left:4px">${_calEsc(c.phase||'')} &middot; ${_calEsc(c.pm)||'no PM'}</span></span>
+            <span style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">${summaryChips}<span style="font-size:11.5px;color:#888;margin-left:4px">${_calEsc(_phLabel(c.phase))} &middot; ${_calEsc(c.pm)||'no PM'}</span></span>
           </div>
         </summary>
         <div style="padding:0 16px 14px">
         <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:8px">
           <span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-size:13px;color:#185FA5">Open the property card &rsaquo;</span>
-          <span style="font-size:12px;color:#666">${_calEsc(c.phase||'')} &middot; PM: ${_calEsc(c.pm)||'&mdash;'}${perm?' &middot; &#127963; Permitted':''}</span>
+          <span style="font-size:12px;color:#666">${_calEsc(_phLabel(c.phase))} &middot; PM: ${_calEsc(c.pm)||'&mdash;'}${perm?' &middot; &#127963; Permitted':''}</span>
         </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:6px">
           ${cell('Budgeted',fmt(b),null,'','wm-bud-'+c.id)}
@@ -8789,7 +9063,13 @@ function openSystemSOP(id) {
 }
 
 // ===================== HELPERS =====================
-function showErr(el, msg) { el.textContent = msg; el.style.display = "block"; }
+function showErr(el, msg) {
+  el.textContent = msg; el.style.display = "block";
+  // Bring it into view. In a tall modal the error box is at the top and the button
+  // you just pressed is at the bottom, so the message lands off-screen and the form
+  // looks like a dead button - which is what stopped Katie Harr signing up on 8 Sept.
+  try{ el.scrollIntoView({block:"center", behavior:"smooth"}); }catch(e){}
+}
 
 // ===================== HOME SCREENS =====================
 
@@ -9290,11 +9570,29 @@ function _effectiveUser(){
 // the meantime it puts the two things a realtor genuinely needs in front of them -
 // what is on the market and what is about to be. Nothing here pretends to be
 // finished.
-function openRealtorDashboard(){
+// Bruce, 8 Sept: "the realtor drop down just needs to have Realtor Dashboard. Under
+// the realtor dashboard we will have the end of project assistant thing, and a main
+// dashboard. Under Katie it'll be set up kinda like the end of project assistant -
+// prelist / punch out, on the market, in contract, request remedy - and we need to add
+// another one in there that is cleared to close."
+// So: one menu item, two tabs, and Katie's stages read left to right in the order a
+// house actually moves through them.
+const RLT_TABS=[
+  ['main',  '🔑 Main Dashboard',           'Listings, contracts and what is coming up'],
+  ['stages','🏁 End of Project Assistant', 'Every house Katie is holding, by stage']
+];
+const RLT_STAGES=["Pre List / Punchout Process","Listed on the Market","In Contract","RTR In Process","RTR Completed (Pending Closing)"];
+function _rltTab(){ const t=window._rltTabSel||'main'; return RLT_TABS.some(x=>x[0]===t)?t:'main'; }
+function _rltGo(t){ window._rltTabSel=t; openRealtorDashboard(); }
+function openRealtorDashboard(tab){
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
+  if(tab) window._rltTabSel=tab;
+  const _rt=_rltTab();
   const act=(typeof _mktCards==='function')?_mktCards('active'):[];
   const ctr=(typeof _mktCards==='function')?_mktCards('contract'):[];
+  const rtr=(typeof _mktCards==='function')?_mktCards('rtr'):[];
+  const ctc=(typeof _mktCards==='function')?_mktCards('ctc'):[];
   const soon=(typeof _mktCards==='function')?_mktCards('soon'):[];
   const tile=(icon,title,n,sub,color,click)=>`<div ${click?`onclick="${click}"`:''} style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${color};border-radius:10px;padding:13px 15px;${click?'cursor:pointer':''}">
       <div style="display:flex;justify-content:space-between"><div style="font-size:13.5px;font-weight:600;color:#111">${icon} ${title}</div>${click?'<span style="color:#ccc">›</span>':''}</div>
@@ -9302,28 +9600,59 @@ function openRealtorDashboard(){
       <div style="font-size:11px;color:#999">${sub}</div></div>`;
   const list=(cards, empty)=>cards.length?cards.map(c=>`<div onclick="openPropDetail('${c.id}')" style="display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:0.5px solid #f4f5f7;cursor:pointer">
       <div style="min-width:0"><div style="font-size:13.5px;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</div>
-        <div style="font-size:11.5px;color:#999">${_calEsc(c.phase||'')}${c.pm?(' · PM '+_calEsc(c.pm)):''}</div></div>
+        <div style="font-size:11.5px;color:#999">${_calEsc(_phLabel(c.phase))}${c.pm?(' · PM '+_calEsc(c.pm)):''}</div></div>
       <div style="font-size:12px;color:#888;white-space:nowrap">${_calEsc(c.goalArv||'')||'no ARV yet'}</div>
     </div>`).join(''):`<div style="font-size:12.5px;color:#bbb;padding:8px 0">${empty}</div>`;
   const card=(title,inner)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:13px 16px">
       <div style="font-size:14px;font-weight:700;color:#111;margin-bottom:4px">${title}</div>${inner}</div>`;
 
-  document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div style="padding:20px;max-width:1000px;margin:0 auto">
-    <div style="font-size:18px;font-weight:700;color:#111">🔑 Realtor Dashboard</div>
-    <div style="font-size:12.5px;color:#999;margin-bottom:12px">Listings, showings and contracts in one place.</div>
+  const tabBar=`<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:14px">${RLT_TABS.map(t=>{
+      const on=(t[0]===_rt);
+      return `<div onclick="_rltGo('${t[0]}')" title="${_calEsc(t[2])}" style="padding:8px 15px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;${on?'background:#122A4A;color:#fff':'background:#fff;color:#555;border:0.5px solid #d8dce6'}">${t[1]}</div>`;
+    }).join('')}</div>`;
+
+  // Katie's stages, in the order a house moves through them.
+  const stageBlock=RLT_STAGES.map(ph=>{
+    const cs=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && c.phase===ph)
+      .sort((a,b)=>String(a.addr||'').localeCompare(String(b.addr||'')));
+    const info=(typeof phInfo==='function')?phInfo(ph):{bg:'#f4f5f7',text:'#555'};
+    const rows=cs.length?cs.map(c=>`<div onclick="openPropDetail('${c.id}')" style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;padding:8px 15px;border-top:0.5px solid #f4f5f7;cursor:pointer">
+        <span style="font-size:13.5px;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span>
+        <span style="font-size:11.5px;color:#999;white-space:nowrap">${c.pm?('PM '+_calEsc(c.pm)):'no PM'}${c.closingDateSell?(' · close '+_calEsc(c.closingDateSell)):''}</span>
+      </div>`).join(''):'<div style="padding:11px 15px;border-top:0.5px solid #f4f5f7;font-size:12.5px;color:#c4c9d2">Nothing at this stage.</div>';
+    return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;overflow:hidden;margin-bottom:10px">
+      <div style="padding:9px 15px;background:${info.bg};display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:13px;font-weight:700;color:${info.text}">${_calEsc(_phLabel(ph))}</span>
+        <span style="font-size:12px;font-weight:700;color:${info.text};opacity:.75">${cs.length}</span>
+      </div>${rows}</div>`;
+  }).join('');
+
+  const mainBody=`
     <div style="background:#FFF7E0;border:1px solid #EAD9A8;border-radius:11px;padding:12px 15px;margin-bottom:14px">
-      <div style="font-size:13.5px;color:#6b5310"><b>🚧 This dashboard is still being built.</b> The squares below are live and correct, but the realtor-specific reporting — showing feedback trends, price-drop history, commission tracking — is not here yet. Tell Bruce what you actually need on it and it gets built.</div>
+      <div style="font-size:13.5px;color:#6b5310"><b>🚧 Still being built.</b> The squares below are live and correct. The request-a-remedy process gets built into this dashboard next, once Bruce sends the write-up of how it runs today.</div>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:14px">
-      ${tile('🏡','On the market',act.length,'listed right now','#185FA5',"openWeeklyMeeting('market')")}
-      ${tile('🤝','In contract',ctr.length,'through to closing','#12987A',"openWeeklyMeeting('market')")}
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:10px;margin-bottom:14px">
       ${tile('⏳','Coming soon',soon.length,'about to be listed','#B7791F',"openWeeklyMeeting('market')")}
+      ${tile('🏡','On the market',act.length,'listed right now','#185FA5',"openWeeklyMeeting('market')")}
+      ${tile('🤝','In contract',ctr.length,'before the remedy list','#12987A',"openWeeklyMeeting('market')")}
+      ${tile('🛠','Request a remedy',rtr.length,'remedies being worked','#BA7517',"openWeeklyMeeting('market')")}
+      ${tile('✅','Cleared to close',ctc.length,'remedies completed','#534AB7',"openWeeklyMeeting('market')")}
     </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">
+      ${card('⏳ Coming soon', list(soon,'Nothing is queued to be listed.'))}
       ${card('🏡 On the market', list(act,'Nothing is listed right now.'))}
       ${card('🤝 In contract', list(ctr,'Nothing is in contract.'))}
-      ${card('⏳ Coming soon', list(soon,'Nothing is queued to be listed.'))}
-    </div>
+      ${card('🛠 Request a remedy', list(rtr,'No remedy lists are being worked.'))}
+      ${card('✅ Cleared to close', list(ctc,'Nothing is cleared to close.'))}
+    </div>`;
+
+  document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div style="padding:20px;max-width:1000px;margin:0 auto">
+    <div style="font-size:18px;font-weight:700;color:#111">🔑 Realtor Dashboard</div>
+    <div style="font-size:12.5px;color:#999;margin-bottom:12px">Listings, remedies and contracts in one place.</div>
+    ${tabBar}
+    ${_rt==='stages'
+      ? `<div style="font-size:12.5px;color:#888;margin-bottom:10px">Every house Katie is holding, in the order it moves: pre-list and punch out, on the market, in contract, request a remedy, cleared to close.</div>${stageBlock}`
+      : mainBody}
   </div></div></div>`;
 }
 
@@ -10142,7 +10471,7 @@ function _propCardMini(c){
   return `<div onclick="openPropDetail('${c.id}')" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:13px 15px;cursor:pointer;border-top:3px solid ${p.dot}">
       <div style="font-size:14px;font-weight:500;color:#111;margin-bottom:6px">${_calEsc(c.addr)}</div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <span style="font-size:11px;padding:2px 8px;border-radius:99px;background:${p.bg};color:${p.text};font-weight:500">${_calEsc(c.phase)}</span>
+        <span style="font-size:11px;padding:2px 8px;border-radius:99px;background:${p.bg};color:${p.text};font-weight:500">${_calEsc(_phLabel(c.phase))}</span>
         ${c.pm?`<span style="font-size:12px;color:#888;display:flex;align-items:center;gap:4px"><span style="width:14px;height:14px;border-radius:50%;background:${pmColor};color:#fff;font-size:9px;display:flex;align-items:center;justify-content:center">${_calEsc((c.pm[0]||'').toUpperCase())}</span>${_calEsc(c.pm)}</span>`:''}
       </div>
       ${c.end?`<div style="font-size:12px;color:#666;margin-top:7px">Target close: <span style="color:#111;font-weight:500">${_calEsc(c.end)}</span></div>`:''}
@@ -10755,6 +11084,175 @@ async function confirmVacancy(id){
   _confirmNavRefresh();
   if(typeof _refreshCurrentView==='function') _refreshCurrentView(); else openProjectDashboard('trello');
 }
+
+// ===================== NOTIFICATIONS ==========================================
+// Bruce, 8 Sept: "we need to have that tab for the notifications... for now it'll just
+// be a notification at the top, kinda like Facebook notifications - a little tab to
+// click on, drop down, see all your notifications. And then as we go I will tell you
+// what things we want to start tying notifications into."
+//
+// Deliberately DERIVED, not stored. Nothing writes a notification row; the bell reads
+// the same live data every screen reads and works out what is waiting on you right
+// now. That means a notification can never go stale, can never survive the thing it
+// was about, and no new table has to be kept in step. The only thing written down is
+// which ones you have already read, so the count is yours and follows you between
+// your laptop and your phone.
+function _nfMe(){
+  try{
+    const u=(typeof _myProfile!=='undefined'&&_myProfile)?_myProfile:null;
+    if(!u) return '';
+    return ((u.firstName||'')+' '+(u.lastName||'')).trim();
+  }catch(e){ return ''; }
+}
+function _nfMineOnly(){
+  // A project director sees the house-level nudges for every house; everybody else
+  // sees the houses they are the PM on.
+  try{ return !(typeof canApprove==='function' && canApprove()); }catch(e){ return true; }
+}
+async function _nfLoad(){
+  const d=await _pmSettingsRead('notif_read');
+  window._nfRead=(d&&typeof d==='object')?d:{};
+}
+function _nfReadMap(){ const me=_nfMe()||'_'; return ((window._nfRead||{})[me])||{}; }
+async function _nfSetRead(ids){
+  const me=_nfMe()||'_';
+  const fresh=await _pmSettingsRead('notif_read');
+  const base=(fresh&&typeof fresh==='object')?fresh:(window._nfRead||{});
+  base[me]=base[me]||{};
+  const now=new Date().toISOString();
+  (ids||[]).forEach(function(id){ base[me][id]=now; });
+  window._nfRead=base;
+  await _pmSettingsWrite('notif_read', base);
+  _nfBadge(); _nfRender();
+}
+function _nfItems(){
+  const out=[];
+  const me=_nfMe();
+  const today=(typeof _ymd==='function')?_ymd(new Date()):'';
+  const push=function(o){ out.push(o); };
+  // 1 - your own tasks, due today or already past
+  try{
+    (typeof _tasksCache!=='undefined'?_tasksCache:[]).forEach(function(t){
+      if(t.status==='done') return;
+      if(!t.due_date || t.due_date>today) return;
+      const who=(typeof taskAssignees==='function')?taskAssignees(t):[];
+      if(me && who.length && who.indexOf(me)<0) return;
+      if(me && !who.length) return;
+      const late=t.due_date<today;
+      push({ id:'task:'+t.id+':'+t.due_date, icon: late?'⏰':'📋',
+        tone: late?'red':'blue',
+        text:(t.category?t.category+' — ':'')+(t.title||'a task'),
+        sub:(late?'was due ':'due ')+t.due_date+((typeof _locLabel==='function'&&_locLabel(t))?(' · '+_locLabel(t)):''),
+        when:t.due_date, click:"openTaskDetail('"+t.id+"')" });
+    });
+  }catch(e){}
+  // 2 - side tasks that asked to come back up today
+  try{
+    (typeof propCards!=='undefined'?propCards:[]).forEach(function(c){
+      if(c.archived) return;
+      if(_nfMineOnly() && me && c.pm && c.pm!==me) return;
+      _sqList(c).forEach(function(x){
+        if(!_sqDue(x)) return;
+        push({ id:'sq:'+c.id+':'+x.id, icon:'🧩', tone:'amber',
+          text:x.t||'a side task', sub:(c.addr||'a property')+' · side task, ready to look at',
+          when:x.at||today, click:"openPropDetail('"+c.id+"')" });
+      });
+    });
+  }catch(e){}
+  // 3 & 4 - permits: an examiner waiting on us, or a portal nobody has opened
+  try{
+    (typeof _permitList==='function'?_permitList():[]).forEach(function(r){
+      const need=(typeof _permitNeeds==='function')?_permitNeeds(r):null;
+      if(!need) return;
+      const answering=/not responded to/.test(need);
+      push({ id:'permit:'+r.id+':'+(r.received||r.checked||''), icon: answering?'✉️':'🔎',
+        tone: answering?'red':'amber',
+        text:(r.addr||'a permit')+' — '+need,
+        sub:'Permit '+(r.number||'')+(r.juris?(' · '+r.juris):''),
+        when:r.received||r.checked||today, click:"openPermitDashboard('tracker')" });
+    });
+  }catch(e){}
+  // 5 - an issued permit whose inspection order nobody has set
+  try{
+    (typeof _permitList==='function'?_permitList():[]).forEach(function(r){
+      if(typeof _permitIsApproved!=='function' || !_permitIsApproved(r)) return;
+      const ins=(typeof _permitInsps==='function')?_permitInsps(r):[];
+      if(ins && ins.length) return;
+      push({ id:'insporder:'+r.id, icon:'📐', tone:'amber',
+        text:(r.addr||'a permit')+' is issued with no inspection order set',
+        sub:'Permit '+(r.number||'')+' · the order of inspections has not been listed yet',
+        when:r.issued||today, click:"openPermitDashboard('insp')" });
+    });
+  }catch(e){}
+  // 6 - closings and vacancies waiting on a yes or no
+  try{
+    if(typeof canApprove==='function' && canApprove() && typeof _confirmItems==='function'){
+      const d=_confirmItems();
+      if(d && d.total) push({ id:'confirm:'+d.total+':'+today, icon:'⚑', tone:'red',
+        text:d.total+' '+(d.total===1?'closing or vacancy is':'closings and vacancies are')+' waiting on a yes or no',
+        sub:'The date has passed and nobody has confirmed it', when:today, click:'openConfirmations()' });
+    }
+  }catch(e){}
+  out.sort(function(a,b){ return String(b.when||'').localeCompare(String(a.when||'')); });
+  return out;
+}
+function _nfUnread(){ const rd=_nfReadMap(); return _nfItems().filter(function(x){ return !rd[x.id]; }); }
+function _nfBadge(){
+  const box=document.getElementById('nf-box'); if(!box) return;
+  const signedIn=!!(typeof _myProfile!=='undefined' && _myProfile);
+  box.style.display = signedIn ? 'flex' : 'none';
+  if(!signedIn) return;
+  let n=0; try{ n=_nfUnread().length; }catch(e){ n=0; }
+  const c=document.getElementById('nf-count');
+  if(c){ c.textContent=(n>99?'99+':n); c.style.display=n?'block':'none'; }
+  box.title = n ? (n+' new notification'+(n===1?'':'s')) : 'Notifications — nothing new';
+}
+const NF_TONE={ red:{bg:'#FBEAE8',bd:'#f0c8c2',fg:'#B42318'}, amber:{bg:'#FBF3E2',bd:'#EAD9A8',fg:'#8a6d1a'}, blue:{bg:'#E8F0FA',bd:'#cddffa',fg:'#185FA5'} };
+function _nfRender(){
+  const p=document.getElementById('nf-panel'); if(!p) return;
+  const rd=_nfReadMap();
+  let items=[]; try{ items=_nfItems(); }catch(e){ items=[]; }
+  const unread=items.filter(function(x){ return !rd[x.id]; });
+  const head='<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:11px 14px;border-bottom:0.5px solid #eef0f6;position:sticky;top:0;background:#fff;z-index:1">'
+    + '<span style="font-size:13.5px;font-weight:700;color:#111">Notifications</span>'
+    + (unread.length?'<span onclick="_nfAllRead()" style="font-size:12px;color:#185FA5;cursor:pointer">Mark all read</span>':'<span style="font-size:12px;color:#bbb">all read</span>')
+    + '</div>';
+  if(!items.length){
+    p.innerHTML=head+'<div style="padding:26px 16px;text-align:center;color:#bbb;font-size:13px">Nothing is waiting on you.</div>'
+      +'<div style="padding:9px 14px;border-top:0.5px solid #eef0f6;font-size:11px;color:#c4c9d2">These are worked out live from your tasks, side tasks and the permit tracker. More gets tied in as Bruce says what he wants in here.</div>';
+    return;
+  }
+  const rows=items.map(function(x){
+    const isNew=!rd[x.id];
+    const t=NF_TONE[x.tone]||NF_TONE.blue;
+    return '<div onclick="_nfOpen(\'' + x.id.replace(/'/g,"\\'") + '\')" style="display:flex;gap:10px;padding:10px 14px;border-bottom:0.5px solid #f4f5f9;cursor:pointer;background:'+(isNew?'#FBFCFE':'#fff')+'">'
+      + '<div style="width:26px;height:26px;border-radius:7px;background:'+t.bg+';border:0.5px solid '+t.bd+';display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0">'+x.icon+'</div>'
+      + '<div style="flex:1;min-width:0">'
+      + '<div style="font-size:13px;color:'+(isNew?'#111':'#7a828f')+';font-weight:'+(isNew?'600':'400')+';line-height:1.35">'+_calEsc(x.text)+'</div>'
+      + '<div style="font-size:11.5px;color:#a3aab6;margin-top:2px">'+_calEsc(x.sub||'')+'</div>'
+      + '</div>'
+      + (isNew?'<div style="width:7px;height:7px;border-radius:99px;background:'+t.fg+';flex-shrink:0;margin-top:6px"></div>':'')
+      + '</div>';
+  }).join('');
+  p.innerHTML=head+rows+'<div style="padding:9px 14px;font-size:11px;color:#c4c9d2">Worked out live from your tasks, side tasks and the permit tracker. More gets tied in as Bruce says what he wants in here.</div>';
+}
+function _nfOpen(id){
+  let items=[]; try{ items=_nfItems(); }catch(e){}
+  const it=items.find(function(x){ return x.id===id; });
+  _nfSetRead([id]);
+  _nfClose();
+  if(it && it.click){ try{ (new Function(it.click))(); }catch(e){} }
+}
+function _nfAllRead(){ try{ _nfSetRead(_nfItems().map(function(x){ return x.id; })); }catch(e){} }
+function _nfClose(){ const p=document.getElementById('nf-panel'); if(p) p.style.display='none'; }
+function _nfToggle(){
+  const p=document.getElementById('nf-panel'); if(!p) return;
+  if(p.style.display==='block'){ p.style.display='none'; return; }
+  document.querySelectorAll('.dd').forEach(function(x){ x.classList.remove('open'); });
+  _nfRender(); p.style.display='block';
+}
+document.addEventListener('click', function(){ _nfClose(); });
+
 // Standing counter in the brand bar for the roles who can act on these.
 function _confirmNavRefresh(){
   const box=document.getElementById("confirm-box"); if(!box) return;
@@ -10763,6 +11261,7 @@ function _confirmNavRefresh(){
   box.style.display=(can && n)?"flex":"none";
   const cnt=document.getElementById("confirm-count"); if(cnt) cnt.textContent=n;
   box.title=n+" waiting to be confirmed";
+  if(typeof _nfBadge==='function') _nfBadge();
 }
 function openConfirmations(){
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
@@ -10835,7 +11334,7 @@ function renderDirectorHome(){
 function _dirBack(){ const el=document.getElementById('pd-content'); if(el) el.innerHTML=renderDirectorHome(); }
 function _dirDrillHead(title){ return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px"><button onclick="_dirBack()" style="font-size:13px;padding:6px 12px;border:0.5px solid #cdd7e6;border-radius:6px;background:#fff;color:#185FA5;cursor:pointer">‹ Back</button><div style="font-size:16px;font-weight:600;color:#111">${title}</div></div>`; }
 function _dirPropRow(c){ const p=(typeof phInfo==='function')?phInfo(c.phase):{dot:'#888'}; return `<div onclick="openPropDetail('${c.id}')" style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid ${p.dot||'#888'};border-radius:8px;padding:10px 13px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px">
-    <div><div style="font-size:13.5px;font-weight:600;color:#111">${_calEsc(c.addr||'')}</div><div style="font-size:12px;color:#999">${_calEsc(c.phase||'')} · ${c.pm?_calEsc(c.pm):'—'}</div></div>
+    <div><div style="font-size:13.5px;font-weight:600;color:#111">${_calEsc(c.addr||'')}</div><div style="font-size:12px;color:#999">${_calEsc(_phLabel(c.phase))} · ${c.pm?_calEsc(c.pm):'—'}</div></div>
     <div style="font-size:12px;color:#aaa;text-align:right">${c.closingDate?('Buy '+c.closingDate):''}${c.closingDateSell?('<br>Sell '+c.closingDateSell):''}</div>
   </div>`; }
 function _dirList(rows){ return rows.length?`<div style="display:flex;flex-direction:column;gap:8px;max-width:760px">${rows}</div>`:`<div style="color:#bbb;font-size:14px;padding:20px 0">Nothing here right now.</div>`; }
@@ -10927,7 +11426,7 @@ function _utilitiesDashboard(){
   const ro=isReadOnly();
   const row=(c)=>{ const cl=c.checklists||{}; const cells=items.map(it=>{const st=cl[it[0]]||{}; return ro?`<td style="text-align:center;padding:7px">${st.done?'✅':'⬜'}</td>`:`<td style="text-align:center;padding:7px"><span onclick="_utilToggle('${c.id}','${it[0]}')" style="cursor:pointer;font-size:17px">${st.done?'✅':'⬜'}</span></td>`;}).join("");
     const on=items.filter(it=> (cl[it[0]]||{}).done).length;
-    return `<tr style="border-top:0.5px solid #eef0f6"><td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span><div style="font-size:11px;color:#999">${_calEsc(c.phase||'')}</div></td>${cells}<td style="text-align:center;padding:7px;font-size:12px;font-weight:600;color:${on===3?'#2E7D32':'#B7791F'}">${on}/3</td></tr>`; };
+    return `<tr style="border-top:0.5px solid #eef0f6"><td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span><div style="font-size:11px;color:#999">${_calEsc(_phLabel(c.phase))}</div></td>${cells}<td style="text-align:center;padding:7px;font-size:12px;font-weight:600;color:${on===3?'#2E7D32':'#B7791F'}">${on}/3</td></tr>`; };
   return `<div style="padding:20px;max-width:860px;margin:0 auto">
     <div style="font-size:16px;font-weight:600;color:#111">⚡ Utilities Dashboard</div>
     <div style="font-size:13px;color:#888;margin-bottom:12px">Electric / water / gas per active property. Click a box to mark it on or off; click an address to open the card.</div>
@@ -11146,7 +11645,7 @@ function _trkClosedSimple(closed, what){
     (c)=>`<tr data-trk="${_calEsc(c.addr||'')}" style="border-top:0.5px solid #eef0f6">
         <td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span></td>
         <td style="padding:7px;color:#666">${_calEsc(c.closedDate||c.closingDateSell||'')||'<span style="color:#ccc">no date</span>'}</td>
-        <td style="padding:7px;color:#888">${_calEsc(c.phase||'')}</td>
+        <td style="padding:7px;color:#888">${_calEsc(_phLabel(c.phase))}</td>
         <td style="padding:7px;text-align:right"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;color:#185FA5;font-size:12px">Open the card &rsaquo;</span></td>
       </tr>`, '#888');
 }
@@ -12354,7 +12853,7 @@ function _vaTrackers(){
     return `<input value="${_calEsc(ph)}" placeholder="${m?'Add their number':'Pick a mower first'}" onchange="_mowPhoneSet('${c.id}',this.value)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:118px"/>${m?`<div style="font-size:10px;color:#bbb;margin-top:2px">from the directory</div>`:''}`;
   };
   const mowRow=(c)=>`<tr data-trk="${nm(c)}" style="border-top:0.5px solid #eef0f6">
-    <td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${nm(c)}</span><div style="font-size:11px;color:#999">${_calEsc(c.phase||'')}</div></td>
+    <td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${nm(c)}</span><div style="font-size:11px;color:#999">${_calEsc(_phLabel(c.phase))}</div></td>
     <td style="padding:7px">${mowWhoSel(c)}</td>
     <td style="padding:7px">${usel('mowinfo',c.id,'freq',MOW_FREQ,112)}</td>
     <td style="padding:7px">${txt('mowinfo',c.id,'cost','$ per mow',70)}</td>
@@ -12367,7 +12866,7 @@ function _vaTrackers(){
   // off the route. It stays flagged here until she ticks "removed after".
   const offRoute=closed.filter(c=>!_trkOn('mowinfo',c.id,'removed'));
   const offRow=(c)=>`<tr data-trk="${nm(c)}" style="border-top:0.5px solid #eef0f6;background:#FFF7E0">
-    <td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${nm(c)}</span><div style="font-size:11px;color:#8a6d1a;font-weight:600">✉️ TEXT THE MOWER — take this one off the route (${_calEsc(c.phase||'')})</div></td>
+    <td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${nm(c)}</span><div style="font-size:11px;color:#8a6d1a;font-weight:600">✉️ TEXT THE MOWER — take this one off the route (${_calEsc(_phLabel(c.phase))})</div></td>
     <td style="padding:7px">${mowWhoSel(c)}</td>
     <td style="padding:7px">${usel('mowinfo',c.id,'freq',MOW_FREQ,112)}</td>
     <td style="padding:7px">${txt('mowinfo',c.id,'cost','',70)}</td>
@@ -12380,7 +12879,7 @@ function _vaTrackers(){
 
   // ---------- Window tracker — four dated stages + what's being replaced + notes ----------
   const winRow=(c)=>`<tr data-trk="${nm(c)}" style="border-top:0.5px solid #eef0f6">
-    <td style="padding:7px 10px;min-width:170px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${nm(c)}</span><div style="font-size:11px;color:#999">${_calEsc(c.phase||'')} · PM ${_calEsc(c.pm||'—')}</div>
+    <td style="padding:7px 10px;min-width:170px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${nm(c)}</span><div style="font-size:11px;color:#999">${_calEsc(_phLabel(c.phase))} · PM ${_calEsc(c.pm||'—')}</div>
       <div style="margin-top:4px;font-size:11.5px;color:#666;display:flex;gap:9px">
         <span>${fchk('win',c.id,'glass')} Glass</span><span>${fchk('win',c.id,'windows')} Windows</span><span>${fchk('win',c.id,'both')} Both</span></div></td>
     <td style="padding:7px;text-align:center">${fchk('win',c.id,'needed')}<div style="font-size:10.5px;color:#bbb;margin-top:2px">requested</div></td>
@@ -12605,7 +13104,7 @@ function _jennTab(){
 
   const drawRows=drawings.map(c=>`<div onclick="openPropDetail('${c.id}')" style="display:flex;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px;cursor:pointer">
       <span style="color:#111">${_calEsc(c.addr||'')}</span>
-      <span style="font-size:12px;color:#888">${_calEsc(c.phase||'')}</span></div>`).join('');
+      <span style="font-size:12px;color:#888">${_calEsc(_phLabel(c.phase))}</span></div>`).join('');
 
   const _due48Rows=_due48.map(t=>{
     const prop=all.find(c=>c.id===t.property_id);
@@ -12960,19 +13459,8 @@ function openArchitectDashboard(activeTab) {
   }
 }
 
-function openTVDashboard() {
-  document.querySelectorAll(".dd").forEach(x => x.classList.remove("open"));
-  document.querySelectorAll(".ni.has-dd").forEach(x => x.classList.remove("on"));
-  document.getElementById("dash-body").innerHTML = `
-    <div class="empty-state">
-      <div class="icon">📺</div>
-      <p style="color:#888;font-size:16px;font-weight:500">TV Dashboard</p>
-      <p style="color:#555;font-size:14px;margin-top:6px">This dashboard is being built out. Check back soon.</p>
-    </div>
-  `;
-}
-
-// ===================== HOME BUTTON =====================
+// The TV Dashboard was removed on 8 Sept at Bruce's request - "we will not have a
+// TV dashboard, at least not at this time." Nothing was built behind it.
 function goHome() {
   const u = _effectiveUser();
   if (!u) return;
@@ -12998,7 +13486,6 @@ const SEARCH_INDEX = [
   { title: "Design Dashboard",                  desc: "Design dashboard for all roles except VA Assistants", action: () => openDesignDashboard() },
   { title: "Monthly Reports",                  desc: "Fill out and store monthly business overview reports by year and month", action: () => openMonthlyReports() },
   { title: "Yearly Reports",                   desc: "View yearly reporting dashboard", action: () => document.getElementById("rep-t").click() },
-  { title: "Biweekly Reports",                 desc: "View biweekly reporting dashboard", action: () => document.getElementById("rep-t").click() },
   { title: "End of Project Reports",           desc: "View end-of-project reporting dashboard", action: () => document.getElementById("rep-t").click() },
   { title: "SOPs",                             desc: "All standard operating procedures — job roles and systems (under Tools)", action: () => document.getElementById("tools-t").click() },
   { title: "Tools",                            desc: "External tool links including Eagleview", action: () => document.getElementById("tools-t").click() },
@@ -13958,7 +14445,6 @@ function openAddCalEvent(dateStr){
   if(_blockIfReadOnly()) return;
   const props=(typeof propCards!=='undefined'?propCards:[]);
   const propOpts=props.map(p=>`<option value="${p.id}" ${_calState.prop===p.id?"selected":""}>${_calEsc(p.addr)}</option>`).join("");
-  const contractorOpts=_contractorsCache.map(c=>`<option value="${c.id}">${c.red_flag?'\uD83D\uDEA9 DO NOT HIRE — ':''}${_calEsc(c.name)}${c.business_name?(' ('+_calEsc(c.business_name)+')'):''}</option>`).join("");
   const html=`
     <button class="modal-close" onclick="closeModal('calevent-modal')">✕</button>
     <h2>Add to construction calendar</h2>
@@ -13977,12 +14463,9 @@ function openAddCalEvent(dateStr){
     <div class="form-row" id="cal-material-row"><label>What's being delivered</label><input type="text" id="cal-title" placeholder="e.g. Cabinets, flooring, windows" /></div>
     <div class="form-row" id="cal-custom-row" style="display:none"><label>New custom type</label><input type="text" id="cal-custom" placeholder="e.g. Drawings due, inspection, dumpster pickup" /><div style="font-size:12px;color:#999;margin-top:4px">This becomes a reusable type you can pick next time.</div></div>
     <div id="cal-contractor-row" style="display:none">
-      <div class="form-row"><label>Contractor</label>
-        <select id="cal-contractor" onchange="_calContractorChange()">
-          <option value="">— Select saved contractor —</option>
-          ${contractorOpts}
-          <option value="__new">＋ Add new contractor…</option>
-        </select>
+      <div class="form-row"><label>Contractor <span style="font-size:11px;color:#999">— type a person or a company, either one finds them</span></label>
+        ${_taField('cal-contractor',{items:_taContractorItems(),placeholder:'Start typing — a name, a company, a trade…',hint:(_contractorsCache||[]).length+' contractors in the directory'})}
+        <div style="margin-top:6px"><span onclick="_calNewContractor()" style="font-size:12.5px;color:#185FA5;cursor:pointer">＋ Add somebody who isn\u2019t in the directory yet</span></div>
       </div>
       <div id="cal-newc" style="display:none">
         <div class="form-two">
@@ -14085,7 +14568,7 @@ async function saveCalEvent(){
   _logAudit("created","calendar", prop?_propAddr(prop):location, kind==="contractor"?("Contractor start: "+_contractorName(contractorId)):(kind==="custom"?("Custom: "+title):("Material delivery: "+title)));
   await loadCalendarEventsFromSupabase();
   closeModal("calevent-modal");
-  _calRerender();
+  _wmReturnOrRerender();
 }
 // Mark a construction event complete / reopen. Re-renders whatever view is showing.
 async function toggleCalEventDone(id){
@@ -14482,10 +14965,13 @@ function renderTaskCalendar(){
   const taskChip=(entry)=>{
     const t=entry.t, done=t.status==="done";
     const bg=done?"#EAF3DE":"#FAEEDA", col=done?"#3B6D11":"#633806", deco=done?"text-decoration:line-through;opacity:0.8;":"";
-    const _who=taskAssignees(t); const who=_who.length?(" · "+_who.join(", ")):"";
+    // Bruce, 8 Sept: "when you tag multiple people for a task, the task takes up the
+    // whole calendar because it shows every name." Month view now shows the type of
+    // task and nothing else; the names are in the tooltip, the day view and the card.
+    const _who=taskAssignees(t); const who="";
     const label=t.category?t.category:t.title;
     const mk=entry.marker==="start"?"▶ ":(entry.marker==="due"?"■ ":"");
-    const tip=`${t.category?t.category+" — ":""}${t.title}${entry.marker==="start"?" (start)":entry.marker==="due"?" (due)":""}`;
+    const tip=`${t.category?t.category+" — ":""}${t.title}${entry.marker==="start"?" (start)":entry.marker==="due"?" (due)":""}${_who.length?" · "+_who.join(", "):" · Unassigned"}`;
     return `<div onclick="event.stopPropagation();openTaskDetail('${t.id}')" title="${_calEsc(tip)} · click to open / edit" style="font-size:11px;background:${bg};color:${col};border-radius:4px;padding:2px 5px;margin-bottom:2px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${deco}">${done?'✓ ':mk}${_calEsc(label)}${_calEsc(who)}</div>`;
   };
   const cells=[];
@@ -14604,14 +15090,10 @@ function openAddTask(dateStr, pre){
     <h2>Add task</h2>
     <div class="error-msg" id="task-err"></div>
     <div class="form-row"><label>Task</label><input type="text" id="task-title" placeholder="What needs to get done" /></div>
-    <div class="form-row"><label>Header / category</label>
-      <select id="task-cat" onchange="_taskCatToggle()">
-        <option value="">— None —</option>
-        ${catOpts}
-        <option value="__new">＋ Add new header…</option>
-      </select>
+    <div class="form-row"><label>Header / category <span style="font-size:11px;color:#999">— start typing; close matches come up, anything new is kept</span></label>
+      ${_taField('task-cat',{items:_taHeaderItems(),free:true,placeholder:'e.g. Build Scope of Work',hint:'This is what shows on the calendar.'})}
     </div>
-    <div class="form-row" id="task-cat-new-row" style="display:none"><label>New header</label><input type="text" id="task-cat-new" placeholder="e.g. Build Scope of Work" /><div style="font-size:12px;color:#999;margin-top:4px">Saved so you can reuse it. This is what shows on the calendar.</div></div>
+    <div class="form-row" id="task-cat-new-row" style="display:none"><input type="hidden" id="task-cat-new" /></div>
     <div class="form-row"><label>Assign to (pick any number — leave all unchecked for Unassigned)</label>
       <div style="border:0.5px solid #ddd;border-radius:8px;padding:4px;max-height:150px;overflow-y:auto;background:#fff">${asgChecks}</div>
     </div>
@@ -14646,13 +15128,7 @@ function openAddTask(dateStr, pre){
     const set=(id,v)=>{ const e=document.getElementById(id); if(e && v) e.value=v; };
     set("task-title",pre.title); set("task-notes",pre.notes);
     if(pre.cat){
-      const sc=document.getElementById("task-cat");
-      if(sc){
-        let found=false;
-        Array.from(sc.options).forEach(o=>{ if(o.value===pre.cat||o.text===pre.cat) found=true; });
-        if(!found){ const o=document.createElement("option"); o.text=pre.cat; o.value=pre.cat; sc.insertBefore(o, sc.options[sc.options.length-1]); }
-        sc.value=pre.cat;
-      }
+      if(typeof _taSet==='function') _taSet('task-cat', pre.cat, pre.cat);
     }
     if(pre.propId){ const sp=document.getElementById("task-prop"); if(sp){ sp.value=pre.propId; if(typeof _taskPropChange==="function") _taskPropChange(); } }
     if(pre.assignees && pre.assignees.length){
@@ -15288,7 +15764,7 @@ function _renderSettings(){
     </div>`;
 
   // ---- Section 3: phase auto-advance ----
-  const phaseOptions=(sel)=>PROP_PHASES.map(p=>`<option value="${_wfEsc(p.name)}"${p.name===sel?" selected":""}>${_wfEsc(p.name)}</option>`).join("");
+  const phaseOptions=(sel)=>PROP_PHASES.map(p=>`<option value="${_wfEsc(p.name)}"${p.name===sel?" selected":""}>${_wfEsc(_phLabel(p.name))}</option>`).join("");
   const advKeys=Object.keys(d.advance||{});
   const advRows = advKeys.map(ph=>{
     const a=d.advance[ph]||{};
@@ -16328,7 +16804,7 @@ function _chkTrackerBody(){
     return `<tr data-trk="${_calEsc((c.addr||'')+' '+(c.pm||''))}" style="border-bottom:0.5px solid #f1f3f7">
       <td style="padding:8px 10px;font-size:13px;color:#185FA5;cursor:pointer" onclick="openPropDetail('${c.id}')">${_calEsc(c.addr||'')}</td>
       <td style="padding:8px;font-size:12.5px;color:#666">${_calEsc(c.pm||'—')}</td>
-      <td style="padding:8px;font-size:12.5px;color:#666">${_calEsc(c.phase||'')}</td>
+      <td style="padding:8px;font-size:12.5px;color:#666">${_calEsc(_phLabel(c.phase))}</td>
       <td style="padding:8px;display:flex;gap:9px;align-items:center;flex-wrap:wrap">${bits||'<span style="font-size:11.5px;color:#ccc">no steps written yet</span>'}</td></tr>`;
   }).join('');
   return `<div style="font-size:12.5px;color:#666;background:#F7F8FB;border:0.5px dashed #d5d9e2;border-radius:9px;padding:10px 13px;margin-bottom:14px">
@@ -16365,4 +16841,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-07d kickoff-pdf-on-completion -->
+<!-- build: 2026-09-08a meeting-fixes-notifications-realtor -->
