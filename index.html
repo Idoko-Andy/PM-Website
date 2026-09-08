@@ -1526,7 +1526,9 @@ function applyPermissionsUI() {
   });
   // Role-scoped top nav: everyone sees only their own job-role dropdown (plus the
   // shared Tools/SOPs, and Data/Reporting where permitted). The 3 power roles see all.
-  const _roleTabs = ["pd-t","pm-t","am-t","adm-t","va-t","arch-t"];
+  // rlt-t belongs here too - without it the Realtor menu was never explicitly shown
+  // or hidden by role, it just happened to survive because nothing touched it.
+  const _roleTabs = ["pd-t","pm-t","am-t","adm-t","va-t","arch-t","rlt-t"];
   const _superSees = u.isSuperAdmin || isBruce(u) || NAV_SUPER_ROLES.indexOf(u.role) >= 0;
   if (_superSees) {
     _roleTabs.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = ""; });
@@ -1918,7 +1920,12 @@ function switchAdminTab(id) {
 }
 
 // ===================== NAV DROPDOWNS =====================
-[["pd-t","pd-d"],["pm-t","pm-d"],["am-t","am-d"],["adm-t","adm-d"],["va-t","va-d"],["arch-t","arch-d"],["tools-t","tools-d"],["rep-t","rep-d"],["data-t","data-d"]].forEach(([tid,did]) => {
+// Every dropdown in the nav must be in this list or it simply never opens. rlt-t was
+// missing from the day the Realtor menu was added (Bruce, 8 Sept: "when I'm clicking
+// on the realtor drop down, it is still not popping up"). The assertion below turns a
+// silently dead menu into an obvious one, so this cannot happen quietly again.
+const NAV_DROPDOWNS = [["pd-t","pd-d"],["pm-t","pm-d"],["am-t","am-d"],["adm-t","adm-d"],["va-t","va-d"],["rlt-t","rlt-d"],["arch-t","arch-d"],["tools-t","tools-d"],["rep-t","rep-d"],["data-t","data-d"]];
+NAV_DROPDOWNS.forEach(([tid,did]) => {
   const t = document.getElementById(tid), d = document.getElementById(did);
   if (!t || !d) return;
   t.addEventListener("click", e => {
@@ -1933,6 +1940,15 @@ function switchAdminTab(id) {
     }
   });
 });
+// A menu with no opener looks like a broken feature, not a missing line of code.
+// Say so in the console the moment the page loads rather than waiting for somebody
+// to report that a whole dashboard "isn't there".
+(function(){
+  const wired = NAV_DROPDOWNS.map(x=>x[0]);
+  const missing = Array.from(document.querySelectorAll('.nav .ni.has-dd'))
+    .map(n=>n.id).filter(id=>id && wired.indexOf(id)<0);
+  if(missing.length) console.error('NAV BUG — these dropdowns have no click handler and will never open:', missing.join(', '));
+})();
 document.addEventListener("click", () => {
   document.querySelectorAll(".dd").forEach(x => x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x => x.classList.remove("on"));
@@ -12489,13 +12505,14 @@ function _permInspSearch(){
   });
 }
 function _permitInspBody(){
-  const ro=isReadOnly();
   const filt=window._permInspFilter||'all';
   const focus=window._permFocus||null;
+  const archived=!!window._permInspClosed;   // drawn inside Closed Permits
+  const ro=isReadOnly()||archived;
   // Group permits under the property they belong to. A permit whose address has
   // no card still gets a group of its own rather than being dropped.
   const groups=[], byKey={};
-  _permitList().forEach(r=>{
+  (window._permInspClosed ? _permitList().filter(r=>!_permitOpen(r)) : _permitList().filter(_permitOpen)).forEach(r=>{
     const prop=_permitProp(r);
     const key=prop?('p:'+prop.id):('x:'+((typeof _permitSlug==='function'?_permitSlug(r.addr):'')||r.id));
     if(!byKey[key]){ byKey[key]={key, prop, addr:(prop?prop.addr:r.addr)||'(no address)', permits:[]}; groups.push(byKey[key]); }
@@ -12503,7 +12520,9 @@ function _permitInspBody(){
   });
   groups.sort((a,b)=>String(a.addr||'').localeCompare(String(b.addr||'')));
 
-  const all=_permInspStats(_permInspAll());
+  const all=_permInspStats(archived
+    ? _permitList().filter(r=>!_permitOpen(r)).reduce((a,r)=>a.concat(_permitInsps(r)),[])
+    : _permInspAll());
   const tile=(label,val,color)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:9px;padding:9px 14px;min-width:112px">
     <div style="font-size:10.5px;color:#999;text-transform:uppercase;letter-spacing:.05em">${label}</div>
     <div style="font-size:19px;font-weight:700;color:${color};line-height:1.25">${val}</div></div>`;
@@ -12598,14 +12617,17 @@ function _permitInspBody(){
       ${tile('Properties', groups.filter(g=>g.permits.some(r=>_permitInsps(r).length)).length, '#122A4A')}
     </div>`;
 
-  const foot=`<div style="font-size:12px;color:#999;margin-top:4px">
+  const foot=archived?'':`<div style="font-size:12px;color:#999;margin-top:4px">
     These are the same inspections the Permit Tracker holds &mdash; adding one here puts a matching step on that property's card straight away, and ticking it passed ticks that step too.
     Label it <b>before finishes</b> for a mid-build inspection (MEPs, before the drywall closes it up) and <b>after finishes</b> for an end-of-job one.
     <br>The list is a <b>sequence</b>: number 1 is the first inspection the city wants, and the first one still open is marked <b>NEXT UP</b>. Add them in order and nudge them with the arrows.
     <br>Failures are counted per inspection because the End of Project report asks for them by name.
     </div>`;
 
-  return stats+bar+(cards||`<div style="background:#fff;border:0.5px dashed #d5d9e2;border-radius:11px;padding:26px;text-align:center;color:#bbb;font-size:13px">No inspections match this filter. Add one under any permit.</div>`)+foot;
+  const empty=archived
+    ? `<div style="background:#fff;border:0.5px dashed #d5d9e2;border-radius:11px;padding:22px;text-align:center;color:#bbb;font-size:13px">No inspections were recorded on the closed permits.</div>`
+    : `<div style="background:#fff;border:0.5px dashed #d5d9e2;border-radius:11px;padding:26px;text-align:center;color:#bbb;font-size:13px">No inspections match this filter. Add one under any permit.</div>`;
+  return (archived?'':stats+bar)+(cards||empty)+foot;
 }
 
 function _permitStatusColor(s){
@@ -12633,7 +12655,8 @@ function _permitTrackerBody(){
   const _inDash=(window._permitCtx==='dashboard');
   const _pTabBar=_inDash?'':`<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:13px">${_pTabBtn('permits','\ud83d\udcc4 Permits')}${_pTabBtn('insp','\ud83d\udd29 Inspections'+(_pOpen?(' &middot; '+_pOpen+' open'):''))}</div>`;
   if(_ptab==='insp' && !_inDash) return _pTabBar+_permitInspBody();
-  const rows=_permitList();
+  // Closed permits live on their own tab now. Everything here is work still in flight.
+  const rows=_permitList().filter(_permitOpen);
   const jl=_permitJurisdictions();
   const COLS=arch?14:15;
   const sel=(id,field,opts,w,color)=>{
@@ -13483,8 +13506,92 @@ function _zonAdders(ro){
 const PERMIT_DASH_TABS = [
   { id:'tracker', label:'Permit Tracker',     icon:'📄' },
   { id:'insp',    label:'Inspection Tracker', icon:'🔩' },
-  { id:'zoning',  label:'Zoning Info',        icon:'🗺️' }
+  { id:'zoning',  label:'Zoning Info',        icon:'🗺️' },
+  { id:'closed',  label:'Closed Permits',     icon:'📦' }
 ];
+// Finished work, off the working tabs but never deleted. Permits and their inspections
+// stay separated inside this one tab, exactly as they are on the two live tabs.
+function _permitClosedBody(){
+  const done=_permitList().filter(r=>!_permitOpen(r));
+  const insps=done.reduce((n,r)=>n+_permitInsps(r).length,0);
+  if(!done.length){
+    return `<div style="background:#fff;border:0.5px dashed #d5d9e2;border-radius:11px;padding:30px;text-align:center;color:#aab0bb;font-size:13.5px">
+      Nothing here yet.<div style="font-size:12.5px;margin-top:6px;color:#c4c9d2">Set a permit's status to <b>Closed</b> on the Permit Tracker and it moves here, with its inspections, and comes off the two working tabs.</div></div>`;
+  }
+  const head=`<div style="background:#F4F6FA;border:0.5px solid #dfe3ec;border-radius:11px;padding:11px 15px;margin-bottom:14px;font-size:13px;color:#3f4a5c">
+      <b>&#128230; ${done.length} closed permit${done.length===1?'':'s'}</b>${insps?(' &middot; '+insps+' inspection'+(insps===1?'':'s')+' on record'):''}.
+      Finished and out of the way &mdash; still here whenever you need to look one up. Put a permit's status back to anything other than Closed and it returns to the working tabs.
+    </div>`;
+  // Same two views as the live tabs, one under the other.
+  const permitsView=(function(){
+    const prev=window._permitCtx, prevTab=window._permTabSel, prevClosed=window._permitShowClosed;
+    window._permitShowClosed=true;
+    let html='';
+    try{ html=_permitClosedCards(done); }catch(e){ html='<div style="color:#B42318;font-size:13px">Could not draw the closed permits: '+_calEsc(e.message||'')+'</div>'; }
+    window._permitCtx=prev; window._permTabSel=prevTab; window._permitShowClosed=prevClosed;
+    return html;
+  })();
+  const inspView=(function(){
+    const prev=window._permInspClosed;
+    window._permInspClosed=true;
+    let html='';
+    try{ html=_permitInspBody(); }catch(e){ html='<div style="color:#B42318;font-size:13px">Could not draw the closed inspections: '+_calEsc(e.message||'')+'</div>'; }
+    window._permInspClosed=prev;
+    return html;
+  })();
+  const sec=(icon,title,sub,inner)=>`<div style="margin-top:18px">
+      <div style="display:flex;align-items:baseline;gap:9px;margin-bottom:9px">
+        <span style="font-size:14.5px;font-weight:700;color:#122A4A">${icon} ${title}</span>
+        <span style="font-size:12px;color:#98a2b3">${sub}</span>
+      </div>${inner}</div>`;
+  return head
+    + sec('&#128196;','Permits','the permit record, as it stood when it closed', permitsView)
+    + sec('&#128297;','Inspections','every inspection that was run on those permits', inspView);
+}
+// The closed permits, drawn as the same cards the tracker uses but read-only: a
+// finished record should not be quietly editable from the archive.
+function _permitClosedCards(list){
+  const jl=[];
+  list.forEach(r=>{ const j=r.juris||'Other'; if(jl.indexOf(j)<0) jl.push(j); });
+  const fmt=(d)=>d?_calEsc(d):'—';
+  const fld=(label,val)=>`<div style="padding:7px 12px;border-right:0.5px solid #eef0f4;border-bottom:0.5px solid #eef0f4;min-width:0">
+      <div style="font-size:9.5px;text-transform:uppercase;letter-spacing:.055em;color:#98a2b3;font-weight:700;margin-bottom:3px">${label}</div>
+      <div style="font-size:13px;color:#111">${val}</div></div>`;
+  let out='';
+  jl.sort().forEach(j=>{
+    const mine=list.filter(r=>(r.juris||'Other')===j).sort((a,b)=>String(a.addr||'').localeCompare(String(b.addr||'')));
+    out+=`<div style="display:flex;align-items:baseline;gap:10px;margin:16px 0 8px">
+        <span style="font-size:12.5px;font-weight:700;color:#122A4A;letter-spacing:.05em;text-transform:uppercase">${_calEsc(j)}</span>
+        <span style="flex:1;height:1px;background:#e6e9f0"></span>
+        <span style="font-size:11.5px;color:#b6bcc7">${mine.length} closed</span>
+      </div>`;
+    mine.forEach(r=>{
+      const prop=_permitProp(r);
+      const turn=(r.submitted&&r.issued)?(_pdhDays(r.submitted,r.issued)+' days to issue'):'—';
+      out+=`<div data-trk="${_calEsc((r.addr||'')+' '+(r.number||'')+' '+j+' '+(r.examiner||''))}" style="background:#fff;border:0.5px solid #dfe3ec;border-radius:11px;overflow:hidden;margin-bottom:10px">
+        <div style="background:#5A6B7D;padding:8px 13px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+          <div style="min-width:0">
+            ${prop?`<span onclick="openPropDetail('${prop.id}')" style="cursor:pointer;font-weight:700;color:#fff;font-size:15px;text-decoration:underline;text-decoration-color:rgba(255,255,255,.35)">${_calEsc(r.addr||'')}</span>`
+                 :`<span style="font-weight:700;color:#fff;font-size:15px">${_calEsc(r.addr||'')}</span>`}
+            ${prop?`<div style="font-size:11.5px;color:#cfd6df">${_calEsc(_phLabel(prop.phase))}</div>`:''}
+          </div>
+          <span style="background:#E6F4ED;color:#0F7B54;padding:2px 10px;border-radius:99px;font-size:11.5px;font-weight:700">Closed</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr))">
+          ${fld('Permit / application #','<b>'+_calEsc(r.number||'—')+'</b>')}
+          ${fld('Submitted',fmt(r.submitted))}
+          ${fld('Issued',fmt(r.issued))}
+          ${fld('Turnaround',turn)}
+          ${fld('Examiner / inspector',_calEsc(r.examiner||'—'))}
+          ${fld('Last portal check',fmt(r.checked))}
+        </div>
+        ${r.notes?`<div style="padding:7px 12px;border-bottom:0.5px solid #eef0f4"><div style="font-size:9.5px;text-transform:uppercase;letter-spacing:.055em;color:#98a2b3;font-weight:700;margin-bottom:3px">Notes</div><div style="font-size:12.5px;color:#4b5563;white-space:pre-wrap">${_calEsc(r.notes)}</div></div>`:''}
+        <div style="padding:6px 13px;background:#FAFBFD;font-size:11.5px;color:#98a2b3">Read only &mdash; reopen it by setting the status back on the Permit Tracker.</div>
+      </div>`;
+    });
+  });
+  return out;
+}
 function openPermitDashboard(activeTab){
   activeTab = PERMIT_DASH_TABS.some(t=>t.id===activeTab) ? activeTab : 'tracker';
   // Re-render through this dashboard, keeping the horizontal scroll position, so
@@ -13498,6 +13605,8 @@ function openPermitDashboard(activeTab){
     content=wrap(`<div style="font-size:16px;font-weight:600;color:#111;margin-bottom:10px">&#128297; Inspection Tracker</div>`+_permitInspBody());
   } else if(activeTab==='zoning'){
     content=wrap(`<div style="font-size:16px;font-weight:600;color:#111;margin-bottom:10px">&#128506;&#65039; Zoning Info</div>`+_zonBody());
+  } else if(activeTab==='closed'){
+    content=wrap(`<div style="font-size:16px;font-weight:600;color:#111;margin-bottom:10px">&#128230; Closed Permits</div>`+_permitClosedBody());
   } else {
     window._permTabSel='permits';
     content=wrap(`<div style="font-size:16px;font-weight:600;color:#111;margin-bottom:10px">&#128196; Permit Tracker</div>`+_permitTrackerBody());
@@ -16936,4 +17045,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-08d days-accumulated-and-boards -->
+<!-- build: 2026-09-08e realtor-menu-fix-and-closed-permits -->
