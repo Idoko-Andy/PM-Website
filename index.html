@@ -4127,6 +4127,7 @@ function _pdLinked(c){
                 ${_ro_sp ? `<span style="color:#111;font-weight:500">${c.closingDate||'—'}</span>` : `<span style="display:flex;gap:6px;align-items:center"><input type="date" id="pd-closing-date" value="${c.closingDate||''}" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"/><button onclick="saveClosingDate('${c.id}')" style="font-size:12px;padding:3px 9px;border-radius:5px;background:#111;color:#fff;border:none;cursor:pointer">Save date</button></span>`}
               </div>
               ${_kickCardRow(c)}
+              ${_pdocBody(c)}
               <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:0.5px solid #f4f5f7;font-size:14px">
                 <span style="color:#888;display:flex;align-items:center;gap:5px">🏠 Vacancy Date</span>
                 ${_ro_sp ? `<span style="color:#111;font-weight:500">${c.vacancyDate||'—'}</span>` : `<span style="display:flex;gap:6px;align-items:center"><input type="date" id="pd-vacancy-date" value="${c.vacancyDate||''}" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"/><button onclick="saveVacancyDate('${c.id}')" style="font-size:12px;padding:3px 9px;border-radius:5px;background:#111;color:#fff;border:none;cursor:pointer">Save date</button></span>`}
@@ -7203,6 +7204,125 @@ function _kickPdfHtml(pid){
   </body></html>`;
 }
 // The row that goes on the property card, next to CompanyCam and the Drive folder.
+// ===================== APPROVED PERMIT PDFs ==================================
+// Bruce, 8 Sept: "if a property is permitted, being able to attach PDF copies of
+// those approved permits to every property card at any time, as many PDFs as you
+// want, because sometimes there's multiple PDFs from one permit approval or
+// multiple different types of permits under one property."
+//
+// The files go to Supabase storage; the card keeps only a small record of each one
+// (name, path, who put it there, when). Bruce chose the existing bucket for now -
+// it is PUBLIC, so a person holding the exact link can open a file without signing
+// in. City permits are public record, so that is a considered trade, and the note
+// under the uploader says so plainly rather than leaving anyone to assume otherwise.
+// Moving to a private bucket later is a one-line change here.
+const PERMIT_DOC_BUCKET = 'hub-deploy';
+const PERMIT_DOC_PREFIX = 'permit-docs';
+const PERMIT_DOC_MAX_MB = 25;
+function _pdocList(c){ const a=((c&&c.checklists)||{}).permit_docs; return Array.isArray(a)?a:[]; }
+function _pdocSafeName(n){
+  return String(n||'file.pdf').replace(/[^A-Za-z0-9._-]+/g,'-').replace(/^-+|-+$/g,'').slice(-80) || 'file.pdf';
+}
+function _pdocSize(b){
+  if(!b && b!==0) return '';
+  if(b<1024) return b+' B';
+  if(b<1024*1024) return Math.round(b/1024)+' KB';
+  return (b/1048576).toFixed(1)+' MB';
+}
+async function _pdocWrite(pid, mut){
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return false;
+  const arr=_pdocList(c).slice();
+  mut(arr);
+  return await _wmChecklistPatch(pid, { permit_docs: arr });
+}
+async function _pdocUpload(pid){
+  if(_blockIfReadOnly()) return;
+  const inp=document.getElementById('pdoc-f-'+pid);
+  const files=(inp && inp.files)?Array.from(inp.files):[];
+  if(!files.length){ alert("Choose one or more PDFs first."); return; }
+  const tooBig=files.filter(f=>f.size > PERMIT_DOC_MAX_MB*1048576);
+  if(tooBig.length){ alert("These are over "+PERMIT_DOC_MAX_MB+"MB and were not uploaded:\n\n"+tooBig.map(f=>f.name).join("\n")); }
+  const ok=files.filter(f=>f.size <= PERMIT_DOC_MAX_MB*1048576);
+  if(!ok.length) return;
+  const st=document.getElementById('pdoc-s-'+pid);
+  const say=(t)=>{ if(st){ st.textContent=t; st.style.display='inline'; } };
+  const me=(typeof _myProfile!=='undefined' && _myProfile)?(((_myProfile.firstName||'')+' '+(_myProfile.lastName||'')).trim()):'';
+  const added=[]; const failed=[];
+  for(let i=0;i<ok.length;i++){
+    const f=ok[i];
+    say('Uploading '+(i+1)+' of '+ok.length+'…');
+    const path=PERMIT_DOC_PREFIX+'/'+pid+'/'+Date.now()+'-'+i+'-'+_pdocSafeName(f.name);
+    try{
+      const up=await supabase.storage.from(PERMIT_DOC_BUCKET).upload(path, f, {contentType:f.type||'application/pdf', upsert:false});
+      if(up.error){ failed.push(f.name+' — '+(up.error.message||'upload refused')); continue; }
+      const pub=supabase.storage.from(PERMIT_DOC_BUCKET).getPublicUrl(path);
+      added.push({ id:Date.now().toString(36)+Math.random().toString(36).slice(2,5),
+        name:f.name, path:path, url:(pub && pub.data && pub.data.publicUrl)||'',
+        size:f.size, by:me, at:new Date().toISOString() });
+    }catch(e){ failed.push(f.name+' — '+((e&&e.message)||'upload failed')); }
+  }
+  if(added.length){
+    const saved=await _pdocWrite(pid, arr=>added.forEach(x=>arr.push(x)));
+    if(saved){
+      const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
+      _logAudit('created','property',(c&&c.addr)||'', 'Attached '+added.length+' permit PDF'+(added.length===1?'':'s')+': '+added.map(x=>x.name).join(', '));
+    }
+  }
+  say('');
+  if(failed.length){
+    alert("Some files did not upload:\n\n"+failed.join("\n")+"\n\nIf every one failed, storage is refusing uploads — tell Bruce and he can have Andy check the bucket.");
+  }
+  if(inp) inp.value='';
+  if(typeof openPropDetail==='function') openPropDetail(pid);
+}
+// Takes it off the card. The file itself is deliberately left in storage - nothing
+// here deletes a document for good, and an accidental click should never be able to.
+async function _pdocDetach(pid, id){
+  if(_blockIfReadOnly()) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
+  const x=_pdocList(c).find(y=>y.id===id);
+  if(!x) return;
+  if(!confirm('Take "'+(x.name||'this PDF')+'" off this property card?\n\nThe file itself is kept — this only removes it from the card.')) return;
+  if(await _pdocWrite(pid, arr=>{ const i=arr.findIndex(y=>y.id===id); if(i>=0) arr.splice(i,1); })){
+    _logAudit('updated','property',(c&&c.addr)||'', 'Took the permit PDF "'+(x.name||'')+'" off the card');
+    if(typeof openPropDetail==='function') openPropDetail(pid);
+  }
+}
+function _pdocBody(c){
+  if(!c) return '';
+  const ro=(typeof isReadOnly==='function')?isReadOnly():false;
+  const list=_pdocList(c);
+  const permitted=(typeof _isPermittedCard==='function') ? _isPermittedCard(c) : ((c.checklists||{}).permitted==='yes');
+  // Only worth showing on a house that actually has permits - but never hide a file
+  // somebody has already attached.
+  if(!permitted && !list.length) return '';
+  const row=(x)=>`<div style="display:flex;align-items:center;gap:9px;padding:7px 0;border-bottom:0.5px solid #f4f5f9">
+      <span style="font-size:15px;flex-shrink:0">&#128196;</span>
+      <div style="flex:1;min-width:0">
+        ${x.url?`<a href="${_calEsc(x.url)}" target="_blank" rel="noopener" style="font-size:13px;color:#185FA5;text-decoration:none;font-weight:600;word-break:break-all">${_calEsc(x.name||'permit.pdf')}</a>`
+               :`<span style="font-size:13px;color:#111;font-weight:600">${_calEsc(x.name||'permit.pdf')}</span>`}
+        <div style="font-size:10.5px;color:#b6bcc7">${_pdocSize(x.size)}${x.by?(' &middot; '+_calEsc(x.by)):''}${x.at?(' &middot; '+_calEsc(String(x.at).slice(0,10))):''}</div>
+      </div>
+      ${ro?'':`<span onclick="_pdocDetach('${c.id}','${x.id}')" title="Take it off this card" style="cursor:pointer;font-size:11px;color:#ddd;flex-shrink:0">&#10005;</span>`}
+    </div>`;
+  const adder=ro?'':`<div style="border-top:0.5px solid #eef0f6;padding:9px 14px;background:#FAFBFD">
+      <div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">
+        <input type="file" id="pdoc-f-${c.id}" accept="application/pdf,.pdf" multiple style="font-size:12.5px;max-width:100%"/>
+        <button onclick="_pdocUpload('${c.id}')" style="padding:6px 13px;border:none;border-radius:7px;background:#122A4A;color:#fff;font-size:13px;font-weight:600;cursor:pointer">Attach</button>
+        <span id="pdoc-s-${c.id}" style="display:none;font-size:12px;color:#B7791F"></span>
+      </div>
+      <div style="font-size:11px;color:#aaa;margin-top:5px">Pick as many as you like &mdash; one approval often comes back as several files. PDFs up to ${PERMIT_DOC_MAX_MB}MB each. They open in a new tab and are stored on a public link, so treat them the way you would a permit pinned up on site.</div>
+    </div>`;
+  return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden;margin-top:12px">
+      <div style="padding:9px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+        <div style="font-size:13px;font-weight:500;color:#111">&#128203; Approved permit PDFs
+          <span style="font-size:11.5px;color:#aaa;font-weight:400">&mdash; the stamped copies, kept with the house</span></div>
+        <span style="font-size:11.5px;color:#aaa">${list.length?(list.length+' attached'):'none yet'}</span>
+      </div>
+      ${list.length?`<div style="padding:2px 14px 6px">${list.map(row).join('')}</div>`:''}
+      ${adder}
+    </div>`;
+}
 function _kickCardRow(c){
   const k=_kickNotesFor(c.id);
   // Bruce's rule: the PDF appears once the kickoff for THAT property is marked
@@ -17045,4 +17165,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-08e realtor-menu-fix-and-closed-permits -->
+<!-- build: 2026-09-08f permit-pdfs-on-the-card -->
