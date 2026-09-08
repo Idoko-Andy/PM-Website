@@ -2121,7 +2121,11 @@ function _phaseAdvanceBlocking(card){
 // The five structures above (SUB_PHASES / SUB_PHASE_BOARD / SUBPHASE_APPROVAL /
 // SUBPHASE_CHAIN / PHASE_ADVANCE) are the hard-coded DEFAULT workflow. A saved
 // override in the pm_settings table (key="workflow") replaces them at load time.
-const WORKFLOW_BOARDS = ["SOW & Budgets","Permits & Drawings","Design Budgets & Design Status"];
+// Bruce, 8 Sept: "not all the options are there for selections." Six boards exist on
+// the dashboards; the settings screen only ever offered the first three, so a new
+// subphase could never be pointed at Takedowns, Pre Listing or Remedy Requests.
+const WORKFLOW_BOARDS = ["SOW & Budgets","Permits & Drawings","Design Budgets & Design Status",
+  "Takedowns / Vacancies","Pre Listing Phase","Remedy Requests / Upcoming Closings"];
 const _WORKFLOW_DEFAULTS = JSON.parse(JSON.stringify({
   subPhases: SUB_PHASES,
   board:     SUB_PHASE_BOARD,
@@ -2412,7 +2416,16 @@ async function updatePropertyPhaseInSupabase(id, newPhase) {
   const _npIdx = PROP_PHASES.findIndex(p=>p.name===newPhase);
   if (_wpIdx>=0 && _npIdx>=_wpIdx) {
     const _cl = Object.assign({}, (_pc && _pc.checklists) || {});
-    if (!_cl.construction_start) { _cl.construction_start = _ymd(new Date()); patch.checklists = _cl; }
+    let _clChg=false;
+    if (!_cl.construction_start) { _cl.construction_start = _ymd(new Date()); _clChg=true; }
+    // Bruce, 8 Sept: on a PERMITTED job the first stretch of Days Accumulated runs
+    // until the permits come through, not until pre-construction ends - the permit
+    // wait is the thing he wants measured. Stamp the day it clears Waiting Permits.
+    const _frIdx = PROP_PHASES.findIndex(p=>p.name==="Framing, MEPS, Insulation");
+    if (_frIdx>=0 && _npIdx>=_frIdx && (_cl.permitted==='yes') && !_cl.permits_cleared) {
+      _cl.permits_cleared = _ymd(new Date()); _clChg=true;
+    }
+    if (_clChg) patch.checklists = _cl;
   }
   // Permitted properties must pass Final Inspections before hitting Listed on the Market.
   // A permitted property is held at Final Inspections only if the Permit Tracker
@@ -2959,6 +2972,8 @@ async function _maybeAutoAdvance(propId){
     const _nxI=PROP_PHASES.findIndex(p=>p.name===cfg.next);
     const _cl=Object.assign({},card.checklists||{}); let _chg=false;
     if(_wpI>=0 && _nxI>=_wpI && !_cl.construction_start){ _cl.construction_start=_ymd(new Date()); _chg=true; }
+    { const _frI=PROP_PHASES.findIndex(p=>p.name==="Framing, MEPS, Insulation");
+      if(_frI>=0 && _nxI>=_frI && _cl.permitted==='yes' && !_cl.permits_cleared){ _cl.permits_cleared=_ymd(new Date()); _chg=true; } }
     if((cfg.next==="Rental Handoff Process"||cfg.next==="Listed on the Market") && !_cl.timeline_done){ _cl.timeline_done=_ymd(new Date()); _chg=true; }
     if(_chg) _patch.checklists=_cl; }
   const { error } = await supabase.from("pm_properties").update(_patch).eq("id",propId);
@@ -10415,10 +10430,39 @@ function pmAssistantTabContent(name){
     <div style="font-size:12px;color:#aaa;margin-top:10px">Click a task to mark it done. New tasks assigned to ${_calEsc(name)} show up here automatically.</div>
   </div>`;
 }
+// Is this house permitted? The Yes/No on the property card, nothing inferred.
+function _isPermittedCard(c){ return !!(c && c.checklists && c.checklists.permitted==='yes'); }
+// The day the permits actually came through, for a permitted house.
+// First choice is the stamp written when it cleared Waiting Permits. Houses that
+// cleared before that stamp existed fall back to the permit tracker: the day the LAST
+// of their permits was issued. If any permit on the house is still unissued we return
+// nothing rather than guessing - a missing number is honest, an invented one is not.
+function _permitsThroughDate(c){
+  if(!c) return null;
+  const st=(c.checklists||{}).permits_cleared;
+  if(st) return st;
+  if(typeof _permitList!=='function' || typeof _permitProp!=='function') return null;
+  let mine=[];
+  try{ mine=_permitList().filter(r=>{ const pr=_permitProp(r); return pr && pr.id===c.id; }); }catch(e){ return null; }
+  if(!mine.length) return null;
+  const issued=mine.map(r=>r.issued).filter(Boolean);
+  if(issued.length<mine.length) return null;      // at least one is still out
+  return issued.slice().sort().pop();
+}
+// Where the first stretch stops, and what to call it.
+//   Non-permitted - the day pre-construction finished (it left Pre Construction).
+//   Permitted     - the day the permits came through.
+function _accumStage1(c){
+  if(_isPermittedCard(c)){
+    return { to:_permitsThroughDate(c), label:"Bought \u2192 permits through", next:"Permits through \u2192 listed" };
+  }
+  return { to:_consStart(c), label:"Bought \u2192 pre-con done", next:"Construction \u2192 listed" };
+}
 // Days Accumulated, split into the three stretches the team actually tracks.
-//   1. Takedown  - the day we close on the purchase until the property leaves Pre
-//                  Construction. This is the stretch that covers waiting on the house
-//                  to go vacant, pre-construction, and demo / cleanout.
+//   1. Bought    - the day we CLOSE ON THE PURCHASE (not the takedown date - Bruce,
+//                  8 Sept) until pre-construction is done, or on a permitted house
+//                  until the permits come through. Covers waiting on the house to go
+//                  vacant, pre-construction, demo / cleanout, and the permit wait.
 //   2. Build     - the construction clock starting until the property is finished and
 //                  listed on the market.
 //   3. On market - listed until it closes and sells.
@@ -10441,12 +10485,19 @@ function _accumSegments(c){
     const n=Math.round((_dParse(b||today)-_dParse(a))/86400000);
     return n<0 ? { n:n, bad:true } : { n:n, bad:false };
   };
-  const s1=seg(bought,cStart), s2=seg(cStart,listed), s3=seg(listed,sold);
+  // The three stretches have to chain, or the total double-counts the permit wait:
+  // whatever ends stretch one begins stretch two.
+  const st1=_accumStage1(c);
+  const mid=st1.to;
+  const s1=seg(bought,mid), s2=seg(mid,listed), s3=seg(listed,sold);
+  const permNote=_isPermittedCard(c)
+    ? (mid ? ((c.checklists||{}).permits_cleared ? "" : "from the permit tracker") : "waiting on permits")
+    : "";
   return [
-    { label:"Takedown \u2192 pre-con done", from:bought, to:cStart, n:s1.n, bad:s1.bad, live:!!(bought&&!cStart),
-      note:c.vacancyDate?("vacant "+c.vacancyDate):"" },
-    { label:"Construction \u2192 listed",    from:cStart, to:listed, n:s2.n, bad:s2.bad, live:!!(cStart&&!listed), note:"" },
-    { label:"Listed \u2192 sold",            from:listed, to:sold,   n:s3.n, bad:s3.bad, live:!!(listed&&!sold),   note:"" }
+    { label:st1.label, from:bought, to:mid, n:s1.n, bad:s1.bad, live:!!(bought&&!mid),
+      note:permNote || (c.vacancyDate?("vacant "+c.vacancyDate):"") },
+    { label:st1.next,  from:mid, to:listed, n:s2.n, bad:s2.bad, live:!!(mid&&!listed), note:"" },
+    { label:"Listed \u2192 sold", from:listed, to:sold, n:s3.n, bad:s3.bad, live:!!(listed&&!sold), note:"" }
   ];
 }
 // $/day for the property card. Spend to date over construction days, the same basis
@@ -16885,4 +16936,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-08c permit-cards-and-role-scoping -->
+<!-- build: 2026-09-08d days-accumulated-and-boards -->
