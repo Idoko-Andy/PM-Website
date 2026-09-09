@@ -1919,6 +1919,45 @@ function switchAdminTab(id) {
   if (tabs[idx]) tabs[idx].classList.add("active");
 }
 
+// ===================== TEXT BOXES THAT GROW =================================
+// Bruce, 9 Sept: "I don't wanna have to manually pull down on the tab and make it
+// bigger myself. I want the tab to get larger where everybody can read it without
+// having to drag something. It's like when you send an iMessage - type more and the
+// box gets bigger, delete it and it shrinks back."
+// One rule for the whole site rather than a fix per screen: any textarea grows to
+// fit its content as you type, and shrinks again when you delete. The height comes
+// from the text itself, so it survives a redraw without anything being stored.
+function _growBox(el){
+  if(!el || el.tagName!=='TEXTAREA') return;
+  if(el.dataset.nogrow==='1') return;
+  const min=parseFloat(el.dataset.growMin||'0') || el.offsetHeight || 44;
+  if(!el.dataset.growMin) el.dataset.growMin=String(min);
+  el.style.overflowY='hidden';
+  el.style.height='auto';
+  const want=Math.max(el.scrollHeight + 2, parseFloat(el.dataset.growMin));
+  el.style.height=want+'px';
+}
+function _growAll(root){
+  try{
+    (root||document).querySelectorAll('textarea').forEach(_growBox);
+  }catch(e){}
+}
+document.addEventListener('input', function(e){ if(e.target && e.target.tagName==='TEXTAREA') _growBox(e.target); }, true);
+document.addEventListener('focusin', function(e){ if(e.target && e.target.tagName==='TEXTAREA') _growBox(e.target); }, true);
+// Screens here are drawn by replacing innerHTML, so new boxes appear constantly.
+// Watch for them rather than remembering to call this from thirty render functions.
+(function(){
+  let pending=null;
+  const obs=new MutationObserver(function(){
+    if(pending) return;
+    pending=requestAnimationFrame(function(){ pending=null; _growAll(); });
+  });
+  const start=function(){
+    try{ obs.observe(document.body,{childList:true,subtree:true}); _growAll(); }catch(e){}
+  };
+  if(document.body) start(); else document.addEventListener('DOMContentLoaded',start);
+})();
+
 // ===================== NAV DROPDOWNS =====================
 // Every dropdown in the nav must be in this list or it simply never opens. rlt-t was
 // missing from the day the Realtor menu was added (Bruce, 8 Sept: "when I'm clicking
@@ -7839,31 +7878,35 @@ function openWeeklyMeeting(kind, week){
           ${fld('Project manager',_pmField(c,'wm'))}
           ${fld('JV deal',ro?(c.jvDeal?'Yes':'No'):`<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" ${c.jvDeal?'checked':''} onchange="_wmDeal('${c.id}','jv_deal',this.checked,this)" style="width:15px;height:15px;cursor:pointer"/> Yes</label>`)}
         </div>
-        ${_wmPermitBlock(c)}
+        ${secWrap(secHead('Timeline check','asked every Monday'), pace+trail)}
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:11px;margin-top:11px;align-items:start">
+          <div>${_wmPermitBlock(c) || `<div style="border:0.5px dashed #e6e8ee;border-radius:9px;padding:11px 13px;font-size:12.5px;color:#c0c6d0">&#128196; Permits &mdash; this job is not marked permitted.</div>`}
+            ${_isPermittedCard(c)?`<div style="margin-top:7px"><div style="font-size:9.5px;color:#aaa;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Comments on permits</div>${ta2(c.id+'::permc','Where the permits actually stand, in your words&hellip;',44)}</div>`:''}
+          </div>
+          <div><div style="font-size:12px;font-weight:700;color:#111;margin-bottom:4px">&#128176; Money analysis &mdash; on or off budget, and why</div>${ta2(c.id+'::money','On or off budget, and why?')}</div>
+        </div>
 
         ${secWrap(secHead('What was scheduled last week', (lastItems.length?(lastItems.filter(x=>x.done).length+' of '+lastItems.length+' done &middot; '):'')+_wmLabel(lastWk).replace(/^\w+, /,'')+' &rarr; Sun'), lastRows+
           `<div style="border-top:1px dashed #e6e8ee;padding-top:8px;margin-top:6px"><div style="font-size:9.5px;color:#aaa;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Comments on last week</div>${ta2(c.id+'::lastc','Anything about how last week actually went&hellip;',44)}</div>`)}
 
+        ${secWrap(secHead('Lag-time items','carried until they close'), lagRows+lagAdd)}
+
         ${secWrap(secHead('Scheduled this week &amp; next week', (fwdItems.length?(fwdItems.filter(x=>x.done).length+' of '+fwdItems.length+' done &middot; '):'')+fwdR.from+' &rarr; '+fwdR.to+' &middot; in date order'), fwdRows+
           `<div style="border-top:1px dashed #e6e8ee;padding-top:8px;margin-top:6px"><div style="font-size:9.5px;color:#aaa;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Comments on the weeks ahead</div>${ta2(c.id+'::nextc','Anything about what is coming up&hellip;',44)}</div>`)}
+
+        ${secWrap(secHead('Questions for Bruce / Tommy','carried until answered'), qRows+qAdd)}
+
+        <div style="margin-top:11px"><div style="font-size:12px;font-weight:700;color:#111;margin-bottom:4px">&#127942; Wins this week</div>${ta2(c.id+'::wins','What went right on this property this week?')}</div>
+
+        ${_sqBody(c, true)}
 
         ${roNow?'':`<div style="margin-top:11px;display:flex;gap:8px;flex-wrap:wrap;background:#F7F8FB;border:0.5px dashed #d5d9e2;border-radius:9px;padding:9px 12px;align-items:center">
           <span style="font-size:12px;color:#888">Add to this property, right now:</span>
           <button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">&#65291; Add task</button>
-          <button onclick="_wmAddEvent('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#639922;cursor:pointer;font-weight:600">&#65291; Schedule contractor</button>
+          <button onclick="_wmAddEvent('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#639922;cursor:pointer;font-weight:600">&#65291; Add calendar event</button>
           <button onclick="openPropDetail('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #e6e8ee;border-radius:7px;font-size:12.5px;color:#777;cursor:pointer">Open card</button>
         </div>`}
-
-        ${_sqBody(c, true)}
-
-        ${secWrap(secHead('Timeline check','asked every Monday'), pace+trail)}
-        ${secWrap(secHead('Lag-time items','carried until they close'), lagRows+lagAdd)}
-        ${secWrap(secHead('Questions for Bruce / Tommy','carried until answered'), qRows+qAdd)}
-
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:11px;margin-top:11px">
-          <div><div style="font-size:12px;font-weight:700;color:#111;margin-bottom:4px">Wins this week</div>${ta2(c.id+'::wins','What went right on this property this week?')}</div>
-          <div><div style="font-size:12px;font-weight:700;color:#111;margin-bottom:4px">Money analysis &mdash; on or off budget, and why</div>${ta2(c.id+'::money','On or off budget, and why?')}</div>
-        </div>
         ${roNow?'':`<div style="margin-top:12px;padding-top:11px;border-top:0.5px solid #eef0f6">
           <button onclick="_wmCovered('${wk}','${c.id}')" style="padding:7px 15px;background:${isCov?'#fff':'#0F7B54'};border:${isCov?'0.5px solid #cdd7e6':'none'};border-radius:8px;font-size:13px;font-weight:600;color:${isCov?'#777':'#fff'};cursor:pointer">${isCov?'Reopen this one':'&#10003; Done with this one &mdash; close it up'}</button>
         </div>`}
@@ -10590,9 +10633,9 @@ function _permitsThroughDate(c){
 //   Permitted     - the day the permits came through.
 function _accumStage1(c){
   if(_isPermittedCard(c)){
-    return { to:_permitsThroughDate(c), label:"Bought \u2192 permits through", next:"Permits through \u2192 listed" };
+    return { to:_permitsThroughDate(c), label:"Vacant \u2192 permits through", next:"Permits through \u2192 listed" };
   }
-  return { to:_consStart(c), label:"Bought \u2192 pre-con done", next:"Construction \u2192 listed" };
+  return { to:_consStart(c), label:"Vacant \u2192 pre-con done", next:"Construction \u2192 listed" };
 }
 // Days Accumulated, split into the three stretches the team actually tracks.
 //   1. Bought    - the day we CLOSE ON THE PURCHASE (not the takedown date - Bruce,
@@ -10609,7 +10652,11 @@ function _accumStage1(c){
 function _accumSegments(c){
   const today=_ymd(new Date());
   const cl=(c && c.checklists) || {};
-  const bought = c.closingDate || null;
+  // Access, not ownership. We can own a house for months while a tenant is still in
+  // it; the clock that means anything starts the day it goes vacant and we can get in.
+  // Falls back to the closing date only when nobody has entered a vacancy date.
+  const bought = c.vacancyDate || c.closingDate || null;
+  const boughtIsFallback = !c.vacancyDate && !!c.closingDate;
   const cStart = _consStart(c);
   const listed = cl.timeline_done || null;
   const sold   = c.closedDate || null;
@@ -10629,9 +10676,10 @@ function _accumSegments(c){
   const permNote=_isPermittedCard(c)
     ? (mid ? ((c.checklists||{}).permits_cleared ? "" : "from the permit tracker") : "waiting on permits")
     : "";
+  const startNote = boughtIsFallback ? "no vacancy date — counting from the closing" : "";
   return [
     { label:st1.label, from:bought, to:mid, n:s1.n, bad:s1.bad, live:!!(bought&&!mid),
-      note:permNote || (c.vacancyDate?("vacant "+c.vacancyDate):"") },
+      note:[startNote,permNote].filter(Boolean).join(" \u00b7 ") },
     { label:st1.next,  from:mid, to:listed, n:s2.n, bad:s2.bad, live:!!(mid&&!listed), note:"" },
     { label:"Listed \u2192 sold", from:listed, to:sold, n:s3.n, bad:s3.bad, live:!!(listed&&!sold), note:"" }
   ];
@@ -11319,6 +11367,88 @@ function _nfMe(){
     return ((u.firstName||'')+' '+(u.lastName||'')).trim();
   }catch(e){ return ''; }
 }
+// Who owns permits. The job role first, then the named architect as a fallback so a
+// change of title does not silently switch her notifications off.
+function _nfSeesPermits(){
+  try{
+    const u=(typeof _viewUser==='function')?_viewUser():(typeof currentUser==='function'?currentUser():null);
+    if(!u) return false;
+    if(String(u.role||'')==='Architect') return true;
+    const nm=(typeof _permitArchitectName==='function')?String(_permitArchitectName()||''):'';
+    const me=((u.firstName||'')+' '+(u.lastName||'')).trim();
+    return !!(nm && me && nm.toLowerCase()===me.toLowerCase());
+  }catch(e){ return false; }
+}
+// The six things the architect is told about. Everything here is worked out from the
+// permit tracker itself, so a notification cannot outlive the thing it is about.
+function _nfPermitItems(today){
+  const out=[];
+  const list=(typeof _permitList==='function')?_permitList():[];
+  const days=(d)=>(typeof _permitDaysSince==='function')?_permitDaysSince(d):null;
+  list.forEach(function(r){
+    if(typeof _permitOpen==='function' && !_permitOpen(r)) return;   // closed is finished
+    const where='Permit '+(r.number||'')+(r.juris?(' \u00b7 '+r.juris):'');
+    const addr=r.addr||'a property';
+    // 1 - a revision is due back from us
+    if(/revision/i.test(String(r.status||'')) || (r.received && !r.responded)){
+      const d=days(r.received);
+      out.push({ id:'perm-rev:'+r.id+':'+(r.received||''), icon:'\u270f\ufe0f', tone:'red',
+        text:addr+' \u2014 revisions still to go back to the city',
+        sub:where+(d!==null?(' \u00b7 comment came in '+d+' day'+(d===1?'':'s')+' ago'):''),
+        when:r.received||today, click:"openPermitDashboard('tracker')" });
+    }
+    // 2 - the permit itself is still out
+    if(!r.issued && !/issued|closed/i.test(String(r.status||''))){
+      const d=days(r.submitted);
+      if(d!==null && d>=14) out.push({ id:'perm-due:'+r.id+':'+(r.submitted||''), icon:'\ud83d\udcc4', tone:'amber',
+        text:addr+' \u2014 permit still out at '+d+' days',
+        sub:where+' \u00b7 submitted '+(r.submitted||''),
+        when:r.submitted||today, click:"openPermitDashboard('tracker')" });
+    }
+    // 3 - nobody has opened the portal in a while
+    const ck=days(r.checked);
+    if(ck!==null && typeof PERMIT_STALE_DAYS!=='undefined' && ck>PERMIT_STALE_DAYS){
+      out.push({ id:'perm-follow:'+r.id+':'+(r.checked||''), icon:'\ud83d\udd0e', tone:'amber',
+        text:addr+' \u2014 follow up, the portal has not been checked in '+ck+' days',
+        sub:where, when:r.checked||today, click:"openPermitDashboard('tracker')" });
+    }
+    // 4, 5, 6 - the inspections on an issued permit
+    const insps=(typeof _permitInsps==='function')?_permitInsps(r):[];
+    const issued=(typeof _permitIsApproved==='function')?_permitIsApproved(r):false;
+    if(issued && !insps.length){
+      out.push({ id:'perm-order:'+r.id, icon:'\ud83d\udcd0', tone:'amber',
+        text:addr+' is issued with no inspection order set',
+        sub:where+' \u00b7 list the inspections in the order the city wants them',
+        when:r.issued||today, click:"openPermitDashboard('insp')" });
+    }
+    insps.forEach(function(x,i){
+      if(x.done) return;
+      if(!x.date){
+        // needs scheduling - only nag about the one that is actually next
+        const nxt=insps.filter(y=>!y.done)[0];
+        if(nxt && nxt.id===x.id) out.push({ id:'insp-book:'+r.id+':'+x.id, icon:'\ud83d\udcc5', tone:'blue',
+          text:addr+' \u2014 '+(x.name||'the next inspection')+' needs scheduling',
+          sub:where+' \u00b7 step '+(i+1)+' of '+insps.length,
+          when:today, click:"openPermitDashboard('insp')" });
+        return;
+      }
+      // scheduled, and then a check-back the day after it was due
+      const d=days(x.date);
+      if(d===null) return;
+      if(d<0){
+        out.push({ id:'insp-set:'+r.id+':'+x.id+':'+x.date, icon:'\ud83d\uddd3\ufe0f', tone:'blue',
+          text:addr+' \u2014 '+(x.name||'inspection')+' is booked for '+x.date,
+          sub:where, when:x.date, click:"openPermitDashboard('insp')" });
+      } else if(d>=1){
+        out.push({ id:'insp-check:'+r.id+':'+x.id+':'+x.date, icon:'\u2753', tone:'red',
+          text:addr+' \u2014 did '+(x.name||'the inspection')+' pass? It was booked for '+x.date,
+          sub:where+' \u00b7 mark it passed or failed so the next one can go out',
+          when:x.date, click:"openPermitDashboard('insp')" });
+      }
+    });
+  });
+  return out;
+}
 function _nfMineOnly(){
   // A project director sees the house-level nudges for every house; everybody else
   // sees the houses they are the PM on.
@@ -11374,31 +11504,11 @@ function _nfItems(){
       });
     });
   }catch(e){}
-  // 3 & 4 - permits: an examiner waiting on us, or a portal nobody has opened
-  try{
-    (typeof _permitList==='function'?_permitList():[]).forEach(function(r){
-      const need=(typeof _permitNeeds==='function')?_permitNeeds(r):null;
-      if(!need) return;
-      const answering=/not responded to/.test(need);
-      push({ id:'permit:'+r.id+':'+(r.received||r.checked||''), icon: answering?'✉️':'🔎',
-        tone: answering?'red':'amber',
-        text:(r.addr||'a permit')+' — '+need,
-        sub:'Permit '+(r.number||'')+(r.juris?(' · '+r.juris):''),
-        when:r.received||r.checked||today, click:"openPermitDashboard('tracker')" });
-    });
-  }catch(e){}
-  // 5 - an issued permit whose inspection order nobody has set
-  try{
-    (typeof _permitList==='function'?_permitList():[]).forEach(function(r){
-      if(typeof _permitIsApproved!=='function' || !_permitIsApproved(r)) return;
-      const ins=(typeof _permitInsps==='function')?_permitInsps(r):[];
-      if(ins && ins.length) return;
-      push({ id:'insporder:'+r.id, icon:'📐', tone:'amber',
-        text:(r.addr||'a permit')+' is issued with no inspection order set',
-        sub:'Permit '+(r.number||'')+' · the order of inspections has not been listed yet',
-        when:r.issued||today, click:"openPermitDashboard('insp')" });
-    });
-  }catch(e){}
+  // 3 - everything about permits belongs to the architect and nobody else.
+  // Bruce, 9 Sept: "the only person I want to get notifications on the permits is
+  // Jen. She's the one handling all of that, and she will assign tasks from there."
+  // Six things she is told about, and no permit notification reaches anyone else.
+  try{ if(_nfSeesPermits()) _nfPermitItems(today).forEach(push); }catch(e){}
   // 6 - closings and vacancies waiting on a yes or no
   try{
     if(typeof canApprove==='function' && canApprove() && typeof _confirmItems==='function'){
@@ -12449,6 +12559,44 @@ async function _permitAfterChange(id, field){
 // inspections per property IN THE ORDER THAT THEY ARE TO BE IN."
 // So the list is a sequence, not a bag. It is stored in order, numbered in order,
 // and moved with the arrows - no template, because Jen types each house fresh.
+// Drag one inspection onto another and it takes that position; everything else
+// shuffles up or down. Same save path as the arrows, so the property card's steps
+// and the "NEXT UP" marker stay in step.
+function _inspDragStart(e, pid, insId){
+  window._inspDrag={pid:pid, id:insId};
+  try{ e.dataTransfer.effectAllowed='move'; e.dataTransfer.setData('text/plain', insId); }catch(x){}
+  const tr=e.currentTarget; if(tr) tr.style.opacity='0.45';
+}
+function _inspDragOver(e){
+  const d=window._inspDrag; if(!d) return;
+  e.preventDefault();
+  try{ e.dataTransfer.dropEffect='move'; }catch(x){}
+  const tr=e.currentTarget; if(tr) tr.style.boxShadow='inset 0 2px 0 0 #639922';
+}
+function _inspDragLeave(e){ const tr=e.currentTarget; if(tr) tr.style.boxShadow=''; }
+function _inspDragEnd(e){
+  window._inspDrag=null;
+  document.querySelectorAll('tr[data-insp]').forEach(function(tr){ tr.style.opacity=''; tr.style.boxShadow=''; });
+}
+async function _inspDrop(e, pid, overId){
+  e.preventDefault();
+  const d=window._inspDrag; _inspDragEnd(e);
+  if(!d || d.pid!==pid || d.id===overId) return;
+  if(_blockIfReadOnly()) return;
+  const data=window._trkData||{}; data.permits=data.permits||{};
+  const rec=Object.assign({},(data.permits||{})[pid]||{});
+  const list=(Array.isArray(rec.insps)?rec.insps.map(x=>Object.assign({},x)):[]);
+  const from=list.findIndex(x=>x.id===d.id);
+  const to=list.findIndex(x=>x.id===overId);
+  if(from<0 || to<0) return;
+  const moved=list.splice(from,1)[0];
+  list.splice(to,0,moved);
+  rec.insps=list; data.permits[pid]=rec; window._trkData=data;
+  if(!await _trkSave()) return;
+  _logAudit("updated","permit",(rec.addr||"")+" \u2014 inspection order",
+    "Dragged \u201c"+String(moved.name||"")+"\u201d to step "+(to+1)+" of "+list.length);
+  _permitRerender();
+}
 async function _permitInspMove(id, insId, dir){
   if(_blockIfReadOnly()) return;
   const d=window._trkData||{}; d.permits=d.permits||{};
@@ -12657,8 +12805,9 @@ function _permitInspBody(){
     const arrow=(dir,label,disabled)=>disabled
       ? `<span style="display:block;font-size:9px;color:#e8eaef;line-height:1.15">${label}</span>`
       : `<span onclick="_permitInspMove('${r.id}','${ins.id}',${dir})" title="Move this ${dir<0?'earlier':'later'} in the order" style="display:block;cursor:pointer;font-size:9px;color:#9aa3b2;line-height:1.15">${label}</span>`;
-    return `<tr data-insp="${_calEsc(hay)}" style="border-top:0.5px solid #f1f3f7;${isNext?'background:#FAFCF6':''}">
-      <td style="padding:7px 0 7px 8px;width:22px;text-align:center;vertical-align:middle">${ro?'':`<div>${arrow(-1,'&#9650;',idx===0)}${arrow(1,'&#9660;',idx===last-1)}</div>`}</td>
+    const drag=ro?'':` draggable="true" ondragstart="_inspDragStart(event,'${r.id}','${ins.id}')" ondragover="_inspDragOver(event)" ondragleave="_inspDragLeave(event)" ondrop="_inspDrop(event,'${r.id}','${ins.id}')" ondragend="_inspDragEnd(event)"`;
+    return `<tr data-insp="${_calEsc(hay)}"${drag} style="border-top:0.5px solid #f1f3f7;${isNext?'background:#FAFCF6':''}${ro?'':';cursor:grab'}">
+      <td style="padding:7px 0 7px 8px;width:30px;text-align:center;vertical-align:middle">${ro?'':`<div style="display:flex;align-items:center;gap:3px;justify-content:center"><span title="Drag to reorder" style="font-size:12px;color:#c3cad6;cursor:grab;line-height:1">&#8942;&#8942;</span><div>${arrow(-1,'&#9650;',idx===0)}${arrow(1,'&#9660;',idx===last-1)}</div></div>`}</td>
       <td style="padding:7px 4px;width:22px;text-align:center;vertical-align:middle">
         <span style="display:inline-block;min-width:18px;padding:1px 0;border-radius:5px;font-size:10.5px;font-weight:700;color:${ins.done?'#fff':'#5b6474'};background:${ins.done?'#1D9E75':'#EDEFF4'}">${step}</span></td>
       <td style="padding:7px 8px;width:30px;text-align:center">${ro?`<span style="font-size:15px">${ins.done?'✅':'⬜'}</span>`
@@ -13631,6 +13780,7 @@ const PERMIT_DASH_TABS = [
 ];
 // Finished work, off the working tabs but never deleted. Permits and their inspections
 // stay separated inside this one tab, exactly as they are on the two live tabs.
+function _pclGo(k){ window._pclTab=(k==='insp')?'insp':'permits'; if(typeof openPermitDashboard==='function') openPermitDashboard('closed'); }
 function _permitClosedBody(){
   const done=_permitList().filter(r=>!_permitOpen(r));
   const insps=done.reduce((n,r)=>n+_permitInsps(r).length,0);
@@ -13659,14 +13809,15 @@ function _permitClosedBody(){
     window._permInspClosed=prev;
     return html;
   })();
-  const sec=(icon,title,sub,inner)=>`<div style="margin-top:18px">
-      <div style="display:flex;align-items:baseline;gap:9px;margin-bottom:9px">
-        <span style="font-size:14.5px;font-weight:700;color:#122A4A">${icon} ${title}</span>
-        <span style="font-size:12px;color:#98a2b3">${sub}</span>
-      </div>${inner}</div>`;
-  return head
-    + sec('&#128196;','Permits','the permit record, as it stood when it closed', permitsView)
-    + sec('&#128297;','Inspections','every inspection that was run on those permits', inspView);
+  // Two sub-tabs inside this one, so you look at permits OR inspections - never both
+  // dumped on the same page.
+  const tab=(window._pclTab==='insp')?'insp':'permits';
+  const btn=(k,label,sub)=>`<span onclick="_pclGo('${k}')" title="${_calEsc(sub)}" style="cursor:pointer;padding:7px 15px;border-radius:8px;font-size:13px;font-weight:${tab===k?'600':'400'};background:${tab===k?'#122A4A':'#fff'};color:${tab===k?'#fff':'#444'};border:0.5px solid ${tab===k?'#122A4A':'#d8dce6'}">${label}</span>`;
+  const bar=`<div style="display:flex;gap:7px;flex-wrap:wrap;margin:14px 0 13px">
+      ${btn('permits','\ud83d\udcc4 Permits &middot; '+done.length,'the permit record, as it stood when it closed')}
+      ${btn('insp','\ud83d\udd29 Inspections'+(insps?(' &middot; '+insps):''),'every inspection that was run on those permits')}
+    </div>`;
+  return head + bar + (tab==='insp' ? inspView : permitsView);
 }
 // The closed permits, drawn as the same cards the tracker uses but read-only: a
 // finished record should not be quietly editable from the archive.
@@ -17165,4 +17316,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-08f permit-pdfs-on-the-card -->
+<!-- build: 2026-09-09a meeting-order-growing-boxes-jen-notifications -->
