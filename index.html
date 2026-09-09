@@ -16864,6 +16864,152 @@ function _mBruceName(){ const b=(getUsers()||[]).find(u=>isBruce(u)); return b?(
 function _mViewableNames(){ const bn=_mBruceName().toLowerCase(); return teamMembers().filter(n=>n.toLowerCase()!==bn); }
 function _mMoney(v){ return (v===0||v)?String(v):"—"; }
 
+// ---- Notifications on the phone ---------------------------------------------
+// The bell reads exactly the same _nfItems() list the desktop bell reads, so what a
+// person sees on their phone at 6am is what they will see at their desk at 8.
+function _mUnread(){ try{ return _nfUnread().length; }catch(e){ return 0; } }
+function _mBellHTML(){
+  const n=_mUnread();
+  return `<button onclick="_mOpenBell()" title="Notifications" style="position:relative;background:none;border:none;padding:6px 8px;font-size:22px;line-height:1;cursor:pointer">&#128276;${n?`<span style="position:absolute;top:1px;right:1px;min-width:17px;height:17px;padding:0 4px;border-radius:99px;background:#E24B4A;color:#fff;font-size:10.5px;font-weight:700;line-height:17px;text-align:center">${n>99?'99+':n}</span>`:''}</button>`;
+}
+function _mBellRefresh(){
+  const b=document.getElementById('m-bell');
+  if(b) b.innerHTML=_mBellHTML();
+}
+function _mOpenBell(){
+  const body=document.getElementById('m-body'); if(!body) return;
+  let items=[]; try{ items=_nfItems(); }catch(e){ items=[]; }
+  let read={}; try{ read=_nfReadMap(); }catch(e){ read={}; }
+  const tone={ red:{bg:'#FBEAE8',fg:'#B42318'}, amber:{bg:'#FBF3E2',fg:'#8a6d1a'}, blue:{bg:'#E8F0FA',fg:'#185FA5'} };
+  const rows=items.length?items.map(x=>{
+    const t=tone[x.tone]||tone.blue; const isNew=!read[x.id];
+    return `<div onclick="_mBellTap('${_argEsc(x.id)}')" class="m-card" style="display:flex;gap:11px;align-items:flex-start;margin-bottom:9px;${isNew?'':'opacity:.62'};cursor:pointer">
+      <div style="width:8px;height:8px;border-radius:99px;margin-top:6px;flex-shrink:0;background:${isNew?t.fg:'#e2e5ea'}"></div>
+      <div style="font-size:19px;flex-shrink:0;line-height:1.1">${x.icon||''}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:15px;font-weight:600;color:#111">${_calEsc(x.text||'')}</div>
+        ${x.sub?`<div style="font-size:13px;color:#777;margin-top:2px">${_calEsc(x.sub)}</div>`:''}
+        ${x.when?`<div style="display:inline-block;margin-top:5px;font-size:11px;font-weight:700;padding:1px 8px;border-radius:99px;background:${t.bg};color:${t.fg}">${_calEsc(x.when)}</div>`:''}
+      </div></div>`;
+  }).join(''):`<div class="m-card" style="text-align:center;color:#9aa0a6;padding:34px 20px"><div style="font-size:30px;margin-bottom:8px">&#127881;</div>Nothing needs you right now.</div>`;
+  body.innerHTML=`<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:12px">
+      <button class="m-btn m-btn-lite" style="width:auto;padding:7px 14px;font-size:14px;border-radius:99px;margin:0" onclick="_mRender()">&lsaquo; Back</button>
+      ${items.length?`<button class="m-btn m-btn-lite" style="width:auto;padding:7px 14px;font-size:14px;border-radius:99px;margin:0" onclick="_mBellAllRead()">Mark all read</button>`:''}
+    </div>
+    <div style="font-size:19px;font-weight:700;color:#111;margin-bottom:10px">Notifications</div>
+    ${rows}`;
+  body.scrollTop=0;
+}
+function _mBellTap(id){
+  try{ _nfSetRead([id]); }catch(e){}
+  let it=null; try{ it=_nfItems().find(x=>x.id===id); }catch(e){}
+  _mBellRefresh();
+  // Notifications carry the desktop's click as a string. On a phone the equivalent
+  // screen is the mobile one, so translate rather than firing a desktop view that is
+  // hidden behind the field app.
+  const go=String((it&&it.click)||'');
+  let m=go.match(/^openTaskDetail\('([^']+)'\)$/);
+  if(m && typeof _mOpenTask==='function'){ _mOpenTask(m[1]); return; }
+  m=go.match(/^openPropDetail\('([^']+)'\)$/);
+  if(m && typeof _mOpenProp==='function'){ _mOpenProp(m[1]); return; }
+  _mOpenBell();
+}
+function _mBellAllRead(){ try{ _nfAllRead(); }catch(e){} _mBellRefresh(); _mOpenBell(); }
+
+// ---- Side tasks on the phone -------------------------------------------------
+// Same list, same owner, same save path as the property card on a desktop. Ticking
+// one here ticks it there.
+function _mSqBlock(c){
+  const ro=(typeof isReadOnly==='function')?isReadOnly():false;
+  const list=(typeof _sqList==='function')?_sqList(c):[];
+  const open=list.filter(x=>!x.done);
+  const done=list.filter(x=>x.done);
+  const today=_ymd(new Date());
+  const row=(x)=>{
+    const over=x.at && x.at<today && !x.done;
+    const due =x.at && x.at===today && !x.done;
+    const who=(typeof _sqWhoOf==='function')?_sqWhoOf(x):'';
+    return `<div style="display:flex;gap:11px;align-items:flex-start;padding:9px 0;border-top:0.5px solid #f2f4f7">
+      <div ${ro?'':`onclick="_mSqTick('${c.id}','${x.id}')"`} style="font-size:22px;line-height:1;flex-shrink:0;cursor:${ro?'default':'pointer'}">${x.done?'&#9989;':'&#11036;'}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:15px;color:${x.done?'#9aa0a6':'#111'};${x.done?'text-decoration:line-through':''};white-space:pre-wrap">${_calEsc(x.t||'')}</div>
+        <div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-top:4px">
+          ${who?`<span class="m-pill" style="background:#EAF1FA;color:#185FA5">&#128100; ${_calEsc(who)}</span>`:''}
+          ${x.at?`<span class="m-pill" style="background:${over?'#FBEAE8':(due?'#FBF3E2':'#F1F2F6')};color:${over?'#B42318':(due?'#8a6d1a':'#667085')}">${over?'Overdue':(due?'Today':_calEsc(x.at))}</span>`:''}
+        </div>
+      </div></div>`;
+  };
+  const adder=ro?'':`<div style="border-top:0.5px solid #f2f4f7;padding-top:11px;margin-top:4px">
+      <input class="m-input" id="msq-t-${c.id}" placeholder="Ask the neighbour about the fence line&hellip;" style="margin-top:0"/>
+      <select class="m-select" id="msq-w-${c.id}">${(typeof _sqWhoOpts==='function')?_sqWhoOpts((typeof _sqMe==='function')?_sqMe():''):''}</select>
+      <input class="m-input" type="date" id="msq-d-${c.id}"/>
+      <label style="display:flex;align-items:center;gap:8px;font-size:14px;color:#666;margin-top:10px"><input type="checkbox" id="msq-c-${c.id}" style="width:19px;height:19px"/> put it on the task calendar too</label>
+      <button class="m-btn" style="margin-top:11px" onclick="_mSqAdd('${c.id}')">Add side task</button>
+    </div>`;
+  return `<div class="m-card">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+      <div style="font-size:16px;font-weight:700;color:#111">&#129517; Side Tasks</div>
+      <div style="font-size:12.5px;color:#9aa0a6">${open.length} open${done.length?(' &middot; '+done.length+' handled'):''}</div>
+    </div>
+    ${open.map(row).join('')}${done.map(row).join('')}
+    ${adder}</div>`;
+}
+async function _mSqTick(pid,id){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
+  if(typeof _sqToggle==='function'){ await _sqToggle(pid,id); }
+  _mOpenProp(pid);
+}
+async function _mSqAdd(pid){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
+  // _sqAdd reads the desktop field ids, so mirror the phone's values onto hidden
+  // twins rather than writing a second, drifting copy of the save logic.
+  const map=[['sq-t-','msq-t-'],['sq-d-','msq-d-'],['sq-w-','msq-w-'],['sq-c-','msq-c-']];
+  const made=[];
+  map.forEach(([d,m])=>{
+    const src=document.getElementById(m+pid); if(!src) return;
+    let el=document.getElementById(d+pid);
+    if(!el){ el=document.createElement(src.tagName==='SELECT'?'select':'input'); el.id=d+pid; el.style.display='none'; document.body.appendChild(el); made.push(el); }
+    if(src.type==='checkbox') el.checked=src.checked; else el.value=src.value;
+  });
+  // the phase picker is not on the phone - a side task added from a house in the field
+  // belongs to where that house is right now.
+  let pe=document.getElementById('sq-p-'+pid);
+  if(!pe){ pe=document.createElement('select'); pe.id='sq-p-'+pid; pe.style.display='none';
+    (typeof SQ_PHASES!=='undefined'?SQ_PHASES:[]).forEach(x=>{ const o=document.createElement('option'); o.value=x.id; o.textContent=x.label; pe.appendChild(o); });
+    document.body.appendChild(pe); made.push(pe); }
+  pe.value=(typeof _mSqPhaseFor==='function')?_mSqPhaseFor(pid):'active';
+  try{ await _sqAdd(pid); } finally { made.forEach(el=>{ try{ el.remove(); }catch(e){} }); }
+  _mOpenProp(pid);
+}
+function _mSqPhaseFor(pid){
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
+  const ph=(c&&c.phase)||'';
+  if(['Upcoming Takedowns','Occupied / Closed','Vacant / On Standby','Pre Construction','Waiting Permits'].indexOf(ph)>=0) return 'pre';
+  if(['Finishes','Pre List / Punchout Process','Rental Handoff Process','Listed on the Market','In Contract','RTR In Process','RTR Completed (Pending Closing)','Closed'].indexOf(ph)>=0) return 'post';
+  return 'active';
+}
+// ---- Permit PDFs and the kickoff PDF, on the phone ---------------------------
+function _mDocsBlock(c){
+  const docs=(typeof _pdocList==='function')?_pdocList(c):[];
+  const k=(typeof _kickNotesFor==='function')?_kickNotesFor(c.id):null;
+  const kickReady=!!(k&&k.done);
+  if(!docs.length && !kickReady) return '';
+  const rows=docs.map(x=>`<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-top:0.5px solid #f2f4f7">
+      <span style="font-size:19px;flex-shrink:0">&#128196;</span>
+      <div style="flex:1;min-width:0">
+        ${x.url?`<a href="${_calEsc(x.url)}" target="_blank" rel="noopener" style="font-size:15px;color:#185FA5;text-decoration:none;font-weight:600;word-break:break-word">${_calEsc(x.name||'permit.pdf')}</a>`
+               :`<span style="font-size:15px;color:#111;font-weight:600">${_calEsc(x.name||'permit.pdf')}</span>`}
+        <div style="font-size:11.5px;color:#b6bcc7">${(typeof _pdocSize==='function')?_pdocSize(x.size):''}</div>
+      </div></div>`).join('');
+  return `<div class="m-card">
+    <div style="font-size:16px;font-weight:700;color:#111">&#128193; Paperwork</div>
+    ${kickReady?`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-top:0.5px solid #f2f4f7">
+      <span style="font-size:15px;color:#111;font-weight:600">&#128196; Kickoff notes</span>
+      <span onclick="_kickOpenPDF('${c.id}')" style="color:#185FA5;font-size:14px;font-weight:600">Open &#8599;</span></div>`:''}
+    ${docs.length?rows:''}
+    ${docs.length?'':`<div style="font-size:12.5px;color:#b6bcc7;padding-top:9px;border-top:0.5px solid #f2f4f7">No approved permits attached yet. They get attached from the property card on a computer.</div>`}
+  </div>`;
+}
 function renderMobileApp(){
   const host=document.getElementById("mobile-app"); if(!host) return;
   const u=currentUser();
@@ -16871,7 +17017,10 @@ function renderMobileApp(){
   host.innerHTML=`
     <div class="m-top">
       <div><div class="m-title">Legacy Homes</div><div class="m-sub">${_calEsc(u.firstName||"")} · ${isReadOnly(u)?"Read Only":"Field"}</div></div>
-      <button class="m-signout" onclick="doSignOut()">Sign out</button>
+      <div style="display:flex;align-items:center;gap:4px">
+        <span id="m-bell">${_mBellHTML()}</span>
+        <button class="m-signout" onclick="doSignOut()">Sign out</button>
+      </div>
     </div>
     <div class="m-body" id="m-body"></div>
     <div class="m-nav" id="m-nav"></div>`;
@@ -16919,6 +17068,7 @@ function _mRender(){
   else if(_mTab==="build") body.innerHTML=_mBuildTab();
   else if(_mTab==="props") body.innerHTML=_mPropsTab();
   else body.innerHTML=_mAddTab();
+  _mBellRefresh();
   body.scrollTop=0;
 }
 function _mGo(t){ _mTab=t; _mRender(); }
@@ -17176,7 +17326,9 @@ function _mPropDetail(id){
         ${_mInfoRow("Spent to Date",_calEsc(_mMoney(p.spent)))}
       </div>
     </div>
-    ${links.length?`<div class="m-card">${links.join("")}</div>`:""}`;
+    ${links.length?`<div class="m-card">${links.join("")}</div>`:""}
+    ${_mDocsBlock(p)}
+    ${_mSqBlock(p)}`;
 }
 
 // ---- Add tab ----
@@ -17771,4 +17923,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-09b side-task-owners-realtor-home-dashboard-rework -->
+<!-- build: 2026-09-09c field-app-catch-up -->
