@@ -2008,6 +2008,7 @@ function openProjectDashboard(activeTab) {
     { id: 'trello', label: 'Property Dashboard',icon: '🏗' },
     { id: 'construction', label: 'Construction Calendar', icon: '📅' },
     { id: 'taskcal',      label: 'Task Calendar',               icon: '🗓' },
+    { id: 'sidetasks',    label: 'Side Tasks',                  icon: '🧩' },
   ];
 
   const tabBar = tabs.map(t => `
@@ -3669,6 +3670,8 @@ async function _sqAdd(pid){
   const ph=(pEl&&pEl.value)||'pre';
   const at=(dEl&&dEl.value)||'';
   const cEl=document.getElementById('sq-c-'+pid);
+  const wEl=document.getElementById('sq-w-'+pid);
+  const who=((wEl&&wEl.value)||'').trim();
   const wantCal=!!(cEl&&cEl.checked);
   const me=(typeof _myProfile!=='undefined' && _myProfile && _myProfile.firstName)?_myProfile.firstName:'';
   const c=propCards.find(x=>x.id===pid);
@@ -3678,7 +3681,7 @@ async function _sqAdd(pid){
   let tid=null;
   if(wantCal){
     if(!at){ alert("Pick the date first — a task on the calendar has to land on a day."); return; }
-    const full=(typeof _myProfile!=='undefined'&&_myProfile)?(((_myProfile.firstName||'')+' '+(_myProfile.lastName||'')).trim()):'';
+    const full=who||_sqMe();
     const ins=await supabase.from("pm_tasks").insert({
       title:text, category:'Side Task', assignee:full||null, assignees:full?[full]:[],
       start_date:at, due_date:at, property_id:pid, status:'open',
@@ -3690,10 +3693,10 @@ async function _sqAdd(pid){
   }
   const ok=await _sqWrite(pid, arr=>arr.push({
     id:Date.now().toString(36)+Math.random().toString(36).slice(2,5),
-    ph:ph, t:text, done:false, at:at, by:me, made:new Date().toISOString(), tid:tid
+    ph:ph, t:text, done:false, at:at, by:me, who:who, made:new Date().toISOString(), tid:tid
   }));
   if(!ok) return;
-  _logAudit('created','property',(c&&c.addr)||'', 'Side task: '+text+(at?(' — remind on '+at+(tid?' and put on the task calendar':'')):' — no reminder date'));
+  _logAudit('created','property',(c&&c.addr)||'', 'Side task'+(who?(' for '+who):'')+': '+text+(at?(' — remind on '+at+(tid?' and put on the task calendar':'')):' — no reminder date'));
   if(tEl) tEl.value=''; if(dEl) dEl.value=''; if(cEl) cEl.checked=false;
   _sqRerender(pid);
 }
@@ -3715,6 +3718,42 @@ async function _sqDel(pid, id){
   if(!_confirmDelete('the reminder “'+((x&&x.t)||'')+'”','It is gone from this property for good.')) return;
   if(await _sqWrite(pid, arr=>{ const i=arr.findIndex(y=>y.id===id); if(i>=0) arr.splice(i,1); })) _sqRerender(pid);
 }
+function _sqWhoOf(x){ return String((x&&x.who)||'').trim(); }
+function _sqPeople(){ return (typeof teamMembers==='function')?(teamMembers()||[]):[]; }
+function _sqMe(){
+  if(typeof _myFullName==='function'){ const n=_myFullName(); if(n) return n; }
+  const m=(typeof _myProfile!=='undefined'&&_myProfile)?(((_myProfile.firstName||'')+' '+(_myProfile.lastName||'')).trim()):'';
+  return m;
+}
+function _sqWhoOpts(cur){
+  const me=_sqMe();
+  const people=_sqPeople().slice();
+  if(me && people.indexOf(me)<0) people.unshift(me);
+  return ['<option value="">\u2014 Nobody in particular \u2014</option>']
+    .concat(people.map(n=>`<option value="${_calEsc(n)}" ${String(cur||'')===n?'selected':''}>${_calEsc(n)}${n===me?' (me)':''}</option>`)).join('');
+}
+function _sqWhoChip(name){
+  if(!name) return '';
+  return `<span style="font-size:10.5px;font-weight:600;color:#185FA5;background:#EAF1FA;padding:1px 7px;border-radius:99px;white-space:nowrap">\uD83D\uDC64 ${_calEsc(name)}</span>`;
+}
+// Change who an existing side task is for. If it was also put on the task calendar,
+// the calendar task moves with it - otherwise the two would quietly disagree.
+async function _sqSetWho(pid, id, val){
+  if(_blockIfReadOnly()) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
+  const item=_sqList(c).find(x=>x.id===id);
+  const who=String(val||'').trim();
+  const ok=await _sqWrite(pid, arr=>{ const x=arr.find(y=>y.id===id); if(x) x.who=who; });
+  if(!ok) return;
+  if(item && item.tid){
+    try{
+      await supabase.from("pm_tasks").update({ assignee: who||null, assignees: who?[who]:[] }).eq("id", item.tid);
+      if(typeof loadTasks==='function'){ try{ await loadTasks(); }catch(e){} }
+    }catch(e){}
+  }
+  _logAudit('updated','property',(c&&c.addr)||'', 'Side task now for '+(who||'nobody in particular'));
+  _sqRerender(pid);
+}
 function _sqBody(c, compact){
   const ro=(typeof isReadOnly==='function')?isReadOnly():false;
   const list=_sqList(c);
@@ -3731,6 +3770,9 @@ function _sqBody(c, compact){
           ${ro
             ? `<span style="font-size:11px;color:#aaa">${x.at?('remind '+_calEsc(x.at)):'no reminder date'}</span>`+(x.tid?'<span style="font-size:11px;color:#185FA5"> &middot; on your task calendar</span>':'')
             : `<span style="font-size:11px;color:#aaa">remind me</span><input type="date" value="${_calEsc(x.at||'')}" onchange="_sqWhen('${c.id}','${x.id}',this.value)" style="padding:2px 5px;border:0.5px solid #e2e6ee;border-radius:5px;font-size:11px;color:#666"/>${x.tid?'<span style="font-size:11px;color:#185FA5">&middot; on your task calendar</span>':''}`}
+          ${ro
+            ? _sqWhoChip(_sqWhoOf(x))
+            : `<span style="font-size:11px;color:#aaa">for</span><select onchange="_sqSetWho('${c.id}','${x.id}',this.value)" style="padding:2px 5px;border:0.5px solid #e2e6ee;border-radius:5px;font-size:11px;color:#185FA5;max-width:150px">${_sqWhoOpts(_sqWhoOf(x))}</select>`}
           ${x.by?`<span style="font-size:11px;color:#ccc">added by ${_calEsc(x.by)}</span>`:''}
         </div>
       </div>
@@ -3761,11 +3803,12 @@ function _sqBody(c, compact){
       <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
         <input id="sq-t-${c.id}" placeholder="Ask the neighbour about the fence line…" style="flex:1;min-width:210px;padding:6px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px"/>
         <select id="sq-p-${c.id}" style="padding:6px 7px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12.5px">${SQ_PHASES.map(p=>`<option value="${p.id}">${p.label}</option>`).join('')}</select>
+        <select id="sq-w-${c.id}" title="Who is this for?" style="padding:6px 7px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12.5px;max-width:180px">${_sqWhoOpts(_sqMe())}</select>
         <input type="date" id="sq-d-${c.id}" title="Optional — when should this come back up?" style="padding:5px 7px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12.5px;color:#666"/>
         <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:#777;cursor:pointer;white-space:nowrap"><input type="checkbox" id="sq-c-${c.id}" style="cursor:pointer"/> put it on my task calendar too</label>
         <button onclick="_sqAdd('${c.id}')" style="padding:6px 13px;border:none;border-radius:7px;background:#122A4A;color:#fff;font-size:13px;font-weight:600;cursor:pointer">Add</button>
       </div>
-      <div style="font-size:11px;color:#aaa;margin-top:5px">No due date needed. The date is just for you to look back at &mdash; it stays off everybody's task calendar unless you tick the box.</div>
+      <div style="font-size:11px;color:#aaa;margin-top:5px">No due date needed. The date is just for you to look back at &mdash; it stays off everybody's task calendar unless you tick the box. Whoever you pick sees it under <b style="color:#888">Side Tasks</b> on the Project Dashboard.</div>
     </div>`;
 
   return `<div style="background:#fff;border:0.5px solid ${compact?'#eef0f6':'#e0e4ec'};border-radius:8px;overflow:hidden;margin-top:${compact?'11px':'12px'}">
@@ -4452,6 +4495,74 @@ function closePropModal() {
 }
 
 // ===================== GET PD CONTENT =====================
+// Every side task on every property, in one list. Default view is the ones that are
+// for you - that is the question this tab exists to answer.
+function _sqAllItems(){
+  const out=[];
+  (typeof propCards!=='undefined'?propCards:[]).forEach(c=>{
+    if(c.archived) return;
+    _sqList(c).forEach(x=>out.push({ c:c, x:x, who:_sqWhoOf(x), at:String(x.at||'') }));
+  });
+  return out;
+}
+function _sqAllGo(v){ window._sqAllWho=v; openProjectDashboard('sidetasks'); }
+function _sqAllShowDone(){ window._sqAllDone=!window._sqAllDone; openProjectDashboard('sidetasks'); }
+function _sqAllBody(){
+  const me=_sqMe();
+  const canSeeAll=(typeof _seesEveryone==='function')?_seesEveryone():true;
+  if(window._sqAllWho===undefined) window._sqAllWho = me ? 'me' : 'all';
+  let sel=window._sqAllWho;
+  if(!canSeeAll && sel!=='me') sel='me';
+  const showDone=!!window._sqAllDone;
+  const today=_ymd(new Date());
+  let items=_sqAllItems();
+  if(!showDone) items=items.filter(o=>!o.x.done);
+  if(sel==='me')        items=items.filter(o=>o.who===me);
+  else if(sel==='none') items=items.filter(o=>!o.who);
+  else if(sel!=='all')  items=items.filter(o=>o.who===sel);
+  // Dated ones first, soonest at the top; undated ones after, they are not waiting on a day.
+  items.sort((a,b)=>{
+    if(!!a.at!==!!b.at) return a.at?-1:1;
+    if(a.at!==b.at) return a.at<b.at?-1:1;
+    return String(a.c.addr||'').localeCompare(String(b.c.addr||''));
+  });
+  const counts={};
+  _sqAllItems().filter(o=>!o.x.done).forEach(o=>{ const k=o.who||'\\u2014'; counts[k]=(counts[k]||0)+1; });
+  const mineOpen=counts[me]||0;
+  const chip=(v,label,n,on)=>`<div onclick="_sqAllGo('${_argEsc(v)}')" style="padding:7px 14px;border-radius:9px;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap;${on?'background:#122A4A;color:#fff':'background:#fff;color:#555;border:0.5px solid #d8dce6'}">${_calEsc(label)}${n!==null?` <span style="opacity:.7;font-weight:400">${n}</span>`:''}</div>`;
+  const others=canSeeAll?[...new Set(_sqAllItems().map(o=>o.who).filter(w=>w&&w!==me))].sort():[];
+  const bar=`<div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+      ${me?chip('me','\\uD83D\\uDC64 Mine',mineOpen,sel==='me'):''}
+      ${canSeeAll?chip('all','Everyone',Object.values(counts).reduce((a,b)=>a+b,0),sel==='all'):''}
+      ${canSeeAll?chip('none','Nobody in particular',counts['\\u2014']||0,sel==='none'):''}
+      ${others.map(w=>chip(w,w,counts[w]||0,sel===w)).join('')}
+      <div style="flex:1"></div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#888;cursor:pointer;white-space:nowrap"><input type="checkbox" ${showDone?'checked':''} onchange="_sqAllShowDone()" style="cursor:pointer"/> show handled ones too</label>
+    </div>`;
+  const rows=items.length?items.map(o=>{
+    const over=o.at && o.at<today, due=o.at && o.at===today;
+    const when = !o.at ? 'no date' : (over?'Overdue \\u00b7 '+o.at : (due?'Today':o.at));
+    const col  = !o.at ? '#bbb' : (over?'#B42318':(due?'#B7791F':'#185FA5'));
+    const ph=(SQ_PHASES.find(pp=>pp.id===_sqPhaseOf(o.x))||{}).label||'';
+    return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid ${col};border-radius:9px;padding:10px 13px;margin-bottom:7px;display:flex;gap:10px;align-items:flex-start">
+      <span onclick="_sqToggle('${o.c.id}','${o.x.id}')" title="${o.x.done?'Put it back on the list':'Mark it handled'}" style="cursor:pointer;font-size:15px;flex-shrink:0;line-height:1.2">${o.x.done?'\\u2705':'\\u2B1C'}</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13.5px;color:${o.x.done?'#9aa3b2':'#111'};${o.x.done?'text-decoration:line-through':''};white-space:pre-wrap">${_calEsc(o.x.t||'')}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:4px">
+          <span onclick="openPropDetail('${o.c.id}')" style="font-size:12px;color:#185FA5;cursor:pointer">${_calEsc(o.c.addr||'')}</span>
+          ${ph?`<span style="font-size:10.5px;color:#bbb">${_calEsc(ph)}</span>`:''}
+          ${_sqWhoChip(o.who)}
+          ${o.x.tid?'<span style="font-size:10.5px;color:#185FA5">on the task calendar</span>':''}
+        </div>
+      </div>
+      <div style="font-size:11.5px;font-weight:600;color:${col};white-space:nowrap;flex-shrink:0">${_calEsc(when)}</div>
+    </div>`;
+  }).join(''):`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:30px;text-align:center;color:#bbb;font-size:13.5px">Nothing here. Side tasks are added on a property card &mdash; pick a name when you add one and it lands in that person's list.</div>`;
+  return `<div style="padding:20px;max-width:900px">
+    <div style="font-size:17px;font-weight:700;color:#111">\\uD83E\\uDDE9 Side Tasks</div>
+    <div style="font-size:12.5px;color:#999;margin-bottom:13px">Every reminder written on a property card, gathered by who it is for.</div>
+    ${bar}${rows}</div>`;
+}
 function getPDContent(tab) {
   const placeholder = (icon, msg) => `
     <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:32px;text-align:center;color:#bbb;font-size:14px;margin:20px 0">
@@ -4465,6 +4576,7 @@ function getPDContent(tab) {
     case 'trello': return renderPropertyBoard();
     case 'construction': return renderConstructionCalendar();
     case 'taskcal':      return renderTaskCalendar();
+    case 'sidetasks':    return _sqAllBody();
     default:       return placeholder('📊','Select a tab above to get started.');
   }
 }
@@ -4703,7 +4815,7 @@ function _pmBoardDrill(pmName,key){
   const items=_pdnList.map((n,i)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:8px 10px;margin-bottom:6px;display:flex;gap:8px;align-items:flex-start"><span onclick="_pdnToggle('${pmQ}','${key}',${i})" style="cursor:pointer;font-size:16px;line-height:1.2">${n.done?'✅':'⬜'}</span><div style="flex:1;font-size:12.5px;color:${n.done?'#aaa':'#333'};${n.done?'text-decoration:line-through;':''}">${_calEsc(n.t)}<div style="font-size:10.5px;color:#bbb">${_calEsc(n.at||'')}</div></div><span onclick="_pdnDel('${pmQ}','${key}',${i})" style="cursor:pointer;color:#c0392b;font-size:13px">✕</span></div>`).join('')||'<div style="color:#bbb;font-size:13px;padding:8px 0">No notes yet.</div>';
   const thirdHead='Comments & Notes';
   const thirdBody=`${isReadOnly()?'':`<div style="display:flex;gap:6px;margin-bottom:8px"><input id="pdn-new" placeholder="Feedback, ideas, follow-ups…" style="flex:1;min-width:0;padding:7px 9px;border:0.5px solid #ddd;border-radius:6px;font-size:13px"/><button onclick="_pdnAdd('${pmQ}','${key}')" style="padding:7px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer">Add</button></div>`}${items}
-    <div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin:16px 0 8px">Checklists outstanding</div>${_chkBoardColumn(cards)}`;
+    <div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin:16px 0 8px">Side tasks due</div>${_sqDueColumn(cards)}`;
   el.innerHTML=`<div style="padding:20px">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px"><button onclick="_pmBoardBack('${_argEsc(pmName)}')" style="font-size:13px;padding:6px 12px;border:0.5px solid #cdd7e6;border-radius:6px;background:#fff;color:#185FA5;cursor:pointer">‹ Back</button><div style="font-size:16px;font-weight:600;color:#111">${g.title} — ${_calEsc(resolvePMName(pmName))}</div></div>
     <div style="display:grid;grid-template-columns:1.2fr 1.2fr 1fr;gap:16px;align-items:start">
@@ -4711,7 +4823,81 @@ function _pmBoardDrill(pmName,key){
       <div><div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Needs completed</div>${needs}</div>
       <div><div style="font-size:12px;font-weight:600;color:#888;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">${thirdHead}</div>${thirdBody}</div>
     </div>
-    ${_pdnAllPMs(key, g.title)}
+    ${_pdFivePanels(cards)}
+  </div>`;
+}
+// Side tasks that are shouting: already past their date, or landing inside 48 hours.
+// Overdue first, then soonest. Anything further out stays on the property card where
+// it was written - this column is only the ones that need looking at now.
+function _sqDueSoon(cards){
+  const today=_ymd(new Date());
+  const cut=new Date(); cut.setDate(cut.getDate()+2);
+  const cutStr=_ymd(cut);
+  const out=[];
+  (cards||[]).forEach(c=>{
+    _sqList(c).forEach(x=>{
+      if(!x || x.done || !x.at) return;
+      const at=String(x.at);
+      if(at>cutStr) return;
+      out.push({ c:c, x:x, at:at, over: at<today });
+    });
+  });
+  out.sort((a,b)=> a.at<b.at ? -1 : (a.at>b.at ? 1 : 0));
+  return out;
+}
+function _sqDueColumn(cards){
+  const list=_sqDueSoon(cards);
+  if(!list.length) return `<div style="font-size:12.5px;color:#bbb">Nothing due in the next 48 hours.</div>`;
+  const today=_ymd(new Date());
+  return list.slice(0,25).map(o=>{
+    const when = o.at<today ? 'Overdue' : (o.at===today ? 'Today' : 'Due '+o.at);
+    const col  = o.at<today ? '#B42318' : (o.at===today ? '#B7791F' : '#185FA5');
+    const ph   = (SQ_PHASES.find(p=>p.id===_sqPhaseOf(o.x))||{}).label||'';
+    return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid ${col};border-radius:8px;padding:8px 11px;margin-bottom:6px">
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">
+        <div style="font-size:12.5px;color:#185FA5;cursor:pointer;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" onclick="openPropDetail('${o.c.id}')">${_calEsc(o.c.addr||'')}</div>
+        <div style="font-size:10.5px;font-weight:700;color:${col};flex-shrink:0;text-transform:uppercase;letter-spacing:.04em">${when}</div></div>
+      <div style="font-size:12.5px;color:#333;margin-top:3px">${_calEsc(o.x.t||'')}</div>
+      ${ph?`<div style="font-size:10.5px;color:#aaa;margin-top:2px">${_calEsc(ph)}</div>`:''}
+    </div>`;
+  }).join('')+(list.length>25?`<div style="font-size:11px;color:#aaa;margin-top:4px">+ ${list.length-25} more</div>`:'');
+}
+// Bruce, 9 Sept: "two sections at the bottom. The left is construction work being
+// completed the next five days on all properties. The right is tasks due within
+// five days." Both are scoped to the properties on the board you are looking at.
+function _pdFivePanels(cards){
+  const ids=new Set((cards||[]).map(c=>c.id));
+  const today=new Date(); const todayStr=_ymd(today);
+  const end=new Date(); end.setDate(end.getDate()+5); const endStr=_ymd(end);
+  const evs=(typeof _calEventsCache!=='undefined'?_calEventsCache:[])
+    .filter(e=>ids.has(e.property_id) && !e.completed && e.event_date && e.event_date>=todayStr && e.event_date<=endStr)
+    .sort((a,b)=>a.event_date<b.event_date?-1:1);
+  const tks=(typeof _tasksCache!=='undefined'?_tasksCache:[])
+    .filter(t=>ids.has(t.property_id) && t.status==='open' && t.due_date && t.due_date<=endStr)
+    .sort((a,b)=>a.due_date<b.due_date?-1:1);
+  const dayLbl=d=>{ if(d===todayStr) return 'Today'; const t=new Date(); t.setDate(t.getDate()+1); return d===_ymd(t)?'Tomorrow':d; };
+  const evRows=evs.length?evs.map(e=>{
+    const lbl=e.kind==='contractor'?('\u2605 '+_contractorName(e.contractor_id)):(e.kind==='custom'?('\u2022 '+(e.title||'Event')):('\uD83D\uDCE6 '+(e.title||'Material')));
+    return `<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:0.5px solid #f1f3f7">
+      <div style="min-width:0"><div style="font-size:13px;color:#111;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(lbl)}</div>
+      <div style="font-size:11.5px;color:#888">${_calEsc(_locLabel(e)||'')}</div></div>
+      <div style="font-size:11.5px;color:#639922;white-space:nowrap;font-weight:600">${_calEsc(dayLbl(e.event_date))}</div></div>`;
+  }).join(''):'<div style="font-size:12.5px;color:#bbb;padding:12px 0">No contractors or materials booked in the next five days.</div>';
+  const tkRows=tks.length?tks.map(t=>{
+    const over=t.due_date<todayStr;
+    return `<div onclick="openTaskDetail('${t.id}')" style="cursor:pointer;display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:0.5px solid #f1f3f7">
+      <div style="min-width:0"><div style="font-size:13px;color:#111;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(t.title||'')}</div>
+      <div style="font-size:11.5px;color:#888">${_calEsc(_locLabel(t)||'')}</div></div>
+      <div style="font-size:11.5px;color:${over?'#B42318':'#185FA5'};white-space:nowrap;font-weight:600">${over?'Overdue':_calEsc(dayLbl(t.due_date))}</div></div>`;
+  }).join(''):'<div style="font-size:12.5px;color:#bbb;padding:12px 0">Nothing due in the next five days.</div>';
+  const panel=(title,count,rows,color)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${color};border-radius:10px;overflow:hidden">
+    <div style="padding:11px 15px;border-bottom:0.5px solid #eef0f4;display:flex;justify-content:space-between;align-items:baseline">
+      <div style="font-size:13.5px;font-weight:700;color:#111">${title}</div>
+      <div style="font-size:11.5px;color:#999">${count} item${count===1?'':'s'}</div></div>
+    <div style="padding:6px 15px 12px">${rows}</div></div>`;
+  return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:22px">
+    ${panel('\uD83C\uDFD7 Construction \u2014 next 5 days', evs.length, evRows, '#639922')}
+    ${panel('\uD83D\uDDD2 Tasks due \u2014 next 5 days', tks.length, tkRows, '#185FA5')}
   </div>`;
 }
 // Directors and the CEO see every PM's comments for this board, on one page, and can add
@@ -9771,10 +9957,53 @@ function _effectiveUser(){
 // another one in there that is cleared to close."
 // So: one menu item, two tabs, and Katie's stages read left to right in the order a
 // house actually moves through them.
-const RLT_TABS=[
-  ['main',  '🔑 Main Dashboard',           'Listings, contracts and what is coming up'],
-  ['stages','🏁 End of Project Assistant', 'Every house Katie is holding, by stage']
-];
+// Bruce, 9 Sept: "once Katie and them have created their job roles they should pop up
+// on the dashboard with their realtor names. Make sure Will doesn't see Katie's and
+// Katie's doesn't see Will's - actually, you can let those two see each other. But any
+// other realtor, like if we let Brad come in here, we don't need him to see Katie and
+// Will's dashboard."
+// So: realtors named together in a group can see each other's tabs. Everybody else
+// gets exactly one tab - their own. To let another pair see each other, add their
+// full names to the same array below.
+const RLT_VIEW_GROUPS=[ ["Will Harr","Katie Harr"] ];
+function _rltSeesAll(){
+  const u=(typeof _effectiveUser==='function')?_effectiveUser():currentUser();
+  if(!u) return false;
+  if(typeof _seesEveryone==='function') return _seesEveryone(u);
+  return !!(isBruce(u) || u.role==='CEO' || u.role==='Project Director' || u.isSuperAdmin);
+}
+// Every approved realtor, by full name.
+function _rltAll(){
+  return [...new Set((typeof getUsers==='function'?getUsers():[])
+    .filter(u=>u.status==='approved' && u.role==='Realtor')
+    .map(u=>((u.firstName||'')+' '+(u.lastName||'')).trim()).filter(Boolean))].sort();
+}
+// The realtors THIS person is allowed to open a tab for.
+function _rltVisible(){
+  const all=_rltAll();
+  if(_rltSeesAll()) return all;
+  const me=(typeof _myFullName==='function')?_myFullName():'';
+  const norm=x=>String(x||'').trim().toLowerCase();
+  const mine=norm(me);
+  const group=RLT_VIEW_GROUPS.find(g=>g.some(n=>norm(n)===mine));
+  if(group) return all.filter(n=>group.some(g=>norm(g)===norm(n)));
+  return all.filter(n=>norm(n)===mine);
+}
+// Houses this realtor is listing. The listing agent on the property card is what
+// feeds their tab, so assigning one is what makes a house show up here.
+function _rltCards(name){
+  const norm=x=>String(x||'').trim().toLowerCase();
+  return (typeof propCards!=='undefined'?propCards:[])
+    .filter(c=>!c.archived && norm(c.listingAgent)===norm(name));
+}
+function _rltKey(name){ return 'r:'+name; }
+function _rltTabs(){
+  const t=[['main','\uD83D\uDD11 Main Dashboard','Listings, contracts and what is coming up']];
+  _rltVisible().forEach(n=>t.push([_rltKey(n),'\uD83C\uDFE0 '+n,'Every house '+n+' is holding, by stage']));
+  if(_rltSeesAll()) t.push(['stages','\uD83C\uDFC1 All houses','Every house on the market, by stage, whoever is listing it']);
+  return t;
+}
+Object.defineProperty(window,'RLT_TABS',{ get:_rltTabs, configurable:true });
 const RLT_STAGES=["Pre List / Punchout Process","Listed on the Market","In Contract","RTR In Process","RTR Completed (Pending Closing)"];
 function _rltTab(){ const t=window._rltTabSel||'main'; return RLT_TABS.some(x=>x[0]===t)?t:'main'; }
 function _rltGo(t){ window._rltTabSel=t; openRealtorDashboard(); }
@@ -9802,12 +10031,14 @@ function openRealtorDashboard(tab){
 
   const tabBar=`<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:14px">${RLT_TABS.map(t=>{
       const on=(t[0]===_rt);
-      return `<div onclick="_rltGo('${t[0]}')" title="${_calEsc(t[2])}" style="padding:8px 15px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;${on?'background:#122A4A;color:#fff':'background:#fff;color:#555;border:0.5px solid #d8dce6'}">${t[1]}</div>`;
+      return `<div onclick="_rltGo('${_argEsc(t[0])}')" title="${_calEsc(t[2])}" style="padding:8px 15px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;${on?'background:#122A4A;color:#fff':'background:#fff;color:#555;border:0.5px solid #d8dce6'}">${_calEsc(t[1])}</div>`;
     }).join('')}</div>`;
 
-  // Katie's stages, in the order a house moves through them.
-  const stageBlock=RLT_STAGES.map(ph=>{
-    const cs=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && c.phase===ph)
+  // The stages, in the order a house moves through them. Pass a realtor's name and
+  // it is only their houses; pass nothing and it is every house on the board.
+  const _stageBlockFor=(who)=>RLT_STAGES.map(ph=>{
+    const pool = who ? _rltCards(who) : (typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived);
+    const cs=pool.filter(c=>c.phase===ph)
       .sort((a,b)=>String(a.addr||'').localeCompare(String(b.addr||'')));
     const info=(typeof phInfo==='function')?phInfo(ph):{bg:'#f4f5f7',text:'#555'};
     const rows=cs.length?cs.map(c=>`<div onclick="openPropDetail('${c.id}')" style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;padding:8px 15px;border-top:0.5px solid #f4f5f7;cursor:pointer">
@@ -9820,6 +10051,7 @@ function openRealtorDashboard(tab){
         <span style="font-size:12px;font-weight:700;color:${info.text};opacity:.75">${cs.length}</span>
       </div>${rows}</div>`;
   }).join('');
+  const stageBlock=_stageBlockFor(null);
 
   const mainBody=`
     <div style="background:#FFF7E0;border:1px solid #EAD9A8;border-radius:11px;padding:12px 15px;margin-bottom:14px">
@@ -9845,8 +10077,13 @@ function openRealtorDashboard(tab){
     <div style="font-size:12.5px;color:#999;margin-bottom:12px">Listings, remedies and contracts in one place.</div>
     ${tabBar}
     ${_rt==='stages'
-      ? `<div style="font-size:12.5px;color:#888;margin-bottom:10px">Every house Katie is holding, in the order it moves: pre-list and punch out, on the market, in contract, request a remedy, cleared to close.</div>${stageBlock}`
-      : mainBody}
+      ? `<div style="font-size:12.5px;color:#888;margin-bottom:10px">Every house on the board, in the order it moves: pre-list and punch out, on the market, in contract, request a remedy, cleared to close.</div>${stageBlock}`
+      : (_rt.indexOf('r:')===0
+        ? (()=>{ const who=_rt.slice(2); const mine=_rltCards(who);
+            return `<div style="font-size:12.5px;color:#888;margin-bottom:10px"><b style="color:#111">${_calEsc(who)}</b> &mdash; ${mine.length} house${mine.length===1?'':'s'}, in the order they move: pre-list and punch out, on the market, in contract, request a remedy, cleared to close.</div>`
+              + (mine.length?'':`<div style="background:#FFF7E0;border:1px solid #EAD9A8;border-radius:11px;padding:12px 15px;margin-bottom:12px;font-size:13px;color:#6b5310">No houses are listed under this name yet. A house shows up here once <b>${_calEsc(who)}</b> is set as the listing agent on its property card.</div>`)
+              + _stageBlockFor(who); })()
+        : mainBody)}
   </div></div></div>`;
 }
 
@@ -9916,6 +10153,103 @@ function _inviteRoleFor(email){
   return rec?rec.role:'';
 }
 
+// ===================== REALTOR HOME =====================
+// Bruce, 9 Sept: "for the job role as a realtor, their home page when they log in -
+// there'll be tasks overdue in one box. Replace the Google Calendar box with a
+// construction calendar that only shows request remedies for properties they are the
+// realtor for. The task calendar shows tasks assigned just to them. They won't see the
+// year to date financials. At the bottom, closed this year for properties tied to their
+// name, properties on the market tied to their name, and the other boxes they see on
+// their realtor dashboard."
+// Everything on this page is scoped to the listing agent on the property card. No
+// money, no other realtor's houses.
+const RLT_REMEDY_PHASES=["RTR In Process","RTR Completed (Pending Closing)"];
+function _rhomeCards(name){ return (typeof _rltCards==='function')?_rltCards(name):[]; }
+function renderRealtorHome(user){
+  user=user||_effectiveUser();
+  const me=_rhName(user);
+  const mine=_rhomeCards(me);
+  const ids=new Set(mine.map(c=>c.id));
+  const todayStr=_ymd(new Date());
+  const yr=new Date().getFullYear();
+  const ph=(list)=>mine.filter(c=>list.indexOf(c.phase)>=0);
+
+  const card=(title,linkLabel,linkFn,body)=>`<div style="background:#111;border:1px solid #2a2a2a;border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
+      <div style="padding:10px 14px;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;justify-content:space-between">
+        <div style="font-size:13px;font-weight:500;color:#fff">${title}</div>
+        ${linkFn?`<div onclick="${linkFn}" style="font-size:11px;color:#5dade2;cursor:pointer">${linkLabel} &rarr;</div>`:''}
+      </div>
+      <div style="padding:10px 14px;flex:1">${body}</div>
+    </div>`;
+  const empty=(m)=>`<div style="text-align:center;color:#555;font-size:13px;padding:16px 0">${m}</div>`;
+
+  // ---- overdue, theirs only ----
+  const overdue=(typeof _tasksCache!=='undefined'?_tasksCache:[])
+    .filter(t=>t.status==='open' && t.due_date && t.due_date<todayStr && _taskHasAssignee(t,me))
+    .sort((a,b)=>a.due_date<b.due_date?-1:1);
+  const overdueRows=overdue.length
+    ? overdue.slice(0,8).map(t=>`<div onclick="openTaskDetail('${t.id}')" style="display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:0.5px solid #2e1c1c;cursor:pointer"><div style="min-width:0"><div style="font-size:13px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(t.title||'')}</div><div style="font-size:11px;color:#b98a82">${_calEsc(_locLabel(t)||'')}</div></div><div style="font-size:11px;color:#ff8a7a;white-space:nowrap">Due ${_calEsc(t.due_date)}</div></div>`).join('')
+    : empty('\uD83C\uDF89 Nothing overdue');
+  const overdueCard=`<div style="background:#1a1111;border:1px solid ${overdue.length?'#5a2b2b':'#2a2a2a'};border-radius:10px;overflow:hidden;margin-top:14px">
+      <div style="padding:10px 14px;border-bottom:1px solid #2a1a1a;display:flex;align-items:center;justify-content:space-between">
+        <div style="font-size:13px;font-weight:600;color:#fff">\u26A0\uFE0F Overdue Tasks${overdue.length?` <span style="color:#ff8a7a">(${overdue.length})</span>`:''}</div>
+        <div onclick="openProjectDashboard('taskcal')" style="font-size:11px;color:#5dade2;cursor:pointer">Task calendar &rarr;</div>
+      </div>
+      <div style="padding:6px 14px 10px">${overdueRows}</div>
+    </div>`;
+
+  // ---- remedy work booked on their houses ----
+  const remedyIds=new Set(ph(RLT_REMEDY_PHASES).map(c=>c.id));
+  const rEvents=(typeof _calEventsCache!=='undefined'?_calEventsCache:[])
+    .filter(e=>remedyIds.has(e.property_id) && !e.completed && e.event_date && e.event_date>=todayStr)
+    .sort((a,b)=>a.event_date<b.event_date?-1:1).slice(0,6);
+  const rRows=rEvents.length?rEvents.map(e=>{
+    const lbl=e.kind==='contractor'?('\u2605 '+_contractorName(e.contractor_id)):(e.kind==='custom'?('\u2022 '+(e.title||'Event')):('\uD83D\uDCE6 '+(e.title||'Material')));
+    return `<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:0.5px solid #1e1e1e"><div style="min-width:0"><div style="font-size:13px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(lbl)}</div><div style="font-size:11px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(_locLabel(e)||'')}</div></div><div style="font-size:11px;color:#f0c674;white-space:nowrap">${_calEsc(e.event_date)}</div></div>`;
+  }).join(''):empty(remedyIds.size?'No remedy work booked yet':'Nothing on your remedy list right now');
+
+  // ---- their tasks, nobody else's ----
+  const myTasks=(typeof _tasksCache!=='undefined'?_tasksCache:[])
+    .filter(t=>t.status==='open' && t.due_date && t.due_date>=todayStr && _taskHasAssignee(t,me))
+    .sort((a,b)=>a.due_date<b.due_date?-1:1).slice(0,6);
+  const tRows=myTasks.length?myTasks.map(t=>`<div onclick="openTaskDetail('${t.id}')" style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:0.5px solid #1e1e1e;cursor:pointer"><div style="min-width:0"><div style="font-size:13px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(t.title||'')}</div><div style="font-size:11px;color:#666">${_calEsc(_locLabel(t)||'')}</div></div><div style="font-size:11px;color:#5dade2;white-space:nowrap">${_calEsc(t.due_date)}</div></div>`).join(''):empty('No upcoming tasks assigned to you');
+
+  // ---- closed this year, tied to their name ----
+  const closed=mine.filter(c=>c.phase==='Closed' && c.end && new Date(c.end).getFullYear()===yr);
+  const onMkt=ph(['Listed on the Market','Listed on the Market / Final Inspections']);
+  const soon=ph(['Pre List / Punchout Process','Rental Handoff Process']);
+  const inCon=ph(['In Contract']);
+  const rtr=ph(['RTR In Process']);
+  const ctc=ph(['RTR Completed (Pending Closing)']);
+
+  const listBox=(title,cards,emptyMsg)=>card(title,cards.length?'Open':'', cards.length?"openRealtorDashboard('"+_argEsc('r:'+me)+"')":'',
+    cards.length?cards.slice(0,6).map(c=>`<div onclick="openPropDetail('${c.id}')" style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:0.5px solid #1e1e1e;cursor:pointer"><div style="min-width:0"><div style="font-size:13px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(c.addr||'')}</div><div style="font-size:11px;color:#666">${_calEsc(_phLabel(c.phase))}</div></div><div style="font-size:11px;color:#888;white-space:nowrap">${_calEsc(c.pm||'')}</div></div>`).join('')+(cards.length>6?`<div style="font-size:11px;color:#555;padding-top:6px">+ ${cards.length-6} more</div>`:''):empty(emptyMsg));
+
+  const noneYet = mine.length?'':`<div style="background:#1a1608;border:1px solid #40340f;border-radius:10px;padding:13px 15px;margin-top:14px;font-size:13px;color:#e0c98a">No houses are listed under <b>${_calEsc(me)}</b> yet. A house appears here once your name is set as the listing agent on its property card.</div>`;
+
+  return `<div style="padding:20px 24px;max-width:100%">
+    ${welcomeHeader(user)}
+    ${noneYet}
+    ${overdueCard}
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-top:12px">
+      ${card('\uD83D\uDEE0 Remedy work on your houses','Construction calendar',"openProjectDashboard('construction')",rRows)}
+      ${card('\uD83D\uDDD2 Your tasks','Task calendar',"openProjectDashboard('taskcal')",tRows)}
+    </div>
+    ${_rhHead('Your houses','everything with your name on it as listing agent')}
+    ${_rhRow([
+      _rhTile('Coming soon',soon.length,'#f0c674','about to be listed',"openRealtorDashboard('"+_argEsc('r:'+me)+"')"),
+      _rhTile('On the market',onMkt.length,'#5dade2','listed right now',"openRealtorDashboard('"+_argEsc('r:'+me)+"')"),
+      _rhTile('In contract',inCon.length,'#2ecc71','before the remedy list',"openRealtorDashboard('"+_argEsc('r:'+me)+"')"),
+      _rhTile('Request a remedy',rtr.length,'#f39c12','remedies being worked',"openRealtorDashboard('"+_argEsc('r:'+me)+"')"),
+      _rhTile('Cleared to close',ctc.length,'#a78bfa','remedies completed',"openRealtorDashboard('"+_argEsc('r:'+me)+"')"),
+      _rhTile('Closed in '+yr,closed.length,'#2ecc71','tied to your name',"openRealtorDashboard('"+_argEsc('r:'+me)+"')")
+    ])}
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;margin-top:6px">
+      ${listBox('\uD83C\uDFE1 On the market',onMkt,'Nothing of yours is listed right now')}
+      ${listBox('\u2705 Closed in '+yr,closed,'Nothing closed under your name yet this year')}
+    </div>
+  </div>`;
+}
 function renderGenericHome(user) {
   user = user || _effectiveUser();
   if (isBruce(user)) return renderBruceHome();
@@ -9926,6 +10260,7 @@ function renderGenericHome(user) {
   if (r === "Virtual Administrative Assistant") return renderVAHome(user);
   if (r === "Senior Administrative Assistant" || r === "Administrative Assistant" || r === "Administrative Manager") return renderAdminHome(user);
   if (r === "Architect") return renderArchitectHome(user);
+  if (r === "Realtor") return renderRealtorHome(user);
   if (r === "Start of Project Assistant") return renderProjectAssistantHome(user,'start');
   if (r === "End of Project Assistant") return renderProjectAssistantHome(user,'end');
   if (r === "Project Director") return renderBruceHome();
@@ -9991,6 +10326,7 @@ function openPMAssistantDashboard(activeTab){
     {id:'property',     label:'Property Dashboard',      icon:'🏗'},
     {id:'construction', label:'Construction Calendar',   icon:'📅'},
     {id:'taskcal',      label:'Task Calendar',           icon:'🗓'},
+    {id:'sidetasks',    label:'Side Tasks',              icon:'🧩'},
   ];
   // When inside a role's inner tabs (phase / this-week / due-now), keep its top role tab highlighted.
   let hi = activeTab;
@@ -10020,7 +10356,8 @@ const _ASSISTANT_ROLE_BOARDS = {
     { id:'eop-prelist',  title:'Pre List / Punchout', phases:['Pre List / Punchout Process'] },
     { id:'eop-market',   title:'On the Market',       phases:['Listed on the Market'] },
     { id:'eop-contract', title:'In Contract',         phases:['In Contract'] },
-    { id:'eop-rtr',      title:'Request to Remedy',   phases:['RTR In Process','RTR Completed (Pending Closing)'] },
+    { id:'eop-rtr',      title:'Request a Remedy',    phases:['RTR In Process'] },
+    { id:'eop-ctc',      title:'Cleared to Close',    phases:['RTR Completed (Pending Closing)'] },
   ]},
 };
 // Look up a phase board by id and which role tab it belongs to.
@@ -10208,6 +10545,7 @@ function getPMAContent(tab){
     case 'property':     return renderPropertyBoard();
     case 'construction': return renderConstructionCalendar();
     case 'taskcal':      return renderTaskCalendar();
+    case 'sidetasks':    return _sqAllBody();
     default:             return pmAssistantMainDashboard();
   }
 }
@@ -14647,6 +14985,122 @@ function _contractorJobs(id){
   </div>`;
   document.body.appendChild(host);
 }
+// ---- Possible duplicates ----------------------------------------------------
+// Bruce, 9 Sept: "delete Brady Packs, Brandon Miller, Jacob Barnes, Joe Garcia /
+// Andy, because if they all share the same number then something's been put in
+// incorrectly."
+// Two of those pairs are two different NAMES on one phone number, and guessing which
+// name is the real one is not mine to guess - pick the wrong one and a real contractor
+// disappears. So the app finds them and shows them, and you say which name to keep.
+// It merges rather than deletes: bookings move to the record you keep, blank fields on
+// it are filled in from the one being folded away, and only then does the copy go.
+function _ctDigits(x){ return String(x||'').replace(/[^0-9]/g,'').replace(/^1(?=\d{10}$)/,''); }
+function _ctNameKey(x){ return String(x||'').toLowerCase().replace(/[^a-z]/g,''); }
+function _ctDupGroups(){
+  const list=(typeof _contractorsCache!=='undefined'?_contractorsCache:[])||[];
+  const groups=[];
+  const seen=new Set();
+  const push=(reason, members)=>{
+    const ids=members.map(m=>m.id).sort().join('|');
+    if(seen.has(ids)) return; seen.add(ids);
+    groups.push({ reason, members });
+  };
+  // same phone number
+  const byPhone={};
+  list.forEach(c=>{ const d=_ctDigits(c.phone); if(d.length>=10){ (byPhone[d]=byPhone[d]||[]).push(c); } });
+  Object.keys(byPhone).forEach(d=>{ if(byPhone[d].length>1) push('the same phone number', byPhone[d]); });
+  // near-identical names (Brady Pack / Brady Packs)
+  const byName={};
+  list.forEach(c=>{ const k=_ctNameKey(c.name); if(k.length>=4){ (byName[k]=byName[k]||[]).push(c); } });
+  Object.keys(byName).forEach(k=>{ if(byName[k].length>1) push('the same name', byName[k]); });
+  const keys=Object.keys(byName);
+  keys.forEach(a=>keys.forEach(b=>{
+    if(a>=b) return;
+    if(a===b+'s' || b===a+'s'){ push('almost the same name', byName[a].concat(byName[b])); }
+  }));
+  return groups;
+}
+function _ctDupPanel(){
+  const groups=_ctDupGroups();
+  if(!groups.length) return '';
+  const ro=isReadOnly();
+  const cards=groups.map((g,gi)=>{
+    const rows=g.members.map(m=>{
+      const uses=(typeof _contractorUses==='function')?_contractorUses(m.id):0;
+      const others=g.members.filter(x=>x.id!==m.id);
+      return `<div style="display:flex;gap:10px;align-items:center;padding:8px 0;border-top:0.5px solid #f1f3f7;flex-wrap:wrap">
+        <div style="flex:1;min-width:150px">
+          <div style="font-size:13.5px;font-weight:600;color:#111">${_calEsc(m.name||'(no name)')}</div>
+          <div style="font-size:11.5px;color:#999">${_calEsc(m.business_name||'no business name')} &middot; ${_calEsc(m.trade||'no trade')} &middot; ${uses} booking${uses===1?'':'s'}</div>
+        </div>
+        ${ro?'':`<button onclick="_ctMerge('${m.id}',['${others.map(o=>o.id).join("','")}'])" style="padding:6px 12px;border:0.5px solid #cdd7e6;border-radius:7px;background:#fff;color:#185FA5;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">Keep this one</button>`}
+      </div>`;
+    }).join('');
+    return `<div style="background:#fff;border:0.5px solid #EAD9A8;border-radius:10px;padding:11px 14px;margin-bottom:8px">
+      <div style="font-size:12px;color:#8a6d1f;font-weight:600">${g.members.length} records share ${_calEsc(g.reason)}</div>
+      ${rows}
+      <div style="font-size:11px;color:#aaa;margin-top:7px;border-top:0.5px solid #f1f3f7;padding-top:7px">Keeping one folds the others into it &mdash; their bookings move across, and anything blank on the record you keep is filled in from the others. Nothing is lost.</div>
+    </div>`;
+  }).join('');
+  return `<div style="background:#FFF7E0;border:1px solid #EAD9A8;border-radius:11px;padding:13px 15px;margin-bottom:16px">
+    <div style="font-size:14px;font-weight:700;color:#6b5310;margin-bottom:3px">&#9888; ${groups.length} possible duplicate${groups.length===1?'':'s'}</div>
+    <div style="font-size:12.5px;color:#6b5310;margin-bottom:9px">These records look like the same person entered twice. Say which name is the right one and the rest are folded into it.</div>
+    ${cards}</div>`;
+}
+// Fold one or more contractor records into the one being kept.
+async function _ctMerge(keepId, dropIds){
+  if(_blockIfReadOnly()) return;
+  const list=(typeof _contractorsCache!=='undefined'?_contractorsCache:[])||[];
+  const keep=list.find(x=>x.id===keepId); if(!keep) return;
+  const drops=(dropIds||[]).map(id=>list.find(x=>x.id===id)).filter(Boolean);
+  if(!drops.length) return;
+  const names=drops.map(d=>d.name||d.business_name||'(no name)').join(', ');
+  const moving=drops.reduce((n,d)=>n+((typeof _contractorUses==='function')?_contractorUses(d.id):0),0);
+  if(!confirm('Keep "'+(keep.name||keep.business_name)+'" and fold in: '+names+'?\n\n'
+    + (moving?(moving+' booking'+(moving===1?'':'s')+' will move onto the record you are keeping.\n'):'Neither record has any bookings against it.\n')
+    + 'Anything blank on the record you keep gets filled in from the others.\n\n'
+    + 'The folded-in record'+(drops.length===1?'':'s')+' then go'+(drops.length===1?'es':'')+' away. This cannot be undone.')) return;
+  // 1. move every reference across before anything is removed.
+  const moves=[['pm_calendar_events','contractor_id'],['pricing_item_contractor_prices','contractor_id'],
+               ['pricing_price_history','contractor_id'],['pricing_contractor_categories','contractor_id'],
+               ['acq_budget_line_items','contractor_id'],['pm_sow_line_items','labor_contractor_id']];
+  for(const d of drops){
+    for(const [tbl,col] of moves){
+      try{
+        const patch={}; patch[col]=keepId;
+        const r=await supabase.from(tbl).update(patch).eq(col,d.id);
+        // A table this build does not have is not a failure - the reference cannot exist.
+        if(r.error && !/does not exist|schema cache|relation/i.test(r.error.message||'')){
+          alert('Stopped before removing anything: could not move the '+tbl.replace(/_/g,' ')+' records \u2014 '+(r.error.message||''));
+          return;
+        }
+      }catch(e){}
+    }
+  }
+  // 2. fill the blanks on the record being kept.
+  const patch={};
+  ['name','business_name','phone','email','trade','notes'].forEach(f=>{
+    if(!String(keep[f]||'').trim()){
+      const src=drops.find(d=>String(d[f]||'').trim());
+      if(src) patch[f]=src[f];
+    }
+  });
+  if(drops.some(d=>d.red_flag) && !keep.red_flag) patch.red_flag=true;
+  if(Object.keys(patch).length){
+    const r=await supabase.from("pm_contractors").update(patch).eq("id",keepId);
+    if(r.error){ alert('The records were merged but the kept one could not be updated: '+(r.error.message||'')); }
+  }
+  // 3. only now remove the copies.
+  for(const d of drops){
+    const r=await supabase.from("pm_contractors").delete().eq("id",d.id);
+    if(r.error){ alert('Could not remove "'+(d.name||'')+'": '+(r.error.message||'')+'\n\nIts bookings have already been moved, so nothing is lost \u2014 the record is just still there.'); }
+    else if(typeof _logAudit==='function') _logAudit('merged','contractor', d.name||d.business_name||'',
+      'Folded into "'+(keep.name||keep.business_name||'')+'"'+(moving?(' \u2014 bookings moved across'):''));
+  }
+  if(typeof loadContractorsFromSupabase==='function') await loadContractorsFromSupabase();
+  if(typeof loadCalendarEvents==='function'){ try{ await loadCalendarEvents(); }catch(e){} }
+  renderContractorDirectory();
+}
 function renderContractorDirectory(){
   const ro = isReadOnly();
   const inp=(c,field,ph,w)=>ro?`<span style="color:#333">${_calEsc(c[field])||'<span style="color:#bbb">—</span>'}</span>`
@@ -14694,6 +15148,7 @@ function renderContractorDirectory(){
           ${flagged?`<span style="font-size:12px;background:#FBEAE8;color:#B42318;padding:3px 10px;border-radius:99px">🚩 ${flagged} red-flagged — do not hire</span>`:''}
           <span style="font-size:12px;background:#F1F2F6;color:#777;padding:3px 10px;border-radius:99px">Need a category that is not here? Add it under Trade → ＋ Other…</span>
         </div>
+        ${_ctDupPanel()}
         ${addForm}
         <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:auto">
           <table style="width:100%;border-collapse:collapse;font-size:14px;color:#111">
@@ -17316,4 +17771,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-09a meeting-order-growing-boxes-jen-notifications -->
+<!-- build: 2026-09-09b side-task-owners-realtor-home-dashboard-rework -->
