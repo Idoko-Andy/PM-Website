@@ -2235,6 +2235,35 @@ async function saveWorkflowSettings(cfg){
   return error || null;
 }
 
+// Known name variants, folded to the one name we use. Add a line here whenever a
+// person turns out to have two spellings in the wild; everything that groups people
+// reads through _canonName, so one entry fixes every screen at once.
+const PERSON_ALIASES = {
+  "tom":"Tommy", "tommy":"Tommy", "tom harr":"Tommy", "tommy harr":"Tommy", "thomas":"Tommy"
+};
+function _canonName(n){
+  const raw=String(n==null?'':n).trim();
+  if(!raw) return '';
+  const hit=PERSON_ALIASES[raw.toLowerCase()];
+  return hit || raw;
+}
+// Same person? Compare canonically, so "Tom" and "Tommy" are never two people.
+function _canonSame(a,b){
+  const x=_canonName(a).toLowerCase(), y=_canonName(b).toLowerCase();
+  return !!x && x===y;
+}
+// De-duplicate a list of names by who they actually are, keeping the first spelling
+// of each person as the one to display.
+function _canonUnique(list){
+  const out=[], seen={};
+  (list||[]).forEach(function(n){
+    const c=_canonName(n); if(!c) return;
+    const k=c.toLowerCase();
+    if(seen[k]) return;
+    seen[k]=true; out.push(c);
+  });
+  return out;
+}
 let PM_MANAGERS = ["Andrew","Isaiah"];
 async function loadPMManagers(){
   // The Project Manager tabs are driven primarily by JOB ROLE: anyone whose role
@@ -2249,8 +2278,8 @@ async function loadPMManagers(){
   let manual = [];
   const { data: mgr, error } = await supabase.from("pm_managers").select("name").order("sort",{ascending:true});
   if(!error) manual = (mgr||[]).map(r=>r.name).filter(Boolean);
-  const merged = [];
-  manual.concat(roleNames).forEach(n=>{ if(merged.indexOf(n)<0) merged.push(n); });
+  // Two spellings of one person must not become two managers.
+  const merged = _canonUnique(manual.concat(roleNames));
   PM_MANAGERS = merged.length ? merged : ["Andrew","Isaiah"];
 }
 async function addPMManager(){
@@ -3481,8 +3510,9 @@ let _propBoardPM = 'all';
 function setPropBoardPM(v){ _propBoardPM = v; openProjectDashboard('trello'); }
 function renderPropertyBoard() {
   _propBack = 'trello';
-  const _pmMatch = c => (_propBoardPM === 'all' || c.pm === _propBoardPM);
-  const sidebar = [...propCards.filter(c=>!c.archived && _pmMatch(c))].sort((a,b)=>a.addr.localeCompare(b.addr)).map((c,i) => {
+  const _pmMatch = c => (_propBoardPM === 'all' || _canonSame(c.pm, _propBoardPM));
+  const _sbClosed = propCards.filter(c=>!c.archived && _pmMatch(c) && c.phase==='Closed').length;
+  const sidebar = [...propCards.filter(c=>!c.archived && _pmMatch(c) && c.phase!=='Closed')].sort((a,b)=>a.addr.localeCompare(b.addr)).map((c,i) => {
     const p = phInfo(c.phase);
     return `<div onclick="openPropDetail('${c.id}')" style="padding:8px 10px;cursor:pointer;border-bottom:0.5px solid #f4f5f7;display:flex;align-items:center;gap:7px">
       <span style="font-size:11px;color:#aaa;min-width:16px;font-weight:500">${String(i+1).padStart(2,'0')}</span>
@@ -3507,7 +3537,7 @@ function renderPropertyBoard() {
       <div ondragover="event.preventDefault();this.style.background='#f0f7ff'" ondragleave="this.style.background='transparent'" ondrop="this.style.background='transparent';propDrop(event,this.dataset.phase)" data-phase="${ph.name}" style="display:flex;flex-direction:column;gap:5px;min-height:60px;border-radius:6px;transition:background 0.15s">
         ${pc.map(c => {
           const typeStyle = PROP_TYPE_STYLE[c.type] || "background:#f4f5f7;color:#555";
-          const pmColor = PROP_PM_COLORS[c.pm] || "#ccc";
+          const pmColor = PROP_PM_COLORS[_canonName(c.pm)] || "#ccc";
           const bNum = parseFloat((c.budget||'0').replace(/[^0-9.]/g,''))||0;
           const sNum = parseFloat((c.spent||'0').replace(/[^0-9.]/g,''))||0;
           const pct  = bNum>0 ? Math.round((sNum/bNum)*100) : 0;
@@ -3575,7 +3605,7 @@ function renderPropertyBoard() {
           <span style="font-size:12px;font-weight:500;color:#888;text-transform:uppercase;letter-spacing:0.05em">All Properties</span>
           <button onclick="closePropSidebar()" style="background:none;border:none;cursor:pointer;color:#aaa;font-size:14px;padding:2px 5px;border-radius:4px">✕</button>
         </div>
-        <div id="prop-sb-list" style="overflow-y:auto;flex:1">${sidebar}</div>
+        <div id="prop-sb-list" style="overflow-y:auto;flex:1">${sidebar||`<div style="padding:14px;font-size:12px;color:#bbb;text-align:center">Nothing open right now.</div>`}${_sbClosed?`<div style="padding:9px 12px;border-top:0.5px solid #eef0f4;font-size:11px;color:#aaa;line-height:1.45">${_sbClosed} closed propert${_sbClosed===1?'y is':'ies are'} not listed here &mdash; they stay in the <b style="color:#888">Closed</b> column on the board until they are archived.</div>`:''}</div>
       </div>
       <!-- Board scroll -->
       <div style="flex:1;overflow:auto;padding:12px">
@@ -3834,7 +3864,7 @@ function openPropDetail(id) {
   const pct  = bNum > 0 ? Math.round((sNum/bNum)*100) : 0;
   const progColor = pct>90?'#E24B4A':pct>70?'#EF9F27':'#639922';
   const typeStyle = PROP_TYPE_STYLE[c.type] || "background:#f4f5f7;color:#555";
-  const pmColor = PROP_PM_COLORS[c.pm] || "#ccc";
+  const pmColor = PROP_PM_COLORS[_canonName(c.pm)] || "#ccc";
 
   // Every property shows the full standard subphase list, prefilled. Each row has a
   // start and finish date; filling both auto-creates a task for this property's PM.
@@ -4583,7 +4613,7 @@ function getPDContent(tab) {
 
 function pmTabContent(name) {
   const liveName = resolvePMName(name);
-  const pmColor = PROP_PM_COLORS[name] || '#ccc';
+  const pmColor = PROP_PM_COLORS[_canonName(name)] || '#ccc';
 
   const today = new Date(); today.setHours(0,0,0,0);
 
@@ -10435,10 +10465,10 @@ function _pmTabNames(){
   if(!_seesEveryone()){
     const me=_myFullName();
     if(me){
-      const mine=roster.filter(n=>String(n).toLowerCase()===me.toLowerCase());
+      const mine=roster.filter(n=>_canonSame(n,me));
       if(mine.length) return mine;
       // Not on the roster but running houses anyway (a temporary cover) - still their tab.
-      if(all.some(c=>!c.archived && String(c.pm||'').trim().toLowerCase()===me.toLowerCase())) return [me];
+      if(all.some(c=>!c.archived && _canonSame(c.pm,me))) return [_canonName(me)];
       return [];
     }
   }
@@ -10449,10 +10479,10 @@ function _pmTabNames(){
   // Anyone running a property who is not on the roster at all - a temporary cover
   // like Gabe taking a project - still earns a tab.
   all.filter(c=>!c.archived && c.phase!=='Closed' && String(c.pm||'').trim()).forEach(c=>{
-    const nm=String(c.pm).trim();
-    if(!out.some(n=>n.toLowerCase()===nm.toLowerCase())) out.push(nm);
+    const nm=_canonName(c.pm);
+    if(!out.some(n=>_canonSame(n,nm))) out.push(nm);
   });
-  return out;
+  return _canonUnique(out);
 }
 // Options for a "who is the PM on this property" dropdown. The roster comes
 // first; everybody else on the team is offered underneath so a project can be
@@ -11068,7 +11098,7 @@ function _accumBox(c){
     ${_velDayLine(c)}`;
 }
 function _propCardMini(c){
-  const p=phInfo(c.phase); const pmColor=PROP_PM_COLORS[c.pm]||'#ccc';
+  const p=phInfo(c.phase); const pmColor=PROP_PM_COLORS[_canonName(c.pm)]||'#ccc';
   return `<div onclick="openPropDetail('${c.id}')" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:13px 15px;cursor:pointer;border-top:3px solid ${p.dot}">
       <div style="font-size:14px;font-weight:500;color:#111;margin-bottom:6px">${_calEsc(c.addr)}</div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
@@ -15128,8 +15158,9 @@ function teamMembers(){
     })
     .filter(n => n);
   // Only real, approved accounts with an actual (non-"Other") job role appear —
-  // no hardcoded seeds, so nobody shows up twice or without a real login.
-  return base.sort((a,b)=>a.localeCompare(b));
+  // no hardcoded seeds, so nobody shows up twice or without a real login. Variant
+  // spellings of one person collapse to one entry.
+  return _canonUnique(base).sort((a,b)=>a.localeCompare(b));
 }
 // Distinct task categories/headers in use (e.g. "Build Scope of Work"), plus a
 // couple of sensible seeds so the list is never empty on a fresh install.
@@ -15935,7 +15966,8 @@ function taskAssignees(t){
 // (and vice-versa) after someone's profile name is filled in or changed. Matches
 // on exact name, or on shared first name when one side is a bare first name.
 function _sameAssignee(a,b){
-  a=(a||"").trim().toLowerCase(); b=(b||"").trim().toLowerCase();
+  if(_canonSame(a,b)) return true;
+  a=_canonName(a).toLowerCase(); b=_canonName(b).toLowerCase();
   if(!a||!b) return false;
   if(a===b) return true;
   const af=a.split(" ")[0], bf=b.split(" ")[0];
@@ -18137,4 +18169,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-10c legacy-failure-counts-stay-visible -->
+<!-- build: 2026-09-10d one-tommy-and-closed-off-the-all-list -->
