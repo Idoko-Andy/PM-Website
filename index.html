@@ -12515,6 +12515,10 @@ function _utilGaps(c){
 // for. Ticking "Needed" on the Window Tracker is that request; entering any window
 // date counts too, so nothing already in flight falls off. Once the #window-tracker
 // Slack channel feeds requests in, it sets the same flag.
+function _winComplete(c){
+  if(!c) return false;
+  return ['measured','ordered','arrived','installed'].every(k=>_trkOn('win',c.id,k));
+}
 function _winInQueue(c){
   if(_trkOn('win',c.id,'needed')) return true;
   return ['measured','ordered','arrived','installed'].some(k=>_trkOn('win',c.id,k))
@@ -13846,7 +13850,25 @@ function _vaTrackers(){
     <td style="padding:7px;text-align:center">${dt('win',c.id,'arrival_date',`_trkWinDate('${c.id}','arrival_date',this.value)`)}<div style="margin-top:3px">${fchk('win',c.id,'arrived')}</div></td>
     <td style="padding:7px;text-align:center">${dt('win',c.id,'install_date',`_trkWinDate('${c.id}','install_date',this.value)`)}<div style="margin-top:3px">${fchk('win',c.id,'installed')}</div></td>
     <td style="padding:7px">${txt('win',c.id,'notes','Notes & comments',190)}</td></tr>`;
-  const winrows=active.length?active.map(winRow).join(""):'<tr><td colspan="6" style="padding:16px;color:#bbb;text-align:center">No active properties.</td></tr>';
+  // The front page is work still to do. Anything finished drops into the folder
+  // below it - still editable, so unticking a box brings the property straight back.
+  const winLive=active.filter(c=>!_winComplete(c));
+  const winFin=active.filter(_winComplete);
+  const winrows=winLive.length?winLive.map(winRow).join(""):'<tr><td colspan="7" style="padding:16px;color:#bbb;text-align:center">Nothing outstanding \u2014 every property with window work is finished.</td></tr>';
+  const winFinished=winFin.length?`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden;margin-top:14px">
+      <details${window._winFinOpen?' open':''} ontoggle="window._winFinOpen=this.open">
+        <summary style="cursor:pointer;padding:11px 14px;outline:none;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+          <span style="font-size:14px;font-weight:700;color:#0F7B54">&#9989; Window work completed
+            <span style="font-size:11.5px;font-weight:400;color:#aaa;margin-left:6px">${winFin.length} propert${winFin.length===1?'y':'ies'} &middot; still on the job, windows finished</span></span>
+          <span style="font-size:11.5px;color:#aaa">open</span>
+        </summary>
+        <div style="padding:0 0 4px">
+          <div style="font-size:11.5px;color:#999;padding:0 14px 8px">All four boxes ticked &mdash; measured, ordered, arrived, installed &mdash; so they are off the list above. They are still editable: untick anything and the property comes straight back to the front page. They move to the closed history below once the house sells.</div>
+          <div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px;color:#111">
+            <thead><tr style="background:#F2F4F9;color:#122A4A"><th style="padding:9px 10px;text-align:left">Property / what was replaced</th><th style="padding:9px">Needed</th><th style="padding:9px">Measured</th><th style="padding:9px">Ordered</th><th style="padding:9px">Arrived</th><th style="padding:9px">Installed</th><th style="padding:9px;text-align:left">Notes &amp; comments</th></tr></thead>
+            <tbody>${winFin.map(winRow).join('')}</tbody></table></div>
+        </div>
+      </details></div>`:'';
   const winClosed=closed.length?`<div style="margin-top:14px">${_trkClosedFolders('🗄 Closed properties — window history', closed, '<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">Needed</th><th style="padding:9px">Measured</th><th style="padding:9px">Ordered</th><th style="padding:9px">Arrived</th><th style="padding:9px">Installed</th><th style="padding:9px;text-align:left">Notes</th>', winRow, '#888')}</div>`:'';
 
   // ---------- Checklist tracker ----------
@@ -13876,7 +13898,7 @@ function _vaTrackers(){
 
   if(view==='w9') return shell(back+_trkSearchBox('Search a contractor…')+_trkTable('🧾 W-9 Tracker','#7A3FA8','<th style="padding:9px 10px;text-align:left">Contractor</th><th style="padding:9px;text-align:left">Name on W-9</th><th style="padding:9px">On file</th><th style="padding:9px;text-align:left">Notes</th><th style="padding:9px;text-align:left">Email</th><th style="padding:9px;text-align:left">Phone</th>'+(ro?'':'<th style="padding:9px;text-align:right">Jobs</th><th></th>'),w9rows)+`<div style="font-size:12px;color:#999">Ticking "On file" here also marks the contractor in the Contractor Directory.${ro?'':' <b>Remove</b> deletes the whole contractor record — use it on duplicates, and remove the copy with 0 jobs against it.'}</div>`);
   if(view==='mow') return shell(back+_trkSearchBox('Search a property…')+_trkTable('🌱 Mowing Tracker','#3B6D11','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px;text-align:left">Who is mowing</th><th style="padding:9px;text-align:left">How often</th><th style="padding:9px;text-align:left">Cost/mow</th><th style="padding:9px;text-align:left">Contact #</th><th style="padding:9px;text-align:left">PM</th><th style="padding:9px;text-align:left">Payment</th><th style="padding:9px">On route</th><th style="padding:9px">Removed after</th>',mowrows)+_trkClosedSimple(closed,'mowing history'));
-  if(view==='window') return shell(back+_trkSearchBox('Search a property…')+_trkTable('🪟 Window Tracker','#185FA5','<th style="padding:9px 10px;text-align:left">Property / what’s being replaced</th><th style="padding:9px">Needed</th><th style="padding:9px">Measure</th><th style="padding:9px">Ordered</th><th style="padding:9px">Arrival</th><th style="padding:9px">Install</th><th style="padding:9px;text-align:left">Notes &amp; comments</th>',winrows)+`<div style="font-size:12px;color:#999;margin-top:-8px">Tick <b>Needed</b> when a PM requests windows or glass — that puts the property on Marlo's list with its next booking. Dates you set here land on that property’s construction calendar automatically, and Slack posts 48 hours before the measure and install dates.</div>`+winClosed);
+  if(view==='window') return shell(back+_trkSearchBox('Search a property…')+_trkTable('🪟 Window Tracker','#185FA5','<th style="padding:9px 10px;text-align:left">Property / what’s being replaced</th><th style="padding:9px">Needed</th><th style="padding:9px">Measure</th><th style="padding:9px">Ordered</th><th style="padding:9px">Arrival</th><th style="padding:9px">Install</th><th style="padding:9px;text-align:left">Notes &amp; comments</th>',winrows)+`<div style="font-size:12px;color:#999;margin-top:-8px">Tick <b>Needed</b> when a PM requests windows or glass — that puts the property on Marlo's list with its next booking. Dates you set here land on that property’s construction calendar automatically, and Slack posts 48 hours before the measure and install dates.${winFin.length?` <b>${winFin.length}</b> finished propert${winFin.length===1?'y is':'ies are'} in the completed folder below.`:''}</div>`+winFinished+winClosed);
   if(view==='util'){
     const ut=window._utilTab||'e';
     const subtab=(k,label)=>`<span onclick="_utilTabTo('${k}')" style="cursor:pointer;padding:6px 13px;border-radius:7px;font-size:13px;font-weight:${ut===k?'600':'400'};background:${ut===k?'#122A4A':'#fff'};color:${ut===k?'#fff':'#444'};border:0.5px solid ${ut===k?'#122A4A':'#d8dce6'}">${label}</span>`;
@@ -18169,4 +18191,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-10d one-tommy-and-closed-off-the-all-list -->
+<!-- build: 2026-09-10e window-work-completed-folder -->
