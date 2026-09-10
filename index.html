@@ -17150,7 +17150,7 @@ function _mTaskDetail(id){
         ${t.category?_mInfoRow("Category",_calEsc(t.category)):''}
         ${_mInfoRow("Assigned to", who.length?_calEsc(who.join(", ")):"Unassigned")}
         ${t.start_date?_mInfoRow("Start",_calEsc(t.start_date)):''}
-        ${_mInfoRow("Due", _calEsc(t.due_date||'—'))}
+        ${_mInfoRow("Due", _calEsc(t.due_date||'\u2014')+(t.due_time?('  \uD83D\uDD50 '+_calEsc(_fmtTime(t.due_time))):''))}
         ${prop?_mInfoRow("Property",_calEsc(prop)):''}
         ${t.refer_to?_mInfoRow("Refer questions to",_calEsc(t.refer_to)):''}
       </div>
@@ -17194,6 +17194,7 @@ function _mEditTask(id){
       <div style="flex:1"><div class="m-label" style="margin-top:12px">Start</div><input id="me-start" type="date" class="m-input" value="${_calEsc(t.start_date||"")}"/></div>
       <div style="flex:1"><div class="m-label" style="margin-top:12px">Due</div><input id="me-due" type="date" class="m-input" value="${_calEsc(t.due_date||"")}"/></div>
     </div>
+    <div class="m-label" style="margin-top:12px">Time <span style="color:#aaa;font-weight:400">&mdash; optional</span></div><input id="me-time" type="time" class="m-input" value="${_calEsc(t.due_time||"")}"/>
     <div class="m-label" style="margin-top:12px">Notes</div><textarea id="me-notes" class="m-input" rows="2">${_calEsc(t.notes||"")}</textarea>
     <button class="m-btn" onclick="_submit('m-task-edit',this,'Saving…',()=>_mSubmitTaskEdit('${t.id}'))">Save changes</button>
     <button class="m-btn m-btn-lite" onclick="_mOpenTask('${t.id}')">Cancel</button>
@@ -17220,7 +17221,7 @@ async function _mSubmitTaskEdit(id){
     title,
     category:(document.getElementById("me-cat").value||"").trim()||null,
     assignee:who, assignees:who?[who]:[],
-    due_date:due, start_date:start,
+    due_date:due, due_time:(((document.getElementById("me-time")||{}).value||"")||null), start_date:start,
     property_id:_pl.property_id, location:_pl.location,
     notes:(document.getElementById("me-notes").value||"").trim()||null
   };
@@ -17415,6 +17416,7 @@ function _mAddFormTask(){
       <div style="flex:1"><div class="m-label" style="margin-top:12px">Start</div><input id="mt-start" type="date" class="m-input"/></div>
       <div style="flex:1"><div class="m-label" style="margin-top:12px">Due</div><input id="mt-due" type="date" class="m-input" value="${_mDay}"/></div>
     </div>
+    <div class="m-label" style="margin-top:12px">Time <span style="color:#aaa;font-weight:400">&mdash; optional</span></div><input id="mt-time" type="time" class="m-input"/>
     <div style="display:flex;gap:10px">
       <div style="flex:1"><div class="m-label" style="margin-top:12px">Repeat</div><select id="mt-repeat" class="m-select"><option value="none">Does not repeat</option><option value="daily">Every day</option><option value="weekly">Every week</option><option value="biweekly">Every 2 weeks</option><option value="monthly">Every month</option></select></div>
       <div style="flex:1"><div class="m-label" style="margin-top:12px">Repeat until</div><input id="mt-repeat-until" type="date" class="m-input"/></div>
@@ -17432,6 +17434,7 @@ async function _mSubmitTask(){
   const who=document.getElementById("mt-who").value||null;
   const _pl=_mResolveAddr("mt"); const prop=_pl.property_id; const location=_pl.location;
   const due=document.getElementById("mt-due").value||_mDay;
+  const dueTime=((document.getElementById("mt-time")||{}).value||"")||null;
   const start=document.getElementById("mt-start").value||null;
   const notes=(document.getElementById("mt-notes").value||"").trim()||null;
   if(start && start>due){ alert("Start date can't be after the due date."); return; }
@@ -17441,7 +17444,7 @@ async function _mSubmitTask(){
   const dueList=_recurDueDates(due, repeat, runtil);
   const offDays=(start!=null)?Math.round((_dParse(due)-_dParse(start))/86400000):null;
   const _steps=(typeof _newSteps!=='undefined'?_newSteps:[]).filter(x=>x && String(x.text||'').trim());
-  const rows=dueList.map(d=>({ title, category:cat, assignee:who, assignees:who?[who]:[], due_date:d, start_date:(offDays!=null?_dAddDays(d,-offDays):null), property_id:prop, location, notes, status:"open",
+  const rows=dueList.map(d=>({ title, category:cat, assignee:who, assignees:who?[who]:[], due_date:d, due_time:dueTime, start_date:(offDays!=null?_dAddDays(d,-offDays):null), property_id:prop, location, notes, status:"open",
     subtasks:_steps.map(x=>({ id:Date.now().toString(36)+Math.random().toString(36).slice(2,5), text:String(x.text).trim(), done:false })) }));
   const { error }=await supabase.from("pm_tasks").insert(rows);
   if(error){ _toast("That task was NOT saved — "+(error.message||""),"bad"); return; }
@@ -17923,4 +17926,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-09c field-app-catch-up -->
+<!-- build: 2026-09-10a field-app-task-time -->
