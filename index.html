@@ -13345,7 +13345,13 @@ function _permitInspBody(){
         ${log.length
           ? `<span onclick="_inspLogToggle('${r.id}','${ins.id}')" title="Every attempt on this inspection" style="cursor:pointer;font-size:11.5px;font-weight:600;color:#185FA5">${log.length} attempt${log.length===1?'':'s'} ${logOpen?'&#9652;':'&#9662;'}</span>
              ${fails?`<div style="font-size:10.5px;color:#B42318;font-weight:600">${fails} failed</div>`:''}`
-          : `<span style="font-size:11.5px;color:#ccc">no attempts</span>`}</td>
+          : (fails
+              // A failure counted before the track record existed. The count is real
+              // and has to keep showing; the dates were never stored, so say that
+              // rather than inventing one or hiding the failure.
+              ? `<span title="Counted before the track record existed, so it has no date on it" style="font-size:11.5px;font-weight:700;color:#B42318">${fails} failed</span>
+                 <div style="font-size:10px;color:#b6bcc7">no dates recorded</div>`
+              : `<span style="font-size:11.5px;color:#ccc">no attempts</span>`)}</td>
       <td style="padding:7px 10px;text-align:center;width:28px">${ro?'':`<span onclick="_permitInspRemove('${r.id}','${ins.id}')" title="Remove this inspection" style="cursor:pointer;font-size:12px;color:#ddd">&#10005;</span>`}</td>
     </tr>${logRow}`;
   };
@@ -18131,4 +18137,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-10b inspection-scheduling-partial-pass-track-record -->
+<!-- build: 2026-09-10c legacy-failure-counts-stay-visible -->
