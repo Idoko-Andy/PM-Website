@@ -2690,6 +2690,59 @@ async function setPropertyCompanyCamInSupabase(id, url) {
 }
 
 // Permitted yes/no — stored on the property (changeable anytime). Feeds Marlo's dashboard.
+function _mfOn(c){ return ((c&&c.checklists)||{}).multi==='yes'; }
+function _mfUnits(c){
+  const a=((c&&c.checklists)||{}).units;
+  const list=Array.isArray(a)?a.map(x=>String(x||'').trim()).filter(Boolean):[];
+  return list;
+}
+// "818-820 22nd St" or "427-439 Hanford" -> ["818","820"] / ["427","439"]. A guess
+// offered to the user, never saved on its own.
+function _mfGuessUnits(c){
+  const m=String((c&&c.addr)||'').match(/^\s*(\d+)\s*[-\u2013\u2014]\s*(\d+)/);
+  return m?[m[1],m[2]]:[];
+}
+// The rows the utility sheets should draw for this property: itself, or one per unit.
+function _utilRowsFor(c){
+  if(!_mfOn(c)) return [c];
+  const units=_mfUnits(c);
+  if(!units.length) return [c];
+  return units.map(u=>Object.assign(Object.create(Object.getPrototypeOf(c)||Object.prototype), c, {
+    id: c.id+'::'+u, addr: (c.addr||'')+' \u2014 Unit '+u, _unitOf:c.id, _unit:u
+  }));
+}
+function _utilBaseId(pid){ const i=String(pid||'').indexOf('::'); return i<0?pid:String(pid).slice(0,i); }
+async function setPropertyMulti(id, val){
+  if(_blockIfReadOnly()) return;
+  const card=propCards.find(x=>x.id===id); if(!card) return;
+  const cl=Object.assign({},card.checklists||{});
+  cl.multi=val;
+  if(val==='yes' && !(Array.isArray(cl.units)&&cl.units.length)){
+    const g=_mfGuessUnits(card);
+    if(g.length) cl.units=g;
+  }
+  const { error }=await supabase.from("pm_properties").update({ checklists: cl }).eq("id", id);
+  if(error){ alert("Couldn't save that: "+(error.message||"")); return; }
+  _logAudit("updated","property",card.addr||"", val==='yes'
+    ? ("Marked multi-family"+((cl.units&&cl.units.length)?(" \u2014 units "+cl.units.join(', ')):""))
+    : "No longer marked multi-family");
+  await loadPropertiesFromSupabase();
+  openPropDetail(id);
+}
+async function _mfSetUnits(id){
+  if(_blockIfReadOnly()) return;
+  const el=document.getElementById('pi-units-'+id);
+  const raw=el?(el.value||''):'';
+  const units=raw.split(/[,/]+/).map(x=>x.trim()).filter(Boolean);
+  if(units.length<2 && raw.trim()){ alert("A multi-family property needs at least two units \u2014 for example: 818, 820"); return; }
+  const card=propCards.find(x=>x.id===id); if(!card) return;
+  const cl=Object.assign({},card.checklists||{}); cl.units=units;
+  const { error }=await supabase.from("pm_properties").update({ checklists: cl }).eq("id", id);
+  if(error){ alert("Couldn't save the units: "+(error.message||"")); return; }
+  _logAudit("updated","property",card.addr||"","Units set to "+(units.join(', ')||'(none)'));
+  await loadPropertiesFromSupabase();
+  openPropDetail(id);
+}
 async function setPropertyPermitted(id, val) {
   if (_blockIfReadOnly()) return;
   const card = propCards.find(x => x.id === id); if (!card) return;
@@ -4217,6 +4270,24 @@ function _pdLinked(c){
                   <button onclick="setPropertyPermitted('${c.id}','no')" style="font-size:12px;padding:3px 11px;border-radius:5px;cursor:pointer;border:0.5px solid ${(c.checklists&&c.checklists.permitted)==='no'?'#B42318':'#ddd'};background:${(c.checklists&&c.checklists.permitted)==='no'?'#FCEBEB':'#fff'};color:${(c.checklists&&c.checklists.permitted)==='no'?'#B42318':'#666'}">No</button>
                 </span>`}
               </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px">
+                <span style="color:#888">🏢 Multi-family?</span>
+                ${_ro_sp ? `<span style="color:#111;font-weight:500">${_mfOn(c)?('Yes \u2014 '+(_mfUnits(c).join(', ')||'units not set')):'No'}</span>` : `<span style="display:inline-flex;gap:4px">
+                  <button onclick="setPropertyMulti('${c.id}','yes')" style="font-size:12px;padding:3px 11px;border-radius:5px;cursor:pointer;border:0.5px solid ${_mfOn(c)?'#7A3FA8':'#ddd'};background:${_mfOn(c)?'#F3E8FB':'#fff'};color:${_mfOn(c)?'#4A1D6E':'#666'}">Yes</button>
+                  <button onclick="setPropertyMulti('${c.id}','no')" style="font-size:12px;padding:3px 11px;border-radius:5px;cursor:pointer;border:0.5px solid ${!_mfOn(c)?'#B42318':'#ddd'};background:${!_mfOn(c)?'#FCEBEB':'#fff'};color:${!_mfOn(c)?'#B42318':'#666'}">No</button>
+                </span>`}
+              </div>
+              ${_mfOn(c)?`<div style="padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px">
+                <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+                  <span style="color:#888">Units</span>
+                  ${_ro_sp?`<span style="color:#111;font-weight:500">${_calEsc(_mfUnits(c).join(', '))||'not set'}</span>`
+                    :`<span style="display:inline-flex;gap:5px;align-items:center">
+                      <input id="pi-units-${c.id}" value="${_calEsc(_mfUnits(c).join(', '))}" placeholder="818, 820" style="font-size:13px;padding:3px 7px;border:0.5px solid #ddd;border-radius:5px;width:120px"/>
+                      <button onclick="_mfSetUnits('${c.id}')" style="font-size:12px;padding:3px 10px;border-radius:5px;border:none;background:#111;color:#fff;cursor:pointer">Save</button>
+                    </span>`}
+                </div>
+                <div style="font-size:11.5px;color:#aaa;margin-top:3px;line-height:1.45">This stays one property card. The <b>Utility Tracker</b> splits into a line per unit so each one carries its own electric, water and gas account number.</div>
+              </div>`:''}
               <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px">
                 <span style="color:#888">🏠 Rental?</span>
                 ${_ro_sp ? `<span style="color:#111;font-weight:500">${c.isRental?'Yes':'No'}</span>` : `<span style="display:inline-flex;gap:4px">
@@ -12500,6 +12571,40 @@ function _utilTabTo(t){ window._trkView='util'; window._utilTab=t; if(t!=='h') w
 
 // A property is "outstanding" when any utility has no provider recorded, or is
 // recorded as off. That is what the VA chases every week.
+function _utilDueDay(kind,pid){
+  const raw=String(_trkVal(kind,pid,'due')||'');
+  const m=raw.match(/(\d{1,2})/);
+  if(!m) return null;
+  const n=parseInt(m[1],10);
+  return (n>=1 && n<=31)?n:null;
+}
+// The next time this bill lands: the due day in the month after the last payment.
+// No last payment yet? The next due day from today.
+function _utilNextDue(kind,pid,sub){
+  const day=_utilDueDay(kind,pid);
+  if(!day) return null;
+  const pays=sub?_utilArr('upay',pid,sub):[];
+  const lastStr=(pays[0]&&pays[0].d)||_trkVal(kind,pid,'last')||'';
+  const base=lastStr?new Date(lastStr+'T12:00:00'):new Date();
+  if(isNaN(base.getTime())) return null;
+  const d=new Date(base.getFullYear(), base.getMonth(), 1);
+  if(lastStr) d.setMonth(d.getMonth()+1);
+  else if(base.getDate()>=day) d.setMonth(d.getMonth()+1);
+  // A 31st due day in a 30-day month lands on the last day of that month.
+  const lastDayOfMonth=new Date(d.getFullYear(), d.getMonth()+1, 0).getDate();
+  d.setDate(Math.min(day,lastDayOfMonth));
+  return _ymd(d);
+}
+function _utilDueChip(kind,pid,sub){
+  const nx=_utilNextDue(kind,pid,sub);
+  if(!nx) return '';
+  const today=_ymd(new Date());
+  const soon=(()=>{ const t=new Date(); t.setDate(t.getDate()+5); return _ymd(t); })();
+  const late=nx<today, near=!late && nx<=soon;
+  const col=late?'#B42318':(near?'#B7791F':'#0F7B54');
+  const bg =late?'#FBEAE8':(near?'#FBF3E2':'#E6F4ED');
+  return `<div style="margin-top:3px"><span title="Worked out from the due day and the last payment" style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:99px;background:${bg};color:${col};white-space:nowrap">${late?'overdue':'next'} ${_calEsc(nx)}</span></div>`;
+}
 function _utilOutstanding(c){
   return UTILS.some(u=>{ const prov=_trkVal(u.k,c.id,'prov'); return !prov || _utilIsOn(u.k,c)==='No'; });
 }
@@ -13809,18 +13914,18 @@ function _vaTrackers(){
     <td style="padding:7px;text-align:center">${uOnSel(u,c)}</td>
     <td style="padding:7px">${uta(u.k,c.id,'notes','Called on 00/00/26 …',230)}</td>
     <td style="padding:7px">${uta(u.k,c.id,'sched','Turn-on dates, inspections, meter installs…',200)}</td>
-    <td style="padding:7px;text-align:center">${txt(u.k,c.id,'due','e.g. 15th',72)}</td>
+    <td style="padding:7px;text-align:center">${txt(u.k,c.id,'due','e.g. 15th',72)}${_utilDueChip(u.k,c.id,u.key)}</td>
     <td style="padding:7px;text-align:center">${dt(u.k,c.id,'last')}</td>
     <td style="padding:7px;text-align:center">${txt(u.k,c.id,'amt','$0.00',82)}</td>
     <td style="padding:7px;text-align:center">${txt(u.k,c.id,'chg','$0.00',70)}</td>
     <td style="padding:7px">${txt(u.k,c.id,'conf','Confirmation #',140)}</td>
     ${u.key==='g'?`<td style="padding:7px;text-align:center">${dt(u.k,c.id,'tank')}</td>`:''}
     <td style="padding:7px;text-align:center">${fchk(u.k,c.id,'rcpt')}</td>
-    <td style="padding:7px;text-align:center"><span onclick="_utilOpenHistory('${c.id}')" style="cursor:pointer;color:#185FA5;font-size:12px;white-space:nowrap">📜 ${(_utilArr('upay',c.id,u.key).length)||''} open</span></td></tr>`;
+    <td style="padding:7px;text-align:center">${(()=>{const n=_utilArr('upay',c.id,u.key).length;return `<span onclick="_utilOpenHistory('${c.id}')" title="Every payment recorded against this utility" style="cursor:pointer;display:inline-block;padding:3px 10px;border-radius:99px;font-size:11.5px;font-weight:600;background:${n?'#E8F0FA':'#F4F5F7'};color:${n?'#185FA5':'#98a2b3'};white-space:nowrap">📜 ${n?(n+' payment'+(n===1?'':'s')):'add a payment'}</span>`;})()}</td></tr>`;
   const uEmpty=(n)=>`<tr><td colspan="${n}" style="padding:16px;color:#bbb;text-align:center">No active properties.</td></tr>`;
 
   // Utility Info Master Sheet — one line per property, all three providers side by side.
-  const umRows=active.length?active.map(c=>{
+  const umRows=active.length?active.reduce((a,c)=>a.concat(_utilRowsFor(c)),[]).map(c=>{
     const st=_trkVal('um',c.id,'status');
     const stColor = st==='Confirmed'?'#1D9E75' : st==='Needs attention'?'#B7791F' : st==='Not set up'?'#B42318' : '#888';
     return `<tr data-trk="${nm(c)}" style="border-top:0.5px solid #eef0f6">
@@ -13986,7 +14091,10 @@ function _vaTrackers(){
     const subtab=(k,label)=>`<span onclick="_utilTabTo('${k}')" style="cursor:pointer;padding:6px 13px;border-radius:7px;font-size:13px;font-weight:${ut===k?'600':'400'};background:${ut===k?'#122A4A':'#fff'};color:${ut===k?'#fff':'#444'};border:0.5px solid ${ut===k?'#122A4A':'#d8dce6'}">${label}</span>`;
     const bar=`<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px">${subtab('e','⚡ Electric')}${subtab('w','💧 Water')}${subtab('g','🔥 Gas / Propane')}${subtab('m','📋 Master Sheet')}${ut==='h'?subtab('h','📜 Property History'):''}</div>`;
     if(ut==='h'){
-      const pid=window._utilProp; const c=all.find(x=>x.id===pid);
+      const pid=window._utilProp; const c=all.find(x=>x.id===_utilBaseId(pid))
+        ? Object.assign({},all.find(x=>x.id===_utilBaseId(pid)),
+            (String(pid).indexOf('::')>0?{addr:(all.find(x=>x.id===_utilBaseId(pid)).addr||'')+' \u2014 Unit '+String(pid).split('::')[1]}:{}))
+        : null;
       if(!c) return shell(back+bar+`<div style="padding:20px;color:#bbb">Pick a property from one of the utility sheets to see its history.</div>`);
       const money=(v)=>_calEsc(v||'');
       const payTable=(u)=>{
@@ -13999,12 +14107,15 @@ function _vaTrackers(){
       const logs=_utilArr('ulog',pid);
       const logBody=logs.length?logs.map((r,i)=>`<tr style="border-top:0.5px solid #eef0f6"><td style="padding:7px 10px;white-space:nowrap">${_calEsc(r.d||'')}</td><td style="padding:7px">${_calEsc(r.u||'')}</td><td style="padding:7px;white-space:pre-wrap">${_calEsc(r.txt||'')}</td><td style="padding:7px;font-size:11.5px;color:#999">${_calEsc(r.by||'')}</td><td style="padding:7px;text-align:center">${ro?'':`<span onclick="_utilLogDel('${pid}',${i})" style="cursor:pointer;color:#B42318">✕</span>`}</td></tr>`).join(''):'<tr><td colspan="5" style="padding:14px;color:#bbb;text-align:center">Nothing logged yet.</td></tr>';
       const logAdd=ro?'':`<tr style="background:#F7F8FB;border-top:0.5px solid #e0e4ec"><td style="padding:7px 10px"><input type="date" id="ul-d" value="${_ymd(new Date())}" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td style="padding:7px"><select id="ul-u" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"><option value="">— Utility —</option><option>Electric</option><option>Water</option><option>Gas / Propane</option><option>Trash</option><option>Other</option></select></td><td style="padding:7px"><textarea id="ul-t" placeholder="Called on … to start service. Rep said …" style="width:100%;min-width:320px;min-height:44px;padding:5px 7px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;font-family:inherit;resize:vertical"></textarea></td><td colspan="2" style="padding:7px;text-align:center"><button onclick="_utilLogAdd('${pid}')" style="padding:5px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">+ Add entry</button></td></tr>`;
-      const provCard=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 15px;margin-bottom:16px"><div style="font-size:13.5px;font-weight:700;color:#111;margin-bottom:8px">🏷 Utility provider information</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px">${UTILS.map(u=>`<div style="border:0.5px solid #eef0f6;border-radius:8px;padding:10px 12px"><div style="font-size:12.5px;font-weight:600;color:${u.color};margin-bottom:5px">${u.icon} ${u.label}</div><div style="font-size:12.5px;color:#444;line-height:1.7"><b>Provider:</b> ${_calEsc(_trkVal(u.k,pid,'prov'))||'<span style="color:#ccc">not set</span>'}<br/><b>Account #:</b> ${_calEsc(_trkVal(u.k,pid,'acct'))||'<span style="color:#ccc">not set</span>'}<br/><b>Contact:</b> ${_calEsc(_trkVal(u.k,pid,'contact'))||'<span style="color:#ccc">not set</span>'}<br/><b>Service on:</b> ${_calEsc(_utilIsOn(u.k,c))||'<span style="color:#ccc">unknown</span>'}<br/><b>Due each month:</b> ${_calEsc(_trkVal(u.k,pid,'due'))||'<span style="color:#ccc">—</span>'}<br/><b>Next/last payment:</b> ${_calEsc(_trkVal(u.k,pid,'last'))||'<span style="color:#ccc">—</span>'}</div></div>`).join('')}</div><div style="font-size:12px;color:#999;margin-top:8px">Edit these on the Electric / Water / Gas sheets.</div></div>`;
+      const provCard=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 15px;margin-bottom:16px"><div style="font-size:13.5px;font-weight:700;color:#111;margin-bottom:8px">🏷 Utility provider information</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px">${UTILS.map(u=>`<div style="border:0.5px solid #eef0f6;border-radius:8px;padding:10px 12px"><div style="font-size:12.5px;font-weight:600;color:${u.color};margin-bottom:5px">${u.icon} ${u.label}</div><div style="font-size:12.5px;color:#444;line-height:1.7"><b>Provider:</b> ${_calEsc(_trkVal(u.k,pid,'prov'))||'<span style="color:#ccc">not set</span>'}<br/><b>Account #:</b> ${_calEsc(_trkVal(u.k,pid,'acct'))||'<span style="color:#ccc">not set</span>'}<br/><b>Contact:</b> ${_calEsc(_trkVal(u.k,pid,'contact'))||'<span style="color:#ccc">not set</span>'}<br/><b>Service on:</b> ${_calEsc(_utilIsOn(u.k,c))||'<span style="color:#ccc">unknown</span>'}<br/><b>Due each month:</b> ${_calEsc(_trkVal(u.k,pid,'due'))||'<span style="color:#ccc">—</span>'}<br/><b>Last payment:</b> ${_calEsc(_trkVal(u.k,pid,'last'))||'<span style="color:#ccc">—</span>'}<br/><b>Next expected:</b> ${(()=>{const nx=_utilNextDue(u.k,pid,u.key);return nx?`<b style="color:#185FA5">${_calEsc(nx)}</b>`:'<span style="color:#ccc">set a due day first</span>';})()}</div></div>`).join('')}</div><div style="font-size:12px;color:#999;margin-top:8px">Edit these on the Electric / Water / Gas sheets.</div></div>`;
       return shell(back+bar+`<div style="font-size:15px;font-weight:600;color:#111;margin-bottom:10px">📜 ${nm(c)}</div>`+provCard+UTILS.map(payTable).join('')+_trkTable('📞 Utility notes &amp; activity','#0B7285','<th style="padding:9px 10px;text-align:left">Date</th><th style="padding:9px;text-align:left">Utility</th><th style="padding:9px;text-align:left">What happened</th><th style="padding:9px;text-align:left">Logged by</th><th style="padding:9px"></th>',logBody+logAdd));
     }
     if(ut==='m') return shell(back+bar+_trkSearchBox('Search a property…')+_trkTable('📋 Utility Info Master Sheet','#122A4A','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px;text-align:left">Electric provider</th><th style="padding:9px;text-align:left">Gas provider</th><th style="padding:9px;text-align:left">Water provider</th><th style="padding:9px;text-align:left">Comments</th><th style="padding:9px">Status</th><th style="padding:9px">History</th>',umRows));
     const u=UTILS.find(x=>x.key===ut)||UTILS[0];
-    const rows=active.length?active.map(uRow(u)).join(''):uEmpty(u.key==='g'?16:14);
+    // A multi-family property draws one line per unit, so 818 and 820 keep their own
+    // account numbers, providers and payment history.
+    const uList=active.reduce((a,c)=>a.concat(_utilRowsFor(c)),[]);
+    const rows=uList.length?uList.map(uRow(u)).join(''):uEmpty(u.key==='g'?16:14);
     return shell(back+bar+_trkSearchBox('Search a property, provider or account #…')+_trkTable(`${u.icon} ${u.label} Tracker`,u.color,uHead(u),rows)+`<div style="font-size:12px;color:#999;margin-top:-8px">Every box saves the moment you leave it. Scroll the table sideways for the payment columns, or click <b>📜 open</b> on a row for that property's full payment history and call log.</div>`+_trkClosedSimple(closed,'utility history'));
   }
   // Bruce, 5 Sept: permits moved out of Trackers and into their own dashboard.
@@ -18273,4 +18384,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-12a window-queue-by-stage -->
+<!-- build: 2026-09-12b utilities-by-unit-and-next-due -->
