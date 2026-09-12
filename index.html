@@ -12515,6 +12515,66 @@ function _utilGaps(c){
 // for. Ticking "Needed" on the Window Tracker is that request; entering any window
 // date counts too, so nothing already in flight falls off. Once the #window-tracker
 // Slack channel feeds requests in, it sets the same flag.
+const WIN_STAGES = [
+  { k:'measure', label:'Needs measuring',  icon:'\uD83D\uDCCF', color:'#B42318',
+    hint:'Requested \u2014 book the measure with Steve' },
+  { k:'measured',label:'Measure booked',   icon:'\uD83D\uDCC5', color:'#B7791F',
+    hint:'Booked \u2014 confirm it happened' },
+  { k:'order',   label:'Needs ordering',   icon:'\uD83D\uDED2', color:'#185FA5',
+    hint:'Measured \u2014 put the order in' },
+  { k:'arrive',  label:'Awaiting arrival', icon:'\uD83D\uDE9A', color:'#7A3FA8',
+    hint:'Ordered \u2014 waiting on delivery' },
+  { k:'install', label:'Needs installing', icon:'\uD83D\uDD28', color:'#0B7285',
+    hint:'Arrived \u2014 book and confirm the install' },
+  { k:'done',    label:'Completed',        icon:'\u2705', color:'#0F7B54',
+    hint:'Measured, ordered, arrived and installed' }
+];
+// Which single step is this property waiting on? Ticks are what advance it - a date
+// on its own is a booking, not a completed step.
+function _winStage(c){
+  if(!c) return null;
+  const on=(k)=>_trkOn('win',c.id,k), dt=(k)=>_trkVal('win',c.id,k);
+  if(on('installed')) return 'done';
+  if(on('arrived'))   return 'install';
+  if(on('ordered'))   return 'arrive';
+  if(on('measured'))  return 'order';
+  if(dt('measure_date')) return 'measured';
+  return 'measure';
+}
+function _winStageMeta(k){ return WIN_STAGES.find(x=>x.k===k)||WIN_STAGES[0]; }
+// The one line telling Marlo what this property is waiting on, with its date if it
+// has one.
+function _winStageNote(c){
+  const st=_winStage(c), dt=(k)=>_trkVal('win',c.id,k);
+  if(st==='measure')  return 'needs a measure booked';
+  if(st==='measured') return 'measure booked '+(dt('measure_date')||'')+' \u2014 confirm it happened';
+  if(st==='order')    return dt('order_date') ? ('ordered '+dt('order_date')+' \u2014 tick it off') : 'needs ordering';
+  if(st==='arrive')   return dt('arrival_date') ? ('arriving '+dt('arrival_date')+' \u2014 confirm delivery') : 'needs an arrival date';
+  if(st==='install')  return dt('install_date') ? ('install booked '+dt('install_date')+' \u2014 confirm it happened') : 'needs an install date booked';
+  return '';
+}
+function _winGo(k){ window._winStageFilter=(window._winStageFilter===k?null:k); (window._trkRerender||function(){openVAAdminDashboard('trackers');})(); }
+async function _winAdd(){
+  if(_blockIfReadOnly()) return;
+  const sel=document.getElementById('win-add');
+  const pid=sel?sel.value:'';
+  if(!pid){ alert("Pick the property first."); return; }
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
+  await _trkSet('win',pid,'needed',true,true);
+  if(typeof _logAudit==='function') _logAudit('created','property',(c&&c.addr)||'','Added to the window list');
+  window._winStageFilter=null;
+  (window._trkRerender||function(){openVAAdminDashboard('trackers');})();
+}
+// Taking a house back off the list only makes sense while nothing has happened on
+// it - once it is measured or ordered the record is history, not clutter.
+async function _winRemove(pid){
+  if(_blockIfReadOnly()) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
+  if(!confirm('Take '+((c&&c.addr)||'this property')+' off the window list?\n\nNothing has been measured or ordered on it, so nothing is lost. You can add it back any time.')) return;
+  await _trkSet('win',pid,'needed',false,true);
+  if(typeof _logAudit==='function') _logAudit('updated','property',(c&&c.addr)||'','Taken off the window list');
+  (window._trkRerender||function(){openVAAdminDashboard('trackers');})();
+}
 function _winComplete(c){
   if(!c) return false;
   return ['measured','ordered','arrived','installed'].every(k=>_trkOn('win',c.id,k));
@@ -13842,19 +13902,41 @@ function _vaTrackers(){
   // ---------- Window tracker — four dated stages + what's being replaced + notes ----------
   const winRow=(c)=>`<tr data-trk="${nm(c)}" style="border-top:0.5px solid #eef0f6">
     <td style="padding:7px 10px;min-width:170px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${nm(c)}</span><div style="font-size:11px;color:#999">${_calEsc(_phLabel(c.phase))} · PM ${_calEsc(c.pm||'—')}</div>
-      <div style="margin-top:4px;font-size:11.5px;color:#666;display:flex;gap:9px">
-        <span>${fchk('win',c.id,'glass')} Glass</span><span>${fchk('win',c.id,'windows')} Windows</span><span>${fchk('win',c.id,'both')} Both</span></div></td>
+      ${(()=>{const st=_winStage(c),m=_winStageMeta(st);return (st&&st!=='done')?`<div style="margin-top:3px"><span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:99px;background:${m.color}1A;color:${m.color};white-space:nowrap">${m.icon} ${m.label}</span><div style="font-size:10.5px;color:#aaa;margin-top:2px">${_calEsc(_winStageNote(c))}</div></div>`:'';})()}
+      <div style="margin-top:4px;font-size:11.5px;color:#666;display:flex;gap:9px;align-items:center">
+        <span>${fchk('win',c.id,'glass')} Glass</span><span>${fchk('win',c.id,'windows')} Windows</span><span>${fchk('win',c.id,'both')} Both</span>${(!ro && _winStage(c)==='measure' && !_trkVal('win',c.id,'measure_date'))?`<span onclick="_winRemove('${c.id}')" title="Take this house back off the window list" style="cursor:pointer;font-size:10.5px;color:#ccc">remove</span>`:''}</div></td>
     <td style="padding:7px;text-align:center">${fchk('win',c.id,'needed')}<div style="font-size:10.5px;color:#bbb;margin-top:2px">requested</div></td>
     <td style="padding:7px;text-align:center">${dt('win',c.id,'measure_date',`_trkWinDate('${c.id}','measure_date',this.value)`)}<div style="margin-top:3px">${fchk('win',c.id,'measured')}</div></td>
     <td style="padding:7px;text-align:center">${dt('win',c.id,'order_date',`_trkWinDate('${c.id}','order_date',this.value)`)}<div style="margin-top:3px">${fchk('win',c.id,'ordered')}</div></td>
     <td style="padding:7px;text-align:center">${dt('win',c.id,'arrival_date',`_trkWinDate('${c.id}','arrival_date',this.value)`)}<div style="margin-top:3px">${fchk('win',c.id,'arrived')}</div></td>
     <td style="padding:7px;text-align:center">${dt('win',c.id,'install_date',`_trkWinDate('${c.id}','install_date',this.value)`)}<div style="margin-top:3px">${fchk('win',c.id,'installed')}</div></td>
     <td style="padding:7px">${txt('win',c.id,'notes','Notes & comments',190)}</td></tr>`;
-  // The front page is work still to do. Anything finished drops into the folder
-  // below it - still editable, so unticking a box brings the property straight back.
-  const winLive=active.filter(c=>!_winComplete(c));
-  const winFin=active.filter(_winComplete);
-  const winrows=winLive.length?winLive.map(winRow).join(""):'<tr><td colspan="7" style="padding:16px;color:#bbb;text-align:center">Nothing outstanding \u2014 every property with window work is finished.</td></tr>';
+  // The front page is the window QUEUE - only houses somebody has actually asked for
+  // windows or glass on. Everything else is off it until someone adds it.
+  const winQueue=active.filter(_winInQueue);
+  const winLive=winQueue.filter(c=>!_winComplete(c));
+  const winFin=winQueue.filter(_winComplete);
+  const _wf=window._winStageFilter||null;
+  const winShown=_wf?winLive.filter(c=>_winStage(c)===_wf):winLive;
+  const winCount=(k)=>winLive.filter(c=>_winStage(c)===k).length;
+  const winrows=winShown.length?winShown.map(winRow).join(""):`<tr><td colspan="7" style="padding:16px;color:#bbb;text-align:center">${winLive.length?'Nothing at this stage \u2014 clear the filter to see the rest.':'Nothing outstanding \u2014 every window job on the list is finished.'}</td></tr>`;
+  // One square per stage. The number is how many jobs are waiting on THAT step.
+  const winStageBar=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:8px;margin-bottom:12px">${
+    WIN_STAGES.filter(st=>st.k!=='done').map(st=>{
+      const n=winCount(st.k), on=(_wf===st.k);
+      return `<div onclick="_winGo('${st.k}')" title="${_calEsc(st.hint)}" style="background:${on?st.color:'#fff'};border:0.5px solid ${on?st.color:'#e0e4ec'};border-top:3px solid ${st.color};border-radius:9px;padding:9px 11px;cursor:pointer">
+        <div style="font-size:11px;color:${on?'rgba(255,255,255,.85)':'#888'};line-height:1.3">${st.icon} ${st.label}</div>
+        <div style="font-size:22px;font-weight:700;color:${on?'#fff':(n?st.color:'#c9ccd4')};line-height:1.2">${n}</div></div>`;
+    }).join('')}</div>`;
+  const winAdd=ro?'':(()=>{
+    const opts=active.filter(c=>!_winInQueue(c)).sort((a,b)=>String(a.addr||'').localeCompare(String(b.addr||'')));
+    return `<div style="background:#fff;border:0.5px dashed #cdd7e6;border-radius:9px;padding:9px 13px;margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <span style="font-size:12.5px;color:#666">Doing glass or windows on a house that is not on this list?</span>
+      <select id="win-add" style="padding:6px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12.5px;max-width:280px"><option value="">\u2014 Pick a property \u2014</option>${opts.map(c=>`<option value="${c.id}">${_calEsc(c.addr||'')}</option>`).join('')}</select>
+      <button onclick="_winAdd()" style="padding:6px 13px;border:none;border-radius:7px;background:#122A4A;color:#fff;font-size:12.5px;font-weight:600;cursor:pointer">&#65291; Add to the window list</button>
+      <span style="font-size:11.5px;color:#aaa">${opts.length} propert${opts.length===1?'y':'ies'} not on the list</span>
+    </div>`;
+  })();
   const winFinished=winFin.length?`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden;margin-top:14px">
       <details${window._winFinOpen?' open':''} ontoggle="window._winFinOpen=this.open">
         <summary style="cursor:pointer;padding:11px 14px;outline:none;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
@@ -13898,7 +13980,7 @@ function _vaTrackers(){
 
   if(view==='w9') return shell(back+_trkSearchBox('Search a contractor…')+_trkTable('🧾 W-9 Tracker','#7A3FA8','<th style="padding:9px 10px;text-align:left">Contractor</th><th style="padding:9px;text-align:left">Name on W-9</th><th style="padding:9px">On file</th><th style="padding:9px;text-align:left">Notes</th><th style="padding:9px;text-align:left">Email</th><th style="padding:9px;text-align:left">Phone</th>'+(ro?'':'<th style="padding:9px;text-align:right">Jobs</th><th></th>'),w9rows)+`<div style="font-size:12px;color:#999">Ticking "On file" here also marks the contractor in the Contractor Directory.${ro?'':' <b>Remove</b> deletes the whole contractor record — use it on duplicates, and remove the copy with 0 jobs against it.'}</div>`);
   if(view==='mow') return shell(back+_trkSearchBox('Search a property…')+_trkTable('🌱 Mowing Tracker','#3B6D11','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px;text-align:left">Who is mowing</th><th style="padding:9px;text-align:left">How often</th><th style="padding:9px;text-align:left">Cost/mow</th><th style="padding:9px;text-align:left">Contact #</th><th style="padding:9px;text-align:left">PM</th><th style="padding:9px;text-align:left">Payment</th><th style="padding:9px">On route</th><th style="padding:9px">Removed after</th>',mowrows)+_trkClosedSimple(closed,'mowing history'));
-  if(view==='window') return shell(back+_trkSearchBox('Search a property…')+_trkTable('🪟 Window Tracker','#185FA5','<th style="padding:9px 10px;text-align:left">Property / what’s being replaced</th><th style="padding:9px">Needed</th><th style="padding:9px">Measure</th><th style="padding:9px">Ordered</th><th style="padding:9px">Arrival</th><th style="padding:9px">Install</th><th style="padding:9px;text-align:left">Notes &amp; comments</th>',winrows)+`<div style="font-size:12px;color:#999;margin-top:-8px">Tick <b>Needed</b> when a PM requests windows or glass — that puts the property on Marlo's list with its next booking. Dates you set here land on that property’s construction calendar automatically, and Slack posts 48 hours before the measure and install dates.${winFin.length?` <b>${winFin.length}</b> finished propert${winFin.length===1?'y is':'ies are'} in the completed folder below.`:''}</div>`+winFinished+winClosed);
+  if(view==='window') return shell(back+winStageBar+winAdd+_trkSearchBox('Search a property…')+_trkTable('🪟 Window Tracker'+(_wf?' — '+_winStageMeta(_wf).label:''),'#185FA5','<th style="padding:9px 10px;text-align:left">Property / what’s being replaced</th><th style="padding:9px">Needed</th><th style="padding:9px">Measure</th><th style="padding:9px">Ordered</th><th style="padding:9px">Arrival</th><th style="padding:9px">Install</th><th style="padding:9px;text-align:left">Notes &amp; comments</th>',winrows)+`<div style="font-size:12px;color:#999;margin-top:-8px">This list is the window <b>queue</b> &mdash; only houses somebody has actually asked for windows or glass on. Use <b>Add to the window list</b> above for a one-off job. Each square is one stage: the number is how many houses are waiting on <i>that</i> step, and clicking a square filters the list to it. A house moves on when you tick the box, not when you set the date &mdash; a booked install is still an install to chase. Dates you set here land on that property’s construction calendar automatically, and Slack posts 48 hours before the measure and install dates.${winFin.length?` <b>${winFin.length}</b> finished propert${winFin.length===1?'y is':'ies are'} in the completed folder below.`:''}</div>`+winFinished+winClosed);
   if(view==='util'){
     const ut=window._utilTab||'e';
     const subtab=(k,label)=>`<span onclick="_utilTabTo('${k}')" style="cursor:pointer;padding:6px 13px;border-radius:7px;font-size:13px;font-weight:${ut===k?'600':'400'};background:${ut===k?'#122A4A':'#fff'};color:${ut===k?'#fff':'#444'};border:0.5px solid ${ut===k?'#122A4A':'#d8dce6'}">${label}</span>`;
@@ -18191,4 +18273,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-10e window-work-completed-folder -->
+<!-- build: 2026-09-12a window-queue-by-stage -->
