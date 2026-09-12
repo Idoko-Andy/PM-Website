@@ -8790,7 +8790,7 @@ function _computePMMetrics(name){
   const ago7=_ymd(new Date(today.getTime()-7*86400000));
   const t7=tasks.filter(t=>t.due_date && t.due_date>=ago7 && t.due_date<=todayStr);
   const resched7= t7.length? Math.round(t7.filter(t=>(t.reschedule_count||0)>0).length/t7.length*100) : "--";
-  return { avgDailyWork:perDay, dollarsPerDayYear:dollarsDay, dollarsPerDay7:dollars7, dollarsPerDay7Short:dollars7Short, dollarsPerDay7Days:dollars7Days, dollarsPerDayYTD:dollarsYTD, dollarsPerDayRange:dollarsRange, dollarsPerDayRangeShort:rangeShort, dollarsPerDayRangeDays:rangeDays, dollarsPerDayRangeFrom:rangeFrom, reschedulePct7:resched7, budgetPct:{on:"--",over:"--"}, timelinePct:{on:onTime,over:overTime}, flipsCompleted:flips, rentalHandoffs:handoffs, taskCompletionPct:taskPct, reschedulePct:reschedPct, taskCount:total, windowLabel:_W.label, windowKey:_W.key };
+  return { avgDailyWork:perDay, dollarsPerDayYear:dollarsDay, dollarsPerDay7:dollars7, dollarsPerDay7Short:dollars7Short, dollarsPerDay7Days:dollars7Days, dollarsPerDayYTD:dollarsYTD, dollarsPerDayRange:dollarsRange, dollarsPerDayRangeShort:rangeShort, dollarsPerDayRangeDays:rangeDays, dollarsPerDayRangeFrom:rangeFrom, reschedulePct7:resched7, budgetPct:(function(){ const b=_budgetSplit(mine); return b.pct==null?{on:"--",over:"--",unknown:b.unknown,total:0}:{on:b.pct,over:b.overPct,unknown:b.unknown,total:b.total}; })(), timelinePct:{on:onTime,over:overTime}, flipsCompleted:flips, rentalHandoffs:handoffs, taskCompletionPct:taskPct, reschedulePct:reschedPct, taskCount:total, windowLabel:_W.label, windowKey:_W.key };
 }
 // Team Overview period picker — the $/day figure on every PM card follows this.
 function _tovWindow(){
@@ -8841,7 +8841,7 @@ function pmCard(name, d, liveName) {
           <div class="pm-stat-card green" style="margin:0">
             <div class="pm-stat-label">In Budget</div>
             <div class="pm-stat-value" style="font-size:21px">${d.budgetPct.on}${d.budgetPct.on==='--'?'':'%'}</div>
-            <div class="pm-stat-sub">Awaits cost data</div>
+            <div class="pm-stat-sub">${d.budgetPct.on==='--'?'No budget figures yet':((d.budgetPct.total||0)+' propert'+((d.budgetPct.total||0)===1?'y':'ies')+' with a budget'+(d.budgetPct.unknown?(' &middot; '+d.budgetPct.unknown+' without one'):''))}</div>
           </div>
           <div class="pm-stat-card blue" style="margin:0">
             <div class="pm-stat-label">On Timeline</div>
@@ -9799,6 +9799,21 @@ function _rhMoney(v){ return (v==null)?"—":("$"+Number(v).toLocaleString()); }
 function _rhName(u){ return u?`${u.firstName||""} ${u.lastName||""}`.trim():""; }
 
 // 30-day performance for one person: $/day, task completion, reschedules, budget, timeline.
+// On budget = spent is at or under budget, counted per property. Properties with no
+// budget or no spend figure are left out rather than scored as a pass.
+function _budgetSplit(cards){
+  let on=0, off=0, unknown=0;
+  (cards||[]).forEach(function(c){
+    const b=parseFloat(String((c&&c.budget)||"").replace(/[^0-9.\-]/g,""));
+    const sp=(typeof _spentNow==='function')?_spentNow(c):null;
+    if(isNaN(b)||b<=0||sp==null){ unknown++; return; }
+    if(sp<=b) on++; else off++;
+  });
+  const tot=on+off;
+  return { on:on, off:off, unknown:unknown, total:tot,
+           pct: tot?Math.round(on/tot*100):null,
+           overPct: tot?(100-Math.round(on/tot*100)):null };
+}
 function _rhMetrics30(name){
   const today=new Date(); today.setHours(0,0,0,0);
   const todayStr=_ymd(today), ago30=_ymd(new Date(today.getTime()-30*86400000));
@@ -9809,23 +9824,30 @@ function _rhMetrics30(name){
   const mine=_rhCards().filter(c=>_sameAssignee(c.pm,name));
   let dpd=_dollarsDayRange(mine,ago30,todayStr);
   if(dpd==null){ try{ dpd=_computePMMetrics(name).dollarsPerDayYear; }catch(e){ dpd=null; } }
-  let bOn=0,bOff=0;
-  mine.forEach(c=>{
-    const b=parseFloat(String(c.budget||"").replace(/[^0-9.\-]/g,"")), sp=_spentNow(c);
-    if(isNaN(b)||b<=0||sp==null) return;
-    if(sp<=b) bOn++; else bOff++;
-  });
-  const budgetPct=(bOn+bOff)? Math.round(bOn/(bOn+bOff)*100) : null;
+  const budgetPct=_budgetSplit(mine).pct;
   let tl={on:"--",over:"--"}; try{ tl=_computePMMetrics(name).timelinePct; }catch(e){}
   return { dpd, taskPct, reschedPct, budgetPct, timelineOn:tl.on, timelineOver:tl.over };
 }
 // Shared performance strip — every role except the CEO/Director sees their own numbers.
 function _rhPerfStrip(name){
   const m=_rhMetrics30(name);
-  return _rhHead("My performance","last 30 days · tracked to your name")+_rhRow([
+  const mine=_rhCards().filter(c=>_sameAssignee(c.pm,name));
+  const bs=_budgetSplit(mine);
+  const tiles=[
     _rhTile("Task completion %",_rhPct(m.taskPct),"#2ecc71"),
-    _rhTile("Tasks rescheduled %",_rhPct(m.reschedPct),(m.reschedPct!=null&&m.reschedPct>25)?"#e74c3c":"#f39c12"),
-  ]);
+    _rhTile("Tasks rescheduled %",_rhPct(m.reschedPct),(m.reschedPct!=null&&m.reschedPct>25)?"#e74c3c":"#f39c12")
+  ];
+  if(mine.length){
+    tiles.push(_rhTile("Projects on budget %", bs.pct==null?"\u2014":(bs.pct+"%"),
+      bs.pct==null?"#666":(bs.pct>=80?"#2ecc71":(bs.pct>=50?"#f39c12":"#e74c3c")),
+      bs.total?(bs.on+" of "+bs.total+" at or under budget"+(bs.unknown?(" \u00b7 "+bs.unknown+" with no budget set"):"")):"no budgets set yet"));
+    tiles.push(_rhTile("On timeline %", (m.timelineOn==null||m.timelineOn==="--")?"\u2014":(m.timelineOn+"%"),
+      (m.timelineOn==null||m.timelineOn==="--")?"#666":(m.timelineOn>=80?"#2ecc71":(m.timelineOn>=50?"#f39c12":"#e74c3c")),
+      "finished by the date on the card"));
+    tiles.push(_rhTile("Production $/day", m.dpd==null?"\u2014":("$"+Number(m.dpd).toLocaleString()),
+      m.dpd==null?"#666":"#5dade2", m.dpd==null?"no spend history yet":"across your live jobs"));
+  }
+  return _rhHead("My performance","last 30 days \u00b7 tracked to your name")+_rhRow(tiles);
 }
 
 // ---- CEO star: properties Tommy is personally monitoring ----
@@ -18384,4 +18406,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-12b utilities-by-unit-and-next-due -->
+<!-- build: 2026-09-12c on-budget-is-a-real-number-everywhere -->
