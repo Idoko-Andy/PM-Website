@@ -3781,6 +3781,8 @@ async function _sqAdd(pid){
   if(!ok) return;
   _logAudit('created','property',(c&&c.addr)||'', 'Side task'+(who?(' for '+who):'')+': '+text+(at?(' — remind on '+at+(tid?' and put on the task calendar':'')):' — no reminder date'));
   if(tEl) tEl.value=''; if(dEl) dEl.value=''; if(cEl) cEl.checked=false;
+  // Saved is saved: drop the draft so the next redraw doesn't put the old text back.
+  if(typeof _wmDraftClear==='function'){ ['sq-t-','sq-d-','sq-w-','sq-c-'].forEach(function(k){ _wmDraftClear(k+pid); }); }
   _sqRerender(pid);
 }
 async function _sqToggle(pid, id){
@@ -4295,9 +4297,22 @@ function _pdLinked(c){
                   <button onclick="setPropertyRental('${c.id}','no')" style="font-size:12px;padding:3px 11px;border-radius:5px;cursor:pointer;border:0.5px solid ${!c.isRental?'#B42318':'#ddd'};background:${!c.isRental?'#FCEBEB':'#fff'};color:${!c.isRental?'#B42318':'#666'}">No</button>
                 </span>`}
               </div>
-              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px"><span style="color:#888">Start Date</span>${_ro_sp?`<span style="color:#111;font-weight:500">${c.start||'—'}</span>`:`<input type="date" id="pi-start" value="${c.start||''}" onchange="savePropInfo('${c.id}',true)" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"/>`}</div>
-              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;font-size:14px"><span style="color:#888">Target Completion</span>${_ro_sp?`<span style="color:#111;font-weight:500">${c.end||'—'}</span>`:`<input type="date" id="pi-end" value="${c.end||''}" onchange="savePropInfo('${c.id}',true)" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"/>`}</div>
               <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;font-size:14px">
+                <span style="color:#888;display:flex;align-items:center;gap:5px">🗓 Closing Date <span style="font-size:10px;background:#E6F1FB;color:#185FA5;padding:1px 5px;border-radius:4px">Us Buying</span>${c.purchaseConfirmed?` <span style="font-size:10px;background:#EAF3DE;color:#173404;padding:1px 5px;border-radius:4px">Owned ✓</span>`:''}</span>
+                ${_ro_sp ? `<span style="color:#111;font-weight:500">${c.closingDate||'—'}</span>` : `<span style="display:flex;gap:6px;align-items:center"><input type="date" id="pd-closing-date" value="${c.closingDate||''}" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"/><button onclick="saveClosingDate('${c.id}')" style="font-size:12px;padding:3px 9px;border-radius:5px;background:#111;color:#fff;border:none;cursor:pointer">Save date</button></span>`}
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:0.5px solid #f4f5f7;font-size:14px">
+                <span style="color:#888;display:flex;align-items:center;gap:5px">🏠 Vacancy Date</span>
+                ${_ro_sp ? `<span style="color:#111;font-weight:500">${c.vacancyDate||'—'}</span>` : `<span style="display:flex;gap:6px;align-items:center"><input type="date" id="pd-vacancy-date" value="${c.vacancyDate||''}" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"/><button onclick="saveVacancyDate('${c.id}')" style="font-size:12px;padding:3px 9px;border-radius:5px;background:#111;color:#fff;border:none;cursor:pointer">Save date</button></span>`}
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:0.5px solid #f4f5f7;font-size:14px"><span style="color:#888">Start Date</span>${_ro_sp?`<span style="color:#111;font-weight:500">${c.start||'—'}</span>`:`<input type="date" id="pi-start" value="${c.start||''}" onchange="savePropInfo('${c.id}',true)" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"/>`}</div>
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:0.5px solid #f4f5f7;font-size:14px"><span style="color:#888">Target Completion</span>${_ro_sp?`<span style="color:#111;font-weight:500">${c.end||'—'}</span>`:`<input type="date" id="pi-end" value="${c.end||''}" onchange="savePropInfo('${c.id}',true)" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"/>`}</div>
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:0.5px solid #f4f5f7;font-size:14px">
+                <span style="color:#888;display:flex;align-items:center;gap:5px">🗓 Closing Date <span style="font-size:10px;background:#FCEBEB;color:#791F1F;padding:1px 5px;border-radius:4px">Us Selling</span>${c.closeApproved?` <span style="font-size:10px;background:#EAF3DE;color:#173404;padding:1px 5px;border-radius:4px">Sold ✓</span>`:''}</span>
+                ${_ro_sp ? `<span style="color:#111;font-weight:500">${c.closingDateSell||'—'}</span>` : `<span style="display:flex;gap:6px;align-items:center"><input type="date" id="pd-closing-sell" value="${c.closingDateSell||''}" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"/><button onclick="saveClosingSellDate('${c.id}')" style="font-size:12px;padding:3px 9px;border-radius:5px;background:#111;color:#fff;border:none;cursor:pointer">Save date</button></span>`}
+              </div>
+              ${_kickCardRow(c)}
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:0.5px solid #f4f5f7;font-size:14px">
                 <span style="color:#888;display:flex;align-items:center;gap:5px">📷 CompanyCam <span style="font-size:10px;background:#E6F1FB;color:#185FA5;padding:1px 5px;border-radius:4px">Auto-links when folder created</span></span>
                 ${c.companyCam ? `<a href="${c.companyCam}" target="_blank" style="font-size:13px;color:#185FA5;text-decoration:none">Open Folder ↗</a>` : `<button onclick="openPropModal('companycam','${c.id}')" style="font-size:12px;padding:2px 8px;border-radius:4px;background:transparent;color:#aaa;border:0.5px solid #ccc;cursor:pointer">+ Add Link</button>`}
               </div>
@@ -4305,20 +4320,7 @@ function _pdLinked(c){
                 <span style="color:#888;display:flex;align-items:center;gap:5px">📁 Project Drive Folder</span>
                 ${c.driveUrl ? `<a href="${c.driveUrl}" target="_blank" style="font-size:13px;color:#185FA5;text-decoration:none">Open Folder ↗</a>` : (_ro_sp?`<span style="font-size:12px;color:#ccc">—</span>`:`<button onclick="openPropModal('drive','${c.id}')" style="font-size:12px;padding:2px 8px;border-radius:4px;background:transparent;color:#aaa;border:0.5px solid #ccc;cursor:pointer">+ Add Link</button>`)}
               </div>
-              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:0.5px solid #f4f5f7;font-size:14px">
-                <span style="color:#888;display:flex;align-items:center;gap:5px">🗓 Closing Date <span style="font-size:10px;background:#E6F1FB;color:#185FA5;padding:1px 5px;border-radius:4px">Us Buying</span>${c.purchaseConfirmed?` <span style="font-size:10px;background:#EAF3DE;color:#173404;padding:1px 5px;border-radius:4px">Owned ✓</span>`:''}</span>
-                ${_ro_sp ? `<span style="color:#111;font-weight:500">${c.closingDate||'—'}</span>` : `<span style="display:flex;gap:6px;align-items:center"><input type="date" id="pd-closing-date" value="${c.closingDate||''}" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"/><button onclick="saveClosingDate('${c.id}')" style="font-size:12px;padding:3px 9px;border-radius:5px;background:#111;color:#fff;border:none;cursor:pointer">Save date</button></span>`}
-              </div>
-              ${_kickCardRow(c)}
               ${_pdocBody(c)}
-              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:0.5px solid #f4f5f7;font-size:14px">
-                <span style="color:#888;display:flex;align-items:center;gap:5px">🏠 Vacancy Date</span>
-                ${_ro_sp ? `<span style="color:#111;font-weight:500">${c.vacancyDate||'—'}</span>` : `<span style="display:flex;gap:6px;align-items:center"><input type="date" id="pd-vacancy-date" value="${c.vacancyDate||''}" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"/><button onclick="saveVacancyDate('${c.id}')" style="font-size:12px;padding:3px 9px;border-radius:5px;background:#111;color:#fff;border:none;cursor:pointer">Save date</button></span>`}
-              </div>
-              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:0.5px solid #f4f5f7;font-size:14px">
-                <span style="color:#888;display:flex;align-items:center;gap:5px">🗓 Closing Date <span style="font-size:10px;background:#FCEBEB;color:#791F1F;padding:1px 5px;border-radius:4px">Us Selling</span>${c.closeApproved?` <span style="font-size:10px;background:#EAF3DE;color:#173404;padding:1px 5px;border-radius:4px">Sold ✓</span>`:''}</span>
-                ${_ro_sp ? `<span style="color:#111;font-weight:500">${c.closingDateSell||'—'}</span>` : `<span style="display:flex;gap:6px;align-items:center"><input type="date" id="pd-closing-sell" value="${c.closingDateSell||''}" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"/><button onclick="saveClosingSellDate('${c.id}')" style="font-size:12px;padding:3px 9px;border-radius:5px;background:#111;color:#fff;border:none;cursor:pointer">Save date</button></span>`}
-              </div>
             </div>
           </div>
           <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden">
@@ -4946,6 +4948,57 @@ function _sqDueSoon(cards){
   out.sort((a,b)=> a.at<b.at ? -1 : (a.at>b.at ? 1 : 0));
   return out;
 }
+// Bruce, 13 Sept: "Marlo, on her main dashboard - above her tasks, it needs to be side
+// tasks as another box. So side tasks in order from newest to oldest or due date to no
+// due date. And then same thing for Jen on her dashboard."
+// Dated ones first, soonest (and overdue) at the top, because those are the ones with a
+// clock on them. Undated ones after, newest first - the one you just agreed to is the
+// one you are most likely looking for.
+function _sqMineList(name){
+  const who=String(name||'').trim();
+  if(!who) return [];
+  const cards=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived);
+  const out=[];
+  cards.forEach(function(c){
+    _sqList(c).forEach(function(x){
+      if(!x || x.done) return;
+      if(!_canonSame(_sqWhoOf(x), who)) return;
+      out.push({ c:c, x:x, at:String(x.at||''), made:String(x.made||'') });
+    });
+  });
+  out.sort(function(a,b){
+    if(a.at && !b.at) return -1;
+    if(!a.at && b.at) return 1;
+    if(a.at && b.at) return a.at<b.at?-1:(a.at>b.at?1:0);
+    return a.made>b.made?-1:(a.made<b.made?1:0);
+  });
+  return out;
+}
+// The box itself. Empty is a real answer - it says nobody has put anything on you.
+function _sqMineBox(name, title){
+  const list=_sqMineList(name);
+  const today=_ymd(new Date());
+  const body = list.length ? list.slice(0,30).map(function(o){
+    const when = !o.at ? '' : (o.at<today ? 'Overdue' : (o.at===today ? 'Today' : 'Due '+o.at));
+    const col  = !o.at ? '#888' : (o.at<today ? '#B42318' : (o.at===today ? '#B7791F' : '#185FA5'));
+    const ph   = (SQ_PHASES.find(function(p){return p.id===_sqPhaseOf(o.x);})||{}).label||'';
+    return '<div style="background:#111;border:1px solid #2a2a2a;border-left:3px solid '+col+';border-radius:8px;padding:9px 12px;margin-bottom:6px">'
+      + '<div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline">'
+      + '<div onclick="openPropDetail(\''+o.c.id+'\')" style="font-size:12.5px;color:#5dade2;cursor:pointer;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+_calEsc(o.c.addr||'')+'</div>'
+      + (when?'<div style="font-size:10.5px;font-weight:700;color:'+col+';flex-shrink:0;text-transform:uppercase;letter-spacing:.04em">'+when+'</div>'
+             :'<div style="font-size:10.5px;color:#555;flex-shrink:0;text-transform:uppercase;letter-spacing:.04em">no date</div>')
+      + '</div>'
+      + '<div style="font-size:13px;color:#ddd;margin-top:3px;white-space:pre-wrap">'+_calEsc(o.x.t||'')+'</div>'
+      + '<div style="font-size:10.5px;color:#555;margin-top:2px">'+_calEsc(ph)+(o.x.by?(' \u00b7 added by '+_calEsc(o.x.by)):'')+'</div>'
+      + '</div>';
+  }).join('') + (list.length>30?('<div style="font-size:11px;color:#555;margin-top:4px">+ '+(list.length-30)+' more</div>'):'')
+   : '<div style="font-size:12.5px;color:#555;padding:4px 0">Nothing on your side-task list. They get added on a property card or in Monday\u2019s meeting.</div>';
+  return '<div style="background:#0a0a0a;border:1px solid #2a2a2a;border-radius:10px;padding:13px 15px;margin-bottom:12px">'
+    + '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:9px">'
+    + '<span style="font-size:13px;font-weight:600;color:#fff">\uD83D\uDCCC '+(title||'Side tasks')+'</span>'
+    + '<span style="font-size:11px;color:#555">'+(list.length?(list.length+' open \u00b7 dated first, then newest'):'nothing open')+'</span>'
+    + '</div>' + body + '</div>';
+}
 function _sqDueColumn(cards){
   const list=_sqDueSoon(cards);
   if(!list.length) return `<div style="font-size:12.5px;color:#bbb">Nothing due in the next 48 hours.</div>`;
@@ -5410,7 +5463,7 @@ function _wmArchive(kind, current){
 // The meeting screen is driven live in a room, so a field must save without
 // re-rendering the page underneath someone who is mid-sentence in a notes box.
 // Each input writes its own column and flashes; nothing else moves.
-const _WM_COL_TO_CARD={ end_date:'end', jv_deal:'jvDeal', est_profit:'estProfit', goal_arv:'goalArv', listing_agent:'listingAgent' };
+const _WM_COL_TO_CARD={ start_date:'start', end_date:'end', jv_deal:'jvDeal', est_profit:'estProfit', goal_arv:'goalArv', listing_agent:'listingAgent' };
 // Every figure on the Monday card, computed from today's date. Used both when the
 // screen is drawn and when it is refreshed in place, so the two can never drift.
 function _wmCalc(c){
@@ -5479,7 +5532,7 @@ async function _wmDeal(pid, col, val, el){
   if(error || !data || !data.length){ _wmFlash(el,false, error?(error.message||''):'nothing was saved — refresh and try again'); return; }
   const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
   if(c) c[_WM_COL_TO_CARD[col]] = (col==='jv_deal') ? !!val : (val||'');
-  const labels={ end_date:'Finish date', jv_deal:'JV deal', est_profit:'Estimated profit', goal_arv:'Goal ARV', listing_agent:'Listing agent' };
+  const labels={ start_date:'Start date', end_date:'Finish date', jv_deal:'JV deal', est_profit:'Estimated profit', goal_arv:'Goal ARV', listing_agent:'Listing agent' };
   _logAudit("updated","property", (c&&c.addr)||"", labels[col]+" set in the Monday meeting"+(col==='jv_deal'?(val?': yes':': no'):(val?(': '+val):' — cleared')));
   try{ _wmRefreshMetrics(pid); }catch(e){}
   _wmFlash(el,true);
@@ -6036,6 +6089,21 @@ async function _wmPaceOk(pid){
   if(_blockIfReadOnly()) return;
   const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return;
   if(await _wmChecklistPatch(pid,{est_checked:_ymd(new Date())})) openWeeklyMeeting('team');
+}
+// Bruce, 13 Sept: "make sure on the Monday project meeting we can adjust the start
+// dates as well if it automatically didn't set one." The start date is what $/day and
+// days-accumulated are measured from, so - like the committed finish - it can be moved,
+// it just has to be on purpose.
+async function _wmStartSet(pid, val, el){
+  if(_blockIfReadOnly()) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return;
+  if(c.start && val!==c.start){
+    if(!confirm("The start date for "+(c.addr||'this property')+" is "+c.start+".\n\nProduction $/day and days accumulated are both measured from this date, so moving it changes every number on this card.\n\nChange it to "+(val||'blank')+" anyway?")){
+      if(el) el.value=c.start||''; return;
+    }
+  }
+  await _wmDeal(pid,'start_date',val,el);
+  openWeeklyMeeting('team');
 }
 // The committed date can be changed - it just has to be deliberate.
 async function _wmCommitSet(pid, val, el){
@@ -7883,14 +7951,74 @@ function _wmReturnOrRerender(){
 // Bruce, 8 Sept: "when 'done with this one' it shoots you down to the bottom of all
 // the address lists." Every tick in the meeting redraws the whole screen, which threw
 // the page back to wherever the new, shorter document happened to put it.
+// Every box the user has typed in since the last save, by element id.
+window.__wmDirty = window.__wmDirty || {};
+function _wmInMeetingEl(el){
+  return !!(el && el.id && (el.tagName==='INPUT'||el.tagName==='TEXTAREA'||el.tagName==='SELECT')
+            && el.closest && el.closest('#dash-body'));
+}
+// Mark a box dirty the moment a key lands in it.
+function _wmMarkDirty(e){
+  const el=e.target;
+  if(!_wmInMeetingEl(el)) return;
+  if(!document.querySelector('[data-wm-prop]')) return;   // only inside a meeting
+  window.__wmDirty[el.id]=el.value;
+}
+document.addEventListener('input',  _wmMarkDirty, true);
+// A dropdown or a date box can land its value on 'change' alone. The owner picker on a
+// side task is exactly that: pick a name, and a redraw two seconds later put it back to
+// you. Both events mark the box, so whichever one fires, the pick survives.
+document.addEventListener('change', _wmMarkDirty, true);
+// A save clears the draft for that box - saved is saved, and the next redraw should
+// show what the database has.
+function _wmDraftClear(id){ if(id) delete window.__wmDirty[id]; }
+function _wmDraftClearAll(){ window.__wmDirty={}; }
+// Snapshot before a redraw: unsaved text, where the cursor is, and how far down.
+function _wmSnap(){
+  const a=document.activeElement;
+  const snap={ vals:Object.assign({},window.__wmDirty), active:null, s:null, e:null,
+               y:(window.pageYOffset||document.documentElement.scrollTop||0) };
+  if(_wmInMeetingEl(a)){
+    snap.active=a.id;
+    try{ snap.s=a.selectionStart; snap.e=a.selectionEnd; }catch(err){}
+    snap.vals[a.id]=a.value;      // whatever is in the focused box right now
+  }
+  return snap;
+}
+// Put it back. Typing beats a redraw, every time.
+function _wmUnsnap(snap){
+  if(!snap) return;
+  Object.keys(snap.vals||{}).forEach(function(id){
+    const el=document.getElementById(id);
+    if(!el) return;
+    if(el.value===snap.vals[id]) return;
+    el.value=snap.vals[id];
+    if(typeof _growBox==='function' && el.tagName==='TEXTAREA'){ try{ _growBox(el); }catch(e){} }
+  });
+  if(snap.active){
+    const el=document.getElementById(snap.active);
+    if(el){
+      try{
+        el.focus({preventScroll:true});
+        if(snap.s!=null && el.setSelectionRange && el.type!=='date' && el.tagName!=='SELECT'){
+          el.setSelectionRange(snap.s, snap.e==null?snap.s:snap.e);
+        }
+      }catch(e){}
+    }
+  }
+}
 const _wmOpenRaw = openWeeklyMeeting;
 openWeeklyMeeting = function(kind, week){
   const same = (window.__wmLastKind===kind) && ((window.__wmLastWeek||null)===(week||null));
-  const y = same ? (window.pageYOffset||document.documentElement.scrollTop||0) : 0;
+  // Leaving this meeting for a different one throws the drafts away - they belong to
+  // the document they were typed in.
+  if(!same) _wmDraftClearAll();
+  const snap = same ? _wmSnap() : null;
+  const y = same ? snap.y : 0;
   const r = _wmOpenRaw.apply(this, arguments);
-  if(same && y>0){
-    const back=function(){ window.scrollTo(0,y); };
-    back(); requestAnimationFrame(back); setTimeout(back,0); setTimeout(back,70);
+  if(same){
+    const put=function(){ if(y>0) window.scrollTo(0,y); _wmUnsnap(snap); };
+    put(); requestAnimationFrame(put); setTimeout(put,0); setTimeout(put,70);
   }
   _wmPollStart();
   return r;
@@ -7951,6 +8079,9 @@ async function _wmPollTick(){
     const el=document.getElementById('wm-'+k);
     if(!el){ return; }
     if(document.activeElement===el) return;      // never yank the box somebody is typing in
+    // Nor a box they typed in and have not saved yet - their words are not the
+    // server's to overwrite.
+    if(Object.prototype.hasOwnProperty.call(window.__wmDirty||{}, el.id)) return;
     el.value=theirs[k]; _wmLiveFlash(el); changed++;
   });
   if(structural){ openWeeklyMeeting(kind, window.__wmLastWeek||undefined); return; }
@@ -8156,7 +8287,9 @@ function openWeeklyMeeting(kind, week){
           ${cell('Days accum.',accDays!=null?accDays:'&mdash;','#B7791F',accDays!=null?(accAnchor.label+' '+accAnchor.d+(accLive?' &rarr; today':' &rarr; listed')):'no start date','wm-acc-'+c.id)}
         </div>
         <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:11px;padding-top:11px;border-top:0.5px solid #eef0f6">
-          ${fld('Start date',`<span style="font-size:13px;color:${cStart?'#111':'#B7791F'}">${_calEsc(cStart||'set when it goes vacant')}</span>`)}
+          ${fld('Start date', ro
+            ? `<span style="font-size:13px;color:${cStart?'#111':'#B7791F'}">${_calEsc(cStart||'set when it goes vacant')}</span>`
+            : `<input type="date" value="${_calEsc(c.start||'')}" onchange="_wmStartSet('${c.id}',this.value,this)" style="padding:5px 8px;border:0.5px solid ${c.start?'#d8dce6':'#EAD9A8'};border-radius:6px;font-size:13px;background:${c.start?'#fff':'#FFF7E0'}"/>${c.start?'':`<div style="font-size:9.5px;color:#B7791F">not set &mdash; nothing can be measured yet</div>`}`)}
           ${fld('Committed finish &#128274;',commitCell)}
           ${fld('Estimated finish',estCell)}
           ${fld('Est. profit',inp('est_profit',c.estProfit||'','$0'))}
@@ -9980,6 +10113,7 @@ function renderAdminHome(user){
   return `<div style="padding:20px 24px;max-width:100%">
     ${welcomeHeader(user)}
     ${_confirmPanel('Needs confirming')}
+    ${_sqMineBox(name)}
     ${sharedWidgets()}
     ${_rhHead("My desk",`invoice list finalizes Mondays · pays Friday ${fri}`)}
     ${_rhRow([
@@ -10000,6 +10134,7 @@ function renderArchitectHome(user){
   const inSub=(re)=>cards.filter(c=>(c.subPhases||[]).some(sp=>re.test(sp.name||"") && !sp.completed)).length;
   return `<div style="padding:20px 24px;max-width:100%">
     ${welcomeHeader(user)}
+    ${_sqMineBox(name)}
     ${sharedWidgets()}
     ${_rhHead("Design & permits")}
     ${_rhRow([
@@ -13924,6 +14059,12 @@ function _vaTrackers(){
   const fchk=(kind,id,field)=>{ const on=_trkOn(kind,id,field); return ro?(on?'✅':'⬜'):`<span onclick="_trkSet('${kind}','${id}','${field}',${on?'false':'true'},true)" style="cursor:pointer;font-size:17px">${on?'✅':'⬜'}</span>`; };
   const dt=(kind,id,field,handler)=>ro?(_trkVal(kind,id,field)||'—'):`<input type="date" value="${_trkVal(kind,id,field)}" onchange="${handler||`_trkSet('${kind}','${id}','${field}',this.value,false)`}" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:126px"/>`;
   const txt=(kind,id,field,ph,w)=>ro?(_trkVal(kind,id,field)||'—'):`<input value="${_calEsc(_trkVal(kind,id,field))}" placeholder="${ph||''}" oninput="_trkType('${kind}','${id}','${field}',this.value)" onchange="_trkSet('${kind}','${id}','${field}',this.value,false)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:${w||100}px"/>`;
+  // Bruce, 13 Sept: "on the window tracker, can we make the notes and comments section
+  // bigger? You can't even read everything that's typed." A one-line box hid everything
+  // past about twenty characters. This one wraps and grows to fit whatever is in it.
+  const nta=(kind,id,field,ph,w)=>ro
+    ? `<div style="font-size:12.5px;color:#111;white-space:pre-wrap;line-height:1.45;max-width:${w||280}px">${_calEsc(_trkVal(kind,id,field))||'\u2014'}</div>`
+    : `<textarea rows="3" placeholder="${ph||''}" oninput="_trkType('${kind}','${id}','${field}',this.value)" onchange="_trkSet('${kind}','${id}','${field}',this.value,false)" style="padding:6px 8px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12.5px;line-height:1.45;width:${w||280}px;min-height:58px;resize:vertical;font-family:inherit">${_calEsc(_trkVal(kind,id,field))}</textarea>`;
   const cons=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]);
   const all=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived);
   const active=all.filter(c=>!["Closed","Completed"].includes(c.phase));
@@ -14045,7 +14186,7 @@ function _vaTrackers(){
     <td style="padding:7px;text-align:center">${dt('win',c.id,'order_date',`_trkWinDate('${c.id}','order_date',this.value)`)}<div style="margin-top:3px">${fchk('win',c.id,'ordered')}</div></td>
     <td style="padding:7px;text-align:center">${dt('win',c.id,'arrival_date',`_trkWinDate('${c.id}','arrival_date',this.value)`)}<div style="margin-top:3px">${fchk('win',c.id,'arrived')}</div></td>
     <td style="padding:7px;text-align:center">${dt('win',c.id,'install_date',`_trkWinDate('${c.id}','install_date',this.value)`)}<div style="margin-top:3px">${fchk('win',c.id,'installed')}</div></td>
-    <td style="padding:7px">${txt('win',c.id,'notes','Notes & comments',190)}</td></tr>`;
+    <td style="padding:7px;min-width:300px">${nta('win',c.id,'notes','Notes & comments \u2014 type as much as you need',290)}</td></tr>`;
   // The front page is the window QUEUE - only houses somebody has actually asked for
   // windows or glass on. Everything else is off it until someone adds it.
   const winQueue=active.filter(_winInQueue);
@@ -18414,4 +18555,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-13a nothing-typed-drops-off-the-window-list -->
+<!-- build: 2026-09-13b meeting-keeps-what-you-typed -->
