@@ -12706,10 +12706,18 @@ function _winComplete(c){
   if(!c) return false;
   return ['measured','ordered','arrived','installed'].every(k=>_trkOn('win',c.id,k));
 }
+// On the list = somebody has put something on this house. A tick, a date, the kind of
+// work, or a typed note all count.
+// Found in the 13 Sept sweep: making the front page a queue quietly dropped two real
+// properties. One had Marlo's note "Can be marked completed" and nothing else; the
+// other had Glass and Windows ticked but never Needed. Both vanished, note included.
+// Anything a person typed keeps the house on the list.
 function _winInQueue(c){
+  if(!c) return false;
   if(_trkOn('win',c.id,'needed')) return true;
-  return ['measured','ordered','arrived','installed'].some(k=>_trkOn('win',c.id,k))
-      || ['measure_date','order_date','arrival_date','install_date'].some(k=>!!_trkVal('win',c.id,k));
+  if(['measured','ordered','arrived','installed','glass','windows','both'].some(k=>_trkOn('win',c.id,k))) return true;
+  if(['measure_date','order_date','arrival_date','install_date'].some(k=>!!_trkVal('win',c.id,k))) return true;
+  return !!String(_trkVal('win',c.id,'notes')||'').trim();
 }
 // One line per property: the single next thing Marlo has to book, not a list of
 // every box still unticked.
@@ -18406,4 +18414,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-12c on-budget-is-a-real-number-everywhere -->
+<!-- build: 2026-09-13a nothing-typed-drops-off-the-window-list -->
