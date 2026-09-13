@@ -2574,6 +2574,20 @@ async function savePropertyToSupabase(id, data, owns) {
   return true;
 }
 
+// Bruce, 13 Sept, on the full company meeting: he wants "Cleared to Close last 7 days"
+// and "In Contract last 7 days". Nothing in the app recorded WHEN a house reached those
+// phases - only that it is there now - so those counts could not have been honest.
+// Every phase move now leaves a dated stamp, so from here on the seven-day figures are
+// read from the record rather than guessed. Houses that moved before this went live have
+// no stamp and are simply not counted, which is the truthful answer.
+function _phSlug(name){ return String(name||'').toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,''); }
+function _phEnteredKey(name){ return 'ph_in_'+_phSlug(name); }
+function _phEntered(c, name){ return ((c&&c.checklists)||{})[_phEnteredKey(name)]||null; }
+function _phStamp(cl, name){
+  const k=_phEnteredKey(name);
+  if(!cl[k]){ cl[k]=_ymd(new Date()); return true; }
+  return false;
+}
 async function updatePropertyPhaseInSupabase(id, newPhase) {
   if (_blockIfReadOnly()) return false;
   const _pc = (typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===id);
@@ -2634,6 +2648,8 @@ async function updatePropertyPhaseInSupabase(id, newPhase) {
   // A phase move must never stamp or clear it - that would overwrite the real
   // answer with a guess. Occupied / Closed can legitimately carry a future
   // move-out date, which is exactly how the team uses it.
+  { const _clP = Object.assign({}, patch.checklists || (_pc && _pc.checklists) || {});
+    if(_phStamp(_clP, patch.phase||newPhase)) patch.checklists=_clP; }
   const { data: _rows2, error } = await supabase.from("pm_properties").update(patch).eq("id", id).select("id");
   if (error) { alert("Failed to update phase: " + (error.message || "unknown error")); return false; }
   if (!_rows2 || !_rows2.length) { alert("That move was not saved. Either the property no longer exists, or your account does not have permission to move it. Refresh the page and try again."); return false; }
@@ -3198,6 +3214,7 @@ async function _maybeAutoAdvance(propId){
     { const _frI=PROP_PHASES.findIndex(p=>p.name==="Framing, MEPS, Insulation");
       if(_frI>=0 && _nxI>=_frI && _cl.permitted==='yes' && !_cl.permits_cleared){ _cl.permits_cleared=_ymd(new Date()); _chg=true; } }
     if((cfg.next==="Rental Handoff Process"||cfg.next==="Listed on the Market") && !_cl.timeline_done){ _cl.timeline_done=_ymd(new Date()); _chg=true; }
+    if(_phStamp(_cl, cfg.next)) _chg=true;
     if(_chg) _patch.checklists=_cl; }
   const { error } = await supabase.from("pm_properties").update(_patch).eq("id",propId);
   if(error) return false;
@@ -4570,6 +4587,14 @@ function _pdLinked(c){
                 ${_ro_sp ? `<span style="color:#111;font-weight:500">${c.closingDateSell||'—'}</span>` : `<span style="display:flex;gap:6px;align-items:center"><input type="date" id="pd-closing-sell" value="${c.closingDateSell||''}" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"/><button onclick="saveClosingSellDate('${c.id}')" style="font-size:12px;padding:3px 9px;border-radius:5px;background:#111;color:#fff;border:none;cursor:pointer">Save date</button></span>`}
               </div>
               ${_kickCardRow(c)}
+              ${(()=>{ const n=_poCount(c), tot=PUNCH_ITEMS.length, done=_poComplete(c);
+                // Only worth showing once the house is near the end - before that there is
+                // nothing to punch out.
+                if(['Upcoming Takedowns','Occupied / Closed','Vacant / On Standby','Pre Construction'].indexOf(c.phase)>=0 && !_poStarted(c)) return '';
+                return `<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:0.5px solid #f4f5f7;font-size:14px">
+                  <span style="color:#888;display:flex;align-items:center;gap:5px">&#128203; Punch-out checklist ${done?'<span style="font-size:10px;background:#EAF3DE;color:#173404;padding:1px 5px;border-radius:4px">complete</span>':(n?`<span style="font-size:10px;background:#FBF3E2;color:#8a6d1a;padding:1px 5px;border-radius:4px">${n} of ${tot}</span>`:'<span style="font-size:10px;background:#F1F2F6;color:#888;padding:1px 5px;border-radius:4px">not started</span>')}</span>
+                  <span onclick="_poOpen('${c.id}')" style="cursor:pointer;font-size:13px;color:#185FA5;font-weight:600">${done?'Review':'Open'} &rsaquo;</span>
+                </div>`; })()}
               <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:0.5px solid #f4f5f7;font-size:14px">
                 <span style="color:#888;display:flex;align-items:center;gap:5px">📷 CompanyCam <span style="font-size:10px;background:#E6F1FB;color:#185FA5;padding:1px 5px;border-radius:4px">Auto-links when folder created</span></span>
                 ${c.companyCam ? `<a href="${c.companyCam}" target="_blank" style="font-size:13px;color:#185FA5;text-decoration:none">Open Folder ↗</a>` : `<button onclick="openPropModal('companycam','${c.id}')" style="font-size:12px;padding:2px 8px;border-radius:4px;background:transparent;color:#aaa;border:0.5px solid #ccc;cursor:pointer">+ Add Link</button>`}
@@ -6757,6 +6782,66 @@ function D0(wk){
     +D.over.length+' over budget, '+D.moved.length+' timelines pushed.';
 }
 // The two-step the person actually does: save the PDF, then open the email.
+// Bruce, 13 Sept: "every Monday it needs to pull all the data from the last seven days,
+// and it automatically emails" the PDF.
+// Two halves to that, and it is worth being straight about which is which. The PULL is
+// done: this page reads the live board every time it is opened, so Monday morning it is
+// already current with no one pressing anything. The SEND cannot be done from a page in
+// a browser - a browser can only hand the email to whatever mail program is on that
+// machine, and only while somebody has the page open. A true unattended Monday send needs
+// a server job, which is a separate piece of plumbing. So: the app opens Monday's meeting
+// with the write-up typed and the PDF ready, tells whoever opens it that it is Monday, and
+// one click sends it. Nothing here pretends an email went out when it did not.
+function _compRecipients(){
+  const out=[];
+  try{
+    (typeof getUsers==='function'?getUsers():[]).forEach(function(u){
+      if(u.status!=='approved') return;
+      if(!u.email) return;
+      out.push(u.email);
+    });
+  }catch(e){}
+  return [...new Set(out)];
+}
+function _compEmailBody(wk){
+  const mv=_compMovement(), rate=_compAvgRate(), prof=_compProjectedProfit();
+  const D=COMP_WINDOW_DAYS;
+  const money=(n)=>'$'+Math.round(n).toLocaleString();
+  const L=[];
+  L.push('Full Company Meeting — week of '+wk);
+  L.push('The last '+D+' days, off the live board.');
+  L.push('');
+  L.push('• Listed on the market: '+mv.listed.length);
+  L.push('• Started construction: '+mv.started.length);
+  L.push('• Went into contract: '+mv.contract.length);
+  L.push('• Cleared to close: '+mv.cleared.length);
+  L.push('• Average production: '+(rate.avg==null?'not enough running time yet':(money(rate.avg)+' per day across '+rate.n+' live job'+(rate.n===1?'':'s'))));
+  L.push('• Projected profit on live jobs: '+(prof.have?(money(prof.total)+' ('+prof.have+' of '+prof.live+' jobs have a figure)'):'no estimated profit set yet'));
+  L.push('');
+  const shout=((((window._wmData||{})[wk]||{})['company'])||{})['__shout']||'';
+  if(String(shout).trim()){ L.push('Shout outs:'); L.push(String(shout).trim()); L.push(''); }
+  L.push('The full write-up, the property lists and the pictures are on the PDF attached.');
+  return L.join('\n');
+}
+function _compEmailFlow(wk){
+  const addrs=_compRecipients();
+  const who=addrs.length?(addrs.length+' people on the team'):'nobody on the team has an email on file';
+  if(!confirm("Send the company meeting out\n\n1. The PDF window opens — use your browser's Print / Save as PDF to save the file.\n2. Your email program opens with the write-up already typed, addressed to "+who+".\n3. Attach the PDF you just saved and press send.\n\nOpen both now?")) return;
+  _compOpenPDF(wk);
+  const subj='Full Company Meeting — week of '+wk;
+  const href='mailto:'+encodeURIComponent(addrs.join(','))+'?subject='+encodeURIComponent(subj)+'&body='+encodeURIComponent(_compEmailBody(wk));
+  setTimeout(function(){ window.location.href=href; }, 700);
+}
+// A Monday reminder, shown on the meeting itself. It never sends on its own and never
+// claims to - it says the week is ready and puts the button under your thumb.
+function _compMondayBanner(wk){
+  const d=new Date();
+  if(d.getDay()!==1) return '';
+  return `<div style="background:#FFF7E0;border:1px solid #EAD9A8;border-radius:11px;padding:12px 15px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+    <div style="font-size:13.5px;color:#6b5310"><b>It is Monday.</b> This page has already re-read the last ${COMP_WINDOW_DAYS} days off the board &mdash; the numbers below are today's. Build the PDF and send it out.</div>
+    <button onclick="_compEmailFlow('${wk}')" style="padding:7px 15px;background:#122A4A;color:#fff;border:none;border-radius:7px;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">&#9993; Build it and send</button>
+  </div>`;
+}
 function _wmEmailFlow(wk){
   const addrs=_wmDirectorEmails();
   const who=addrs.length?addrs.join(', '):'nobody with a CEO or Project Director account has an email on file';
@@ -7615,69 +7700,183 @@ function _compMovement(){
             .map(c=>({c:c, d:c.closedDate||c.closingDateSell})),
     started: all.filter(c=>within(_consStart(c)) && !listedDate(c))
             .map(c=>({c:c, d:_consStart(c)})),
-    ongoing: all.filter(c=>ACTIVE_PHASES.includes(c.phase))
+    ongoing: all.filter(c=>ACTIVE_PHASES.includes(c.phase)),
+    // Bruce, 13 Sept: add Cleared to Close and In Contract for the same seven days.
+    // These read the dated phase stamp, so a house that moved before stamping existed
+    // is left out rather than counted on a guess.
+    contract: all.filter(c=>c.phase==='In Contract' && within(_phEntered(c,'In Contract')))
+              .map(c=>({c:c, d:_phEntered(c,'In Contract')})),
+    cleared: all.filter(c=>c.phase==='RTR Completed (Pending Closing)' && within(_phEntered(c,'RTR Completed (Pending Closing)')))
+              .map(c=>({c:c, d:_phEntered(c,'RTR Completed (Pending Closing)')}))
   };
+}
+// Projected profit: every live project's estimated profit added up. Only the ones with a
+// figure on the card count - a blank is not a zero, and saying so keeps the number honest.
+function _compProjectedProfit(){
+  const all=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived);
+  const live=all.filter(c=>(typeof ACTIVE_PHASES_FULL!=='undefined'&&ACTIVE_PHASES_FULL)?ACTIVE_PHASES_FULL.includes(c.phase):ACTIVE_PHASES.includes(c.phase));
+  let total=0, have=0, missing=0;
+  live.forEach(function(c){
+    const v=parseFloat(String(c.estProfit||'').replace(/[^0-9.\-]/g,''));
+    if(isNaN(v)||!String(c.estProfit||'').trim()){ missing++; return; }
+    total+=v; have++;
+  });
+  return { total:total, have:have, missing:missing, live:live.length };
+}
+// The company-wide average production rate - one number, not a table of budgets.
+function _compAvgRate(){
+  const rows=_compByPM();
+  const all=[];
+  rows.forEach(g=>{ for(let i=0;i<g.rates.length;i++) all.push(g.rates[i]); });
+  return { avg: all.length?Math.round(all.reduce((a,b)=>a+b,0)/all.length):null, n:all.length };
+}
+// Two pictures, chosen by whoever runs the meeting. Stored as data URLs in the meeting
+// record so the PDF carries them - no bucket, nothing to go missing later.
+function _compPics(wk){
+  const c=(((window._wmData||{})[wk]||{})['company'])||{};
+  return [c['__pic1']||'', c['__pic2']||''];
+}
+async function _compPicSet(wk, slot, dataUrl){
+  if(_blockIfReadOnly()) return;
+  if(window._wmLoadOk===false){ alert("The meeting notes could not be loaded a moment ago, so saving now would overwrite them. Refresh the page and try again."); return; }
+  const d=window._wmData=window._wmData||{};
+  d[wk]=d[wk]||{}; d[wk]['company']=d[wk]['company']||{};
+  d[wk]['company']['__pic'+slot]=dataUrl||'';
+  const err=await _pmSettingsWrite('meeting_notes', d);
+  if(err){ alert("That picture was NOT saved — "+err); return; }
+  openWeeklyMeeting('company', wk);
+}
+// Read the file in the browser and shrink it to a square before storing, so the meeting
+// record stays small and the two pictures line up next to each other.
+function _compPicPick(wk, slot){
+  if(_blockIfReadOnly()) return;
+  const inp=document.createElement('input');
+  inp.type='file'; inp.accept='image/*';
+  inp.onchange=function(){
+    const f=inp.files&&inp.files[0]; if(!f) return;
+    if(f.size>12*1024*1024){ alert("That picture is very large. Pick one under about 12MB."); return; }
+    const rd=new FileReader();
+    rd.onload=function(){
+      const img=new Image();
+      img.onload=function(){
+        const S=620;
+        const cv=document.createElement('canvas'); cv.width=S; cv.height=S;
+        const g=cv.getContext('2d');
+        g.fillStyle='#f4f5f7'; g.fillRect(0,0,S,S);
+        const side=Math.min(img.width,img.height);
+        const sx=Math.round((img.width-side)/2), sy=Math.round((img.height-side)/2);
+        g.drawImage(img, sx, sy, side, side, 0, 0, S, S);
+        _compPicSet(wk, slot, cv.toDataURL('image/jpeg', 0.82));
+      };
+      img.onerror=function(){ alert("That file could not be read as a picture."); };
+      img.src=rd.result;
+    };
+    rd.readAsDataURL(f);
+  };
+  inp.click();
 }
 // The performance block that goes on screen and into the PDF.
 function _compPerfBlock(wk, forPrint){
-  // Autosave picks up any element whose id starts with wm- , so the shout-out box
-  // needs no handler of its own; _wmAutoWire binds it under kind 'company'.
+  // Bruce, 13 Sept, on the Full Company Meeting: make listed / started / shout-outs into
+  // small squares, drop the non-construction task list, show average production $/day
+  // instead of the budget-vs-spent totals, and add Cleared to Close, In Contract and
+  // Projected Profit. "Make it look like a presentation." So this reads as slides: a row
+  // of headline numbers, then the movement, then the people, then the pictures.
   const cnotes=(((window._wmData||{})[wk]||{})['company'])||{};
   const shoutVal=cnotes['__shout']||'';
   const rows=_compByPM();
   const mv=_compMovement();
+  const rate=_compAvgRate();
+  const prof=_compProjectedProfit();
+  const pics=_compPics(wk);
   const money=(n)=>n==null?'&mdash;':('$'+Math.round(n).toLocaleString());
-  const th=(t,a)=>`<th style="padding:7px 9px;text-align:${a||'left'};font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:#fff;font-weight:600">${t}</th>`;
-  const perfRows=rows.length?rows.map(g=>{
-    const drawCol = g.drawnPct==null?'#999':(g.drawnPct>100?'#B42318':(g.drawnPct>85?'#B7791F':'#0F7B54'));
-    return `<tr style="border-bottom:0.5px solid #f1f3f7">
-      <td style="padding:7px 9px;font-size:13px;font-weight:600;color:#111">${_calEsc(resolvePMName(g.pm)||g.pm)}</td>
-      <td style="padding:7px 9px;font-size:13px;text-align:center;color:#111">${g.jobs}</td>
-      <td style="padding:7px 9px;font-size:13px;text-align:right;font-weight:600;color:#4A1D6E">${money(g.avgRate)}${g.thin?`<span style="font-size:10px;color:#bbb"> · ${g.thin} too new</span>`:''}</td>
-      <td style="padding:7px 9px;font-size:13px;text-align:right;color:#111">${money(g.budget)}</td>
-      <td style="padding:7px 9px;font-size:13px;text-align:right;color:#111">${money(g.spent)}</td>
-      <td style="padding:7px 9px;font-size:13px;text-align:right;font-weight:700;color:${drawCol}">${g.drawnPct==null?'&mdash;':(g.drawnPct+'%')}</td>
-      <td style="padding:7px 9px;font-size:13px;text-align:center;color:${g.over?'#B42318':'#bbb'};font-weight:${g.over?'700':'400'}">${g.over||'—'}</td>
-    </tr>`;}).join(''):`<tr><td colspan="7" style="padding:14px;text-align:center;color:#bbb;font-size:13px">Nobody has a live project right now.</td></tr>`;
+  const D=COMP_WINDOW_DAYS;
 
-  const perf=`<table style="width:100%;border-collapse:collapse;color:#111">
-      <thead><tr style="background:#122A4A">${th('Project manager')}${th('Live jobs','center')}${th('Avg production $/day','right')}${th('Budget','right')}${th('Spent','right')}${th('Drawn','right')}${th('Over','center')}</tr></thead>
-      <tbody>${perfRows}</tbody></table>
-    <div style="font-size:11px;color:#aaa;margin-top:6px">Production $/day is money spent divided by the days the job has actually been running. Jobs under a week old are left out of the average — a rate off three days is arithmetic, not information.</div>`;
+  // ---- the headline row ----
+  const sq=(icon,label,value,sub,color)=>`<div style="background:#fff;border:0.5px solid #e4e7ee;border-top:4px solid ${color};border-radius:13px;padding:15px 16px;display:flex;flex-direction:column;justify-content:space-between;min-height:118px">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#98a2b3">${icon} ${label}</div>
+      <div>
+        <div style="font-size:33px;font-weight:800;line-height:1.05;color:${color};font-variant-numeric:tabular-nums;letter-spacing:-.02em">${value}</div>
+        <div style="font-size:11.5px;color:#8a92a0;margin-top:3px;line-height:1.35">${sub}</div>
+      </div></div>`;
+  const squares=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(178px,1fr));gap:11px;margin-bottom:14px">
+    ${sq('&#127991;&#65039;','Listed on the market', mv.listed.length, 'in the last '+D+' days', '#185FA5')}
+    ${sq('&#128296;','Started construction', mv.started.length, 'in the last '+D+' days', '#BA7517')}
+    ${sq('&#129309;','In contract', mv.contract.length, 'in the last '+D+' days', '#12987A')}
+    ${sq('&#9989;','Cleared to close', mv.cleared.length, 'in the last '+D+' days', '#534AB7')}
+    ${sq('&#9889;','Average production', rate.avg==null?'&mdash;':('$'+rate.avg.toLocaleString()), rate.avg==null?'no job has run long enough yet':('per day, across '+rate.n+' live job'+(rate.n===1?'':'s')), '#4A1D6E')}
+    ${sq('&#128176;','Projected profit', prof.have?money(prof.total):'&mdash;', prof.have?(prof.have+' of '+prof.live+' live jobs have a figure'+(prof.missing?(' &middot; '+prof.missing+' still blank'):'')):'no estimated profit set on any live job', '#0F7B54')}
+  </div>`;
 
+  // ---- what moved ----
   const listRows=(arr,emptyTxt,dateLabel)=>arr.length
-    ? arr.sort((a,b)=>String(b.d||'').localeCompare(String(a.d||''))).map(x=>
-        `<div style="display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px">
-          <div style="min-width:0;color:#111">${_calEsc(x.c.addr||'')}<span style="color:#aaa;font-size:11.5px"> · ${_calEsc(x.c.pm||'no PM')}</span></div>
+    ? arr.slice().sort((a,b)=>String(b.d||'').localeCompare(String(a.d||''))).map(x=>
+        `<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 0;border-top:0.5px solid #f4f5f7;font-size:13px">
+          <div style="min-width:0;color:#111">${_calEsc(x.c.addr||'')}<span style="color:#aaa;font-size:11.5px"> &middot; ${_calEsc(x.c.pm||'no PM')}</span></div>
           <div style="color:#888;font-size:12px;white-space:nowrap">${dateLabel} ${_calEsc(x.d||'')}</div>
         </div>`).join('')
-    : `<div style="font-size:12.5px;color:#bbb;padding:5px 0">${emptyTxt}</div>`;
+    : `<div style="font-size:12.5px;color:#c0c6d0;padding:6px 0;border-top:0.5px solid #f4f5f7">${emptyTxt}</div>`;
 
-  const box=(t,inner,note)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:12px 15px;margin-bottom:11px;color:#111">
-      <div style="font-size:13.5px;font-weight:700;color:#111;margin-bottom:${note?'2px':'7px'}">${t}</div>
-      ${note?`<div style="font-size:11px;color:#aaa;margin-bottom:7px">${note}</div>`:''}${inner}</div>`;
+  const slide=(t,inner,note)=>`<div style="background:#fff;border:0.5px solid #e4e7ee;border-radius:13px;padding:14px 17px;margin-bottom:12px;color:#111">
+      <div style="font-size:15px;font-weight:700;color:#111;margin-bottom:${note?'2px':'6px'};letter-spacing:-.01em">${t}</div>
+      ${note?`<div style="font-size:11.5px;color:#98a2b3;margin-bottom:6px">${note}</div>`:''}${inner}</div>`;
 
+  const movement=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;margin-bottom:12px">
+      ${slide('&#127991;&#65039; Listed on the market', listRows(mv.listed,'Nothing newly listed in the last '+D+' days.','listed'))}
+      ${slide('&#128296; Started active construction', listRows(mv.started,'No new starts in the last '+D+' days.','started'))}
+      ${slide('&#129309; Went into contract', listRows(mv.contract,'Nothing went into contract in the last '+D+' days.','since'))}
+      ${slide('&#9989; Cleared to close', listRows(mv.cleared,'Nothing was cleared to close in the last '+D+' days.','since'))}
+    </div>`;
+
+  // ---- the people, with the production number Bruce asked for and no budget columns ----
+  const th=(t,a)=>`<th style="padding:8px 10px;text-align:${a||'left'};font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:#fff;font-weight:700">${t}</th>`;
+  const perfRows=rows.length?rows.map(g=>`<tr style="border-bottom:0.5px solid #f1f3f7">
+      <td style="padding:9px 10px;font-size:13.5px;font-weight:600;color:#111">${_calEsc(resolvePMName(g.pm)||g.pm)}</td>
+      <td style="padding:9px 10px;font-size:13.5px;text-align:center;color:#111">${g.jobs}</td>
+      <td style="padding:9px 10px;font-size:15px;text-align:right;font-weight:800;color:#4A1D6E;font-variant-numeric:tabular-nums">${money(g.avgRate)}${g.thin?`<span style="font-size:10px;color:#bbb;font-weight:400"> &middot; ${g.thin} too new</span>`:''}</td>
+    </tr>`).join(''):`<tr><td colspan="3" style="padding:16px;text-align:center;color:#bbb;font-size:13px">Nobody has a live project right now.</td></tr>`;
+  const perf=`<table style="width:100%;border-collapse:collapse;color:#111">
+      <thead><tr style="background:#122A4A">${th('Project manager')}${th('Live jobs','center')}${th('Production $ / day','right')}</tr></thead>
+      <tbody>${perfRows}</tbody></table>
+    <div style="font-size:11px;color:#aaa;margin-top:7px">Money spent divided by the days the job has actually been running. Jobs under a week old are left out &mdash; a rate off three days is arithmetic, not information.</div>`;
+
+  // ---- shout outs, as a square ----
   const shout = forPrint
-    ? box('&#127942; Shout out / appreciation', `<div style="font-size:13px;color:#111;white-space:pre-wrap;min-height:34px">${_calEsc(shoutVal)||'<span style="color:#bbb">(not filled in)</span>'}</div>`)
-    : box('&#127942; Shout out / appreciation',
-        `<textarea id="wm-__shout" placeholder="Who are we shouting out this week — on the project team or anywhere else in the company — and why?…" style="width:100%;min-height:56px;padding:9px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:13.5px;color:#222;resize:vertical;font-family:inherit">${_calEsc(shoutVal)}</textarea>`,
-        'Saves itself as you type.');
+    ? `<div style="background:#122A4A;border-radius:13px;padding:16px 18px;color:#fff;min-height:118px;display:flex;flex-direction:column;justify-content:space-between">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#8da4c8">&#127942; Shout outs</div>
+        <div style="font-size:15px;line-height:1.55;white-space:pre-wrap;color:#fff">${_calEsc(shoutVal)||'<span style="color:#5a6b86">(not filled in)</span>'}</div></div>`
+    : `<div style="background:#122A4A;border-radius:13px;padding:16px 18px;color:#fff">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#8da4c8;margin-bottom:7px">&#127942; Shout outs</div>
+        <textarea id="wm-__shout" placeholder="Who are we shouting out this week &mdash; on the project team or anywhere else in the company &mdash; and why?" style="width:100%;box-sizing:border-box;min-height:88px;padding:10px 12px;border:1px solid #2e4070;border-radius:9px;font-size:14px;color:#fff;background:#0d1e38;resize:vertical;font-family:inherit;line-height:1.5">${_calEsc(shoutVal)}</textarea>
+        <div style="font-size:11px;color:#5a6b86;margin-top:5px">Saves itself as you type.</div></div>`;
 
-  // Company jobs with no property behind them - the only work in the building no
-  // other meeting on this app reports on.
-  const nct=_compNonConstructionTasks();
-  const nctRows=nct.length
-    ? nct.map(t=>`<div style="display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:0.5px solid #f4f5f7;font-size:13px">
-        <div style="min-width:0;color:${t.status==='done'?'#0F7B54':'#111'}">${t.status==='done'?'&#10003; ':''}${_calEsc(t.title||'')}<span style="color:#aaa;font-size:11.5px"> &middot; ${_calEsc((typeof taskAssignees==='function'?taskAssignees(t).join(', '):'')||'nobody on it')}${t.category?(' &middot; '+_calEsc(t.category)):''}</span></div>
-        <div style="color:#888;font-size:12px;white-space:nowrap">${_calEsc(t.due_date||'')}</div>
-      </div>`).join('')
-    : `<div style="font-size:12.5px;color:#bbb;padding:5px 0">Nothing outside construction in the last ${COMP_WINDOW_DAYS} days.</div>`;
+  // ---- two square pictures ----
+  const picBox=(i)=>{
+    const src=pics[i-1];
+    if(forPrint) return src
+      ? `<div style="border-radius:13px;overflow:hidden;background:#f4f5f7;aspect-ratio:1/1"><img src="${src}" style="width:100%;height:100%;object-fit:cover;display:block"/></div>`
+      : '';
+    return `<div style="border-radius:13px;overflow:hidden;background:#f4f5f7;border:${src?'0.5px solid #e4e7ee':'1.5px dashed #d2d7e0'};aspect-ratio:1/1;position:relative;display:flex;align-items:center;justify-content:center">
+      ${src?`<img src="${src}" style="width:100%;height:100%;object-fit:cover;display:block"/>
+            <span onclick="_compPicSet('${wk}',${i},'')" title="Remove this picture" style="position:absolute;top:8px;right:8px;background:rgba(17,17,17,.62);color:#fff;border-radius:99px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:15px">&times;</span>
+            <span onclick="_compPicPick('${wk}',${i})" style="position:absolute;bottom:8px;left:8px;background:rgba(17,17,17,.62);color:#fff;border-radius:99px;padding:4px 12px;cursor:pointer;font-size:12px">Change</span>`
+          :`<div onclick="_compPicPick('${wk}',${i})" style="cursor:pointer;text-align:center;color:#98a2b3;padding:18px">
+              <div style="font-size:30px;line-height:1">&#128247;</div>
+              <div style="font-size:13px;font-weight:600;margin-top:6px;color:#667085">Add picture ${i}</div>
+              <div style="font-size:11.5px;margin-top:2px">A finished kitchen, the team, a before-and-after &mdash; it goes on the PDF</div>
+            </div>`}
+    </div>`;
+  };
+  const picsRow=(forPrint && !pics[0] && !pics[1]) ? '' :
+    `<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;max-width:560px">${picBox(1)}${picBox(2)}</div>`;
 
-  return box('&#128202; Project team performance', perf, 'Live jobs only, straight off the property cards — nothing is typed in here.')
-    + box('&#127991;&#65039; Listed on the market &mdash; last '+COMP_WINDOW_DAYS+' days', listRows(mv.listed,'Nothing newly listed in the last '+COMP_WINDOW_DAYS+' days.','listed'))
-    + box('&#128296; Started active construction &mdash; last '+COMP_WINDOW_DAYS+' days', listRows(mv.started,'No new starts in the last '+COMP_WINDOW_DAYS+' days.','started'))
-    + shout
-    + box('&#128188; Non-construction tasks &mdash; last '+COMP_WINDOW_DAYS+' days', nctRows, 'Company work with no property behind it — training, the warehouse, the website, workshops.');
+  return squares
+    + movement
+    + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;margin-bottom:12px;align-items:start">
+        ${slide('&#128202; Project team production', perf, 'Live jobs only, straight off the property cards &mdash; nothing is typed in here.')}
+        <div>${shout}</div>
+      </div>`
+    + picsRow;
 }
 
 // Open the company meeting as a printable page - this is what goes to Suzette.
@@ -7689,21 +7888,34 @@ function _compOpenPDF(wk){
 }
 function _compPrintHtml(wk){
   const when=(()=>{ try{ return new Date(wk+'T00:00:00').toLocaleDateString(undefined,{month:'long',day:'numeric',year:'numeric'}); }catch(e){ return wk; } })();
+  // Bruce, 13 Sept: "make it look like a presentation." A deck reads as a cover and then
+  // panels, so the print sheet gets a real title block and holds the squares together on
+  // a page rather than letting them break across one.
   return `<!doctype html><html><head><meta charset="utf-8"><title>Full Company Meeting — week of ${wk}</title>
     <style>
       *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
-      body{background:#fff;color:#111;padding:26px 30px}
-      h1{font-size:21px;font-weight:700;margin-bottom:2px}
-      .sub{font-size:12.5px;color:#888;margin-bottom:16px}
+      body{background:#fff;color:#111;padding:0}
+      .wrap{padding:26px 30px}
+      .cover{background:#122A4A;color:#fff;padding:26px 30px 22px}
+      .cover h1{font-size:27px;font-weight:800;letter-spacing:-.02em;line-height:1.15}
+      .cover .k{font-size:11px;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#8da4c8;margin-bottom:7px}
+      .cover .sub{font-size:13px;color:#a8bcd8;margin-top:6px}
       table{width:100%;border-collapse:collapse}
-      .noprint{margin-bottom:14px}
+      .noprint{padding:14px 30px 0}
       button{padding:8px 16px;background:#111;color:#fff;border:none;border-radius:7px;font-size:13px;cursor:pointer}
-      @media print{ .noprint{display:none} body{padding:0} }
+      img{max-width:100%}
+      @media print{
+        .noprint{display:none}
+        div[style*="border-radius:13px"]{break-inside:avoid;page-break-inside:avoid}
+      }
     </style></head><body>
     <div class="noprint"><button onclick="window.print()">&#8595; Save as PDF / Print</button></div>
-    <h1>Legacy Homes &mdash; Full Company Meeting</h1>
-    <div class="sub">Week of ${when} &middot; performance for the last ${COMP_WINDOW_DAYS} days &middot; generated ${new Date().toLocaleString()}</div>
-    ${_compPerfBlock(wk, true)}
+    <div class="cover">
+      <div class="k">Legacy Homes &middot; Columbus, Ohio</div>
+      <h1>Full Company Meeting</h1>
+      <div class="sub">Week of ${when} &nbsp;&middot;&nbsp; the last ${COMP_WINDOW_DAYS} days &nbsp;&middot;&nbsp; built ${new Date().toLocaleString()}</div>
+    </div>
+    <div class="wrap">${_compPerfBlock(wk, true)}</div>
     </body></html>`;
 }
 // Bruce, 4 Sept: "on the full company meeting template, all I wanna see is the
@@ -7730,10 +7942,13 @@ function _compNonConstructionTasks(){
 }
 function _compMeetingBody(wk){
   const perfTop=`<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">
-      <div style="font-size:12.5px;color:#888">Short and performance-based &mdash; the last ${COMP_WINDOW_DAYS} days. Everything below is live off the property cards and the task calendar.</div>
-      <button onclick="_compOpenPDF('${wk}')" style="padding:7px 14px;background:#122A4A;color:#fff;border:none;border-radius:7px;font-size:12.5px;font-weight:600;cursor:pointer">&#8595; Build the PDF for Suzette</button>
+      <div style="font-size:12.5px;color:#888">Short and performance-based &mdash; the last ${COMP_WINDOW_DAYS} days, read live off the property cards. It re-reads itself every time you open it, so Monday morning it is already current.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button onclick="_compOpenPDF('${wk}')" style="padding:7px 14px;background:#122A4A;color:#fff;border:none;border-radius:7px;font-size:12.5px;font-weight:600;cursor:pointer">&#8595; Build the PDF</button>
+        <button onclick="_compEmailFlow('${wk}')" style="padding:7px 14px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;font-weight:600;color:#185FA5;cursor:pointer">&#9993; Email it out</button>
+      </div>
     </div>`;
-  return perfTop+_compPerfBlock(wk,false)
+  return _compMondayBanner(wk)+perfTop+_compPerfBlock(wk,false)
     +`<div style="font-size:12px;color:#999;margin-top:4px">Built ${_calEsc(_wmWhen(new Date().toISOString()))} from the live board. Nothing on this page is typed in except the shout out.</div>`;
 }
 // ===================== KICKOFF NOTES, AS A PDF ================================
@@ -10532,16 +10747,196 @@ function _rltCards(name){
 }
 function _rltKey(name){ return 'r:'+name; }
 function _rltTabs(){
-  const t=[['main','\uD83D\uDD11 Main Dashboard','Listings, contracts and what is coming up']];
+  const t=[['main','\uD83D\uDD11 Main Dashboard','Listings, contracts and what is coming up'],
+           ['contract','\uD83E\uDD1D In contract','Inspection, remedy and notes on every house in contract']];
   _rltVisible().forEach(n=>t.push([_rltKey(n),'\uD83C\uDFE0 '+n,'Every house '+n+' is holding, by stage']));
   if(_rltSeesAll()) t.push(['stages','\uD83C\uDFC1 All houses','Every house on the market, by stage, whoever is listing it']);
   return t;
 }
 Object.defineProperty(window,'RLT_TABS',{ get:_rltTabs, configurable:true });
+// ===================== WHAT A REALTOR IS ACTUALLY WAITING ON =====================
+// Bruce, 13 Sept: "I want it to be those five squares at the top and then below that,
+// five sections of updates." The squares are the counts; the sections underneath are
+// only the houses with something outstanding, so the page is a list of what to chase
+// rather than a list of every address he already knows.
+
+// ---- Punch-out checklist ----
+// Bruce: pre-list / punch-out shows "properties with non-completed punch-out checklists."
+// NPI's inspection report goes to Patience, who fills this in; it lives on the property
+// card so the PM, the realtor and the office are all reading one list.
+const PUNCH_ITEMS = [
+  ['paint',   'Paint touched up',              'Walls, trim, ceilings — anything the inspection flagged'],
+  ['clean',   'Final clean done',              'Including windows, appliances and the garage'],
+  ['trades',  'Trade punch list closed out',   'Plumbing, electrical, HVAC items from the report'],
+  ['doors',   'Doors, locks and hardware',     'Everything opens, closes and locks'],
+  ['exterior','Exterior and landscaping',      'Gutters, downspouts, grading, mow and edge'],
+  ['safety',  'Smoke / CO detectors in place', 'Working, and where code wants them'],
+  ['npi',     'NPI report items cleared',      'Every line on the inspection report answered'],
+  ['photos',  'Photos in CompanyCam',          'The listing agent needs them before it goes live']
+];
+function _poData(c){ const o=((c&&c.checklists)||{}).po; return (o&&typeof o==='object')?o:{}; }
+function _poDone(c,k){ return (_poData(c)[k]||{}).done===true; }
+function _poCount(c){ return PUNCH_ITEMS.filter(it=>_poDone(c,it[0])).length; }
+function _poComplete(c){ return _poCount(c)===PUNCH_ITEMS.length; }
+function _poStarted(c){ return _poCount(c)>0 || !!String((_poData(c).notes||'')).trim(); }
+async function _poSet(pid, key, on){
+  if(_blockIfReadOnly()) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return;
+  const cur=Object.assign({}, _poData(c));
+  const me=(typeof _sqMe==='function')?_sqMe():'';
+  cur[key]= on ? { done:true, by:me, at:_ymd(new Date()) } : { done:false };
+  if(!(await _wmChecklistPatch(pid, { po: cur }))) return;
+  const label=(PUNCH_ITEMS.find(x=>x[0]===key)||[])[1]||key;
+  _logAudit('updated','property',(c&&c.addr)||'', 'Punch-out: '+label+(on?' ticked':' un-ticked'));
+  _poRerender(pid);
+}
+async function _poNote(pid, val){
+  if(_blockIfReadOnly()) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return;
+  const cur=Object.assign({}, _poData(c)); cur.notes=val;
+  await _wmChecklistPatch(pid, { po: cur });
+}
+function _poRerender(pid){
+  if(window.__poModal===pid){ _poOpen(pid); return; }
+  if(typeof openRealtorDashboard==='function' && window.__rltOpen){ openRealtorDashboard(); return; }
+  if(typeof openPropDetail==='function') openPropDetail(pid);
+}
+function _poClose(){ window.__poModal=null; const h=document.getElementById('po-modal'); if(h) h.remove(); }
+function _poOpen(pid){
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return;
+  window.__poModal=pid;
+  const ro=(typeof isReadOnly==='function')?isReadOnly():false;
+  const d=_poData(c);
+  const n=_poCount(c), tot=PUNCH_ITEMS.length;
+  const rows=PUNCH_ITEMS.map(function(it){
+    const on=_poDone(c,it[0]); const rec=d[it[0]]||{};
+    return `<div style="display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-top:0.5px solid #f1f3f7">
+      ${ro?`<span style="font-size:18px;flex-shrink:0">${on?'&#9989;':'&#11036;'}</span>`
+          :`<span onclick="_poSet('${pid}','${it[0]}',${on?'false':'true'})" style="cursor:pointer;font-size:18px;flex-shrink:0;line-height:1.2">${on?'&#9989;':'&#11036;'}</span>`}
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13.5px;font-weight:600;color:${on?'#0F7B54':'#111'}">${it[1]}</div>
+        <div style="font-size:11.5px;color:#999;margin-top:1px">${it[2]}</div>
+        ${on&&rec.by?`<div style="font-size:10.5px;color:#bbb;margin-top:2px">${_calEsc(rec.by)}${rec.at?(' &middot; '+_calEsc(rec.at)):''}</div>`:''}
+      </div></div>`;
+  }).join('');
+  const host=document.createElement('div');
+  host.id='po-modal';
+  host.style.cssText='position:fixed;inset:0;background:rgba(17,17,17,.45);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px;overflow:auto';
+  host.onclick=(e)=>{ if(e.target===host) _poClose(); };
+  host.innerHTML=`<div style="background:#fff;border-radius:12px;max-width:640px;width:100%;box-shadow:0 18px 50px rgba(0,0,0,.25);margin:auto">
+    <div style="padding:15px 20px;border-bottom:0.5px solid #e7eaf0;display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+      <div>
+        <div style="font-size:17px;font-weight:600;color:#111">&#128203; Punch-out checklist &mdash; ${_calEsc(c.addr||'')}</div>
+        <div style="font-size:12.5px;color:#888;margin-top:2px">${n} of ${tot} done${_poComplete(c)?' &mdash; <b style="color:#0F7B54">ready to list</b>':''}. Patience fills this in from the NPI inspection report; it shows on the property card and on the realtor dashboard.</div>
+      </div>
+      <span onclick="_poClose()" style="cursor:pointer;font-size:24px;color:#aaa;line-height:1">&times;</span>
+    </div>
+    <div style="padding:4px 20px 8px">
+      <div style="background:#f4f5f7;border-radius:6px;height:6px;margin:10px 0 2px;overflow:hidden"><div style="height:100%;width:${Math.round(n/tot*100)}%;background:${_poComplete(c)?'#0F7B54':'#B7791F'}"></div></div>
+      ${rows}
+      <div style="margin-top:12px">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#98a2b3;margin-bottom:4px">Notes from the inspection report</div>
+        ${ro?`<div style="font-size:13px;color:#333;white-space:pre-wrap;background:#F7F8FB;border-radius:7px;padding:9px 11px;min-height:30px">${_calEsc(d.notes||'')||'<span style="color:#bbb">Nothing written</span>'}</div>`
+            :`<textarea id="po-n-${pid}" onchange="_poNote('${pid}',this.value)" placeholder="What NPI flagged, what is being handled and by whom…" style="width:100%;box-sizing:border-box;min-height:72px;padding:9px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:13px;line-height:1.5;font-family:inherit;resize:vertical">${_calEsc(d.notes||'')}</textarea>`}
+      </div>
+      <div style="display:flex;gap:8px;margin:12px 0 16px;flex-wrap:wrap">
+        <button onclick="_poClose();openPropDetail('${pid}')" style="padding:7px 14px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">Open the property card</button>
+      </div>
+    </div>
+  </div>`;
+  document.body.appendChild(host);
+}
+
+// ---- In contract ----
+// Bruce, 13 Sept: "clicking opens an in-contract dashboard with properties on the left
+// and Inspections yes/no, Request remedy yes/no, notes in the middle."
+function _icData(c){ const o=((c&&c.checklists)||{}).ic; return (o&&typeof o==='object')?o:{}; }
+function _icInsp(c){ return _icData(c).insp||''; }   // '', 'yes', 'no'
+function _icRem(c){ return _icData(c).rem||''; }
+function _icNotes(c){ return _icData(c).notes||''; }
+function _icNoInspection(c){ return _icInsp(c)!=='yes'; }
+async function _icSet(pid, field, val){
+  if(_blockIfReadOnly()) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return;
+  const cur=Object.assign({}, _icData(c));
+  cur[field]=val;
+  if(field!=='notes'){ cur[field+'By']=(typeof _sqMe==='function')?_sqMe():''; cur[field+'At']=_ymd(new Date()); }
+  if(!(await _wmChecklistPatch(pid, { ic: cur }))) return;
+  const label={insp:'Home inspection', rem:'Request to remedy', notes:'In-contract notes'}[field]||field;
+  _logAudit('updated','property',(c&&c.addr)||'', label+(field==='notes'?' updated':(': '+(val||'cleared'))));
+  if(field!=='notes') _icRender();
+}
+function _icPick(pid){ window._icSel=pid; _icRender(); }
+function _icRender(){
+  const host=document.getElementById('ic-body');
+  if(!host){ if(typeof openRealtorDashboard==='function') openRealtorDashboard(); return; }
+  host.innerHTML=_icBody();
+}
+function _icCards(){
+  const who=(_rltTab().indexOf('r:')===0)?_rltTab().slice(2):null;
+  const pool = who ? _rltCards(who) : (typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived);
+  return pool.filter(c=>c.phase==='In Contract').sort((a,b)=>String(a.addr||'').localeCompare(String(b.addr||'')));
+}
+function _icBody(){
+  const cards=_icCards();
+  if(!cards.length) return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:26px;text-align:center;color:#bbb;font-size:13.5px">Nothing is in contract right now.</div>`;
+  let sel=cards.find(c=>c.id===window._icSel);
+  if(!sel){ sel=cards.find(_icNoInspection)||cards[0]; window._icSel=sel.id; }
+  const ro=(typeof isReadOnly==='function')?isReadOnly():false;
+  const left=cards.map(function(c){
+    const on=(c.id===window._icSel);
+    const needs=_icNoInspection(c);
+    return `<div onclick="_icPick('${c.id}')" style="cursor:pointer;padding:10px 13px;border-left:3px solid ${on?'#122A4A':'transparent'};background:${on?'#F2F5FA':'#fff'};border-bottom:0.5px solid #f1f3f7">
+      <div style="font-size:13.5px;font-weight:600;color:${on?'#111':'#185FA5'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(c.addr||'')}</div>
+      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:3px">
+        <span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:99px;background:${needs?'#FBF3E2':'#E6F4ED'};color:${needs?'#8a6d1a':'#0F7B54'}">${needs?'no inspection yet':'inspected'}</span>
+        ${_icRem(c)==='yes'?'<span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:99px;background:#FBEAE8;color:#B42318">remedy asked</span>':''}
+      </div>
+      ${c.closingDateSell?`<div style="font-size:10.5px;color:#aaa;margin-top:2px">closes ${_calEsc(c.closingDateSell)}</div>`:''}
+    </div>`;
+  }).join('');
+  const yn=(pid,field,cur,labels)=>ro
+    ? `<span style="font-size:13.5px;font-weight:600;color:${cur==='yes'?'#0F7B54':(cur==='no'?'#B42318':'#c9ccd4')}">${cur?(cur==='yes'?labels[0]:labels[1]):'not answered'}</span>`
+    : `<span style="display:inline-flex;gap:6px">
+        <button onclick="_icSet('${pid}','${field}','${cur==='yes'?'':'yes'}')" style="padding:5px 14px;border-radius:7px;cursor:pointer;font-size:12.5px;font-weight:600;border:0.5px solid ${cur==='yes'?'#0F7B54':'#d8dce6'};background:${cur==='yes'?'#E6F4ED':'#fff'};color:${cur==='yes'?'#0F7B54':'#666'}">${labels[0]}</button>
+        <button onclick="_icSet('${pid}','${field}','${cur==='no'?'':'no'}')" style="padding:5px 14px;border-radius:7px;cursor:pointer;font-size:12.5px;font-weight:600;border:0.5px solid ${cur==='no'?'#B42318':'#d8dce6'};background:${cur==='no'?'#FBEAE8':'#fff'};color:${cur==='no'?'#B42318':'#666'}">${labels[1]}</button>
+      </span>`;
+  const d=_icData(sel);
+  const line=(label,hint,inner,by,at)=>`<div style="padding:12px 0;border-top:0.5px solid #f1f3f7">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <div><div style="font-size:13.5px;font-weight:600;color:#111">${label}</div><div style="font-size:11.5px;color:#999;margin-top:1px">${hint}</div></div>
+      ${inner}
+    </div>${by?`<div style="font-size:10.5px;color:#bbb;margin-top:4px">answered by ${_calEsc(by)}${at?(' &middot; '+_calEsc(at)):''}</div>`:''}</div>`;
+  const right=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:14px 17px">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">
+      <span onclick="openPropDetail('${sel.id}')" style="cursor:pointer;font-size:16px;font-weight:700;color:#185FA5">${_calEsc(sel.addr||'')}</span>
+      <span style="font-size:11.5px;color:#999">${sel.pm?('PM '+_calEsc(sel.pm)):'no PM'}${sel.listingAgent?(' &middot; '+_calEsc(sel.listingAgent)):''}${sel.closingDateSell?(' &middot; closes '+_calEsc(sel.closingDateSell)):''}</span>
+    </div>
+    ${line('Home inspection done?','The buyer’s inspection — this is what the remedy list comes off', yn(sel.id,'insp',_icInsp(sel),['Yes','No']), d.inspBy, d.inspAt)}
+    ${line('Request to remedy sent?','Have they asked us to fix anything yet?', yn(sel.id,'rem',_icRem(sel),['Yes','No']), d.remBy, d.remAt)}
+    <div style="padding:12px 0 0;border-top:0.5px solid #f1f3f7">
+      <div style="font-size:13.5px;font-weight:600;color:#111;margin-bottom:5px">Notes</div>
+      ${ro?`<div style="font-size:13px;color:#333;white-space:pre-wrap;background:#F7F8FB;border-radius:7px;padding:9px 11px;min-height:40px">${_calEsc(_icNotes(sel))||'<span style="color:#bbb">Nothing written</span>'}</div>`
+          :`<textarea id="ic-n-${sel.id}" onchange="_icSet('${sel.id}','notes',this.value)" placeholder="Where this one stands — dates, what the buyer asked for, what we agreed…" style="width:100%;box-sizing:border-box;min-height:110px;padding:9px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:13px;line-height:1.55;font-family:inherit;resize:vertical">${_calEsc(_icNotes(sel))}</textarea>`}
+    </div>
+    <div style="display:flex;gap:8px;margin-top:11px;flex-wrap:wrap">
+      <button onclick="openPropDetail('${sel.id}')" style="padding:7px 14px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">Open the property card</button>
+      <button onclick="_coOpen('${sel.id}')" style="padding:7px 14px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#4A1D6E;cursor:pointer;font-weight:600">&#128209; Change orders</button>
+    </div>
+  </div>`;
+  return `<div style="display:grid;grid-template-columns:minmax(210px,270px) 1fr;gap:14px;align-items:start">
+    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;overflow:hidden">
+      <div style="padding:9px 13px;border-bottom:0.5px solid #e0e4ec;font-size:12px;font-weight:700;color:#98a2b3;text-transform:uppercase;letter-spacing:.05em">In contract &middot; ${cards.length}</div>
+      ${left}
+    </div>
+    ${right}
+  </div>`;
+}
 const RLT_STAGES=["Pre List / Punchout Process","Listed on the Market","In Contract","RTR In Process","RTR Completed (Pending Closing)"];
 function _rltTab(){ const t=window._rltTabSel||'main'; return RLT_TABS.some(x=>x[0]===t)?t:'main'; }
 function _rltGo(t){ window._rltTabSel=t; openRealtorDashboard(); }
 function openRealtorDashboard(tab){
+  window.__rltOpen=true;
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
   if(tab) window._rltTabSel=tab;
@@ -10587,30 +10982,100 @@ function openRealtorDashboard(tab){
   }).join('');
   const stageBlock=_stageBlockFor(null);
 
-  const mainBody=`
-    <div style="background:#FFF7E0;border:1px solid #EAD9A8;border-radius:11px;padding:12px 15px;margin-bottom:14px">
-      <div style="font-size:13.5px;color:#6b5310"><b>🚧 Still being built.</b> The squares below are live and correct. The request-a-remedy process gets built into this dashboard next, once Bruce sends the write-up of how it runs today.</div>
-    </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:10px;margin-bottom:14px">
-      ${tile('⏳','Coming soon',soon.length,'about to be listed','#B7791F',"openWeeklyMeeting('market')")}
-      ${tile('🏡','On the market',act.length,'listed right now','#185FA5',"openWeeklyMeeting('market')")}
-      ${tile('🤝','In contract',ctr.length,'before the remedy list','#12987A',"openWeeklyMeeting('market')")}
-      ${tile('🛠','Request a remedy',rtr.length,'remedies being worked','#BA7517',"openWeeklyMeeting('market')")}
-      ${tile('✅','Cleared to close',ctc.length,'remedies completed','#534AB7',"openWeeklyMeeting('market')")}
-    </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">
-      ${card('⏳ Coming soon', list(soon,'Nothing is queued to be listed.'))}
-      ${card('🏡 On the market', list(act,'Nothing is listed right now.'))}
-      ${card('🤝 In contract', list(ctr,'Nothing is in contract.'))}
-      ${card('🛠 Request a remedy', list(rtr,'No remedy lists are being worked.'))}
-      ${card('✅ Cleared to close', list(ctc,'Nothing is cleared to close.'))}
+  // Bruce, 13 Sept: "five squares at the top" - and nothing else on the front page but
+  // the five sections of updates underneath. The addresses used to be printed five times
+  // over on this page; now each section shows only what is outstanding, and everything
+  // else is one click away.
+  const need=(title,count,color,hint,body,openLabel,openFn)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid ${color};border-radius:12px;padding:13px 16px;margin-bottom:11px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:2px">
+        <div><span style="font-size:14.5px;font-weight:700;color:#111">${title}</span>
+          ${count?`<span style="font-size:11px;font-weight:700;color:${color};background:${color}14;padding:2px 9px;border-radius:99px;margin-left:7px">${count}</span>`:''}</div>
+        ${openFn?`<span onclick="${openFn}" style="cursor:pointer;font-size:12px;color:#185FA5;font-weight:600;white-space:nowrap">${openLabel} &rsaquo;</span>`:''}
+      </div>
+      <div style="font-size:11.5px;color:#999;margin-bottom:6px">${hint}</div>
+      ${body}
     </div>`;
+  const nothing=(m)=>`<div style="font-size:12.5px;color:#0F7B54;padding:4px 0">&#10003; ${m}</div>`;
+  const chaseRow=(c, right, click)=>`<div onclick="${click||("openPropDetail('"+c.id+"')")}" style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;padding:7px 0;border-top:0.5px solid #f4f5f7;cursor:pointer">
+      <div style="min-width:0"><div style="font-size:13.5px;font-weight:600;color:#185FA5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(c.addr||'')}</div>
+        <div style="font-size:11px;color:#aaa">${c.pm?('PM '+_calEsc(c.pm)):'no PM'}${c.listingAgent?(' &middot; '+_calEsc(c.listingAgent)):' &middot; no listing agent'}</div></div>
+      <div style="font-size:11.5px;white-space:nowrap;text-align:right">${right}</div>
+    </div>`;
+
+  // 1. Pre-list / punch out — the ones whose punch-out checklist is not finished.
+  const poOpen=soon.filter(c=>!_poComplete(c));
+  const poBody=poOpen.length
+    ? poOpen.slice(0,8).map(c=>chaseRow(c,
+        `<span style="font-weight:700;color:${_poCount(c)?'#B7791F':'#B42318'}">${_poCount(c)} / ${PUNCH_ITEMS.length}</span><div style="font-size:10.5px;color:#bbb">${_poStarted(c)?'in progress':'not started'}</div>`,
+        "_poOpen('"+c.id+"')")).join('')
+      + (poOpen.length>8?`<div style="font-size:11px;color:#aaa;padding-top:6px">+ ${poOpen.length-8} more</div>`:'')
+    : nothing(soon.length?'Every punch-out checklist is finished.':'Nothing is in pre-list or punch out.');
+
+  // 2. On the market — the ones whose 2-weekly checklist has run out.
+  const _today=_ymd(new Date());
+  const _daysSince=(ds)=>{ if(!ds) return null; const a=new Date(ds), b=new Date(_today); a.setHours(0,0,0,0); b.setHours(0,0,0,0); return Math.floor((b-a)/86400000); };
+  const mktLate=act.map(c=>({c:c, ds:_daysSince(c.checklistMarketLast)}))
+                   .filter(x=>x.ds===null || x.ds>=14)
+                   .sort((a,b)=>(b.ds==null?9999:b.ds)-(a.ds==null?9999:a.ds));
+  const mktBody=mktLate.length
+    ? mktLate.slice(0,8).map(x=>chaseRow(x.c,
+        `<span style="font-weight:700;color:#B42318">${x.ds==null?'never done':(x.ds+' days ago')}</span><div style="font-size:10.5px;color:#bbb">due every 2 weeks</div>`)).join('')
+      + (mktLate.length>8?`<div style="font-size:11px;color:#aaa;padding-top:6px">+ ${mktLate.length-8} more</div>`:'')
+    : nothing(act.length?'Every on-market checklist is current.':'Nothing is listed right now.');
+
+  // 3. In contract — the ones with no home inspection recorded yet.
+  const icNo=ctr.filter(_icNoInspection);
+  const icBody=ctr.length
+    ? (icNo.length
+        ? icNo.slice(0,8).map(c=>chaseRow(c,
+            `<span style="font-weight:700;color:#8a6d1a">no inspection yet</span>${_icRem(c)==='yes'?'<div style="font-size:10.5px;color:#B42318;font-weight:600">remedy asked</div>':''}`,
+            "_rltGo('contract');window._icSel='"+c.id+"'")).join('')
+          + (icNo.length>8?`<div style="font-size:11px;color:#aaa;padding-top:6px">+ ${icNo.length-8} more</div>`:'')
+        : nothing('Every house in contract has its inspection recorded.'))
+    : nothing('Nothing is in contract.');
+
+  // 4. Request a remedy — what is actually being worked, with the remedy dates on it.
+  const rtrIds=new Set(rtr.map(c=>c.id));
+  const rtrBody=rtr.length
+    ? rtr.slice(0,8).map(function(c){
+        const nx=(typeof _calEventsCache!=='undefined'?_calEventsCache:[])
+          .filter(e=>e.property_id===c.id && !e.completed && e.event_date && e.event_date>=_today)
+          .sort((a,b)=>String(a.event_date).localeCompare(String(b.event_date)))[0];
+        return chaseRow(c, nx
+          ? `<span style="font-weight:700;color:#BA7517">next ${_calEsc(nx.event_date)}</span><div style="font-size:10.5px;color:#bbb">${_calEsc(nx.title||nx.kind||'booked')}</div>`
+          : `<span style="font-weight:700;color:#B42318">nothing booked</span><div style="font-size:10.5px;color:#bbb">no remedy work on the calendar</div>`);
+      }).join('')
+    : nothing('No remedy lists are being worked.');
+
+  // 5. Cleared to close — what is waiting on a closing date.
+  const ctcBody=ctc.length
+    ? ctc.slice(0,8).map(c=>chaseRow(c, c.closingDateSell
+        ? `<span style="font-weight:700;color:#534AB7">closes ${_calEsc(c.closingDateSell)}</span>`
+        : `<span style="font-weight:700;color:#B42318">no closing date set</span>`)).join('')
+    : nothing('Nothing is cleared to close.');
+
+  const mainBody=`
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:10px;margin-bottom:16px">
+      ${tile('⏳','Coming soon',soon.length,poOpen.length?(poOpen.length+' punch-out'+(poOpen.length===1?'':'s')+' open'):'about to be listed','#B7791F',"_rltGo('stages')")}
+      ${tile('🏡','On the market',act.length,mktLate.length?(mktLate.length+' checklist'+(mktLate.length===1?'':'s')+' overdue'):'checklists current','#185FA5',"_rltGo('stages')")}
+      ${tile('🤝','In contract',ctr.length,icNo.length?(icNo.length+' without an inspection'):'all inspected','#12987A',"_rltGo('contract')")}
+      ${tile('🛠','Request a remedy',rtr.length,'remedies being worked','#BA7517',"_rltGo('stages')")}
+      ${tile('✅','Cleared to close',ctc.length,'remedies completed','#534AB7',"_rltGo('stages')")}
+    </div>
+    <div style="font-size:13px;font-weight:700;color:#111;margin-bottom:8px">What needs chasing</div>
+    ${need('⏳ Pre-list / punch out', poOpen.length, '#B7791F', 'Houses whose punch-out checklist is not finished. Patience fills it in from the NPI inspection report — click one to open it.', poBody, 'See every stage', "_rltGo('stages')")}
+    ${need('🏡 Listed on the market', mktLate.length, '#185FA5', 'The on-the-market checklist is due every two weeks. These have run out.', mktBody, 'On the market meeting', "openWeeklyMeeting('market')")}
+    ${need('🤝 In contract', icNo.length, '#12987A', 'No home inspection recorded yet. Open the in-contract board to answer inspection, remedy and notes on each one.', icBody, 'Open the in-contract board', "_rltGo('contract')")}
+    ${need('🛠 Request a remedy', rtr.length, '#BA7517', 'Remedy lists being worked, and the next thing booked on each house.', rtrBody, 'Construction calendar', "openProjectDashboard('construction')")}
+    ${need('✅ Cleared to close', ctc.length, '#534AB7', 'Remedies finished — these are waiting on a closing date.', ctcBody, 'See every stage', "_rltGo('stages')")}`;
 
   document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div style="padding:20px;max-width:1000px;margin:0 auto">
     <div style="font-size:18px;font-weight:700;color:#111">🔑 Realtor Dashboard</div>
     <div style="font-size:12.5px;color:#999;margin-bottom:12px">Listings, remedies and contracts in one place.</div>
     ${tabBar}
-    ${_rt==='stages'
+    ${_rt==='contract'
+      ? `<div style="font-size:12.5px;color:#888;margin-bottom:10px">Every house in contract. Pick one on the left; answer inspection, remedy and notes in the middle.</div><div id="ic-body">${_icBody()}</div>`
+    : _rt==='stages'
       ? `<div style="font-size:12.5px;color:#888;margin-bottom:10px">Every house on the board, in the order it moves: pre-list and punch out, on the market, in contract, request a remedy, cleared to close.</div>${stageBlock}`
       : (_rt.indexOf('r:')===0
         ? (()=>{ const who=_rt.slice(2); const mine=_rltCards(who);
@@ -19243,4 +19708,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-13d change-orders -->
+<!-- build: 2026-09-13e realtor-and-company-meeting -->
