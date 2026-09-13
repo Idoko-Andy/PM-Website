@@ -1418,6 +1418,12 @@ const ROLE_DEFAULTS = {
   "Architect":                                 ["dash_project","dash_design","dash_architect","sops_view"],
   "Realtor":                                   ["dash_project","dash_realtor","rep_market","sops_view"],
   "Assistant / Intern":                        ["dash_project","sops_view"],
+  // Bruce, 13 Sept: Eman "is gonna be filling stuff out for the kickoff meetings...
+  // the only thing he'll have access to and can see on the whole thing is the kickoff
+  // meetings. And he can also see the property dashboard, but that's it. He can't click
+  // on property cards... but he can edit the kickoff meeting doc and add a property to
+  // the kickoff meeting."
+  "Acquisitions Member":                       ["dash_project","rep_kickoff","sops_view"],
   "Other":                                     ["sops_view"],
 };
 // The Director / CEO Meeting is the one report that is not simply part of
@@ -1617,7 +1623,8 @@ const BASE_ROLES = [
   "CEO","Project Director","Administrative Manager","Project Manager","PM Assistant",
   "Senior Administrative Assistant","Administrative Assistant",
   "Senior Virtual Administrative Assistant","Virtual Administrative Assistant",
-  "Start of Project Assistant","End of Project Assistant","Architect","Realtor","Assistant / Intern","Other"
+  "Start of Project Assistant","End of Project Assistant","Architect","Realtor",
+  "Acquisitions Member","Assistant / Intern","Other"
 ];
 let ROLE_LIST = BASE_ROLES.slice();
 
@@ -1647,7 +1654,8 @@ const ROLE_NAVTAB = {
   "Administrative Manager":"adm-t","Senior Administrative Assistant":"adm-t","Administrative Assistant":"adm-t",
   "Senior Virtual Administrative Assistant":"va-t","Virtual Administrative Assistant":"va-t",
   "Architect":"arch-t",
-  "Realtor":"rlt-t"
+  "Realtor":"rlt-t",
+  "Acquisitions Member":"am-t"
 };
 const NAV_SUPER_ROLES = ["CEO","Project Director","Senior Virtual Administrative Assistant"];
 
@@ -1789,10 +1797,87 @@ function renderAdminUsers() {
       </div>
       <div id="role-mgr-msg" style="font-size:12px;margin-bottom:8px"></div>
       <div id="role-mgr-list"></div>
+    </div>
+    <div style="margin-top:22px;padding-top:16px;border-top:1px solid #2a2a2a">
+      <div style="font-size:14px;color:#fff;font-weight:500;margin-bottom:8px">One person, one spelling</div>
+      <div style="font-size:12px;color:#666;margin-bottom:10px;line-height:1.6">The screens already read <b style="color:#888">Tom</b> and <b style="color:#888">Tommy</b> as the same person, so nothing looks wrong. But the records underneath still hold both, and anything reading the database straight &mdash; a Slack automation, an export &mdash; still sees two people. This rewrites them to one spelling. It shows you every change before it makes any.</div>
+      <button id="name-fix-btn" class="action-btn approve-btn" onclick="_nameFixRun()">Check and fix spellings</button>
+      <div id="name-fix-out" style="font-size:12px;margin-top:9px;line-height:1.6"></div>
     </div>`;
   renderRoleManager();
 }
 
+// ---- One person, one spelling ------------------------------------------------
+// Bruce, 13 Sept: "there's two Tommies. There's a Tommy and then Tom... It's all one
+// person. So fix that. Call him Tommy."
+// The screens already read both spellings as the same person (PERSON_ALIASES), so
+// nothing looks wrong any more - but the stored records still disagree, and anything
+// that reads the database directly (a Slack automation, an export) sees two people.
+// This finds every record whose stored spelling is not the canonical one and rewrites
+// them, in one deliberate click, with a list of exactly what will change first.
+// It is not Tommy-specific: add a name to PERSON_ALIASES and this cleans that up too.
+async function _nameScan(){
+  const out=[];
+  const add=(table,id,field,from,to,label)=>{ if(String(from)!==String(to)) out.push({table,id,field,from,to,label}); };
+  try{
+    const pr=await supabase.from("profiles").select("id,email,first_name,last_name");
+    (pr.data||[]).forEach(function(u){
+      const f=String(u.first_name==null?'':u.first_name), l=String(u.last_name==null?'':u.last_name);
+      add('profiles',u.id,'first_name',f,_canonName(f),u.email||u.id);
+      if(l!==l.trim()) add('profiles',u.id,'last_name',l,l.trim(),u.email||u.id);
+    });
+  }catch(e){}
+  try{
+    const pp=await supabase.from("pm_properties").select("id,addr,pm").not("pm","is",null);
+    (pp.data||[]).forEach(function(c){
+      const v=String(c.pm==null?'':c.pm);
+      add('pm_properties',c.id,'pm',v,_canonName(v),c.addr||c.id);
+    });
+  }catch(e){}
+  try{
+    const pt=await supabase.from("pm_tasks").select("id,title,assignee,assignees");
+    (pt.data||[]).forEach(function(t){
+      const v=String(t.assignee==null?'':t.assignee);
+      add('pm_tasks',t.id,'assignee',v,_canonName(v),t.title||t.id);
+      const arr=Array.isArray(t.assignees)?t.assignees:null;
+      if(arr){
+        const fixed=_canonUnique(arr.map(_canonName));
+        if(JSON.stringify(fixed)!==JSON.stringify(arr))
+          out.push({table:'pm_tasks',id:t.id,field:'assignees',from:arr.join(', '),to:fixed.join(', '),label:t.title||t.id,arr:fixed});
+      }
+    });
+  }catch(e){}
+  try{
+    const pm=await supabase.from("pm_managers").select("id,name");
+    (pm.data||[]).forEach(function(m){
+      const v=String(m.name==null?'':m.name);
+      add('pm_managers',m.id,'name',v,_canonName(v),v);
+    });
+  }catch(e){}
+  return out;
+}
+async function _nameFixRun(){
+  if(_blockIfReadOnly()) return;
+  const btn=document.getElementById('name-fix-btn');
+  if(btn){ btn.disabled=true; btn.textContent='Checking…'; }
+  const list=await _nameScan();
+  if(btn){ btn.disabled=false; btn.textContent='Check and fix spellings'; }
+  const box=document.getElementById('name-fix-out');
+  if(!list.length){ if(box) box.innerHTML='<span style="color:#2ecc71">Every record already uses one spelling per person. Nothing to change.</span>'; return; }
+  const lines=list.map(x=>'• '+x.table+' — '+x.label+': "'+x.from+'" → "'+x.to+'"').join('\n');
+  if(!confirm("Rewrite "+list.length+" record"+(list.length===1?'':'s')+" so each person has one spelling?\n\n"+lines)) return;
+  let ok=0; const bad=[];
+  for(const x of list){
+    const patch={}; patch[x.field] = (x.field==='assignees') ? x.arr : x.to;
+    const r=await supabase.from(x.table).update(patch).eq("id",x.id).select("id");
+    if(r.error || !r.data || !r.data.length) bad.push(x.table+' '+x.label+': '+((r.error&&r.error.message)||'nothing was saved')); else ok++;
+  }
+  _logAudit('updated','settings','', 'Name cleanup — rewrote '+ok+' record'+(ok===1?'':'s')+' to one spelling per person');
+  if(box) box.innerHTML = '<span style="color:'+(bad.length?'#e67e22':'#2ecc71')+'">'+ok+' record'+(ok===1?'':'s')+' fixed'+(bad.length?(', '+bad.length+' could not be: '+bad.join('; ')):'')+'. Refresh the page to see it everywhere.</span>';
+  try{ if(typeof loadPropertiesFromSupabase==='function') await loadPropertiesFromSupabase(); }catch(e){}
+  try{ if(typeof loadPMManagers==='function') await loadPMManagers(); }catch(e){}
+  try{ if(typeof loadTasks==='function') await loadTasks(); }catch(e){}
+}
 // Display name for an audit entry about a user account.
 function _userName(id){ const u=(typeof getUsers==='function'?getUsers():[]).find(x=>x.id===id); return u?((((u.firstName||"")+" "+(u.lastName||"")).trim())||u.email||id):id; }
 
@@ -3910,7 +3995,21 @@ function _sqBody(c, compact){
     </div>`;
 }
 
+// Bruce, 13 Sept, on the Acquisitions Member role: "He can't click on property cards."
+// So the board, the columns and the counts are all his - the card is not. Said plainly
+// rather than silently doing nothing, which would just read as a broken link.
+const NO_PROP_CARD_ROLES = ["Acquisitions Member"];
+function _canOpenPropCard(u){
+  u = u || (typeof currentUser==='function'?currentUser():null);
+  if(!u) return false;
+  if(u.isSuperAdmin) return true;
+  return NO_PROP_CARD_ROLES.indexOf(u.role) < 0;
+}
 function openPropDetail(id) {
+  if(!_canOpenPropCard()){
+    if(typeof showAccessDenied==='function') showAccessDenied("Your role sees the property board, not the individual property cards. The Kickoff Meeting is where you add and fill in a property.");
+    return;
+  }
   const c = propCards.find(x => x.id === id);
   if (!c) return;
   const p = phInfo(c.phase);
@@ -6890,6 +6989,15 @@ async function _miAddQuick(kind, pid){
 // different jobs: buy and list it as it stands, a quick cosmetic, or the full
 // rehab. And the PM chosen here is written straight onto the property card, so
 // nobody has to remember to go and do it afterwards.
+// Bruce, 13 Sept, on the Acquisitions Member role: "he can edit the kickoff meeting doc
+// and add a property to the kickoff meeting." A house joins this meeting by existing in
+// one of the KICK_PHASES, so adding one here is the ordinary new-property form with the
+// phase already set to the first of them - no separate list to fall out of step.
+function _kickAddProperty(){
+  if(_blockIfReadOnly()) return;
+  if(typeof addPropToPhase==='function'){ addPropToPhase(KICK_PHASES[0]); return; }
+  if(typeof openPropModal==='function') openPropModal();
+}
 const KICK_PHASES=["Upcoming Takedowns","Occupied / Closed","Vacant / On Standby","Pre Construction"];
 const KICK_PRICES=[
   ["price_bl",  "Buy and list",   "Sell it as it stands, no work"],
@@ -7038,9 +7146,10 @@ function _kickMeetingBody(wk, notes, prevNotes, roNow){
   const expandBar=cards.length?`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:9px">
       <div style="font-size:12.5px;color:#888">${cards.length} propert${cards.length===1?'y':'ies'} queued to start</div>
       <div style="display:flex;gap:6px">
+        ${roNow?'':`<button onclick="_kickAddProperty()" style="padding:5px 11px;background:#122A4A;border:none;border-radius:7px;font-size:12px;color:#fff;font-weight:600;cursor:pointer">&#65291; Add a property</button>`}
         <button onclick="_wmExpandAll(true)" style="padding:5px 11px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12px;color:#555;cursor:pointer">Expand all</button>
         <button onclick="_wmExpandAll(false)" style="padding:5px 11px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12px;color:#555;cursor:pointer">Collapse all</button>
-      </div></div>`:'';
+      </div></div>`:(roNow?'':`<div style="margin-bottom:9px"><button onclick="_kickAddProperty()" style="padding:6px 13px;background:#122A4A;border:none;border-radius:7px;font-size:12.5px;color:#fff;font-weight:600;cursor:pointer">&#65291; Add a property</button></div>`);
 
   return `${_wmClosedBanner(wk, closedRec, 'kickoff')}
     <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:13px 16px;margin-bottom:14px;font-size:13.5px;color:#444;line-height:1.7">Before work starts on a project you hold a formal <b>kick-off meeting</b>. Every property below is queued to start. Click one open and work down it. <b style="color:#0F7B54">Everything saves itself as you type.</b></div>
@@ -12325,7 +12434,7 @@ function openVAAdminDashboard(activeTab) {
   activeTab = activeTab || 'main';
   // The old standalone Utilities tab is gone - the Utility Tracker under Trackers
   // replaced it. Old links (dashboard tiles, bookmarks) redirect there.
-  if (activeTab === 'utilities') { activeTab = 'trackers'; window._trkView='util'; if(['e','w','g','m'].indexOf(window._utilTab)<0) window._utilTab='e'; }
+  if (activeTab === 'utilities') { activeTab = 'trackers'; window._trkView='util'; if(['p','e','w','g','m'].indexOf(window._utilTab)<0) window._utilTab='p'; }
   const va=(getUsers().find(u=>u.status==="approved"&&u.role==="Virtual Administrative Assistant")||{firstName:"Patience"});
   const vaName=(va.firstName||"Patience");
   const tabs=[
@@ -12697,6 +12806,54 @@ async function _utilPayAdd(pid,sub){
   const kind=(UTILS.find(u=>u.key===sub)||{}).k;
   if(kind){ const dd=window._trkData; dd[kind]=dd[kind]||{}; dd[kind][pid]=Object.assign({},dd[kind][pid]||{},{last:rec.d,amt:rec.amt,chg:rec.chg,conf:rec.conf}); window._trkData=dd; await _trkSave(); }
   _utilOpenHistory(pid);
+}
+// Bruce, 13 Sept: "let's go ahead and build the utility tracker out where it's squares
+// instead of horizontal across just to make sure everything is in order from start to
+// finish." And Patience, same day: payments belong under the utility's own Payment
+// Record, not in the general notes. This is the adder that sits INSIDE each utility
+// square, so a payment is logged where you are already looking.
+async function _utilPayQuick(pid,sub){
+  if(_blockIfReadOnly()) return;
+  const g=(k)=>{ const el=document.getElementById(k); return el?(el.value||'').trim():''; };
+  const key='upq-'+pid+'-'+sub;
+  const d=g(key+'-d');
+  if(!d){ alert("Pick the date the payment was made \u2014 that is what puts it in the right month."); return; }
+  const rec={ d:d, amt:g(key+'-a'), chg:'', conf:g(key+'-c'), method:'', note:g(key+'-n'), by:_utilWho() };
+  const arr=_utilArr('upay',pid,sub).concat([rec]).sort((a,b)=>(a.d<b.d?1:-1));
+  if(!(await _utilArrWrite('upay',pid,sub,arr))) return;
+  const kind=(UTILS.find(u=>u.key===sub)||{}).k;
+  if(kind){ const dd=window._trkData; dd[kind]=dd[kind]||{}; dd[kind][pid]=Object.assign({},dd[kind][pid]||{},{last:rec.d,amt:rec.amt,conf:rec.conf}); window._trkData=dd; await _trkSave(); }
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===_utilBaseId(pid));
+  _logAudit('created','property',(c&&c.addr)||'', (UTILS.find(u=>u.key===sub)||{}).label+' payment logged: '+d+(rec.amt?(' \u2014 '+rec.amt):''));
+  (window._trkRerender||function(){openVAAdminDashboard('trackers');})();
+}
+// Payments grouped by month, newest month first - the month-on-month history Patience
+// asked for. Each utility keeps its own; nothing is shared between them.
+function _utilPayMonths(pid,sub){
+  const rows=_utilArr('upay',pid,sub).slice().sort((a,b)=>(a.d<b.d?1:-1));
+  const out=[]; const seen={};
+  rows.forEach(function(r){
+    const m=String(r.d||'').slice(0,7);
+    if(!seen[m]){ seen[m]={m:m,rows:[],total:0}; seen[m]=seen[m]; out.push(seen[m]); }
+    seen[m].rows.push(r);
+    seen[m].total += (parseFloat(String(r.amt||'').replace(/[^0-9.\-]/g,''))||0);
+  });
+  return out;
+}
+function _utilMonthLabel(m){
+  if(!m || m.length<7) return 'No date';
+  const names=['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const y=m.slice(0,4), mi=parseInt(m.slice(5,7),10)-1;
+  return (names[mi]||m)+' '+y;
+}
+function _utilSqToggle(pid,sub){
+  const k=pid+'::'+sub;
+  window._utilOpenSq=window._utilOpenSq||{};
+  window._utilOpenSq[k]=!window._utilOpenSq[k];
+  const el=document.getElementById('upm-'+pid+'-'+sub);
+  if(el) el.style.display = window._utilOpenSq[k] ? '' : 'none';
+  const cap=document.getElementById('upmc-'+pid+'-'+sub);
+  if(cap) cap.textContent = window._utilOpenSq[k] ? 'hide history' : 'month-by-month history';
 }
 async function _utilPayDel(pid,sub,i){
   if(_blockIfReadOnly()) return;
@@ -14073,7 +14230,12 @@ function _vaTrackers(){
 
   // ---------- Utility tracker (mirrors the Utility Tracker workbook) ----------
   const usel=(kind,id,field,opts,w)=>ro?(_trkVal(kind,id,field)||'—'):`<select onchange="_trkSet('${kind}','${id}','${field}',this.value,true)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:${w||90}px"><option value=""></option>${opts.map(o=>`<option ${_trkVal(kind,id,field)===o?'selected':''}>${_calEsc(o)}</option>`).join('')}</select>`;
-  const uta=(kind,id,field,ph,w)=>ro?`<div style="max-width:260px;white-space:pre-wrap">${_calEsc(_trkVal(kind,id,field))||'—'}</div>`:`<textarea placeholder="${ph||''}" onchange="_trkSet('${kind}','${id}','${field}',this.value,false)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:${w||220}px;min-height:44px;resize:vertical;font-family:inherit">${_calEsc(_trkVal(kind,id,field))}</textarea>`;
+  const uta=(kind,id,field,ph,w)=>{
+    // w==='full' fills the panel it sits in - the property squares need that; the
+    // read-across sheets still pass a pixel width.
+    const wid = (w==='full') ? 'width:100%;box-sizing:border-box;' : ('width:'+(w||220)+'px;');
+    return ro?`<div style="${(w==='full')?'':'max-width:260px;'}white-space:pre-wrap;font-size:12.5px;color:#333">${_calEsc(_trkVal(kind,id,field))||'—'}</div>`:`<textarea placeholder="${ph||''}" onchange="_trkSet('${kind}','${id}','${field}',this.value,false)" style="padding:5px 7px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;line-height:1.45;${wid}min-height:46px;resize:vertical;font-family:inherit">${_calEsc(_trkVal(kind,id,field))}</textarea>`;
+  };
   const uOnSel=(u,c)=>{ const cur=_utilIsOn(u.k,c); return ro?(cur||'—'):`<select onchange="_trkSet('${u.k}','${c.id}','on',this.value,true)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:72px"><option value=""></option>${["Yes","No"].map(o=>`<option ${cur===o?'selected':''}>${o}</option>`).join('')}</select>`; };
   const uHead=(u)=>`<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px;text-align:left">Account #</th><th style="padding:9px;text-align:left">${u.label} Provider</th><th style="padding:9px;text-align:left">Contact info</th>${u.key==='g'?'<th style="padding:9px">Gas or propane</th>':''}<th style="padding:9px">Is it on?</th><th style="padding:9px;text-align:left">Notes / latest updates</th><th style="padding:9px;text-align:left">Scheduled dates / site visits</th><th style="padding:9px">Due on (xx)</th><th style="padding:9px">Last payment</th><th style="padding:9px">Amount</th><th style="padding:9px">Charge</th><th style="padding:9px;text-align:left">Confirmation #</th>${u.key==='g'?'<th style="padding:9px">Tank last filled</th>':''}<th style="padding:9px">In receipt tracker</th><th style="padding:9px">History</th>`;
   const uRow=(u)=>(c)=>`<tr data-trk="${nm(c)+' '+_calEsc(_trkVal(u.k,c.id,'prov'))+' '+_calEsc(_trkVal(u.k,c.id,'acct'))}" style="border-top:0.5px solid #eef0f6;vertical-align:top">
@@ -14257,10 +14419,100 @@ function _vaTrackers(){
   if(view==='w9') return shell(back+_trkSearchBox('Search a contractor…')+_trkTable('🧾 W-9 Tracker','#7A3FA8','<th style="padding:9px 10px;text-align:left">Contractor</th><th style="padding:9px;text-align:left">Name on W-9</th><th style="padding:9px">On file</th><th style="padding:9px;text-align:left">Notes</th><th style="padding:9px;text-align:left">Email</th><th style="padding:9px;text-align:left">Phone</th>'+(ro?'':'<th style="padding:9px;text-align:right">Jobs</th><th></th>'),w9rows)+`<div style="font-size:12px;color:#999">Ticking "On file" here also marks the contractor in the Contractor Directory.${ro?'':' <b>Remove</b> deletes the whole contractor record — use it on duplicates, and remove the copy with 0 jobs against it.'}</div>`);
   if(view==='mow') return shell(back+_trkSearchBox('Search a property…')+_trkTable('🌱 Mowing Tracker','#3B6D11','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px;text-align:left">Who is mowing</th><th style="padding:9px;text-align:left">How often</th><th style="padding:9px;text-align:left">Cost/mow</th><th style="padding:9px;text-align:left">Contact #</th><th style="padding:9px;text-align:left">PM</th><th style="padding:9px;text-align:left">Payment</th><th style="padding:9px">On route</th><th style="padding:9px">Removed after</th>',mowrows)+_trkClosedSimple(closed,'mowing history'));
   if(view==='window') return shell(back+winStageBar+winAdd+_trkSearchBox('Search a property…')+_trkTable('🪟 Window Tracker'+(_wf?' — '+_winStageMeta(_wf).label:''),'#185FA5','<th style="padding:9px 10px;text-align:left">Property / what’s being replaced</th><th style="padding:9px">Needed</th><th style="padding:9px">Measure</th><th style="padding:9px">Ordered</th><th style="padding:9px">Arrival</th><th style="padding:9px">Install</th><th style="padding:9px;text-align:left">Notes &amp; comments</th>',winrows)+`<div style="font-size:12px;color:#999;margin-top:-8px">This list is the window <b>queue</b> &mdash; only houses somebody has actually asked for windows or glass on. Use <b>Add to the window list</b> above for a one-off job. Each square is one stage: the number is how many houses are waiting on <i>that</i> step, and clicking a square filters the list to it. A house moves on when you tick the box, not when you set the date &mdash; a booked install is still an install to chase. Dates you set here land on that property’s construction calendar automatically, and Slack posts 48 hours before the measure and install dates.${winFin.length?` <b>${winFin.length}</b> finished propert${winFin.length===1?'y is':'ies are'} in the completed folder below.`:''}</div>`+winFinished+winClosed);
+  // ---------- Utility tracker, one rectangle per property ----------
+  // Bruce, 13 Sept: "build the utility tracker out where it's squares instead of
+  // horizontal across just to make sure everything is in order from start to finish."
+  // Patience, same day: "I understand what you mean by a rectangle for each property,
+  // then the utilities within each property." So: the property is the box, the three
+  // utilities are the panels inside it, and each panel carries its OWN payment record
+  // with its own month-by-month history. A duplex draws one box per unit.
+  const uSq=(c)=>{
+    const pid=c.id;
+    const panel=(u)=>{
+      const on=_utilIsOn(u.k,c);
+      const onCol = on==='Yes' ? '#0F7B54' : (on==='No' ? '#B42318' : '#98a2b3');
+      const pays=_utilArr('upay',pid,u.key);
+      const months=_utilPayMonths(pid,u.key);
+      const nx=_utilNextDue(u.k,pid,u.key);
+      const last=pays[0]||null;
+      const lifetime=pays.reduce((a,r)=>a+(parseFloat(String(r.amt||'').replace(/[^0-9.\-]/g,''))||0),0);
+      const openKey=(window._utilOpenSq||{})[pid+'::'+u.key];
+      const line=(label,inner)=>`<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:4px 0"><span style="font-size:11px;color:#8a92a0;white-space:nowrap">${label}</span><span style="text-align:right">${inner}</span></div>`;
+      const monthRows=months.length?months.map(function(mo){
+        return `<div style="border-top:0.5px solid #eef0f6;padding:6px 0">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">
+            <span style="font-size:11.5px;font-weight:700;color:#333">${_calEsc(_utilMonthLabel(mo.m))}</span>
+            <span style="font-size:11.5px;font-weight:700;color:${u.color};font-variant-numeric:tabular-nums">$${Math.round(mo.total).toLocaleString()}</span>
+          </div>
+          ${mo.rows.map(function(r){
+            const idx=pays.indexOf(r);
+            return `<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;padding:2px 0">
+              <span style="font-size:11px;color:#888">${_calEsc(r.d||'')}${r.conf?(' · #'+_calEsc(r.conf)):''}${r.note?(' · '+_calEsc(r.note)):''}</span>
+              <span style="font-size:11px;color:#444;white-space:nowrap;font-variant-numeric:tabular-nums">${_calEsc(r.amt||'')}${ro?'':` <span onclick="_utilPayDel('${pid}','${u.key}',${idx})" title="Remove this payment" style="cursor:pointer;color:#d9b3b0;margin-left:4px">✕</span>`}</span>
+            </div>`;
+          }).join('')}
+        </div>`;
+      }).join(''):'<div style="font-size:11.5px;color:#c0c6d0;padding:7px 0;border-top:0.5px solid #eef0f6">No payments recorded on this utility yet.</div>';
+      const quick=ro?'':`<div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;margin-top:7px;padding-top:7px;border-top:0.5px dashed #e6e8ee">
+        <input type="date" id="upq-${pid}-${u.key}-d" title="Date paid" style="padding:3px 5px;border:0.5px solid #d8dce6;border-radius:5px;font-size:11.5px;color:#555"/>
+        <input id="upq-${pid}-${u.key}-a" placeholder="$0.00" title="Amount" style="width:68px;padding:3px 6px;border:0.5px solid #d8dce6;border-radius:5px;font-size:11.5px"/>
+        <input id="upq-${pid}-${u.key}-c" placeholder="Conf #" title="Confirmation number" style="width:76px;padding:3px 6px;border:0.5px solid #d8dce6;border-radius:5px;font-size:11.5px"/>
+        <input id="upq-${pid}-${u.key}-n" placeholder="Note" title="Anything worth remembering" style="flex:1;min-width:70px;padding:3px 6px;border:0.5px solid #d8dce6;border-radius:5px;font-size:11.5px"/>
+        <button onclick="_utilPayQuick('${pid}','${u.key}')" style="padding:4px 10px;background:${u.color};color:#fff;border:none;border-radius:5px;font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap">+ Payment</button>
+      </div>`;
+      return `<div style="border:0.5px solid #e6e8ee;border-top:3px solid ${u.color};border-radius:9px;padding:10px 12px;background:#fff;display:flex;flex-direction:column">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:6px">
+          <span style="font-size:13px;font-weight:700;color:${u.color}">${u.icon} ${u.label}</span>
+          <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:${onCol};background:${onCol}14;padding:2px 8px;border-radius:99px;white-space:nowrap">${on==='Yes'?'service on':(on==='No'?'service off':'unknown')}</span>
+        </div>
+        <div style="border-bottom:0.5px solid #f2f4f8;padding-bottom:5px;margin-bottom:5px">
+          ${line('Is it on?', uOnSel(u,c))}
+          ${line('Provider', txt(u.k,pid,'prov','Provider',132))}
+          ${line('Account #', txt(u.k,pid,'acct','Account #',132))}
+          ${line('Contact', txt(u.k,pid,'contact','Phone / who to ask',132))}
+          ${u.key==='g'?line('Gas or propane', usel(u.k,pid,'gp',["Gas","Propane"],92)):''}
+          ${u.key==='g'?line('Tank last filled', dt(u.k,pid,'tank')):''}
+        </div>
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#98a2b3;margin-bottom:3px">Payment record</div>
+        ${line('Bill due on', txt(u.k,pid,'due','e.g. 15th',68)+_utilDueChip(u.k,pid,u.key))}
+        ${line('Next expected', nx?`<b style="font-size:12px;color:#185FA5">${_calEsc(nx)}</b>`:'<span style="font-size:11.5px;color:#c0c6d0">set a due day</span>')}
+        ${line('Last payment', last?`<b style="font-size:12px;color:#111">${_calEsc(last.d)}</b> <span style="font-size:11.5px;color:#666">${_calEsc(last.amt||'')}</span>`:'<span style="font-size:11.5px;color:#c0c6d0">none yet</span>')}
+        ${line('Paid to date', pays.length?`<b style="font-size:12px;color:#111;font-variant-numeric:tabular-nums">$${Math.round(lifetime).toLocaleString()}</b> <span style="font-size:11px;color:#999">over ${pays.length} payment${pays.length===1?'':'s'}</span>`:'<span style="font-size:11.5px;color:#c0c6d0">—</span>')}
+        ${line('In receipt tracker', fchk(u.k,pid,'rcpt'))}
+        <div onclick="_utilSqToggle('${pid}','${u.key}')" style="cursor:pointer;font-size:11px;color:#185FA5;margin-top:5px;user-select:none">▾ <span id="upmc-${pid}-${u.key}">${openKey?'hide history':'month-by-month history'}</span>${months.length?` <span style="color:#aaa">(${months.length} month${months.length===1?'':'s'})</span>`:''}</div>
+        <div id="upm-${pid}-${u.key}" style="${openKey?'':'display:none;'}margin-top:4px;max-height:230px;overflow-y:auto">${monthRows}</div>
+        ${quick}
+        <div style="margin-top:7px;padding-top:6px;border-top:0.5px solid #f2f4f8">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#98a2b3;margin-bottom:3px">Notes on this utility</div>
+          ${uta(u.k,pid,'notes','Called on 00/00/26 …','full')}
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#98a2b3;margin:6px 0 3px">Scheduled dates / site visits</div>
+          ${uta(u.k,pid,'sched','Turn-on dates, inspections, meter installs…','full')}
+        </div>
+      </div>`;
+    };
+    const overdue=UTILS.filter(u=>{ const nx=_utilNextDue(u.k,pid,u.key); return nx && nx<_ymd(new Date()); }).length;
+    const missing=UTILS.filter(u=>!String(_trkVal(u.k,pid,'acct')||'').trim()).length;
+    const searchKey=[c.addr||''].concat(UTILS.map(u=>String(_trkVal(u.k,pid,'prov')||'')+' '+String(_trkVal(u.k,pid,'acct')||''))).join(' ');
+    return `<div data-trk="${_calEsc(searchKey)}" style="background:#F7F8FB;border:0.5px solid #e0e4ec;border-radius:12px;padding:12px 14px;margin-bottom:12px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:9px">
+        <div style="min-width:0">
+          <span onclick="openPropDetail('${_utilBaseId(pid)}')" style="cursor:pointer;font-size:15px;font-weight:700;color:#185FA5">${_calEsc(c.addr||'')}</span>
+          <div style="font-size:11.5px;color:#8a92a0;margin-top:1px">${_calEsc(_phLabel(c.phase))}${c.pm?(' · PM '+_calEsc(c.pm)):''}</div>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+          ${overdue?`<span style="font-size:10.5px;font-weight:700;color:#B42318;background:#FCEBEB;padding:3px 9px;border-radius:99px">${overdue} bill${overdue===1?'':'s'} past due</span>`:''}
+          ${missing?`<span style="font-size:10.5px;font-weight:700;color:#8a6d1a;background:#FBF3E2;padding:3px 9px;border-radius:99px">${missing} account # missing</span>`:''}
+          <span onclick="_utilOpenHistory('${pid}')" style="cursor:pointer;font-size:11.5px;color:#185FA5;padding:3px 10px;border:0.5px solid #cdd7e6;border-radius:99px;background:#fff;white-space:nowrap">📞 Call log &amp; full history</span>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(258px,1fr));gap:10px;align-items:stretch">${UTILS.map(panel).join('')}</div>
+    </div>`;
+  };
+
   if(view==='util'){
-    const ut=window._utilTab||'e';
+    const ut=window._utilTab||'p';
     const subtab=(k,label)=>`<span onclick="_utilTabTo('${k}')" style="cursor:pointer;padding:6px 13px;border-radius:7px;font-size:13px;font-weight:${ut===k?'600':'400'};background:${ut===k?'#122A4A':'#fff'};color:${ut===k?'#fff':'#444'};border:0.5px solid ${ut===k?'#122A4A':'#d8dce6'}">${label}</span>`;
-    const bar=`<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px">${subtab('e','⚡ Electric')}${subtab('w','💧 Water')}${subtab('g','🔥 Gas / Propane')}${subtab('m','📋 Master Sheet')}${ut==='h'?subtab('h','📜 Property History'):''}</div>`;
+    const bar=`<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px">${subtab('p','🏠 By property')}${subtab('e','⚡ Electric')}${subtab('w','💧 Water')}${subtab('g','🔥 Gas / Propane')}${subtab('m','📋 Master Sheet')}${ut==='h'?subtab('h','📜 Property History'):''}</div>`;
     if(ut==='h'){
       const pid=window._utilProp; const c=all.find(x=>x.id===_utilBaseId(pid))
         ? Object.assign({},all.find(x=>x.id===_utilBaseId(pid)),
@@ -14280,6 +14532,16 @@ function _vaTrackers(){
       const logAdd=ro?'':`<tr style="background:#F7F8FB;border-top:0.5px solid #e0e4ec"><td style="padding:7px 10px"><input type="date" id="ul-d" value="${_ymd(new Date())}" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td style="padding:7px"><select id="ul-u" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"><option value="">— Utility —</option><option>Electric</option><option>Water</option><option>Gas / Propane</option><option>Trash</option><option>Other</option></select></td><td style="padding:7px"><textarea id="ul-t" placeholder="Called on … to start service. Rep said …" style="width:100%;min-width:320px;min-height:44px;padding:5px 7px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;font-family:inherit;resize:vertical"></textarea></td><td colspan="2" style="padding:7px;text-align:center"><button onclick="_utilLogAdd('${pid}')" style="padding:5px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">+ Add entry</button></td></tr>`;
       const provCard=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 15px;margin-bottom:16px"><div style="font-size:13.5px;font-weight:700;color:#111;margin-bottom:8px">🏷 Utility provider information</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px">${UTILS.map(u=>`<div style="border:0.5px solid #eef0f6;border-radius:8px;padding:10px 12px"><div style="font-size:12.5px;font-weight:600;color:${u.color};margin-bottom:5px">${u.icon} ${u.label}</div><div style="font-size:12.5px;color:#444;line-height:1.7"><b>Provider:</b> ${_calEsc(_trkVal(u.k,pid,'prov'))||'<span style="color:#ccc">not set</span>'}<br/><b>Account #:</b> ${_calEsc(_trkVal(u.k,pid,'acct'))||'<span style="color:#ccc">not set</span>'}<br/><b>Contact:</b> ${_calEsc(_trkVal(u.k,pid,'contact'))||'<span style="color:#ccc">not set</span>'}<br/><b>Service on:</b> ${_calEsc(_utilIsOn(u.k,c))||'<span style="color:#ccc">unknown</span>'}<br/><b>Due each month:</b> ${_calEsc(_trkVal(u.k,pid,'due'))||'<span style="color:#ccc">—</span>'}<br/><b>Last payment:</b> ${_calEsc(_trkVal(u.k,pid,'last'))||'<span style="color:#ccc">—</span>'}<br/><b>Next expected:</b> ${(()=>{const nx=_utilNextDue(u.k,pid,u.key);return nx?`<b style="color:#185FA5">${_calEsc(nx)}</b>`:'<span style="color:#ccc">set a due day first</span>';})()}</div></div>`).join('')}</div><div style="font-size:12px;color:#999;margin-top:8px">Edit these on the Electric / Water / Gas sheets.</div></div>`;
       return shell(back+bar+`<div style="font-size:15px;font-weight:600;color:#111;margin-bottom:10px">📜 ${nm(c)}</div>`+provCard+UTILS.map(payTable).join('')+_trkTable('📞 Utility notes &amp; activity','#0B7285','<th style="padding:9px 10px;text-align:left">Date</th><th style="padding:9px;text-align:left">Utility</th><th style="padding:9px;text-align:left">What happened</th><th style="padding:9px;text-align:left">Logged by</th><th style="padding:9px"></th>',logBody+logAdd));
+    }
+    if(ut==='p'){
+      const sqList=active.reduce((a,c)=>a.concat(_utilRowsFor(c)),[]);
+      const body=sqList.length?sqList.map(uSq).join(''):'<div style="padding:24px;color:#bbb;text-align:center">No active properties.</div>';
+      const lateN=sqList.reduce((n,c)=>n+UTILS.filter(u=>{const nx=_utilNextDue(u.k,c.id,u.key);return nx&&nx<_ymd(new Date());}).length,0);
+      const head=`<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+        <div style="font-size:15px;font-weight:600;color:#111">\uD83C\uDFE0 Utilities by property <span style="font-weight:400;color:#888;font-size:13px">\u2014 ${sqList.length} box${sqList.length===1?'':'es'}, each duplex split into its own unit</span></div>
+        ${lateN?`<span style="font-size:12px;font-weight:700;color:#B42318;background:#FCEBEB;padding:4px 11px;border-radius:99px">${lateN} bill${lateN===1?'':'s'} past due across the board</span>`:'<span style="font-size:12px;color:#0F7B54">Nothing past due.</span>'}
+      </div>`;
+      return shell(back+bar+head+_trkSearchBox('Search a property, provider or account #\u2026')+body+`<div style="font-size:12px;color:#999;margin-top:2px">Each utility keeps its own payment record and its own month-by-month history \u2014 log a payment right in the panel you are reading. The provider and account boxes here are the same ones on the Electric / Water / Gas sheets; edit either.</div>`+_trkClosedSimple(closed,'utility history'));
     }
     if(ut==='m') return shell(back+bar+_trkSearchBox('Search a property…')+_trkTable('📋 Utility Info Master Sheet','#122A4A','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px;text-align:left">Electric provider</th><th style="padding:9px;text-align:left">Gas provider</th><th style="padding:9px;text-align:left">Water provider</th><th style="padding:9px;text-align:left">Comments</th><th style="padding:9px">Status</th><th style="padding:9px">History</th>',umRows));
     const u=UTILS.find(x=>x.key===ut)||UTILS[0];
@@ -15440,7 +15702,7 @@ function _calEsc(s){ return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&a
 
 async function loadContractorsFromSupabase(){
   let { data, error } = await supabase.from("pm_contractors")
-    .select("id,name,business_name,phone,email,trade,red_flag,notes").order("name",{ascending:true});
+    .select("id,name,business_name,phone,email,trade,red_flag,notes,created_at").order("name",{ascending:true});
   // The extra columns were added later. If this database has not had them applied
   // yet, fall back rather than blanking the whole directory.
   if(error){ ({ data, error } = await supabase.from("pm_contractors").select("id,name,phone,trade").order("name",{ascending:true})); }
@@ -15564,6 +15826,9 @@ async function openContractorDirectory(){
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
   await loadContractorsFromSupabase();
+  // The import cleanup panel has to know which contractors carry a W-9 record or a
+  // mowing route before it offers to remove anything.
+  if(typeof _trkLoad==='function' && window._trkLoaded!==true){ try{ await _trkLoad(); }catch(e){} }
   renderContractorDirectory();
 }
 const CONTRACTOR_TRADES=["General","Plumbing","HVAC","Electrical","Roofing","Flooring","Drywall","Painting","Framing / Carpentry","Concrete / Masonry","Landscaping","Cleaning","Windows / Doors","Appliances","Pest Control","Demolition","Handyman"];
@@ -15612,6 +15877,117 @@ function _contractorJobs(id){
       :'<div style="padding:26px;text-align:center;color:#bbb;font-size:14px">Never booked on a job.</div>'}
   </div>`;
   document.body.appendChild(host);
+}
+// ---- The August PDF import --------------------------------------------------
+// Bruce, 13 Sept: "remove every contractor that we added from the PDF I gave you. Just
+// keep the ones that we've added since we've been building out the contractor directory."
+// The import went in as two batches on 29-30 August: 115 names. But 68 of them are NOT
+// dead weight - they carry a collected W-9 (often with the legal entity name typed in by
+// hand), or they are the mower on a route, or they have a job booked. Deleting those
+// would throw away real work and blank 42 properties' mowing. So the app separates the
+// two: the ones with nothing attached can go in one click, and the ones in use are
+// listed with what is holding them, for Patience to clean one at a time.
+const CT_IMPORT_FROM='2026-08-29T22:00:00Z';
+const CT_IMPORT_TO  ='2026-08-30T06:00:00Z';
+function _ctImported(c){
+  const t=c && c.created_at ? String(c.created_at) : '';
+  if(!t) return false;
+  const d=new Date(t);
+  return d>=new Date(CT_IMPORT_FROM) && d<new Date(CT_IMPORT_TO);
+}
+// Everything that would break if this record went away.
+function _ctHolds(id){
+  const out=[];
+  const evs=(typeof _calEventsCache!=='undefined'?_calEventsCache:[]).filter(e=>e.contractor_id===id);
+  if(evs.length){
+    const future=evs.filter(e=>String(e.event_date||'')>=_ymd(new Date())).length;
+    out.push({k:'booking', t:evs.length+' booking'+(evs.length===1?'':'s')+(future?(', '+future+' still ahead'):'')});
+  }
+  const d=window._trkData||{};
+  if(((d.w9||{})[id])===true) out.push({k:'w9', t:'W-9 collected'});
+  const wi=(d.w9info||{})[id]||{};
+  const wtxt=[wi.w9name,wi.note].filter(Boolean).join(' · ');
+  if(wtxt) out.push({k:'w9', t:_calEsc(wtxt)});
+  const mow=d.mowinfo||{};
+  const props=Object.keys(mow).filter(pid=>String((mow[pid]||{}).who||'')===String(id));
+  if(props.length) out.push({k:'mow', t:'mows '+props.length+' propert'+(props.length===1?'y':'ies')});
+  return out;
+}
+function _ctImportSplit(){
+  const list=(typeof _contractorsCache!=='undefined'?_contractorsCache:[])||[];
+  const imported=list.filter(_ctImported);
+  const free=[], held=[];
+  imported.forEach(function(c){ const h=_ctHolds(c.id); (h.length?held:free).push({c:c,holds:h}); });
+  return { imported:imported, free:free, held:held, kept:list.filter(c=>!_ctImported(c)) };
+}
+// One click, but it names every record first and asks once. Nothing with anything
+// attached is in this list, by construction.
+async function _ctImportPurge(){
+  if(_blockIfReadOnly()) return;
+  const sp=_ctImportSplit();
+  if(!sp.free.length){ alert("Nothing to remove — every contractor from the August import is either booked, on a mowing route, or has a W-9 on file."); return; }
+  const names=sp.free.map(o=>'• '+((o.c.business_name||o.c.name||'(no name)'))).join('\n');
+  if(!confirm("Remove these "+sp.free.length+" contractors from the August PDF import?\n\nNone of them is booked on a job, on a mowing route, or has a W-9 on file — so nothing else in the app points at them. This cannot be undone.\n\n"+names)) return;
+  let ok=0, bad=[];
+  for(const o of sp.free){
+    const r=await supabase.from("pm_contractors").delete().eq("id",o.c.id);
+    if(r.error) bad.push((o.c.name||o.c.id)+': '+(r.error.message||'')); else ok++;
+  }
+  _logAudit('deleted','contractor','', 'Removed '+ok+' unused contractors from the August PDF import');
+  await loadContractorsFromSupabase();
+  renderContractorDirectory();
+  alert(ok+" removed."+(bad.length?("\n\n"+bad.length+" could not be removed:\n"+bad.join('\n')):""));
+}
+async function _ctImportRemoveOne(id){
+  if(_blockIfReadOnly()) return;
+  const c=(_contractorsCache||[]).find(x=>x.id===id); if(!c) return;
+  const holds=_ctHolds(id);
+  const msg = holds.length
+    ? ("Remove "+(c.business_name||c.name)+"?\n\nThis record is still in use:\n"+holds.map(h=>'• '+String(h.t).replace(/<[^>]*>/g,'')).join('\n')+"\n\nRemoving it will leave those pointing at nothing. Remove anyway?")
+    : ("Remove "+(c.business_name||c.name)+" from the directory? This cannot be undone.");
+  if(!confirm(msg)) return;
+  const r=await supabase.from("pm_contractors").delete().eq("id",id);
+  if(r.error){ alert("Not removed: "+(r.error.message||'')); return; }
+  _logAudit('deleted','contractor',(c.name||''), 'Removed from the directory'+(holds.length?(' — was still in use: '+holds.map(h=>String(h.t).replace(/<[^>]*>/g,'')).join('; ')):''));
+  await loadContractorsFromSupabase();
+  renderContractorDirectory();
+}
+function _ctImportPanel(){
+  const sp=_ctImportSplit();
+  if(!sp.imported.length) return '';
+  const ro=(typeof isReadOnly==='function')?isReadOnly():false;
+  const chipCol={booking:'#185FA5', w9:'#0F7B54', mow:'#639922'};
+  const row=(o,removable)=>`<div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;padding:7px 0;border-top:0.5px solid #f1f3f7">
+    <div style="min-width:0;flex:1">
+      <div style="font-size:13px;color:#111">${_calEsc(o.c.business_name||o.c.name||'(no name)')}${(o.c.business_name&&o.c.name&&o.c.business_name!==o.c.name)?`<span style="color:#999;font-weight:400"> — ${_calEsc(o.c.name)}</span>`:''}</div>
+      <div style="font-size:11.5px;color:#aaa;margin-top:1px">${_calEsc(o.c.trade||'no trade set')}${o.c.phone?(' · '+_calEsc(o.c.phone)):''}</div>
+      ${o.holds.length?`<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:3px">${o.holds.map(h=>`<span style="font-size:10.5px;font-weight:600;color:${chipCol[h.k]||'#666'};background:${(chipCol[h.k]||'#666')}14;padding:1px 8px;border-radius:99px">${h.t}</span>`).join('')}</div>`:''}
+    </div>
+    ${ro?'':`<span onclick="_ctImportRemoveOne('${o.c.id}')" style="cursor:pointer;font-size:12px;color:${removable?'#B42318':'#c9ccd4'};white-space:nowrap;flex-shrink:0">Remove</span>`}
+  </div>`;
+  const openKey=!!window._ctImportOpen;
+  return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid #B7791F;border-radius:10px;padding:14px 16px;margin-bottom:14px">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:14px;font-weight:600;color:#111">📄 From the August PDF import &mdash; ${sp.imported.length} name${sp.imported.length===1?'':'s'}</div>
+        <div style="font-size:12.5px;color:#777;margin-top:2px;line-height:1.5;max-width:760px">${sp.kept.length} contractor${sp.kept.length===1?' was':'s were'} added by hand since and ${sp.kept.length===1?'is':'are'} not touched by anything here. Of the imported ones, <b style="color:#B42318">${sp.free.length}</b> have nothing attached and can go; <b style="color:#0F7B54">${sp.held.length}</b> are still in use.</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        ${ro?'':`<button onclick="_ctImportPurge()" style="padding:7px 14px;background:${sp.free.length?'#B42318':'#e6e8ee'};color:${sp.free.length?'#fff':'#98a2b3'};border:none;border-radius:7px;font-size:12.5px;font-weight:600;cursor:${sp.free.length?'pointer':'default'}">Remove the ${sp.free.length} unused</button>`}
+        <button onclick="window._ctImportOpen=!window._ctImportOpen;renderContractorDirectory()" style="padding:7px 14px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer">${openKey?'Hide the list':'Show the list'}</button>
+      </div>
+    </div>
+    ${openKey?`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-top:12px">
+      <div>
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#B42318;margin-bottom:2px">Nothing attached — safe to remove (${sp.free.length})</div>
+        <div style="max-height:340px;overflow-y:auto">${sp.free.length?sp.free.map(o=>row(o,true)).join(''):'<div style="font-size:12.5px;color:#bbb;padding:8px 0">None.</div>'}</div>
+      </div>
+      <div>
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#0F7B54;margin-bottom:2px">Still in use — removing loses this (${sp.held.length})</div>
+        <div style="max-height:340px;overflow-y:auto">${sp.held.length?sp.held.map(o=>row(o,false)).join(''):'<div style="font-size:12.5px;color:#bbb;padding:8px 0">None.</div>'}</div>
+      </div>
+    </div>`:''}
+  </div>`;
 }
 // ---- Possible duplicates ----------------------------------------------------
 // Bruce, 9 Sept: "delete Brady Packs, Brandon Miller, Jacob Barnes, Joe Garcia /
@@ -15776,6 +16152,7 @@ function renderContractorDirectory(){
           ${flagged?`<span style="font-size:12px;background:#FBEAE8;color:#B42318;padding:3px 10px;border-radius:99px">🚩 ${flagged} red-flagged — do not hire</span>`:''}
           <span style="font-size:12px;background:#F1F2F6;color:#777;padding:3px 10px;border-radius:99px">Need a category that is not here? Add it under Trade → ＋ Other…</span>
         </div>
+        ${_ctImportPanel()}
         ${_ctDupPanel()}
         ${addForm}
         <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:auto">
@@ -18555,4 +18932,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-13b meeting-keeps-what-you-typed -->
+<!-- build: 2026-09-13c utilities-as-squares -->
