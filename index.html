@@ -339,7 +339,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
     <div class="dd" id="rep-d" style="min-width:220px">
       <div class="ddl">Weekly Meetings</div>
       <div class="ddi" onclick="openWeeklyMeeting('team')">🤝 Project Team Meeting</div>
-      <div class="ddi" onclick="openWeeklyMeeting('market')">🏡 On the Market Meeting</div>
+      <div class="ddi" onclick="openWeeklyMeeting('market')">🏡 Listings Meeting</div>
       <div class="ddi" onclick="openWeeklyMeeting('kickoff')">🚀 Kickoff Meeting</div>
       <div class="ddi" onclick="openWeeklyMeeting('eop')">🏁 End of Project Meeting</div>
       <div class="ddi" onclick="openWeeklyMeeting('company')">🏢 Full Company Meeting</div>
@@ -1389,7 +1389,7 @@ const PERM_ITEMS = [
   { key:"trk_all",          label:"Trackers (W-9 · window · mowing · checklists · utilities · permits)", group:"Dashboards" },
   { key:"rep_all",          label:"Reporting — daily, monthly and other reports", group:"Reporting" },
   { key:"rep_team",         label:"Meeting: Project Team",   group:"Reporting" },
-  { key:"rep_market",       label:"Meeting: On the Market",  group:"Reporting" },
+  { key:"rep_market",       label:"Meeting: Listings",  group:"Reporting" },
   { key:"rep_eop",          label:"Meeting: End of Project", group:"Reporting" },
   { key:"rep_kickoff",      label:"Meeting: Kickoff",        group:"Reporting" },
   { key:"rep_company",      label:"Meeting: Full Company",   group:"Reporting" },
@@ -3466,11 +3466,27 @@ function _spentAsOf(pid,dateStr){
 // A change order only counts once somebody approves it; a proposed one is visible but
 // does not move the scoring.
 function _coList(c){ const a=((c&&c.checklists)||{}).co; return Array.isArray(a)?a:[]; }
-function _coAmt(x){ const v=parseFloat(String((x&&x.amt)||'').replace(/[^0-9.\-]/g,'')); return isNaN(v)?0:v; }
-function _coApproved(c){ return _coList(c).filter(x=>x && x.ok===true); }
-function _coTotal(c){ return _coApproved(c).reduce((a,x)=>a+_coAmt(x),0); }
-function _coPending(c){ return _coList(c).filter(x=>!x || x.ok!==true); }
-function _coPendingTotal(c){ return _coPending(c).reduce((a,x)=>a+_coAmt(x),0); }
+function _coNum(v){ const n=parseFloat(String(v==null?'':v).replace(/[^0-9.\-]/g,'')); return isNaN(n)?null:n; }
+function _coEst(x){ const v=_coNum(x&&(x.est!=null?x.est:x.amt)); return v==null?0:v; }
+function _coAct(x){ return _coNum(x&&x.act); }
+// What this change order is worth today: the actual cost once somebody has filled it in,
+// the estimate until then. That is the figure the budget is judged against.
+function _coAmt(x){ const a=_coAct(x); return a!=null?a:_coEst(x); }
+function _coHasAct(x){ return _coAct(x)!=null; }
+// Every change order counts. They are agreed before they are typed in, so there is no
+// waiting room - what there IS is the difference between the estimate and what it really
+// came to, which is the number worth watching.
+function _coApproved(c){ return _coList(c); }
+function _coTotal(c){ return _coList(c).reduce((a,x)=>a+_coAmt(x),0); }
+function _coEstTotal(c){ return _coList(c).reduce((a,x)=>a+_coEst(x),0); }
+function _coActTotal(c){ return _coList(c).filter(_coHasAct).reduce((a,x)=>a+_coAct(x),0); }
+function _coAwaitingActual(c){ return _coList(c).filter(x=>!_coHasAct(x)); }
+// Kept so older code and older records still read: anything without an actual cost is
+// "still to be confirmed", not "still to be approved".
+function _coPending(c){ return _coAwaitingActual(c); }
+function _coPendingTotal(c){ return _coAwaitingActual(c).reduce((a,x)=>a+_coEst(x),0); }
+// The PM on the change order: whoever was typed in, else the PM on the property card.
+function _coPM(c, x){ return String((x&&x.pm)||'').trim() || String((c&&c.pm)||'').trim(); }
 // What the manager is actually judged on: real spend, less the scope he was handed later.
 function _spentAdj(c){
   const sp=_spentNow(c);
@@ -3489,31 +3505,31 @@ async function _coWrite(pid, mut){
 async function _coAdd(pid){
   if(_blockIfReadOnly()) return;
   const g=(k)=>{ const el=document.getElementById(k); return el?String(el.value||'').trim():''; };
-  const what=g('co-w-'+pid), amt=g('co-a-'+pid);
+  const what=g('co-w-'+pid), est=g('co-e-'+pid);
   if(!what){ alert("Say what the change order is for — “add a bathroom in the basement”, “replace the sewer line”."); return; }
-  if(!_coAmt({amt:amt})){ alert("Put the dollar amount in. A change order with no number cannot come off the budget."); return; }
+  if(_coNum(est)==null){ alert("Put the estimated cost in. A change order with no number cannot come off the budget."); return; }
+  const appr=g('co-r-'+pid);
+  if(!appr){ alert("Put down who approved it. These are agreed before they are typed in — the form is the record of who agreed."); return; }
   const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
   const me=(typeof _sqMe==='function')?_sqMe():'';
   const rec={ id:Date.now().toString(36)+Math.random().toString(36).slice(2,5),
-              d:g('co-d-'+pid)||_ymd(new Date()), amt:amt, t:what, why:g('co-y-'+pid),
-              who:g('co-r-'+pid), by:me, made:new Date().toISOString(), ok:false };
+              d:g('co-d-'+pid)||_ymd(new Date()),
+              pm:g('co-p-'+pid)||String((c&&c.pm)||''),
+              t:what,
+              cause:g('co-c-'+pid),
+              appr:appr,
+              est:est, act:'',
+              by:me, made:new Date().toISOString() };
   if(!(await _coWrite(pid, arr=>arr.push(rec)))) return;
-  _logAudit('created','property',(c&&c.addr)||'', 'Change order raised: '+what+' — '+(amt||'no amount')+(rec.who?(' (asked for by '+rec.who+')'):''));
-  ['co-w-','co-a-','co-y-','co-r-'].forEach(function(k){ const el=document.getElementById(k+pid); if(el) el.value=''; if(typeof _wmDraftClear==='function') _wmDraftClear(k+pid); });
+  _logAudit('created','property',(c&&c.addr)||'', 'Change order: '+what+' — estimated '+est+', approved by '+appr+(rec.cause?(' — caused by '+rec.cause):''));
+  ['co-w-','co-e-','co-c-','co-r-','co-p-'].forEach(function(k){ const el=document.getElementById(k+pid); if(el) el.value=''; if(typeof _wmDraftClear==='function') _wmDraftClear(k+pid); });
   _coRerender(pid);
 }
-// Approving is what makes it count against the budget, so it is a separate, named act.
+// Kept so an old link or an old browser tab does not throw. Approval is no longer a step
+// in the app - it happens in the room before anybody types the change order in, and the
+// form records who gave it.
 async function _coApprove(pid, id){
-  if(_blockIfReadOnly()) return;
-  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
-  const x=_coList(c).find(y=>y.id===id); if(!x) return;
-  const turningOn=!(x.ok===true);
-  if(turningOn && !confirm("Approve this change order?\n\n"+String(x.t||'')+" — "+String(x.amt||'')+"\n\nOnce approved it comes off this project's spend when on-budget is worked out. Spent to Date does not change."))
-    return;
-  const me=(typeof _sqMe==='function')?_sqMe():'';
-  if(!(await _coWrite(pid, arr=>{ const y=arr.find(z=>z.id===id); if(y){ y.ok=turningOn; y.okBy=turningOn?me:''; y.okAt=turningOn?new Date().toISOString():''; } }))) return;
-  _logAudit('updated','property',(c&&c.addr)||'', (turningOn?'Change order approved: ':'Change order approval withdrawn: ')+String(x.t||'')+' — '+String(x.amt||''));
-  _coRerender(pid);
+  alert("Change orders no longer wait to be approved here.\n\nThey are agreed before they are entered, so the form asks who approved it instead. If that name is wrong, edit it on the row.");
 }
 async function _coDel(pid, id){
   if(_blockIfReadOnly()) return;
@@ -3542,38 +3558,70 @@ function _coOpen(pid){
   const list=_coList(c).slice().sort((a,b)=>String(b.d||'').localeCompare(String(a.d||'')));
   const budget=parseFloat(String(c.budget||'').replace(/[^0-9.\-]/g,''));
   const spent=_spentNow(c);
-  const appr=_coTotal(c), pend=_coPendingTotal(c);
+  const appr=_coTotal(c), estT=_coEstTotal(c), actT=_coActTotal(c), waiting=_coAwaitingActual(c).length;
   const adj=_spentAdj(c);
   const inBudget = (!isNaN(budget)&&budget>0&&adj!=null) ? (adj<=budget) : null;
   const rawOver  = (!isNaN(budget)&&budget>0&&spent!=null) ? (spent-budget) : null;
   const tile=(l,v,col,sub)=>`<div style="background:#f7f8fb;border-radius:8px;padding:9px 12px"><div style="font-size:10px;color:#98a2b3;text-transform:uppercase;letter-spacing:.05em">${l}</div><div style="font-size:18px;font-weight:700;color:${col||'#111'};font-variant-numeric:tabular-nums">${v}</div>${sub?`<div style="font-size:10.5px;color:#aaa;margin-top:1px">${sub}</div>`:''}</div>`;
+  const pmOpts=(cur)=>{
+    const names=(typeof _pmTabNames==='function')?_pmTabNames():[];
+    const list=_canonUnique(names.concat(cur?[cur]:[]));
+    return ['<option value="">— not set —</option>'].concat(list.map(n=>`<option value="${_calEsc(n)}" ${_canonSame(n,cur)?'selected':''}>${_calEsc(n)}</option>`)).join('');
+  };
   const row=(x)=>{
-    const on=x.ok===true;
-    return `<tr style="border-top:0.5px solid #eef0f6;${on?'':'background:#FFFDF7'}">
-      <td style="padding:9px 12px;white-space:nowrap;font-size:12.5px;color:#666">${ro?_calEsc(x.d||''):`<input type="date" value="${_calEsc(x.d||'')}" onchange="_coField('${pid}','${x.id}','d',this.value)" style="padding:3px 5px;border:0.5px solid #d8dce6;border-radius:5px;font-size:12px;color:#555"/>`}</td>
-      <td style="padding:9px 12px"><div style="font-size:13.5px;color:#111;white-space:pre-wrap">${_calEsc(x.t||'')}</div>${x.why?`<div style="font-size:11.5px;color:#888;margin-top:2px;white-space:pre-wrap">${_calEsc(x.why)}</div>`:''}</td>
-      <td style="padding:9px 12px;font-size:12.5px;color:#555;white-space:nowrap">${_calEsc(x.who||'')||'<span style="color:#ccc">—</span>'}</td>
-      <td style="padding:9px 12px;text-align:right;font-size:13.5px;font-weight:700;color:${on?'#111':'#8a6d1a'};white-space:nowrap;font-variant-numeric:tabular-nums">${_calEsc(x.amt||'')}</td>
-      <td style="padding:9px 12px;text-align:center;white-space:nowrap">
-        ${ro
-          ? `<span style="font-size:11px;font-weight:700;color:${on?'#0F7B54':'#8a6d1a'}">${on?'approved':'proposed'}</span>`
-          : `<span onclick="_coApprove('${pid}','${x.id}')" title="${on?'Withdraw the approval':'Approve it — this is what makes it count'}" style="cursor:pointer;font-size:11px;font-weight:700;padding:3px 10px;border-radius:99px;background:${on?'#E6F4ED':'#FBF3E2'};color:${on?'#0F7B54':'#8a6d1a'};white-space:nowrap">${on?'✓ approved':'approve'}</span>`}
-        ${on&&x.okBy?`<div style="font-size:10px;color:#bbb;margin-top:2px">by ${_calEsc(x.okBy)}</div>`:''}
+    const est=_coEst(x), act=_coAct(x), hasAct=_coHasAct(x);
+    const drift = hasAct ? (act-est) : null;
+    return `<tr style="border-top:0.5px solid #eef0f6">
+      <td style="padding:9px 11px;white-space:nowrap;font-size:12.5px;color:#666">${ro?_calEsc(x.d||''):`<input type="date" value="${_calEsc(x.d||'')}" onchange="_coField('${pid}','${x.id}','d',this.value)" style="padding:3px 5px;border:0.5px solid #d8dce6;border-radius:5px;font-size:12px;color:#555"/>`}</td>
+      <td style="padding:9px 11px;min-width:160px">
+        <div style="font-size:13.5px;color:#111;white-space:pre-wrap;font-weight:600">${_calEsc(x.t||'')}</div>
+        ${x.why?`<div style="font-size:11.5px;color:#888;margin-top:2px;white-space:pre-wrap">${_calEsc(x.why)}</div>`:''}
       </td>
-      ${ro?'':`<td style="padding:9px 12px;text-align:right"><span onclick="_coDel('${pid}','${x.id}')" style="cursor:pointer;color:#ddd;font-size:12px">✕</span></td>`}
+      <td style="padding:9px 11px;font-size:12.5px;color:#555">${ro?(_calEsc(x.cause||'')||'<span style="color:#ccc">—</span>'):`<input value="${_calEsc(x.cause||'')}" placeholder="What caused it" onchange="_coField('${pid}','${x.id}','cause',this.value)" style="width:126px;padding:3px 6px;border:0.5px solid #d8dce6;border-radius:5px;font-size:12px"/>`}</td>
+      <td style="padding:9px 11px;font-size:12.5px;color:#555;white-space:nowrap">${ro?(_calEsc(_coPM(c,x))||'<span style="color:#ccc">—</span>'):`<select onchange="_coField('${pid}','${x.id}','pm',this.value)" style="padding:3px 5px;border:0.5px solid #d8dce6;border-radius:5px;font-size:12px;max-width:118px">${pmOpts(_coPM(c,x))}</select>`}</td>
+      <td style="padding:9px 11px;font-size:12.5px;color:#555">${ro?(_calEsc(x.appr||x.who||'')||'<span style="color:#ccc">—</span>'):`<input value="${_calEsc(x.appr||x.who||'')}" placeholder="Who approved" onchange="_coField('${pid}','${x.id}','appr',this.value)" style="width:112px;padding:3px 6px;border:0.5px solid #d8dce6;border-radius:5px;font-size:12px"/>`}</td>
+      <td style="padding:9px 11px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums">${ro?`<span style="font-size:13px;color:#666">${_coMoney(est)}</span>`:`<input value="${_calEsc(x.est!=null?x.est:(x.amt||''))}" placeholder="$0" onchange="_coField('${pid}','${x.id}','est',this.value)" style="width:78px;text-align:right;padding:3px 6px;border:0.5px solid #d8dce6;border-radius:5px;font-size:12.5px"/>`}</td>
+      <td style="padding:9px 11px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;background:${hasAct?'transparent':'#FFFDF7'}">
+        ${ro?(hasAct?`<span style="font-size:13.5px;font-weight:700;color:#111">${_coMoney(act)}</span>`:'<span style="font-size:11.5px;color:#8a6d1a">not yet</span>')
+            :`<input value="${_calEsc(x.act||'')}" placeholder="fill in later" onchange="_coField('${pid}','${x.id}','act',this.value)" style="width:88px;text-align:right;padding:3px 6px;border:0.5px solid ${hasAct?'#d8dce6':'#EAD9A8'};border-radius:5px;font-size:12.5px;background:${hasAct?'#fff':'#FFFBF2'}"/>`}
+        ${drift!=null&&drift!==0?`<div style="font-size:10px;font-weight:700;color:${drift>0?'#B42318':'#0F7B54'}">${drift>0?'+':'−'}${_coMoney(drift)} vs estimate</div>`:''}
+      </td>
+      ${ro?'':`<td style="padding:9px 11px;text-align:right"><span onclick="_coDel('${pid}','${x.id}')" title="Remove" style="cursor:pointer;color:#ddd;font-size:12px">✕</span></td>`}
     </tr>`;
   };
-  const adder=ro?'':`<div style="background:#F7F8FB;border-top:0.5px solid #e0e4ec;padding:12px 14px">
-    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#98a2b3;margin-bottom:7px">Add a change order</div>
-    <div style="display:flex;gap:7px;flex-wrap:wrap;align-items:flex-start">
-      <input id="co-w-${pid}" placeholder="What is it? — add a bathroom in the basement…" style="flex:2;min-width:230px;padding:7px 10px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px"/>
-      <input id="co-a-${pid}" placeholder="$0.00" style="width:100px;padding:7px 10px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px"/>
-      <input id="co-r-${pid}" placeholder="Who asked for it?" style="width:150px;padding:7px 10px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px"/>
-      <input type="date" id="co-d-${pid}" value="${_ymd(new Date())}" style="padding:6px 8px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12.5px;color:#555"/>
-      <button onclick="_coAdd('${pid}')" style="padding:7px 15px;background:#122A4A;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer">Add</button>
+  const adder=ro?'':`<div style="background:#F7F8FB;border-top:0.5px solid #e0e4ec;padding:13px 16px">
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#98a2b3;margin-bottom:2px">Change order form</div>
+    <div style="font-size:11.5px;color:#999;margin-bottom:9px">For <b style="color:#555">${_calEsc(c.addr||'')}</b>. These are agreed before they are written down, so the form records who agreed rather than asking for approval here.</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px">
+      <div style="grid-column:1/-1">
+        <label style="display:block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#98a2b3;margin-bottom:3px">What is the change order for?</label>
+        <input id="co-w-${pid}" placeholder="Add a bathroom in the basement…" style="width:100%;box-sizing:border-box;padding:8px 10px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px"/>
+      </div>
+      <div>
+        <label style="display:block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#98a2b3;margin-bottom:3px">Date of change order</label>
+        <input type="date" id="co-d-${pid}" value="${_ymd(new Date())}" style="width:100%;box-sizing:border-box;padding:7px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12.5px;color:#555"/>
+      </div>
+      <div>
+        <label style="display:block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#98a2b3;margin-bottom:3px">Project manager</label>
+        <select id="co-p-${pid}" style="width:100%;box-sizing:border-box;padding:7px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12.5px">${pmOpts(String(c.pm||''))}</select>
+      </div>
+      <div>
+        <label style="display:block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#98a2b3;margin-bottom:3px">Who or what caused it</label>
+        <input id="co-c-${pid}" placeholder="Owner request, rot behind the tub…" style="width:100%;box-sizing:border-box;padding:8px 10px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px"/>
+      </div>
+      <div>
+        <label style="display:block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#98a2b3;margin-bottom:3px">Who approved it</label>
+        <input id="co-r-${pid}" placeholder="Name" style="width:100%;box-sizing:border-box;padding:8px 10px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px"/>
+      </div>
+      <div>
+        <label style="display:block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#98a2b3;margin-bottom:3px">Total estimated cost</label>
+        <input id="co-e-${pid}" placeholder="$0.00" style="width:100%;box-sizing:border-box;padding:8px 10px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px"/>
+      </div>
+      <div style="display:flex;align-items:flex-end">
+        <button onclick="_coAdd('${pid}')" style="width:100%;padding:9px 15px;background:#122A4A;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer">Save change order</button>
+      </div>
     </div>
-    <input id="co-y-${pid}" placeholder="Why — what changed, and who agreed to it? (optional)" style="width:100%;margin-top:7px;padding:7px 10px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12.5px;box-sizing:border-box"/>
-    <div style="font-size:11.5px;color:#999;margin-top:6px">It lands as <b>proposed</b>. Somebody has to approve it before it comes off the budget — that way nothing quietly excuses an overspend.</div>
+    <div style="font-size:11.5px;color:#999;margin-top:8px"><b>Total actual cost</b> is filled in on the row above, later &mdash; usually at the end of the project, in the End of Project report. Until then the estimate is what the budget is judged against.</div>
   </div>`;
   const host=document.createElement('div');
   host.id='co-modal';
@@ -3583,28 +3631,27 @@ function _coOpen(pid){
     <div style="padding:15px 20px;border-bottom:0.5px solid #e7eaf0;display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
       <div>
         <div style="font-size:17px;font-weight:600;color:#111">&#128209; Change orders &mdash; ${_calEsc(c.addr||'')}</div>
-        <div style="font-size:12.5px;color:#888;margin-top:2px">Work added after the budget was set. <b>Spent to Date never changes</b> &mdash; these come off it when on-budget is worked out at close.</div>
+        <div style="font-size:12.5px;color:#888;margin-top:2px">Work added after the budget was set. <b>Spent to Date never changes</b> &mdash; these come off it when on-budget is worked out at close. Fill the actual cost in when you know it; until then the estimate stands in.</div>
       </div>
       <span onclick="_coClose()" style="cursor:pointer;font-size:24px;color:#aaa;line-height:1">&times;</span>
     </div>
     <div style="padding:14px 20px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px">
       ${tile('Budget', isNaN(budget)||budget<=0?'—':_coMoney(budget), '#111', 'incl. contingency')}
       ${tile('Spent to date', spent==null?'—':_coMoney(spent), rawOver!=null&&rawOver>0?'#B42318':'#111', rawOver!=null?(rawOver>0?(_coMoney(rawOver)+' over the raw number'):(_coMoney(-rawOver)+' under')):'')}
-      ${tile('Approved change orders', appr?('− '+_coMoney(appr)):'—', appr?'#4A1D6E':'#c9ccd4', _coApproved(c).length+' approved'+(pend?(' · '+_coPending(c).length+' waiting'):''))}
+      ${tile('Change orders', appr?('− '+_coMoney(appr)):'—', appr?'#4A1D6E':'#c9ccd4', list.length?(list.length+' order'+(list.length===1?'':'s')+(waiting?(' · '+waiting+' actual cost'+(waiting===1?'':'s')+' still to confirm'):' · all costs confirmed')):'none yet')}
       ${tile('Judged on', adj==null?'—':_coMoney(adj), inBudget===null?'#111':(inBudget?'#0F7B54':'#B42318'), inBudget===null?'set a budget and spend':(inBudget?'IN BUDGET':_coMoney(adj-budget)+' over'))}
     </div>
-    ${(appr&&rawOver!=null&&rawOver>0&&inBudget)?`<div style="margin:0 20px 12px;background:#EAF7F1;border:1px solid #BFE5D4;border-radius:9px;padding:10px 14px;font-size:13px;color:#0d6b4a">Raw spend is <b>${_coMoney(rawOver)}</b> over budget, but <b>${_coMoney(appr)}</b> of that is approved change orders &mdash; work that was not in the budget when it was set. On that basis this project is <b>in budget</b>.</div>`:''}
+    ${(appr&&rawOver!=null&&rawOver>0&&inBudget)?`<div style="margin:0 20px 12px;background:#EAF7F1;border:1px solid #BFE5D4;border-radius:9px;padding:10px 14px;font-size:13px;color:#0d6b4a">Raw spend is <b>${_coMoney(rawOver)}</b> over budget, but <b>${_coMoney(appr)}</b> of that is change orders &mdash; work that was not in the budget when it was set. On that basis this project is <b>in budget</b>.</div>`:''}
+    ${waiting?`<div style="margin:0 20px 12px;background:#FFF7E0;border:1px solid #EAD9A8;border-radius:9px;padding:10px 14px;font-size:13px;color:#6b5310"><b>${waiting}</b> change order${waiting===1?' is':'s are'} still carrying an estimate rather than a real cost. Until the actual costs are filled in &mdash; usually in the End of Project report &mdash; the on-budget figure above is a forecast, not a result.${actT?` So far <b>${_coMoney(actT)}</b> of actual cost has been confirmed against <b>${_coMoney(estT)}</b> estimated.`:''}</div>`:''}
     <div style="overflow:auto;border-top:0.5px solid #e7eaf0">
       <table style="width:100%;border-collapse:collapse">
         <thead><tr style="background:#fafbfc">
-          <th style="padding:9px 12px;text-align:left;font-size:11px;color:#98a2b3;text-transform:uppercase;letter-spacing:.04em">Date</th>
-          <th style="padding:9px 12px;text-align:left;font-size:11px;color:#98a2b3;text-transform:uppercase;letter-spacing:.04em">What changed</th>
-          <th style="padding:9px 12px;text-align:left;font-size:11px;color:#98a2b3;text-transform:uppercase;letter-spacing:.04em">Asked for by</th>
-          <th style="padding:9px 12px;text-align:right;font-size:11px;color:#98a2b3;text-transform:uppercase;letter-spacing:.04em">Amount</th>
-          <th style="padding:9px 12px;text-align:center;font-size:11px;color:#98a2b3;text-transform:uppercase;letter-spacing:.04em">Status</th>
+          ${['Date','What changed','Caused by','PM','Approved by'].map(h=>`<th style="padding:9px 11px;text-align:left;font-size:11px;color:#98a2b3;text-transform:uppercase;letter-spacing:.04em">${h}</th>`).join('')}
+          <th style="padding:9px 11px;text-align:right;font-size:11px;color:#98a2b3;text-transform:uppercase;letter-spacing:.04em">Estimated</th>
+          <th style="padding:9px 11px;text-align:right;font-size:11px;color:#98a2b3;text-transform:uppercase;letter-spacing:.04em">Actual</th>
           ${ro?'':'<th></th>'}
         </tr></thead>
-        <tbody>${list.length?list.map(row).join(''):`<tr><td colspan="${ro?5:6}" style="padding:26px;text-align:center;color:#bbb;font-size:13.5px">No change orders on this project. Everything spent so far was in the original scope.</td></tr>`}</tbody>
+        <tbody>${list.length?list.map(row).join(''):`<tr><td colspan="${ro?7:8}" style="padding:26px;text-align:center;color:#bbb;font-size:13.5px">No change orders on this project. Everything spent so far was in the original scope.</td></tr>`}</tbody>
       </table>
     </div>
     ${adder}
@@ -4521,7 +4568,7 @@ function _pdLinked(c){
             <div style="font-size:18px;font-weight:500;color:${progColor}">${c.spent||'—'}</div>
             <div style="font-size:12px;color:#aaa;margin-top:2px">${pct}% of budget used</div>
             ${(()=>{ const n=_coList(c).length, t=_coTotal(c), pn=_coPending(c).length;
-              return `<div onclick="_coOpen('${c.id}')" style="cursor:pointer;font-size:12px;color:#185FA5;font-weight:600;margin-top:6px;padding-top:6px;border-top:0.5px solid #e3e6ec">&#128209; Change orders${n?` &middot; <span style="color:#4A1D6E">${_coMoney(t)}</span> approved`:''} &rsaquo;${pn?`<div style="font-size:10.5px;font-weight:600;color:#8a6d1a;margin-top:1px">${pn} waiting to be approved</div>`:''}${n?'':`<div style="font-size:10.5px;color:#bbb;font-weight:400;margin-top:1px">none yet &mdash; add one here</div>`}</div>`; })()}
+              return `<div onclick="_coOpen('${c.id}')" style="cursor:pointer;font-size:12px;color:#185FA5;font-weight:600;margin-top:6px;padding-top:6px;border-top:0.5px solid #e3e6ec">&#128209; Change orders${n?` &middot; <span style="color:#4A1D6E">${_coMoney(t)}</span>`:''} &rsaquo;${pn?`<div style="font-size:10.5px;font-weight:600;color:#8a6d1a;margin-top:1px">${pn} actual cost${pn===1?'':'s'} still to confirm</div>`:''}${n?'':`<div style="font-size:10.5px;color:#bbb;font-weight:400;margin-top:1px">none yet &mdash; add one here</div>`}</div>`; })()}
           </div>
           <div style="background:#f4f5f7;border-radius:8px;padding:10px 12px;border:1.5px solid #e6f1fb">
             ${_accumBox(c)}
@@ -5685,14 +5732,14 @@ function _wmWeekKey(){
   return _ymd(rolled ? new Date(thisMon.getTime()+7*86400000) : thisMon);
 }
 function _wmMonday(dateStr){ const d=new Date(dateStr+"T00:00:00"); const day=d.getDay(); const back=(day===0?6:day-1); return _ymd(new Date(d.getTime()-back*86400000)); }
-// The Monday walk-through and the On the Market meeting run on different days, so their
+// The Monday walk-through and the Listings Meeting run on different days, so their
 // weeks cannot roll on the same day.
 //
 // Bruce, 30 Aug: "that meeting we have every Tuesday at nine AM... the reset will go away
 // Saturday and auto fill for the next meeting Sunday. So Katie can start filling things out
 // on Sunday if she wants to."
 //
-// So for On the Market: this week's sheet is live Monday through Friday, clears on Saturday,
+// So for the Listings Meeting: this week's sheet is live Monday through Friday, clears on Saturday,
 // and next week's - already prefilled - is open from Sunday. Everything else keeps the
 // Thursday-noon roll that suits the Monday meeting.
 window.__mktPrefilled_ = window.__mktPrefilled_ || {};
@@ -5903,7 +5950,7 @@ async function _pmSettingsWrite(key, data){
 }
 // The Monday meeting's scope, in one place. Vacant / On Standby through Pre List /
 // Punchout, plus Rental Handoff (Bruce, 8/29). Once a house is listed it leaves this
-// walk-through and picks up in the On the Market meeting instead.
+// walk-through and picks up in the Listings Meeting instead.
 const WM_TEAM_PHASES=["Vacant / On Standby","Pre Construction","Waiting Permits","Framing, MEPS, Insulation","Drywall / Exterior Work","Finishes","Pre List / Punchout Process","Rental Handoff Process"];
 async function _wmLoad(){ try{ const r=await supabase.from("pm_settings").select("data").eq("key","meeting_notes").maybeSingle(); if(r.error){ window._wmLoadOk=false; window._wmData={}; return; } window._wmLoadOk=true; window._wmData=(r.data&&r.data.data)||{}; }catch(e){ window._wmLoadOk=false; window._wmData={}; } }
 // ---- Autosave --------------------------------------------------------------
@@ -6044,7 +6091,7 @@ function _canSeeMeeting(kind){
   return hasPerm(u,k);
 }
 function _meetingDenied(kind){
-  const names={team:'Project Team Meeting',market:'On the Market Meeting',kickoff:'Kickoff Meeting',eop:'End of Project Meeting',company:'Full Company Meeting',ceo:'Director / CEO Meeting'};
+  const names={team:'Project Team Meeting',market:'Listings Meeting',kickoff:'Kickoff Meeting',eop:'End of Project Meeting',company:'Full Company Meeting',ceo:'Director / CEO Meeting'};
   const extra=(kind==='ceo')?'This one is just for Bruce and Tommy.':'You do not have this meeting turned on yet.';
   return `<div class="empty-state"><div class="icon">&#128274;</div>
     <p style="color:#888;font-size:16px;font-weight:500">${names[kind]||'Meeting'}</p>
@@ -6388,13 +6435,54 @@ async function _wmStartSet(pid, val, el){
   await _wmDeal(pid,'start_date',val,el);
   openWeeklyMeeting('team');
 }
-// The committed date can be changed - it just has to be deliberate.
+// Bruce, 13 Sept: a PM "can choose their committed finish date one time, which is the
+// first time it's set. Once a date has been set, if we want to change the committed finish
+// date it needs to ONLY be done in the project team meeting on Monday, or Bruce, Tommy,
+// Marlo, Patience or Andy can change it."
+// So: setting it the first time is anybody's to do. Moving it afterwards is either done in
+// the room on Monday, or by one of the five named people, wherever they are.
+const COMMIT_OVERRIDE = ["Bruce","Tommy","Marlo","Patience","Andy"];
+function _canMoveCommit(u){
+  u = u || (typeof currentUser==='function'?currentUser():null);
+  if(!u) return false;
+  if(u.isSuperAdmin) return true;
+  const first=String(u.firstName||'').trim();
+  return COMMIT_OVERRIDE.some(n=>_canonSame(n, first));
+}
+// "In the room on Monday" means the Project Team Meeting is open, on the live week, and
+// not closed. A past week's archived sheet is a record, not a place to change the date.
+function _inMondayMeeting(){
+  if(window.__wmLastKind!=='team') return false;
+  const wk=(typeof _wmWeekKeyFor==='function')?_wmWeekKeyFor('team'):null;
+  const open=window.__wmLastWeek||wk;
+  if(wk && open && open!==wk) return false;               // archived week
+  try{ const rec=_wmMeta(open,'team','__closed'); if(rec && rec.at) return false; }catch(e){}
+  return true;
+}
+function _commitLocked(c){
+  // Never set = not locked. Anybody can put the first date on it.
+  return !!(c && String(c.end||'').trim());
+}
+function _commitWhoCanText(){
+  return "Once a committed finish date is set it can only be moved:\n\n  • in Monday's Project Team Meeting, with the room, or\n  • by "+COMMIT_OVERRIDE.join(", ")+".";
+}
 async function _wmCommitSet(pid, val, el){
   if(_blockIfReadOnly()) return;
   const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return;
-  if(c.end && val!==c.end){
-    if(!confirm("The committed finish date for "+(c.addr||'this property')+" is "+c.end+".\n\nThis is the date on-time versus late is measured against, so it is meant to stay put once the room agrees it — the estimated finish is the one to move.\n\nChange it to "+val+" anyway?")){
+  const had=_commitLocked(c);
+  if(had && val!==c.end){
+    const allowed = _inMondayMeeting() || _canMoveCommit();
+    if(!allowed){
+      alert("The committed finish date for "+(c.addr||'this property')+" is already set to "+c.end+".\n\n"+_commitWhoCanText()+"\n\nRaise it in Monday's meeting and it can be moved there.");
       if(el) el.value=c.end||''; return;
+    }
+    const where=_inMondayMeeting()?"You are in Monday's meeting, so this is the right place to move it.":"You are one of the people who can move this outside the meeting.";
+    if(!confirm("Move the committed finish date for "+(c.addr||'this property')+" from "+c.end+" to "+val+"?\n\n"+where+"\n\nThis is the date on-time versus late is measured against, and the move is recorded against your name.")){
+      if(el) el.value=c.end||''; return;
+    }
+  } else if(!had && val){
+    if(!confirm("Set the committed finish date for "+(c.addr||'this property')+" to "+val+"?\n\nThis is the one you get to choose. After it is set, it can only be moved in Monday's meeting or by "+COMMIT_OVERRIDE.join(", ")+".")){
+      if(el) el.value=''; return;
     }
   }
   await _wmDeal(pid,'end_date',val,el);
@@ -6411,7 +6499,7 @@ function _wmClosedBanner(wk, rec, kind){
   kind=kind||'team';
   const can=(typeof canApprove==='function') && canApprove(typeof _myProfile!=='undefined'?_myProfile:null);
   const summary=(kind==='team')?`<button onclick="_wmOpenSummary('${wk}')" style="padding:6px 13px;background:#122A4A;color:#fff;border:none;border-radius:7px;font-size:12.5px;cursor:pointer;font-weight:600">&#8595; Summary / PDF</button>
-      <button onclick="_wmEmailFlow('${wk}')" style="padding:6px 13px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">&#9993; Email it to Tommy</button>`:'';
+      <button onclick="_wmEmailFlow('${wk}')" style="padding:6px 13px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">&#9993; Email it to Tommy &amp; Suzette</button>`:'';
   return `<div style="background:#EAF7F1;border:1px solid #BFE5D4;border-radius:10px;padding:11px 15px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
     <div style="font-size:13.5px;color:#0d6b4a"><b>&#10003; This meeting is closed.</b> Marked complete by ${_calEsc(rec.by||'someone')} on ${_calEsc(_wmWhen(rec.at))}. The boxes are locked so the record matches what the room agreed.</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -6426,7 +6514,7 @@ function _wmCloseBar(wk, rec, isPast, kind){
   if(isReadOnly()) return '';
   if(isPast) return `<div style="margin-top:18px;font-size:12.5px;color:#999">This is a past week and was never marked complete. Whatever was typed into it is still on the record.${kind==='team'?` <span onclick="_wmOpenSummary('${wk}')" style="color:#185FA5;cursor:pointer">Build a summary from it anyway &rsaquo;</span>`:''}</div>`;
   const summary=(kind==='team')?`<button onclick="_wmOpenSummary('${wk}')" style="padding:8px 15px;background:#fff;border:0.5px solid #cdd7e6;border-radius:8px;font-size:13px;color:#185FA5;cursor:pointer;font-weight:600">&#8595; Preview the summary</button>
-    <button onclick="_wmEmailFlow('${wk}')" style="padding:8px 15px;background:#fff;border:0.5px solid #cdd7e6;border-radius:8px;font-size:13px;color:#185FA5;cursor:pointer;font-weight:600">&#9993; Email it to Tommy</button>`:'';
+    <button onclick="_wmEmailFlow('${wk}')" style="padding:8px 15px;background:#fff;border:0.5px solid #cdd7e6;border-radius:8px;font-size:13px;color:#185FA5;cursor:pointer;font-weight:600">&#9993; Email it to Tommy &amp; Suzette</button>`:'';
   return `<div style="margin-top:20px;background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:14px 16px;display:flex;gap:9px;align-items:center;flex-wrap:wrap">
     <div style="font-size:13px;color:#555;margin-right:4px"><b>When the meeting is over:</b></div>
     <button onclick="_wmComplete('${wk}','${kind}')" style="padding:8px 16px;background:#122A4A;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">&#10003; Meeting complete</button>
@@ -6434,7 +6522,7 @@ function _wmCloseBar(wk, rec, isPast, kind){
     <div style="font-size:12px;color:#999;flex-basis:100%;margin-top:2px">Closing the week files it under <b>Past meetings</b> and locks the boxes. You do not have to press it &mdash; everything you type is already saved, and a week nobody closed still shows up in the record as exactly that. You can reopen it.</div>
   </div>`;
 }
-const _MEETING_NAMES={team:'Project Team Meeting',market:'On the Market Meeting',kickoff:'Kickoff Meeting',eop:'End of Project Meeting',company:'Full Company Meeting',ceo:'Director / CEO Meeting'};
+const _MEETING_NAMES={team:'Project Team Meeting',market:'Listings Meeting',kickoff:'Kickoff Meeting',eop:'End of Project Meeting',company:'Full Company Meeting',ceo:'Director / CEO Meeting'};
 async function _wmComplete(wk, kind){
   kind=kind||'team';
   if(_blockIfReadOnly()) return;
@@ -6842,8 +6930,11 @@ function _compMondayBanner(wk){
     <button onclick="_compEmailFlow('${wk}')" style="padding:7px 15px;background:#122A4A;color:#fff;border:none;border-radius:7px;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">&#9993; Build it and send</button>
   </div>`;
 }
+// Bruce, 13 Sept: "The Monday PDF also goes to Suzette." She is not on the website, so
+// her address is held here rather than read from an account.
+const WM_ALSO_EMAIL = ['suzette@legacyohiohomes.com'];
 function _wmEmailFlow(wk){
-  const addrs=_wmDirectorEmails();
+  const addrs=[...new Set(_wmDirectorEmails().concat(WM_ALSO_EMAIL))];
   const who=addrs.length?addrs.join(', '):'nobody with a CEO or Project Director account has an email on file';
   if(!confirm("Email this summary\n\n1. The summary window opens - use your browser's Print / Save as PDF to save the file.\n2. Your email program opens with the write-up already typed, addressed to: "+who+"\n3. Attach the PDF you just saved and press send.\n\nOpen both now?")) return;
   _wmOpenSummary(wk);
@@ -6998,13 +7089,13 @@ async function _mktPrefillWeek(wk){
     window._wmData=d;
     const err=await _pmSettingsWrite('meeting_notes', d);
     if(err){ delete d[wk].market; return 0; }
-    if(typeof _logAudit==='function') _logAudit('updated','settings','On the Market meeting',
+    if(typeof _logAudit==='function') _logAudit('updated','settings','Listings Meeting',
       'Prefilled '+Object.keys(patch).length+' answer'+(Object.keys(patch).length===1?'':'s')+
       ' for the week of '+wk+' from the week before, so the sheet is ready before Tuesday.');
     return Object.keys(patch).length;
   } finally { _mktPrefilling=false; }
 }
-// The Monday project team meeting gets the same treatment as the On the Market sheet:
+// The Monday project team meeting gets the same treatment as the Listings sheet:
 // next week's template is prepared from this week's, so nobody opens a blank page on
 // Thursday. Only the standing answers carry - anything that is a report on the week
 // just gone stays behind, or the room would read last week's news as if it were new.
@@ -7649,7 +7740,7 @@ function _eopMeetingBody(wk, notes, prevNotes, roNow){
 
 // ===================== FULL COMPANY MEETING =====================
 // Bruce, 29 Aug: nobody fills this one in. It is assembled from the meetings that
-// already happened this week - Monday's walk-through, the On the Market meeting and
+// already happened this week - Monday's walk-through, the Listings Meeting and
 // the kick-offs - plus the live board. If a section here looks empty, the answer is
 // not to type into it: it is that the meeting it comes from has not been held yet.
 function _compFrom(wk, kind){ return (((window._wmData||{})[wk]||{})[kind])||{}; }
@@ -8570,6 +8661,17 @@ async function _wmPollTick(){
   if(structural){ openWeeklyMeeting(kind, window.__wmLastWeek||undefined); return; }
   if(changed) _wmLiveBanner(changed);
 }
+// When each meeting actually runs. Bruce, 13 Sept: "the listings meeting is every
+// Tuesday at 9:00 or 9:15am just depends when we finish our full company meeting."
+const _WM_WHEN = {
+  team:    'Monday 8:00 AM',
+  market:  'Tuesday, straight after the company meeting \u2014 9:00 or 9:15 AM',
+  company: 'Tuesday 8:45 AM',
+  kickoff: 'held as houses come up',
+  eop:     'held as projects close',
+  ceo:     'Bruce and Tommy, as needed'
+};
+function _wmWhenLabel(kind){ return _WM_WHEN[kind] || 'weekly'; }
 function openWeeklyMeeting(kind, week){
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
@@ -8577,7 +8679,7 @@ function openWeeklyMeeting(kind, week){
   // also be reached from a restored nav state or a link, so check here too.
   if(!_canSeeMeeting(kind)){ document.getElementById("dash-body").innerHTML=_meetingDenied(kind); return; }
   if(window._wmData===undefined||window._wmData===null){ if(window._wmData===undefined){ window._wmData=null; Promise.all([_wmLoad(), _miLoad(), (window._pdnData===undefined?( (window._pdnData=null), _pdnLoad()):Promise.resolve())]).then(()=>openWeeklyMeeting(kind, week)); document.getElementById("dash-body").innerHTML='<div style="padding:40px;text-align:center;color:#999">Loading meeting…</div>'; return; } }
-  const titles={team:'🤝 Project Team Meeting',market:'🏡 On the Market Meeting',kickoff:'🚀 Kickoff Meeting',eop:'🏁 End of Project Meeting',company:'🏢 Full Company Meeting',ceo:'👔 Director / CEO Meeting'};
+  const titles={team:'🤝 Project Team Meeting',market:'🏡 Listings Meeting',kickoff:'🚀 Kickoff Meeting',eop:'🏁 End of Project Meeting',company:'🏢 Full Company Meeting',ceo:'👔 Director / CEO Meeting'};
   const liveWk=_wmWeekKeyFor(kind);
   const wk = week || liveWk;
   const isPast = wk!==liveWk;
@@ -8595,10 +8697,10 @@ function openWeeklyMeeting(kind, week){
   if(kind==='team'){
     // Vacant / On Standby through Pre List / Punchout. Once a house is listed on the
     // market - or handed to rentals - it leaves the Monday construction walk-through
-    // and picks up in the On the Market meeting instead.
+    // and picks up in the Listings Meeting instead.
     // Rental Handoff sits here too (Bruce, 8/29): a rental being turned over is still
     // construction work the room needs to walk, even though it will never be listed.
-    // It also appears under Coming Soon in the On the Market meeting.
+    // It also appears under Coming Soon in the Listings Meeting.
     const cons=WM_TEAM_PHASES;
     // Ordered by house number so the room walks the list 1 -> 9; deliberately NOT grouped by
     // PM, so while one property is discussed the other PMs can keep typing and texting.
@@ -8884,7 +8986,7 @@ function openWeeklyMeeting(kind, week){
     }
   }
   document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div style="padding:20px;max-width:1000px;margin:0 auto">
-    <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:4px"><div style="font-size:18px;font-weight:700;color:#111">${titles[kind]||'Weekly Meeting'}</div><div style="font-size:13px;color:#888">Week of ${_calEsc(_wmLabel(wk))} · Monday 8:00 AM${isPast?' · archived':''}</div></div>
+    <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:4px"><div style="font-size:18px;font-weight:700;color:#111">${titles[kind]||'Weekly Meeting'}</div><div style="font-size:13px;color:#888">Week of ${_calEsc(_wmLabel(wk))} &middot; ${_wmWhenLabel(kind)}${isPast?' &middot; archived':''}</div></div>
     <div style="font-size:12.5px;color:#999;margin-bottom:14px">Auto-prefilled from live data. <b style="color:#0F7B54">Everything saves itself as you type</b> — the Save buttons still work, you just don't need them. Notes are shared with everyone for this week's meeting.${isPast?' <b style="color:#8a6d1a">You are looking back at a past week.</b>':''}</div>
     ${_wmArchive(kind, wk)}
     ${body}
@@ -9902,7 +10004,7 @@ const ROLE_SOP_FACTS = {
 
   "Project Director": { icon:"⬡", reports:"the CEO", manages:"Project Managers, the Administrative Manager and the assistant seats",
     purpose:"Accountable for every active project from the day we take it down to the day it closes. The person everything escalates to.",
-    systems:["Project Team Meeting (Monday)","Kickoff Meeting","On the Market Meeting","Property Dashboard","Admin Panel"],
+    systems:["Project Team Meeting (Monday)","Kickoff Meeting","Listings Meeting","Property Dashboard","Admin Panel"],
     does:["Run the Monday Project Team Meeting and hold the room to the two dates — the committed finish and the current estimate.","Approve scope, budget and any change that moves a committed finish date.","Decide who runs which job, and move a PM off one when it is not working.","Answer everything sitting in the 'Needs a person' panel before the next Monday."],
     good:["No property goes a week without being walked in a meeting.","Every open question has an owner and a date."],
     qs:["Anything you escalate to Tommy that should be a formal step here rather than a phone call?","Should moving a committed finish date require your approval in the app, or stay honour-system?"] },
@@ -9979,7 +10081,7 @@ const ROLE_SOP_FACTS = {
 
   "Realtor": { icon:"🔑", reports:"the Project Director", manages:"nobody",
     purpose:"Prices, lists and sells the houses, and reads the market back to the team.",
-    systems:["On the Market Meeting","Realtor Dashboard","Suggested Listing Doc"],
+    systems:["Listings Meeting","Realtor Dashboard","Suggested Listing Doc"],
     does:["Build the comps and recommend the list price before a house is ready.","Post showing confirmations so the app can tell a house is live.","Bring repetitive feedback back to the Monday room — price, smell, layout, photos.","Own the contract through inspection, appraisal and remedies to close."],
     good:["Houses sell near the number we planned, in the days we planned."],
     qs:["Is the realtor in-house or an outside agent — does the app need to handle both?","What do you want on the Realtor Dashboard that isn't there yet?"] },
@@ -10774,27 +10876,90 @@ const PUNCH_ITEMS = [
   ['npi',     'NPI report items cleared',      'Every line on the inspection report answered'],
   ['photos',  'Photos in CompanyCam',          'The listing agent needs them before it goes live']
 ];
-function _poData(c){ const o=((c&&c.checklists)||{}).po; return (o&&typeof o==='object')?o:{}; }
-function _poDone(c,k){ return (_poData(c)[k]||{}).done===true; }
-function _poCount(c){ return PUNCH_ITEMS.filter(it=>_poDone(c,it[0])).length; }
-function _poComplete(c){ return _poCount(c)===PUNCH_ITEMS.length; }
-function _poStarted(c){ return _poCount(c)>0 || !!String((_poData(c).notes||'')).trim(); }
-async function _poSet(pid, key, on){
+// Bruce, 13 Sept: "Multiple different people will be filling out punch-out forms...
+// the punch-out form needs to be filled out for a property by anyone with an account on
+// the website, and we also need to be able to fill out more than one."
+// So a punch-out is not one checklist on a property any more - it is a LIST of walk-
+// throughs. Each one records who walked it, when, what they found, and what they ticked.
+// A second walk a week later is a second form, not an edit of the first, which is the
+// whole point: you can see what changed between two visits.
+function _poForms(c){
+  const cl=(c&&c.checklists)||{};
+  const arr=Array.isArray(cl.pof)?cl.pof.slice():[];
+  // The first version stored a single object under `po`. Read it as form one so nothing
+  // anybody already ticked disappears.
+  const legacy=cl.po;
+  if(legacy && typeof legacy==='object' && !Array.isArray(legacy)){
+    const items={}; let any=false;
+    PUNCH_ITEMS.forEach(function(it){ const v=legacy[it[0]]; if(v && v.done===true){ items[it[0]]=v; any=true; } });
+    const note=String(legacy.notes||'');
+    if(any||note) arr.unshift({ id:'legacy', title:'First walk-through', by:'', made:'', items:items, notes:note, legacy:true });
+  }
+  return arr;
+}
+function _poForm(c, fid){ return _poForms(c).find(f=>f.id===fid)||null; }
+function _poFormItems(f){ const o=(f&&f.items)||{}; return (o&&typeof o==='object')?o:{}; }
+function _poFormDone(f,k){ return (_poFormItems(f)[k]||{}).done===true; }
+function _poFormCount(f){ return PUNCH_ITEMS.filter(it=>_poFormDone(f,it[0])).length; }
+function _poFormComplete(f){ return _poFormCount(f)===PUNCH_ITEMS.length; }
+// The property's position is its BEST walk-through - if any walk got everything ticked,
+// the house is ready. A later walk that found new problems is its own form and shows.
+function _poCount(c){ const fs=_poForms(c); return fs.length?Math.max.apply(null,fs.map(_poFormCount)):0; }
+function _poComplete(c){ return _poForms(c).some(_poFormComplete); }
+function _poStarted(c){ return _poForms(c).some(f=>_poFormCount(f)>0 || String(f.notes||'').trim()); }
+function _poLatest(c){
+  const fs=_poForms(c).slice().sort((a,b)=>String(b.made||'').localeCompare(String(a.made||'')));
+  return fs[0]||null;
+}
+async function _poWrite(pid, mut){
+  if(_blockIfReadOnly()) return false;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return false;
+  const arr=_poForms(c).map(f=>Object.assign({}, f, {items:Object.assign({}, _poFormItems(f))}));
+  mut(arr);
+  // Once it is written back as a list, the old single-object form has been folded in.
+  return await _wmChecklistPatch(pid, { pof: arr.map(f=>{ const g=Object.assign({},f); delete g.legacy; return g; }), po: null });
+}
+async function _poAddForm(pid){
   if(_blockIfReadOnly()) return;
   const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return;
-  const cur=Object.assign({}, _poData(c));
   const me=(typeof _sqMe==='function')?_sqMe():'';
-  cur[key]= on ? { done:true, by:me, at:_ymd(new Date()) } : { done:false };
-  if(!(await _wmChecklistPatch(pid, { po: cur }))) return;
+  const n=_poForms(c).length+1;
+  const rec={ id:Date.now().toString(36)+Math.random().toString(36).slice(2,5),
+              title:'Walk-through '+n, by:me, made:new Date().toISOString(),
+              on:_ymd(new Date()), items:{}, notes:'' };
+  if(!(await _poWrite(pid, arr=>arr.push(rec)))) return;
+  _logAudit('created','property',(c&&c.addr)||'', 'Punch-out walk-through started'+(me?(' by '+me):''));
+  window._poOpenForm=rec.id;
+  _poRerender(pid);
+}
+async function _poDelForm(pid, fid){
+  if(_blockIfReadOnly()) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
+  const f=_poForm(c,fid); if(!f) return;
+  if(!confirm("Remove this walk-through?\n\n"+String(f.title||'')+(f.by?(" — "+f.by):"")+"\n\nEverything ticked on it goes with it. This cannot be undone.")) return;
+  if(!(await _poWrite(pid, arr=>{ const i=arr.findIndex(x=>x.id===fid); if(i>=0) arr.splice(i,1); }))) return;
+  _logAudit('deleted','property',(c&&c.addr)||'', 'Punch-out walk-through removed: '+String(f.title||''));
+  _poRerender(pid);
+}
+async function _poSet(pid, fid, key, on){
+  if(_blockIfReadOnly()) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return;
+  const me=(typeof _sqMe==='function')?_sqMe():'';
+  if(!(await _poWrite(pid, arr=>{
+    const f=arr.find(x=>x.id===fid); if(!f) return;
+    f.items[key] = on ? { done:true, by:me, at:_ymd(new Date()) } : { done:false };
+  }))) return;
   const label=(PUNCH_ITEMS.find(x=>x[0]===key)||[])[1]||key;
   _logAudit('updated','property',(c&&c.addr)||'', 'Punch-out: '+label+(on?' ticked':' un-ticked'));
   _poRerender(pid);
 }
-async function _poNote(pid, val){
+async function _poNote(pid, fid, val){
   if(_blockIfReadOnly()) return;
-  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return;
-  const cur=Object.assign({}, _poData(c)); cur.notes=val;
-  await _wmChecklistPatch(pid, { po: cur });
+  await _poWrite(pid, arr=>{ const f=arr.find(x=>x.id===fid); if(f) f.notes=val; });
+}
+async function _poFormField(pid, fid, field, val){
+  if(_blockIfReadOnly()) return;
+  await _poWrite(pid, arr=>{ const f=arr.find(x=>x.id===fid); if(f) f[field]=val; });
 }
 function _poRerender(pid){
   if(window.__poModal===pid){ _poOpen(pid); return; }
@@ -10802,47 +10967,85 @@ function _poRerender(pid){
   if(typeof openPropDetail==='function') openPropDetail(pid);
 }
 function _poClose(){ window.__poModal=null; const h=document.getElementById('po-modal'); if(h) h.remove(); }
+function _poPick(pid, fid){ window._poOpenForm=fid; _poOpen(pid); }
+function _poWhen(f){
+  if(f&&f.on) return f.on;
+  if(f&&f.made){ try{ return new Date(f.made).toISOString().slice(0,10); }catch(e){} }
+  return '';
+}
 function _poOpen(pid){
   const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return;
   window.__poModal=pid;
   const ro=(typeof isReadOnly==='function')?isReadOnly():false;
-  const d=_poData(c);
-  const n=_poCount(c), tot=PUNCH_ITEMS.length;
-  const rows=PUNCH_ITEMS.map(function(it){
-    const on=_poDone(c,it[0]); const rec=d[it[0]]||{};
-    return `<div style="display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-top:0.5px solid #f1f3f7">
-      ${ro?`<span style="font-size:18px;flex-shrink:0">${on?'&#9989;':'&#11036;'}</span>`
-          :`<span onclick="_poSet('${pid}','${it[0]}',${on?'false':'true'})" style="cursor:pointer;font-size:18px;flex-shrink:0;line-height:1.2">${on?'&#9989;':'&#11036;'}</span>`}
-      <div style="flex:1;min-width:0">
-        <div style="font-size:13.5px;font-weight:600;color:${on?'#0F7B54':'#111'}">${it[1]}</div>
-        <div style="font-size:11.5px;color:#999;margin-top:1px">${it[2]}</div>
-        ${on&&rec.by?`<div style="font-size:10.5px;color:#bbb;margin-top:2px">${_calEsc(rec.by)}${rec.at?(' &middot; '+_calEsc(rec.at)):''}</div>`:''}
-      </div></div>`;
-  }).join('');
-  const host=document.createElement('div');
-  host.id='po-modal';
-  host.style.cssText='position:fixed;inset:0;background:rgba(17,17,17,.45);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px;overflow:auto';
-  host.onclick=(e)=>{ if(e.target===host) _poClose(); };
-  host.innerHTML=`<div style="background:#fff;border-radius:12px;max-width:640px;width:100%;box-shadow:0 18px 50px rgba(0,0,0,.25);margin:auto">
-    <div style="padding:15px 20px;border-bottom:0.5px solid #e7eaf0;display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
-      <div>
-        <div style="font-size:17px;font-weight:600;color:#111">&#128203; Punch-out checklist &mdash; ${_calEsc(c.addr||'')}</div>
-        <div style="font-size:12.5px;color:#888;margin-top:2px">${n} of ${tot} done${_poComplete(c)?' &mdash; <b style="color:#0F7B54">ready to list</b>':''}. Patience fills this in from the NPI inspection report; it shows on the property card and on the realtor dashboard.</div>
+  const forms=_poForms(c).slice().sort((a,b)=>String(a.made||'').localeCompare(String(b.made||'')));
+  let sel=forms.find(f=>f.id===window._poOpenForm) || forms[forms.length-1] || null;
+  const tot=PUNCH_ITEMS.length;
+
+  const tabs=forms.length?`<div style="display:flex;gap:6px;flex-wrap:wrap;padding:0 20px 4px">${forms.map(function(f){
+      const on=(sel&&f.id===sel.id), n=_poFormCount(f), done=_poFormComplete(f);
+      return `<span onclick="_poPick('${pid}','${f.id}')" style="cursor:pointer;padding:6px 12px;border-radius:8px;font-size:12.5px;font-weight:${on?'700':'500'};background:${on?'#122A4A':'#fff'};color:${on?'#fff':'#444'};border:0.5px solid ${on?'#122A4A':'#d8dce6'};white-space:nowrap">
+        ${_calEsc(f.title||'Walk-through')} <span style="color:${on?(done?'#7fe3b6':'#9fb0c9'):(done?'#0F7B54':'#98a2b3')};font-weight:700">${n}/${tot}</span></span>`;
+    }).join('')}${ro?'':`<span onclick="_poAddForm('${pid}')" style="cursor:pointer;padding:6px 12px;border-radius:8px;font-size:12.5px;font-weight:600;background:#fff;color:#185FA5;border:0.5px dashed #cdd7e6;white-space:nowrap">&#65291; New walk-through</span>`}</div>`
+    : '';
+
+  let inner;
+  if(!sel){
+    inner = `<div style="padding:26px 20px;text-align:center">
+      <div style="font-size:13.5px;color:#888;max-width:34em;margin:0 auto 13px;line-height:1.55">No punch-out walk-through on this house yet. Anybody with an account can start one &mdash; Patience, the PM, the assistant who is standing in the house. Start a second one later and you can see what changed between visits.</div>
+      ${ro?'':`<button onclick="_poAddForm('${pid}')" style="padding:9px 18px;background:#122A4A;color:#fff;border:none;border-radius:8px;font-size:13.5px;font-weight:600;cursor:pointer">&#65291; Start a walk-through</button>`}</div>`;
+  } else {
+    const n=_poFormCount(sel), done=_poFormComplete(sel);
+    const rows=PUNCH_ITEMS.map(function(it){
+      const on=_poFormDone(sel,it[0]); const rec=_poFormItems(sel)[it[0]]||{};
+      return `<div style="display:flex;gap:11px;align-items:flex-start;padding:10px 0;border-top:0.5px solid #f1f3f7">
+        ${ro?`<span style="font-size:18px;flex-shrink:0">${on?'&#9989;':'&#11036;'}</span>`
+            :`<span onclick="_poSet('${pid}','${sel.id}','${it[0]}',${on?'false':'true'})" style="cursor:pointer;font-size:18px;flex-shrink:0;line-height:1.2">${on?'&#9989;':'&#11036;'}</span>`}
+        <div style="flex:1;min-width:0">
+          <div style="font-size:13.5px;font-weight:600;color:${on?'#0F7B54':'#111'}">${it[1]}</div>
+          <div style="font-size:11.5px;color:#999;margin-top:1px">${it[2]}</div>
+          ${on&&rec.by?`<div style="font-size:10.5px;color:#bbb;margin-top:2px">${_calEsc(rec.by)}${rec.at?(' &middot; '+_calEsc(rec.at)):''}</div>`:''}
+        </div></div>`;
+    }).join('');
+    inner = `<div style="padding:4px 20px 8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 0 2px">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          ${ro?`<b style="font-size:13.5px">${_calEsc(sel.title||'Walk-through')}</b>`
+              :`<input value="${_calEsc(sel.title||'')}" onchange="_poFormField('${pid}','${sel.id}','title',this.value)" placeholder="Walk-through" style="padding:4px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px;font-weight:600;width:170px"/>`}
+          ${ro?`<span style="font-size:12px;color:#888">${_calEsc(_poWhen(sel))||''}</span>`
+              :`<input type="date" value="${_calEsc(_poWhen(sel))}" onchange="_poFormField('${pid}','${sel.id}','on',this.value)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12px;color:#555"/>`}
+          <span style="font-size:12px;color:#98a2b3">${sel.by?('walked by '+_calEsc(sel.by)):'walker not recorded'}</span>
+        </div>
+        ${(ro||sel.legacy)?'':`<span onclick="_poDelForm('${pid}','${sel.id}')" style="cursor:pointer;font-size:11.5px;color:#c9ccd4">remove this walk-through</span>`}
       </div>
-      <span onclick="_poClose()" style="cursor:pointer;font-size:24px;color:#aaa;line-height:1">&times;</span>
-    </div>
-    <div style="padding:4px 20px 8px">
-      <div style="background:#f4f5f7;border-radius:6px;height:6px;margin:10px 0 2px;overflow:hidden"><div style="height:100%;width:${Math.round(n/tot*100)}%;background:${_poComplete(c)?'#0F7B54':'#B7791F'}"></div></div>
+      <div style="background:#f4f5f7;border-radius:6px;height:6px;margin:8px 0 2px;overflow:hidden"><div style="height:100%;width:${Math.round(n/tot*100)}%;background:${done?'#0F7B54':'#B7791F'}"></div></div>
+      <div style="font-size:12px;color:#888;margin-bottom:2px">${n} of ${tot} on this walk${done?' &mdash; <b style="color:#0F7B54">nothing outstanding</b>':''}</div>
       ${rows}
       <div style="margin-top:12px">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#98a2b3;margin-bottom:4px">Notes from the inspection report</div>
-        ${ro?`<div style="font-size:13px;color:#333;white-space:pre-wrap;background:#F7F8FB;border-radius:7px;padding:9px 11px;min-height:30px">${_calEsc(d.notes||'')||'<span style="color:#bbb">Nothing written</span>'}</div>`
-            :`<textarea id="po-n-${pid}" onchange="_poNote('${pid}',this.value)" placeholder="What NPI flagged, what is being handled and by whom…" style="width:100%;box-sizing:border-box;min-height:72px;padding:9px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:13px;line-height:1.5;font-family:inherit;resize:vertical">${_calEsc(d.notes||'')}</textarea>`}
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#98a2b3;margin-bottom:4px">Notes from this walk</div>
+        ${ro?`<div style="font-size:13px;color:#333;white-space:pre-wrap;background:#F7F8FB;border-radius:7px;padding:9px 11px;min-height:30px">${_calEsc(sel.notes||'')||'<span style="color:#bbb">Nothing written</span>'}</div>`
+            :`<textarea onchange="_poNote('${pid}','${sel.id}',this.value)" placeholder="What NPI flagged, what is being handled and by whom…" style="width:100%;box-sizing:border-box;min-height:72px;padding:9px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:13px;line-height:1.5;font-family:inherit;resize:vertical">${_calEsc(sel.notes||'')}</textarea>`}
       </div>
       <div style="display:flex;gap:8px;margin:12px 0 16px;flex-wrap:wrap">
         <button onclick="_poClose();openPropDetail('${pid}')" style="padding:7px 14px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">Open the property card</button>
       </div>
+    </div>`;
+  }
+
+  const best=_poCount(c);
+  const host=document.createElement('div');
+  host.id='po-modal';
+  host.style.cssText='position:fixed;inset:0;background:rgba(17,17,17,.45);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px;overflow:auto';
+  host.onclick=(e)=>{ if(e.target===host) _poClose(); };
+  host.innerHTML=`<div style="background:#fff;border-radius:12px;max-width:660px;width:100%;box-shadow:0 18px 50px rgba(0,0,0,.25);margin:auto">
+    <div style="padding:15px 20px 11px;border-bottom:0.5px solid #e7eaf0;display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+      <div>
+        <div style="font-size:17px;font-weight:600;color:#111">&#128203; Punch-out &mdash; ${_calEsc(c.addr||'')}</div>
+        <div style="font-size:12.5px;color:#888;margin-top:2px">${forms.length?(forms.length+' walk-through'+(forms.length===1?'':'s')+' &middot; best is '+best+' of '+tot+(_poComplete(c)?' &mdash; <b style="color:#0F7B54">ready to list</b>':'')):'Anybody with an account can fill one in.'}</div>
+      </div>
+      <span onclick="_poClose()" style="cursor:pointer;font-size:24px;color:#aaa;line-height:1">&times;</span>
     </div>
+    ${tabs}
+    ${inner}
   </div>`;
   document.body.appendChild(host);
 }
@@ -13696,6 +13899,9 @@ const PERMIT_JURIS_SEED= ["City of Columbus","Hilliard","City of Grandview Heigh
 const PERMIT_OWNERS    = ["Jennifer Tatum","Marlo"];
 const PERMIT_TASK_CATEGORY = "Permit";
 // A portal that has not been looked at in this many days raises a task by itself.
+// Bruce, 13 Sept: "a week is the right chase interval for now &mdash; if we want to change
+// it in the future we can." One number, named, so changing it later is a one-line edit
+// rather than a hunt through the file.
 const PERMIT_STALE_DAYS = 7;
 // An inspection happens either mid-build (before drywall closes it up) or at the
 // end. The label is what tells the property card which subphase it belongs to.
@@ -13772,6 +13978,12 @@ function _permitDaysSince(ds){
 function _permitOpen(r){ return (r.status||"")!=="Closed"; }
 // What still needs a human. Anything Closed is finished and never counts.
 function _permitNeeds(r){
+  // Bruce, 13 Sept: "we should add a real approval date field so we can track it more
+  // accurately." The field exists; what was missing is anything insisting it gets filled
+  // in. Without the approval date, "how long does this building department take" cannot
+  // be answered, so a permit marked approved with no date is outstanding work.
+  if(/^(issued|closed)$/i.test(String(r.status||"")) && !r.issued)
+    return "marked approved, but the approval date is missing";
   if(!_permitOpen(r)) return null;
   if((r.status||"")==="Corrections Required") return "corrections required";
   if(r.received && !r.responded) return "comment from "+(r.examiner||"the examiner")+" on "+r.received+" not responded to";
@@ -14714,7 +14926,7 @@ function _permitTrackerBody(){
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr))">
           ${fld('Permit / application #', tx(r.id,"number","Permit #",150))}
           ${fld('Submitted', dt(r.id,"submitted"))}
-          ${fld('Issued', dt(r.id,"issued"), (/issued|closed/i.test(String(r.status||""))&&!r.issued)?'needs a date':'')}
+          ${fld('Approved / issued', dt(r.id,"issued"), (/issued|closed/i.test(String(r.status||""))&&!r.issued)?'<b style="color:#B42318">approved, but no date &mdash; put it in</b>':(r.issued?'the day the city approved it':''))}
           ${fld('Turnaround', turn)}
           ${fld('Engineer stamp', dt(r.id,"stamped"))}
           ${fld('Portal checked', dt(r.id,"checked",`_permitCheckedSet('${r.id}',this.value)`), ckNote)}
@@ -14805,6 +15017,9 @@ function _mowName(pid){
   return m?(m.name||''):(w||'');
 }
 async function _mowSetWho(pid, val){
+  if(val && val!=='__add' && typeof _ctFlagConfirm==='function' && !_ctFlagConfirm(val)){
+    (window._trkRerender||function(){})(); return;
+  }
   if(val==='__add'){ await _mowAdd(pid); return; }
   await _trkSet('mowinfo',pid,'who',val,true);
 }
@@ -15050,7 +15265,7 @@ function _vaTrackers(){
 
   if(view==='w9') return shell(back+_trkSearchBox('Search a contractor…')+_trkTable('🧾 W-9 Tracker','#7A3FA8','<th style="padding:9px 10px;text-align:left">Contractor</th><th style="padding:9px;text-align:left">Name on W-9</th><th style="padding:9px">On file</th><th style="padding:9px;text-align:left">Notes</th><th style="padding:9px;text-align:left">Email</th><th style="padding:9px;text-align:left">Phone</th>'+(ro?'':'<th style="padding:9px;text-align:right">Jobs</th><th></th>'),w9rows)+`<div style="font-size:12px;color:#999">Ticking "On file" here also marks the contractor in the Contractor Directory.${ro?'':' <b>Remove</b> deletes the whole contractor record — use it on duplicates, and remove the copy with 0 jobs against it.'}</div>`);
   if(view==='mow') return shell(back+_trkSearchBox('Search a property…')+_trkTable('🌱 Mowing Tracker','#3B6D11','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px;text-align:left">Who is mowing</th><th style="padding:9px;text-align:left">How often</th><th style="padding:9px;text-align:left">Cost/mow</th><th style="padding:9px;text-align:left">Contact #</th><th style="padding:9px;text-align:left">PM</th><th style="padding:9px;text-align:left">Payment</th><th style="padding:9px">On route</th><th style="padding:9px">Removed after</th>',mowrows)+_trkClosedSimple(closed,'mowing history'));
-  if(view==='window') return shell(back+winStageBar+winAdd+_trkSearchBox('Search a property…')+_trkTable('🪟 Window Tracker'+(_wf?' — '+_winStageMeta(_wf).label:''),'#185FA5','<th style="padding:9px 10px;text-align:left">Property / what’s being replaced</th><th style="padding:9px">Needed</th><th style="padding:9px">Measure</th><th style="padding:9px">Ordered</th><th style="padding:9px">Arrival</th><th style="padding:9px">Install</th><th style="padding:9px;text-align:left">Notes &amp; comments</th>',winrows)+`<div style="font-size:12px;color:#999;margin-top:-8px">This list is the window <b>queue</b> &mdash; only houses somebody has actually asked for windows or glass on. Use <b>Add to the window list</b> above for a one-off job. Each square is one stage: the number is how many houses are waiting on <i>that</i> step, and clicking a square filters the list to it. A house moves on when you tick the box, not when you set the date &mdash; a booked install is still an install to chase. Dates you set here land on that property’s construction calendar automatically, and Slack posts 48 hours before the measure and install dates.${winFin.length?` <b>${winFin.length}</b> finished propert${winFin.length===1?'y is':'ies are'} in the completed folder below.`:''}</div>`+winFinished+winClosed);
+  if(view==='window') return shell(back+winStageBar+winAdd+_trkSearchBox('Search a property…')+_trkTable('🪟 Window Tracker'+(_wf?' — '+_winStageMeta(_wf).label:''),'#185FA5','<th style="padding:9px 10px;text-align:left">Property / what’s being replaced</th><th style="padding:9px">Needed</th><th style="padding:9px">Measure</th><th style="padding:9px">Ordered</th><th style="padding:9px">Arrival</th><th style="padding:9px">Install</th><th style="padding:9px;text-align:left">Notes &amp; comments</th>',winrows)+`<div style="font-size:12px;color:#999;margin-top:-8px">This list is the window <b>queue</b> &mdash; only houses somebody has actually asked for windows or glass on. Use <b>Add to the window list</b> above for a one-off job. Each square is one stage: the number is how many houses are waiting on <i>that</i> step, and clicking a square filters the list to it. A house moves on when you tick the box, not when you set the date &mdash; a booked install is still an install to chase. Dates you set here land on that property’s construction calendar automatically, and Slack posts 48 hours before the measure and install dates — in <b>#Window-Tracker</b>, the same channel the scheduled alerts go to. Post there when you have asked for a measure and the request shows up on this list.${winFin.length?` <b>${winFin.length}</b> finished propert${winFin.length===1?'y is':'ies are'} in the completed folder below.`:''}</div>`+winFinished+winClosed);
   // ---------- Utility tracker, one rectangle per property ----------
   // Bruce, 13 Sept: "build the utility tracker out where it's squares instead of
   // horizontal across just to make sure everything is in order from start to finish."
@@ -16552,16 +16767,55 @@ function _ctImportSplit(){
   imported.forEach(function(c){ const h=_ctHolds(c.id); (h.length?held:free).push({c:c,holds:h}); });
   return { imported:imported, free:free, held:held, kept:list.filter(c=>!_ctImported(c)) };
 }
+// Bruce, 13 Sept: "a red flagged contractor should be warned about." Which is also the
+// reason a red-flagged record is the one import we do NOT delete: the value of the record
+// is the warning on it. Delete it and the same name gets added again next month by
+// somebody who never heard why we stopped using them.
+function _ctFlagged(c){ return !!(c && c.red_flag); }
+function _ctFlagNote(c){
+  const n=String((c&&c.notes)||'');
+  const m=n.match(/Vetting:\s*([^.]+)\./i);
+  return m?m[1].trim():'';
+}
+// Anywhere a contractor is chosen, this is the sentence that goes in front of the person
+// choosing them. Returns '' for everybody who is not flagged, so it costs nothing to call.
+function _ctFlagWarnText(id){
+  const c=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).find(x=>x.id===id);
+  if(!_ctFlagged(c)) return '';
+  const why=_ctFlagNote(c);
+  return '\uD83D\uDEA9 '+String(c.business_name||c.name||'This contractor')+' is RED-FLAGGED \u2014 do not hire.'
+       + (why?('\n\nWhat the directory says: "'+why+'"'):'')
+       + '\n\nBook them anyway?';
+}
+function _ctFlagConfirm(id){
+  const t=_ctFlagWarnText(id);
+  return t ? confirm(t) : true;
+}
+// The small red strip that sits on a contractor's row or booking wherever they appear.
+function _ctFlagChip(id, compact){
+  const c=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).find(x=>x.id===id);
+  if(!_ctFlagged(c)) return '';
+  const why=_ctFlagNote(c);
+  if(compact) return `<span title="Red-flagged \u2014 do not hire${why?(': '+_calEsc(why)):''}" style="font-size:10.5px;font-weight:700;color:#B42318;background:#FBEAE8;padding:1px 7px;border-radius:99px;white-space:nowrap">\uD83D\uDEA9 do not hire</span>`;
+  return `<div style="margin-top:4px;background:#FBEAE8;border:0.5px solid #F0C2BD;border-radius:7px;padding:6px 10px;font-size:11.5px;color:#B42318;line-height:1.45"><b>\uD83D\uDEA9 Red-flagged \u2014 do not hire.</b>${why?(' '+_calEsc(why)+'.'):''} If this is wrong, clear the flag in the Contractor Directory.</div>`;
+}
 // One click, but it names every record first and asks once. Nothing with anything
 // attached is in this list, by construction.
 async function _ctImportPurge(){
   if(_blockIfReadOnly()) return;
   const sp=_ctImportSplit();
-  if(!sp.free.length){ alert("Nothing to remove — every contractor from the August import is either booked, on a mowing route, or has a W-9 on file."); return; }
-  const names=sp.free.map(o=>'• '+((o.c.business_name||o.c.name||'(no name)'))).join('\n');
-  if(!confirm("Remove these "+sp.free.length+" contractors from the August PDF import?\n\nNone of them is booked on a job, on a mowing route, or has a W-9 on file — so nothing else in the app points at them. This cannot be undone.\n\n"+names)) return;
+  // A red-flagged record is kept even though nothing points at it. The flag IS the
+  // record's value - it is the note that stops somebody hiring them again.
+  const go=sp.free.filter(o=>!_ctFlagged(o.c));
+  const keptFlags=sp.free.filter(o=>_ctFlagged(o.c));
+  if(!go.length){ alert("Nothing to remove — every contractor from the August import is either booked, on a mowing route, has a W-9 on file, or is red-flagged."); return; }
+  const names=go.map(o=>'• '+((o.c.business_name||o.c.name||'(no name)'))).join('\n');
+  const flagLine=keptFlags.length
+    ? ("\n\nKEEPING "+keptFlags.length+" red-flagged record"+(keptFlags.length===1?'':'s')+" ("+keptFlags.map(o=>o.c.name).join(', ')+") — the flag is the warning, and deleting it means the name comes back with nothing on it.")
+    : "";
+  if(!confirm("Remove these "+go.length+" contractors from the August PDF import?\n\nNone of them is booked on a job, on a mowing route, or has a W-9 on file — so nothing else in the app points at them. This cannot be undone."+flagLine+"\n\n"+names)) return;
   let ok=0, bad=[];
-  for(const o of sp.free){
+  for(const o of go){
     const r=await supabase.from("pm_contractors").delete().eq("id",o.c.id);
     if(r.error) bad.push((o.c.name||o.c.id)+': '+(r.error.message||'')); else ok++;
   }
@@ -16593,7 +16847,7 @@ function _ctImportPanel(){
     <div style="min-width:0;flex:1">
       <div style="font-size:13px;color:#111">${_calEsc(o.c.business_name||o.c.name||'(no name)')}${(o.c.business_name&&o.c.name&&o.c.business_name!==o.c.name)?`<span style="color:#999;font-weight:400"> — ${_calEsc(o.c.name)}</span>`:''}</div>
       <div style="font-size:11.5px;color:#aaa;margin-top:1px">${_calEsc(o.c.trade||'no trade set')}${o.c.phone?(' · '+_calEsc(o.c.phone)):''}</div>
-      ${o.holds.length?`<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:3px">${o.holds.map(h=>`<span style="font-size:10.5px;font-weight:600;color:${chipCol[h.k]||'#666'};background:${(chipCol[h.k]||'#666')}14;padding:1px 8px;border-radius:99px">${h.t}</span>`).join('')}</div>`:''}
+      ${(o.holds.length||_ctFlagged(o.c))?`<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:3px">${_ctFlagChip(o.c.id,true)}${o.holds.map(h=>`<span style="font-size:10.5px;font-weight:600;color:${chipCol[h.k]||'#666'};background:${(chipCol[h.k]||'#666')}14;padding:1px 8px;border-radius:99px">${h.t}</span>`).join('')}</div>`:''}
     </div>
     ${ro?'':`<span onclick="_ctImportRemoveOne('${o.c.id}')" style="cursor:pointer;font-size:12px;color:${removable?'#B42318':'#c9ccd4'};white-space:nowrap;flex-shrink:0">Remove</span>`}
   </div>`;
@@ -16602,17 +16856,22 @@ function _ctImportPanel(){
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
       <div>
         <div style="font-size:14px;font-weight:600;color:#111">📄 From the August PDF import &mdash; ${sp.imported.length} name${sp.imported.length===1?'':'s'}</div>
-        <div style="font-size:12.5px;color:#777;margin-top:2px;line-height:1.5;max-width:760px">${sp.kept.length} contractor${sp.kept.length===1?' was':'s were'} added by hand since and ${sp.kept.length===1?'is':'are'} not touched by anything here. Of the imported ones, <b style="color:#B42318">${sp.free.length}</b> have nothing attached and can go; <b style="color:#0F7B54">${sp.held.length}</b> are still in use.</div>
+        <div style="font-size:12.5px;color:#777;margin-top:2px;line-height:1.5;max-width:760px">${sp.kept.length} contractor${sp.kept.length===1?' was':'s were'} added by hand since and ${sp.kept.length===1?'is':'are'} not touched by anything here. Of the imported ones, <b style="color:#B42318">${sp.free.filter(o=>!_ctFlagged(o.c)).length}</b> have nothing attached and can go; <b style="color:#0F7B54">${sp.held.length}</b> are still in use${(()=>{const f=sp.free.filter(o=>_ctFlagged(o.c)).length;return f?`, and <b style="color:#B42318">${f}</b> are red-flagged and kept on purpose &mdash; the flag is the warning`:'';})()}.</div>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        ${ro?'':`<button onclick="_ctImportPurge()" style="padding:7px 14px;background:${sp.free.length?'#B42318':'#e6e8ee'};color:${sp.free.length?'#fff':'#98a2b3'};border:none;border-radius:7px;font-size:12.5px;font-weight:600;cursor:${sp.free.length?'pointer':'default'}">Remove the ${sp.free.length} unused</button>`}
+        ${(()=>{ const n=sp.free.filter(o=>!_ctFlagged(o.c)).length;
+          return ro?'':`<button onclick="_ctImportPurge()" style="padding:7px 14px;background:${n?'#B42318':'#e6e8ee'};color:${n?'#fff':'#98a2b3'};border:none;border-radius:7px;font-size:12.5px;font-weight:600;cursor:${n?'pointer':'default'}">Remove the ${n} unused</button>`; })()}
         <button onclick="window._ctImportOpen=!window._ctImportOpen;renderContractorDirectory()" style="padding:7px 14px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer">${openKey?'Hide the list':'Show the list'}</button>
       </div>
     </div>
     ${openKey?`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;margin-top:12px">
       <div>
-        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#B42318;margin-bottom:2px">Nothing attached — safe to remove (${sp.free.length})</div>
-        <div style="max-height:340px;overflow-y:auto">${sp.free.length?sp.free.map(o=>row(o,true)).join(''):'<div style="font-size:12.5px;color:#bbb;padding:8px 0">None.</div>'}</div>
+        ${(()=>{ const go=sp.free.filter(o=>!_ctFlagged(o.c)), keep=sp.free.filter(o=>_ctFlagged(o.c));
+          return `<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#B42318;margin-bottom:2px">Nothing attached &mdash; safe to remove (${go.length})</div>
+        <div style="max-height:300px;overflow-y:auto">${go.length?go.map(o=>row(o,true)).join(''):'<div style="font-size:12.5px;color:#bbb;padding:8px 0">None.</div>'}</div>`
+        + (keep.length?`<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#B42318;margin:12px 0 2px">&#128681; Red-flagged &mdash; kept on purpose (${keep.length})</div>
+          <div style="font-size:11.5px;color:#888;margin-bottom:2px">Nothing points at these either, but the flag is the record. Delete it and the name comes back next month with no warning on it.</div>
+          <div>${keep.map(o=>row(o,false)).join('')}</div>`:''); })()}
       </div>
       <div>
         <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#0F7B54;margin-bottom:2px">Still in use — removing loses this (${sp.held.length})</div>
@@ -19000,40 +19259,58 @@ function _mOpenAdd(kind){
 function _mPropOnlyPicker(pfx){
   const cards=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived)
     .slice().sort((a,b)=>String(a.addr||'').localeCompare(String(b.addr||'')));
-  return `<select id="${pfx}-prop" class="m-select"><option value="">— Pick the property —</option>${
+  const onch = (pfx==='mc') ? ' onchange="_mCOPropPick()"' : '';
+  return `<select id="${pfx}-prop" class="m-select"${onch}><option value="">— Pick the property —</option>${
     cards.map(c=>`<option value="${_calEsc(c.id)}">${_calEsc(c.addr||'')}</option>`).join('')}</select>`;
 }
 function _mAddFormCO(){
+  const names=(typeof _pmTabNames==='function')?_pmTabNames():[];
+  const pmOpts=['<option value="">— not set —</option>'].concat(names.map(n=>`<option value="${_calEsc(n)}">${_calEsc(n)}</option>`)).join('');
   return _mFormWrap("Add a change order",`
     <div style="font-size:13px;color:#888;margin-bottom:10px;line-height:1.5">Work that was <b>not</b> in the budget when it was agreed. Spent to Date does not change &mdash; this comes off it when on-budget is worked out.</div>
     <div class="m-label">Property</div>${_mPropOnlyPicker("mc")}
-    <div class="m-label" style="margin-top:12px">What is it?</div><input id="mc-what" class="m-input" placeholder="Add a bathroom in the basement"/>
-    <div class="m-label" style="margin-top:12px">Amount</div><input id="mc-amt" class="m-input" inputmode="decimal" placeholder="$0.00"/>
-    <div class="m-label" style="margin-top:12px">Who asked for it?</div><input id="mc-who" class="m-input" placeholder="Name"/>
-    <div class="m-label" style="margin-top:12px">Date</div><input id="mc-date" type="date" class="m-input" value="${_ymd(new Date())}"/>
-    <div class="m-label" style="margin-top:12px">Why <span style="color:#aaa;font-weight:400">&mdash; optional</span></div><textarea id="mc-why" class="m-input" rows="2" placeholder="What changed, and who agreed to it"></textarea>
+    <div class="m-label" style="margin-top:12px">What is the change order for?</div><input id="mc-what" class="m-input" placeholder="Add a bathroom in the basement"/>
+    <div class="m-label" style="margin-top:12px">Date of change order</div><input id="mc-date" type="date" class="m-input" value="${_ymd(new Date())}"/>
+    <div class="m-label" style="margin-top:12px">Project manager <span style="color:#aaa;font-weight:400">&mdash; fills itself in when you pick the property</span></div><select id="mc-pm" class="m-select">${pmOpts}</select>
+    <div class="m-label" style="margin-top:12px">Who or what caused it</div><input id="mc-cause" class="m-input" placeholder="Owner request, rot behind the tub…"/>
+    <div class="m-label" style="margin-top:12px">Who approved it</div><input id="mc-appr" class="m-input" placeholder="Name"/>
+    <div class="m-label" style="margin-top:12px">Total estimated cost</div><input id="mc-est" class="m-input" inputmode="decimal" placeholder="$0.00"/>
     <button class="m-btn" onclick="_submit('m-co',this,'Saving…',_mSubmitCO)">Save change order</button>
-    <div style="font-size:12px;color:#999;margin-top:9px">It lands as <b>proposed</b>. Somebody has to approve it on the property card before it counts.</div>
+    <div style="font-size:12px;color:#999;margin-top:9px"><b>Total actual cost</b> gets filled in later on the property card &mdash; usually at the end of the project. Until then the estimate stands in.</div>
   `);
+}
+// Picking the property fills the PM in, because the card already knows who it is.
+function _mCOPropPick(){
+  const sel=document.getElementById('mc-prop'); const pm=document.getElementById('mc-pm');
+  if(!sel||!pm) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===sel.value);
+  const want=String((c&&c.pm)||'');
+  if(!want) return;
+  const opt=[...pm.options].find(o=>_canonSame(o.value,want));
+  if(opt) pm.value=opt.value;
+  else { const o=document.createElement('option'); o.value=want; o.textContent=want; pm.appendChild(o); pm.value=want; }
 }
 async function _mSubmitCO(){
   if(_blockIfReadOnly()) return;
-  const pid=(document.getElementById("mc-prop")||{}).value||'';
+  const g=(k)=>{ const el=document.getElementById(k); return el?String(el.value||'').trim():''; };
+  const pid=g("mc-prop");
   if(!pid){ alert("Pick the property this change order is on."); return; }
-  const what=((document.getElementById("mc-what")||{}).value||'').trim();
+  const what=g("mc-what");
   if(!what){ alert("Say what the change order is for."); return; }
-  const amt=((document.getElementById("mc-amt")||{}).value||'').trim();
-  if(!_coAmt({amt:amt})){ alert("Put the dollar amount in. A change order with no number cannot come off the budget."); return; }
+  const est=g("mc-est");
+  if(_coNum(est)==null){ alert("Put the estimated cost in. A change order with no number cannot come off the budget."); return; }
+  const appr=g("mc-appr");
+  if(!appr){ alert("Put down who approved it."); return; }
   const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
   const rec={ id:Date.now().toString(36)+Math.random().toString(36).slice(2,5),
-              d:((document.getElementById("mc-date")||{}).value)||_ymd(new Date()),
-              amt:amt, t:what,
-              why:((document.getElementById("mc-why")||{}).value||'').trim(),
-              who:((document.getElementById("mc-who")||{}).value||'').trim(),
-              by:_mMyName(), made:new Date().toISOString(), ok:false };
+              d:g("mc-date")||_ymd(new Date()),
+              pm:g("mc-pm")||String((c&&c.pm)||''),
+              t:what, cause:g("mc-cause"), appr:appr,
+              est:est, act:'',
+              by:_mMyName(), made:new Date().toISOString() };
   if(!(await _coWrite(pid, arr=>arr.push(rec)))){ _toast("That change order was NOT saved.","bad"); return; }
-  _logAudit('created','property',(c&&c.addr)||'', 'Change order raised from the field app: '+what+' — '+amt+(rec.who?(' (asked for by '+rec.who+')'):''));
-  _toast("Change order added: "+what+" — waiting to be approved");
+  _logAudit('created','property',(c&&c.addr)||'', 'Change order from the field app: '+what+' — estimated '+est+', approved by '+appr+(rec.cause?(' — caused by '+rec.cause):''));
+  _toast("Change order added: "+what);
   _mGo("add");
 }
 // ---- Side task, from the phone ----
@@ -19708,4 +19985,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-13e realtor-and-company-meeting -->
+<!-- build: 2026-09-13f change-order-form-and-listings-meeting -->
