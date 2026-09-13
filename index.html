@@ -3437,6 +3437,163 @@ function _spentAsOf(pid,dateStr){
   let v=null; for(let i=0;i<h.length;i++){ if(h[i].d<=dateStr) v=h[i].v; else break; }
   return v;
 }
+// ===================== CHANGE ORDERS =====================
+// Bruce, 13 Sept: "if the project manager budgeted one hundred thousand dollars and the
+// final spend was one hundred and fifteen thousand dollars, but on the whole project
+// there was fifteen thousand dollars of change orders, you subtract that fifteen
+// thousand. That means a hundred thousand dollars. He technically was in budget."
+// So: Spent to Date stays exactly what was spent - nobody edits history. A change order
+// is scope the room added after the budget was set, recorded separately with what it was
+// and who asked for it. On-budget is then measured against spend MINUS approved change
+// orders, because the manager cannot be held to a number for work that was not in it.
+// A change order only counts once somebody approves it; a proposed one is visible but
+// does not move the scoring.
+function _coList(c){ const a=((c&&c.checklists)||{}).co; return Array.isArray(a)?a:[]; }
+function _coAmt(x){ const v=parseFloat(String((x&&x.amt)||'').replace(/[^0-9.\-]/g,'')); return isNaN(v)?0:v; }
+function _coApproved(c){ return _coList(c).filter(x=>x && x.ok===true); }
+function _coTotal(c){ return _coApproved(c).reduce((a,x)=>a+_coAmt(x),0); }
+function _coPending(c){ return _coList(c).filter(x=>!x || x.ok!==true); }
+function _coPendingTotal(c){ return _coPending(c).reduce((a,x)=>a+_coAmt(x),0); }
+// What the manager is actually judged on: real spend, less the scope he was handed later.
+function _spentAdj(c){
+  const sp=_spentNow(c);
+  if(sp==null) return null;
+  return sp - _coTotal(c);
+}
+function _coMoney(v){ return '$'+Math.round(Math.abs(v)).toLocaleString(); }
+async function _coWrite(pid, mut){
+  if(_blockIfReadOnly()) return false;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return false;
+  const arr=_coList(c).map(x=>Object.assign({},x));
+  mut(arr);
+  const ok=await _wmChecklistPatch(pid, { co: arr });
+  return ok;
+}
+async function _coAdd(pid){
+  if(_blockIfReadOnly()) return;
+  const g=(k)=>{ const el=document.getElementById(k); return el?String(el.value||'').trim():''; };
+  const what=g('co-w-'+pid), amt=g('co-a-'+pid);
+  if(!what){ alert("Say what the change order is for — “add a bathroom in the basement”, “replace the sewer line”."); return; }
+  if(!_coAmt({amt:amt})){ alert("Put the dollar amount in. A change order with no number cannot come off the budget."); return; }
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
+  const me=(typeof _sqMe==='function')?_sqMe():'';
+  const rec={ id:Date.now().toString(36)+Math.random().toString(36).slice(2,5),
+              d:g('co-d-'+pid)||_ymd(new Date()), amt:amt, t:what, why:g('co-y-'+pid),
+              who:g('co-r-'+pid), by:me, made:new Date().toISOString(), ok:false };
+  if(!(await _coWrite(pid, arr=>arr.push(rec)))) return;
+  _logAudit('created','property',(c&&c.addr)||'', 'Change order raised: '+what+' — '+(amt||'no amount')+(rec.who?(' (asked for by '+rec.who+')'):''));
+  ['co-w-','co-a-','co-y-','co-r-'].forEach(function(k){ const el=document.getElementById(k+pid); if(el) el.value=''; if(typeof _wmDraftClear==='function') _wmDraftClear(k+pid); });
+  _coRerender(pid);
+}
+// Approving is what makes it count against the budget, so it is a separate, named act.
+async function _coApprove(pid, id){
+  if(_blockIfReadOnly()) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
+  const x=_coList(c).find(y=>y.id===id); if(!x) return;
+  const turningOn=!(x.ok===true);
+  if(turningOn && !confirm("Approve this change order?\n\n"+String(x.t||'')+" — "+String(x.amt||'')+"\n\nOnce approved it comes off this project's spend when on-budget is worked out. Spent to Date does not change."))
+    return;
+  const me=(typeof _sqMe==='function')?_sqMe():'';
+  if(!(await _coWrite(pid, arr=>{ const y=arr.find(z=>z.id===id); if(y){ y.ok=turningOn; y.okBy=turningOn?me:''; y.okAt=turningOn?new Date().toISOString():''; } }))) return;
+  _logAudit('updated','property',(c&&c.addr)||'', (turningOn?'Change order approved: ':'Change order approval withdrawn: ')+String(x.t||'')+' — '+String(x.amt||''));
+  _coRerender(pid);
+}
+async function _coDel(pid, id){
+  if(_blockIfReadOnly()) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
+  const x=_coList(c).find(y=>y.id===id); if(!x) return;
+  if(!confirm("Remove this change order?\n\n"+String(x.t||'')+" — "+String(x.amt||'')+"\n\nThis cannot be undone.")) return;
+  if(!(await _coWrite(pid, arr=>{ const i=arr.findIndex(z=>z.id===id); if(i>=0) arr.splice(i,1); }))) return;
+  _logAudit('deleted','property',(c&&c.addr)||'', 'Change order removed: '+String(x.t||''));
+  _coRerender(pid);
+}
+async function _coField(pid, id, field, val){
+  if(_blockIfReadOnly()) return;
+  if(!(await _coWrite(pid, arr=>{ const y=arr.find(z=>z.id===id); if(y) y[field]=val; }))) return;
+  _coRerender(pid);
+}
+function _coRerender(pid){
+  if(window.__coModal===pid){ _coOpen(pid); return; }
+  if(typeof openPropDetail==='function') openPropDetail(pid);
+}
+function _coClose(){ window.__coModal=null; const h=document.getElementById('co-modal'); if(h) h.remove(); }
+// The per-property change order dashboard. Opened from the Spent to Date box.
+function _coOpen(pid){
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return;
+  window.__coModal=pid;
+  const ro=(typeof isReadOnly==='function')?isReadOnly():false;
+  const list=_coList(c).slice().sort((a,b)=>String(b.d||'').localeCompare(String(a.d||'')));
+  const budget=parseFloat(String(c.budget||'').replace(/[^0-9.\-]/g,''));
+  const spent=_spentNow(c);
+  const appr=_coTotal(c), pend=_coPendingTotal(c);
+  const adj=_spentAdj(c);
+  const inBudget = (!isNaN(budget)&&budget>0&&adj!=null) ? (adj<=budget) : null;
+  const rawOver  = (!isNaN(budget)&&budget>0&&spent!=null) ? (spent-budget) : null;
+  const tile=(l,v,col,sub)=>`<div style="background:#f7f8fb;border-radius:8px;padding:9px 12px"><div style="font-size:10px;color:#98a2b3;text-transform:uppercase;letter-spacing:.05em">${l}</div><div style="font-size:18px;font-weight:700;color:${col||'#111'};font-variant-numeric:tabular-nums">${v}</div>${sub?`<div style="font-size:10.5px;color:#aaa;margin-top:1px">${sub}</div>`:''}</div>`;
+  const row=(x)=>{
+    const on=x.ok===true;
+    return `<tr style="border-top:0.5px solid #eef0f6;${on?'':'background:#FFFDF7'}">
+      <td style="padding:9px 12px;white-space:nowrap;font-size:12.5px;color:#666">${ro?_calEsc(x.d||''):`<input type="date" value="${_calEsc(x.d||'')}" onchange="_coField('${pid}','${x.id}','d',this.value)" style="padding:3px 5px;border:0.5px solid #d8dce6;border-radius:5px;font-size:12px;color:#555"/>`}</td>
+      <td style="padding:9px 12px"><div style="font-size:13.5px;color:#111;white-space:pre-wrap">${_calEsc(x.t||'')}</div>${x.why?`<div style="font-size:11.5px;color:#888;margin-top:2px;white-space:pre-wrap">${_calEsc(x.why)}</div>`:''}</td>
+      <td style="padding:9px 12px;font-size:12.5px;color:#555;white-space:nowrap">${_calEsc(x.who||'')||'<span style="color:#ccc">—</span>'}</td>
+      <td style="padding:9px 12px;text-align:right;font-size:13.5px;font-weight:700;color:${on?'#111':'#8a6d1a'};white-space:nowrap;font-variant-numeric:tabular-nums">${_calEsc(x.amt||'')}</td>
+      <td style="padding:9px 12px;text-align:center;white-space:nowrap">
+        ${ro
+          ? `<span style="font-size:11px;font-weight:700;color:${on?'#0F7B54':'#8a6d1a'}">${on?'approved':'proposed'}</span>`
+          : `<span onclick="_coApprove('${pid}','${x.id}')" title="${on?'Withdraw the approval':'Approve it — this is what makes it count'}" style="cursor:pointer;font-size:11px;font-weight:700;padding:3px 10px;border-radius:99px;background:${on?'#E6F4ED':'#FBF3E2'};color:${on?'#0F7B54':'#8a6d1a'};white-space:nowrap">${on?'✓ approved':'approve'}</span>`}
+        ${on&&x.okBy?`<div style="font-size:10px;color:#bbb;margin-top:2px">by ${_calEsc(x.okBy)}</div>`:''}
+      </td>
+      ${ro?'':`<td style="padding:9px 12px;text-align:right"><span onclick="_coDel('${pid}','${x.id}')" style="cursor:pointer;color:#ddd;font-size:12px">✕</span></td>`}
+    </tr>`;
+  };
+  const adder=ro?'':`<div style="background:#F7F8FB;border-top:0.5px solid #e0e4ec;padding:12px 14px">
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#98a2b3;margin-bottom:7px">Add a change order</div>
+    <div style="display:flex;gap:7px;flex-wrap:wrap;align-items:flex-start">
+      <input id="co-w-${pid}" placeholder="What is it? — add a bathroom in the basement…" style="flex:2;min-width:230px;padding:7px 10px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px"/>
+      <input id="co-a-${pid}" placeholder="$0.00" style="width:100px;padding:7px 10px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px"/>
+      <input id="co-r-${pid}" placeholder="Who asked for it?" style="width:150px;padding:7px 10px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px"/>
+      <input type="date" id="co-d-${pid}" value="${_ymd(new Date())}" style="padding:6px 8px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12.5px;color:#555"/>
+      <button onclick="_coAdd('${pid}')" style="padding:7px 15px;background:#122A4A;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer">Add</button>
+    </div>
+    <input id="co-y-${pid}" placeholder="Why — what changed, and who agreed to it? (optional)" style="width:100%;margin-top:7px;padding:7px 10px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12.5px;box-sizing:border-box"/>
+    <div style="font-size:11.5px;color:#999;margin-top:6px">It lands as <b>proposed</b>. Somebody has to approve it before it comes off the budget — that way nothing quietly excuses an overspend.</div>
+  </div>`;
+  const host=document.createElement('div');
+  host.id='co-modal';
+  host.style.cssText='position:fixed;inset:0;background:rgba(17,17,17,.45);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px;overflow:auto';
+  host.onclick=(e)=>{ if(e.target===host) _coClose(); };
+  host.innerHTML=`<div style="background:#fff;border-radius:12px;max-width:920px;width:100%;box-shadow:0 18px 50px rgba(0,0,0,.25);margin:auto">
+    <div style="padding:15px 20px;border-bottom:0.5px solid #e7eaf0;display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+      <div>
+        <div style="font-size:17px;font-weight:600;color:#111">&#128209; Change orders &mdash; ${_calEsc(c.addr||'')}</div>
+        <div style="font-size:12.5px;color:#888;margin-top:2px">Work added after the budget was set. <b>Spent to Date never changes</b> &mdash; these come off it when on-budget is worked out at close.</div>
+      </div>
+      <span onclick="_coClose()" style="cursor:pointer;font-size:24px;color:#aaa;line-height:1">&times;</span>
+    </div>
+    <div style="padding:14px 20px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px">
+      ${tile('Budget', isNaN(budget)||budget<=0?'—':_coMoney(budget), '#111', 'incl. contingency')}
+      ${tile('Spent to date', spent==null?'—':_coMoney(spent), rawOver!=null&&rawOver>0?'#B42318':'#111', rawOver!=null?(rawOver>0?(_coMoney(rawOver)+' over the raw number'):(_coMoney(-rawOver)+' under')):'')}
+      ${tile('Approved change orders', appr?('− '+_coMoney(appr)):'—', appr?'#4A1D6E':'#c9ccd4', _coApproved(c).length+' approved'+(pend?(' · '+_coPending(c).length+' waiting'):''))}
+      ${tile('Judged on', adj==null?'—':_coMoney(adj), inBudget===null?'#111':(inBudget?'#0F7B54':'#B42318'), inBudget===null?'set a budget and spend':(inBudget?'IN BUDGET':_coMoney(adj-budget)+' over'))}
+    </div>
+    ${(appr&&rawOver!=null&&rawOver>0&&inBudget)?`<div style="margin:0 20px 12px;background:#EAF7F1;border:1px solid #BFE5D4;border-radius:9px;padding:10px 14px;font-size:13px;color:#0d6b4a">Raw spend is <b>${_coMoney(rawOver)}</b> over budget, but <b>${_coMoney(appr)}</b> of that is approved change orders &mdash; work that was not in the budget when it was set. On that basis this project is <b>in budget</b>.</div>`:''}
+    <div style="overflow:auto;border-top:0.5px solid #e7eaf0">
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="background:#fafbfc">
+          <th style="padding:9px 12px;text-align:left;font-size:11px;color:#98a2b3;text-transform:uppercase;letter-spacing:.04em">Date</th>
+          <th style="padding:9px 12px;text-align:left;font-size:11px;color:#98a2b3;text-transform:uppercase;letter-spacing:.04em">What changed</th>
+          <th style="padding:9px 12px;text-align:left;font-size:11px;color:#98a2b3;text-transform:uppercase;letter-spacing:.04em">Asked for by</th>
+          <th style="padding:9px 12px;text-align:right;font-size:11px;color:#98a2b3;text-transform:uppercase;letter-spacing:.04em">Amount</th>
+          <th style="padding:9px 12px;text-align:center;font-size:11px;color:#98a2b3;text-transform:uppercase;letter-spacing:.04em">Status</th>
+          ${ro?'':'<th></th>'}
+        </tr></thead>
+        <tbody>${list.length?list.map(row).join(''):`<tr><td colspan="${ro?5:6}" style="padding:26px;text-align:center;color:#bbb;font-size:13.5px">No change orders on this project. Everything spent so far was in the original scope.</td></tr>`}</tbody>
+      </table>
+    </div>
+    ${adder}
+  </div>`;
+  document.body.appendChild(host);
+}
 function _spentNow(c){ const v=parseFloat(String(c.spent||"").replace(/[^0-9.\-]/g,"")); return isNaN(v)?null:v; }
 // Average $/day across a set of properties for any window. Returns null when there is
 // not enough snapshot history yet (the caller falls back to whole-project velocity).
@@ -4346,6 +4503,8 @@ function _pdLinked(c){
             <div style="font-size:11px;color:#aaa;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Spent to Date</div>
             <div style="font-size:18px;font-weight:500;color:${progColor}">${c.spent||'—'}</div>
             <div style="font-size:12px;color:#aaa;margin-top:2px">${pct}% of budget used</div>
+            ${(()=>{ const n=_coList(c).length, t=_coTotal(c), pn=_coPending(c).length;
+              return `<div onclick="_coOpen('${c.id}')" style="cursor:pointer;font-size:12px;color:#185FA5;font-weight:600;margin-top:6px;padding-top:6px;border-top:0.5px solid #e3e6ec">&#128209; Change orders${n?` &middot; <span style="color:#4A1D6E">${_coMoney(t)}</span> approved`:''} &rsaquo;${pn?`<div style="font-size:10.5px;font-weight:600;color:#8a6d1a;margin-top:1px">${pn} waiting to be approved</div>`:''}${n?'':`<div style="font-size:10.5px;color:#bbb;font-weight:400;margin-top:1px">none yet &mdash; add one here</div>`}</div>`; })()}
           </div>
           <div style="background:#f4f5f7;border-radius:8px;padding:10px 12px;border:1.5px solid #e6f1fb">
             ${_accumBox(c)}
@@ -10043,16 +10202,24 @@ function _rhName(u){ return u?`${u.firstName||""} ${u.lastName||""}`.trim():""; 
 // 30-day performance for one person: $/day, task completion, reschedules, budget, timeline.
 // On budget = spent is at or under budget, counted per property. Properties with no
 // budget or no spend figure are left out rather than scored as a pass.
+// Bruce, 13 Sept: approved change orders come off the spend first. A manager who was
+// handed $15k of extra scope after the budget was agreed is not over budget for it, so
+// the figure scored here is spend MINUS approved change orders. Spent to Date on the
+// card is untouched - this is the judgement, not the history.
 function _budgetSplit(cards){
-  let on=0, off=0, unknown=0;
+  let on=0, off=0, unknown=0, coProps=0, coTotal=0, rescued=0;
   (cards||[]).forEach(function(c){
     const b=parseFloat(String((c&&c.budget)||"").replace(/[^0-9.\-]/g,""));
-    const sp=(typeof _spentNow==='function')?_spentNow(c):null;
+    const raw=(typeof _spentNow==='function')?_spentNow(c):null;
+    const co=(typeof _coTotal==='function')?_coTotal(c):0;
+    const sp=(raw==null)?null:(raw-co);
+    if(co>0){ coProps++; coTotal+=co; }
     if(isNaN(b)||b<=0||sp==null){ unknown++; return; }
-    if(sp<=b) on++; else off++;
+    if(sp<=b){ on++; if(raw>b) rescued++; } else off++;
   });
   const tot=on+off;
   return { on:on, off:off, unknown:unknown, total:tot,
+           coProps:coProps, coTotal:coTotal, rescued:rescued,
            pct: tot?Math.round(on/tot*100):null,
            overPct: tot?(100-Math.round(on/tot*100)):null };
 }
@@ -18344,9 +18511,115 @@ function _mAddTab(){
   const item=(ic,t,d,k)=>`<div class="m-card" style="display:flex;align-items:center;gap:12px;margin-bottom:10px" onclick="_mOpenAdd('${k}')"><div style="font-size:25px">${ic}</div><div><div style="font-size:16px;font-weight:600;color:#111">${t}</div><div style="font-size:13px;color:#888">${d}</div></div></div>`;
   return item("✅","Add a task","Assign work to yourself or the team","task")
     +item("🏗","Add a construction item","Schedule work on a property","event")
-    +item("📦","Add a material delivery","Log a delivery to a job","material");
+    +item("📦","Add a material delivery","Log a delivery to a job","material")
+    // Bruce, 13 Sept: "in the field app, where you go over to the tab that says add, we
+    // need to add a change order form there as well... They also need to be able to add
+    // a side task form."
+    +item("📑","Add a change order","Scope added after the budget was set","co")
+    +item("📌","Add a side task","A reminder on a property — no calendar unless you say so","sq");
 }
-function _mOpenAdd(kind){ const body=document.getElementById("m-body"); if(!body) return; if(kind==="task") _newStepsReset(); body.innerHTML= kind==="task"?_mAddFormTask():_mAddFormEvent(kind==="material"); if(kind==="task") _mNewStepsRender(); body.scrollTop=0; }
+function _mOpenAdd(kind){
+  const body=document.getElementById("m-body"); if(!body) return;
+  if(kind==="task") _newStepsReset();
+  body.innerHTML = kind==="task" ? _mAddFormTask()
+                 : kind==="co"   ? _mAddFormCO()
+                 : kind==="sq"   ? _mAddFormSQ()
+                 : _mAddFormEvent(kind==="material");
+  if(kind==="task") _mNewStepsRender();
+  body.scrollTop=0;
+}
+// ---- Change order, from the phone ----
+// Same record the property card's change-order dashboard holds, so a PM standing in the
+// house can raise one the moment the owner asks for it, and it is waiting to be approved
+// before anybody argues about the budget.
+function _mPropOnlyPicker(pfx){
+  const cards=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived)
+    .slice().sort((a,b)=>String(a.addr||'').localeCompare(String(b.addr||'')));
+  return `<select id="${pfx}-prop" class="m-select"><option value="">— Pick the property —</option>${
+    cards.map(c=>`<option value="${_calEsc(c.id)}">${_calEsc(c.addr||'')}</option>`).join('')}</select>`;
+}
+function _mAddFormCO(){
+  return _mFormWrap("Add a change order",`
+    <div style="font-size:13px;color:#888;margin-bottom:10px;line-height:1.5">Work that was <b>not</b> in the budget when it was agreed. Spent to Date does not change &mdash; this comes off it when on-budget is worked out.</div>
+    <div class="m-label">Property</div>${_mPropOnlyPicker("mc")}
+    <div class="m-label" style="margin-top:12px">What is it?</div><input id="mc-what" class="m-input" placeholder="Add a bathroom in the basement"/>
+    <div class="m-label" style="margin-top:12px">Amount</div><input id="mc-amt" class="m-input" inputmode="decimal" placeholder="$0.00"/>
+    <div class="m-label" style="margin-top:12px">Who asked for it?</div><input id="mc-who" class="m-input" placeholder="Name"/>
+    <div class="m-label" style="margin-top:12px">Date</div><input id="mc-date" type="date" class="m-input" value="${_ymd(new Date())}"/>
+    <div class="m-label" style="margin-top:12px">Why <span style="color:#aaa;font-weight:400">&mdash; optional</span></div><textarea id="mc-why" class="m-input" rows="2" placeholder="What changed, and who agreed to it"></textarea>
+    <button class="m-btn" onclick="_submit('m-co',this,'Saving…',_mSubmitCO)">Save change order</button>
+    <div style="font-size:12px;color:#999;margin-top:9px">It lands as <b>proposed</b>. Somebody has to approve it on the property card before it counts.</div>
+  `);
+}
+async function _mSubmitCO(){
+  if(_blockIfReadOnly()) return;
+  const pid=(document.getElementById("mc-prop")||{}).value||'';
+  if(!pid){ alert("Pick the property this change order is on."); return; }
+  const what=((document.getElementById("mc-what")||{}).value||'').trim();
+  if(!what){ alert("Say what the change order is for."); return; }
+  const amt=((document.getElementById("mc-amt")||{}).value||'').trim();
+  if(!_coAmt({amt:amt})){ alert("Put the dollar amount in. A change order with no number cannot come off the budget."); return; }
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
+  const rec={ id:Date.now().toString(36)+Math.random().toString(36).slice(2,5),
+              d:((document.getElementById("mc-date")||{}).value)||_ymd(new Date()),
+              amt:amt, t:what,
+              why:((document.getElementById("mc-why")||{}).value||'').trim(),
+              who:((document.getElementById("mc-who")||{}).value||'').trim(),
+              by:_mMyName(), made:new Date().toISOString(), ok:false };
+  if(!(await _coWrite(pid, arr=>arr.push(rec)))){ _toast("That change order was NOT saved.","bad"); return; }
+  _logAudit('created','property',(c&&c.addr)||'', 'Change order raised from the field app: '+what+' — '+amt+(rec.who?(' (asked for by '+rec.who+')'):''));
+  _toast("Change order added: "+what+" — waiting to be approved");
+  _mGo("add");
+}
+// ---- Side task, from the phone ----
+function _mAddFormSQ(){
+  const me=(typeof _sqMe==='function')?_sqMe():'';
+  const phases=(typeof SQ_PHASES!=='undefined'?SQ_PHASES:[{id:'pre',label:'Before construction'}]);
+  return _mFormWrap("Add a side task",`
+    <div style="font-size:13px;color:#888;margin-bottom:10px;line-height:1.5">A reminder that lives on the property card. It stays off everybody's task calendar unless you tick the box.</div>
+    <div class="m-label">Property</div>${_mPropOnlyPicker("ms")}
+    <div class="m-label" style="margin-top:12px">The reminder</div><textarea id="ms-t" class="m-input" rows="2" placeholder="Ask the neighbour about the fence line…"></textarea>
+    <div class="m-label" style="margin-top:12px">When in the job?</div><select id="ms-ph" class="m-select">${phases.map(x=>`<option value="${_calEsc(x.id)}">${_calEsc(x.label)}</option>`).join('')}</select>
+    <div class="m-label" style="margin-top:12px">Who is it for? <span style="color:#aaa;font-weight:400">&mdash; tap one</span></div>${_mWhoChips("ms",[me])}
+    <div class="m-label" style="margin-top:12px">Bring it back up on <span style="color:#aaa;font-weight:400">&mdash; optional</span></div><input id="ms-d" type="date" class="m-input"/>
+    <label style="display:flex;align-items:center;gap:9px;margin-top:12px;font-size:14px;color:#444"><input type="checkbox" id="ms-c" style="width:19px;height:19px"/> Put it on the task calendar for that date too</label>
+    <button class="m-btn" onclick="_submit('m-sq',this,'Saving…',_mSubmitSQ)">Save side task</button>
+  `);
+}
+async function _mSubmitSQ(){
+  if(_blockIfReadOnly()) return;
+  const pid=(document.getElementById("ms-prop")||{}).value||'';
+  if(!pid){ alert("Pick the property this reminder belongs to."); return; }
+  const text=((document.getElementById("ms-t")||{}).value||'').trim();
+  if(!text){ alert("Write the reminder first."); return; }
+  const ph=((document.getElementById("ms-ph")||{}).value)||'pre';
+  const at=((document.getElementById("ms-d")||{}).value)||'';
+  const wantCal=!!((document.getElementById("ms-c")||{}).checked);
+  const whoList=_canonUnique(_mWhoRead("ms"));
+  const who=whoList.length?whoList[0]:'';
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
+  let tid=null;
+  if(wantCal){
+    if(!at){ alert("Pick the date first — a task on the calendar has to land on a day."); return; }
+    const full=who||_mMyName();
+    const ins=await supabase.from("pm_tasks").insert({
+      title:text, category:'Side Task', assignee:full||null, assignees:whoList.length?whoList.slice():(full?[full]:[]),
+      start_date:at, due_date:at, property_id:pid, status:'open',
+      notes:'Side task from '+((c&&c.addr)||'the property card')
+    }).select("id").single();
+    if(ins.error||!ins.data||!ins.data.id){ _toast("Couldn't put it on the calendar — "+((ins.error&&ins.error.message)||"nothing was saved"),"bad"); return; }
+    tid=ins.data.id;
+    if(typeof loadTasks==='function'){ try{ await loadTasks(); }catch(e){} }
+  }
+  const ok=await _sqWrite(pid, arr=>arr.push({
+    id:Date.now().toString(36)+Math.random().toString(36).slice(2,5),
+    ph:ph, t:text, done:false, at:at, by:_mMyName(), who:who, made:new Date().toISOString(), tid:tid
+  }));
+  if(!ok){ _toast("That side task was NOT saved.","bad"); return; }
+  _logAudit('created','property',(c&&c.addr)||'', 'Side task from the field app'+(who?(' for '+who):'')+': '+text+(at?(' — remind on '+at+(tid?' and on the task calendar':'')):' — no reminder date'));
+  _toast("Side task added"+(who?(" for "+who):""));
+  _mGo("add");
+}
 function _mFormWrap(title,inner){
   return `<button class="m-btn m-btn-lite" style="width:auto;padding:7px 14px;font-size:14px;border-radius:99px;margin-bottom:12px;margin-top:0" onclick="_mGo('add')">‹ Back</button>
     <div class="m-card"><div style="font-size:17px;font-weight:700;color:#111;margin-bottom:4px">${title}</div>${inner}</div>`;
@@ -18410,13 +18683,50 @@ function _mNewStepsField(){
       </div>
     </div>`;
 }
+// Bruce, 13 Sept: "you also need to be able to assign a task to multiple people from
+// the field app and not just one person." A dropdown on a phone can only hold one name,
+// so this is a row of tappable chips instead - tap a name on, tap it off. The first one
+// picked stays the task's primary assignee, because that is what every list and every
+// "whose is this?" column reads.
+function _mWhoChips(pfx, preselect){
+  const me=_mMyName();
+  const names=(typeof teamMembers==='function')?(teamMembers()||[]):[];
+  const pre=Array.isArray(preselect)?preselect.map(String):(preselect?[String(preselect)]:[]);
+  const list=names.slice();
+  if(me && list.indexOf(me)<0) list.unshift(me);
+  const on=(n)=>pre.some(x=>_canonSame(x,n));
+  return `<div id="${pfx}-who-chips" style="display:flex;flex-wrap:wrap;gap:7px;margin-top:2px">
+    ${list.map(n=>`<span data-who="${_calEsc(n)}" class="${on(n)?'mwho on':'mwho'}" onclick="_mWhoTap(this)" style="cursor:pointer;user-select:none;padding:8px 13px;border-radius:99px;font-size:14px;border:1px solid ${on(n)?'#122A4A':'#d8dce6'};background:${on(n)?'#122A4A':'#fff'};color:${on(n)?'#fff':'#444'}">${_calEsc(n)}${n===me?' (me)':''}</span>`).join('')}
+  </div>
+  <div id="${pfx}-who-sum" style="font-size:12.5px;color:#888;margin-top:7px">${_mWhoSummaryText(pre)}</div>`;
+}
+function _mWhoSummaryText(list){
+  if(!list||!list.length) return 'Nobody assigned yet — tap a name. Tap more than one to put it on several people.';
+  if(list.length===1) return 'Assigned to '+list[0]+'.';
+  return 'Assigned to '+list.join(', ')+' — it shows on all '+list.length+' task lists.';
+}
+function _mWhoTap(el){
+  const on=el.classList.contains('on');
+  el.classList.toggle('on', !on);
+  el.style.border='1px solid '+(!on?'#122A4A':'#d8dce6');
+  el.style.background=(!on?'#122A4A':'#fff');
+  el.style.color=(!on?'#fff':'#444');
+  const host=el.parentNode;
+  const sum=host&&host.parentNode?host.parentNode.querySelector('[id$="-who-sum"]'):null;
+  if(sum) sum.textContent=_mWhoSummaryText(_mWhoRead(host.id.replace('-who-chips','')));
+}
+function _mWhoRead(pfx){
+  const host=document.getElementById(pfx+'-who-chips');
+  if(!host) return [];
+  return [...host.querySelectorAll('.mwho.on')].map(x=>x.getAttribute('data-who')).filter(Boolean);
+}
 function _mAddFormTask(){
   const myName=_mMyName();
-  const whoOpts=`<option value="">— Unassigned —</option>`+teamMembers().map(n=>`<option value="${_calEsc(n)}" ${n===myName?"selected":""}>${_calEsc(n)}</option>`).join("");
+  // whoOpts no longer used on this form - the chips above replaced the dropdown.
   return _mFormWrap("Add a task",`
     <div class="m-label">Task</div><input id="mt-title" class="m-input" placeholder="What needs to get done"/>
     <div class="m-label" style="margin-top:12px">Header / category</div><input id="mt-cat" class="m-input" placeholder="Optional"/>
-    <div class="m-label" style="margin-top:12px">Assign to</div><select id="mt-who" class="m-select">${whoOpts}</select>
+    <div class="m-label" style="margin-top:12px">Assign to <span style="color:#aaa;font-weight:400">&mdash; tap one or more</span></div>${_mWhoChips("mt",[myName])}
     <div class="m-label" style="margin-top:12px">Property / address</div>${_mAddrPicker("mt")}
     <div style="display:flex;gap:10px">
       <div style="flex:1"><div class="m-label" style="margin-top:12px">Start</div><input id="mt-start" type="date" class="m-input"/></div>
@@ -18437,7 +18747,8 @@ async function _mSubmitTask(){
   const title=(document.getElementById("mt-title").value||"").trim();
   if(!title){ alert("Enter a task."); return; }
   const cat=(document.getElementById("mt-cat").value||"").trim()||null;
-  const who=document.getElementById("mt-who").value||null;
+  const whoList=_canonUnique(_mWhoRead("mt"));
+  const who=whoList.length?whoList[0]:null;
   const _pl=_mResolveAddr("mt"); const prop=_pl.property_id; const location=_pl.location;
   const due=document.getElementById("mt-due").value||_mDay;
   const dueTime=((document.getElementById("mt-time")||{}).value||"")||null;
@@ -18450,12 +18761,12 @@ async function _mSubmitTask(){
   const dueList=_recurDueDates(due, repeat, runtil);
   const offDays=(start!=null)?Math.round((_dParse(due)-_dParse(start))/86400000):null;
   const _steps=(typeof _newSteps!=='undefined'?_newSteps:[]).filter(x=>x && String(x.text||'').trim());
-  const rows=dueList.map(d=>({ title, category:cat, assignee:who, assignees:who?[who]:[], due_date:d, due_time:dueTime, start_date:(offDays!=null?_dAddDays(d,-offDays):null), property_id:prop, location, notes, status:"open",
+  const rows=dueList.map(d=>({ title, category:cat, assignee:who, assignees:whoList.slice(), due_date:d, due_time:dueTime, start_date:(offDays!=null?_dAddDays(d,-offDays):null), property_id:prop, location, notes, status:"open",
     subtasks:_steps.map(x=>({ id:Date.now().toString(36)+Math.random().toString(36).slice(2,5), text:String(x.text).trim(), done:false })) }));
   const { error }=await supabase.from("pm_tasks").insert(rows);
   if(error){ _toast("That task was NOT saved — "+(error.message||""),"bad"); return; }
   if(_pl.saveAddr && location) await _saveAddressForReuse(location);
-  if(typeof _logAudit==="function") _logAudit("created","task", dueList.length>1?(title+" (×"+dueList.length+", repeats "+repeat+")"):title, who?("Assignee: "+who):"");
+  if(typeof _logAudit==="function") _logAudit("created","task", dueList.length>1?(title+" (×"+dueList.length+", repeats "+repeat+")"):title, whoList.length?("Assigned to: "+whoList.join(", ")):"");
   _toast("Task added: "+title+(_steps.length?(" — "+_steps.length+" step"+(_steps.length===1?"":"s")):""));
   _newStepsReset();
   await loadTasks(); _mGo("day");
@@ -18932,4 +19243,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-13c utilities-as-squares -->
+<!-- build: 2026-09-13d change-orders -->
