@@ -8536,6 +8536,7 @@ function _wmMarkDirty(e){
   const el=e.target;
   if(!_wmInMeetingEl(el)) return;
   if(!document.querySelector('[data-wm-prop]')) return;   // only inside a meeting
+  window.__wmLastKeyAt=Date.now();
   window.__wmDirty[el.id]=el.value;
 }
 document.addEventListener('input',  _wmMarkDirty, true);
@@ -8636,6 +8637,56 @@ function _wmLiveBanner(n){
   clearTimeout(window.__wmBannerT);
   window.__wmBannerT=setTimeout(function(){ if(b) b.style.display='none'; },3200);
 }
+// ---- The bug Isaiah filmed, 14 Sept -------------------------------------------
+// "He would type something out in the comment section, press space, and then boom.
+//  It deletes it automatically."
+//
+// The cause was here, and it was not the space bar. Two of the values in a meeting
+// record are OBJECTS rather than text: __opened ({first, by} - stamped the first time
+// anybody opens the meeting) and __closed ({at, by}). This loop compared them with !==.
+// Every poll re-reads the record from the database, which parses fresh JSON, so those
+// objects are new instances every single time - and `!==` on two identical objects that
+// are not the same instance is ALWAYS true.
+//
+// So from the moment anybody opened a meeting, every tick concluded "something
+// structural changed" and rebuilt the entire screen. Every nine seconds. Permanently,
+// for everybody. Whatever you were typing when the tick landed was thrown away.
+// It looked like the space bar because a space is where people pause.
+//
+// Three things are fixed:
+//   1. Compare by VALUE, not by object identity.
+//   2. __opened never redraws anything - it is a timestamp nothing on screen reads.
+//   3. Even a real structural change waits until nobody is typing before it redraws.
+function _wmSameVal(a,b){
+  if(a===b) return true;
+  if(typeof a==='string' && typeof b==='string') return false;
+  try{ return JSON.stringify(a)===JSON.stringify(b); }catch(e){ return false; }
+}
+// Meta keys that change on their own and that nothing on screen depends on. These must
+// never cost anybody a sentence.
+const WM_QUIET_META = ['__opened'];
+// Is somebody's cursor in a box right now, or was it a moment ago?
+function _wmTypingNow(){
+  const a=document.activeElement;
+  if(a && (a.tagName==='TEXTAREA'||a.tagName==='INPUT'||a.tagName==='SELECT')
+     && a.closest && a.closest('#dash-body')) return true;
+  return (Date.now()-(window.__wmLastKeyAt||0)) < 2500;
+}
+// A redraw that has to happen, held until the room stops typing.
+function _wmRenderWhenIdle(kind, week){
+  window.__wmPendingRender={kind:kind, week:week};
+  if(window.__wmIdleTimer) return;
+  window.__wmIdleTimer=setInterval(function(){
+    if(!window.__wmPendingRender || !document.querySelector('[data-wm-prop]')){
+      clearInterval(window.__wmIdleTimer); window.__wmIdleTimer=null; window.__wmPendingRender=null; return;
+    }
+    if(_wmTypingNow()) return;
+    const pnd=window.__wmPendingRender;
+    window.__wmPendingRender=null;
+    clearInterval(window.__wmIdleTimer); window.__wmIdleTimer=null;
+    openWeeklyMeeting(pnd.kind, pnd.week);
+  }, 900);
+}
 async function _wmPollTick(){
   if(!document.querySelector('[data-wm-prop]')){ clearInterval(_wmPollTimer); _wmPollTimer=null; return; }
   const kind=window.__wmLastKind; if(!kind) return;
@@ -8648,8 +8699,11 @@ async function _wmPollTick(){
   window._wmData=fresh;
   let changed=0, structural=false;
   Object.keys(theirs).forEach(function(k){
-    if(mine[k]===theirs[k]) return;
-    if(k.indexOf('__')===0){ structural=true; return; }
+    if(_wmSameVal(mine[k], theirs[k])) return;
+    if(k.indexOf('__')===0){
+      if(WM_QUIET_META.indexOf(k)<0) structural=true;
+      return;
+    }
     const el=document.getElementById('wm-'+k);
     if(!el){ return; }
     if(document.activeElement===el) return;      // never yank the box somebody is typing in
@@ -8658,7 +8712,13 @@ async function _wmPollTick(){
     if(Object.prototype.hasOwnProperty.call(window.__wmDirty||{}, el.id)) return;
     el.value=theirs[k]; _wmLiveFlash(el); changed++;
   });
-  if(structural){ openWeeklyMeeting(kind, window.__wmLastWeek||undefined); return; }
+  if(structural){
+    // Somebody closed or reopened the meeting - the screen genuinely has to change.
+    // It can wait a couple of seconds for the person mid-sentence.
+    if(_wmTypingNow()) _wmRenderWhenIdle(kind, window.__wmLastWeek||undefined);
+    else openWeeklyMeeting(kind, window.__wmLastWeek||undefined);
+    return;
+  }
   if(changed) _wmLiveBanner(changed);
 }
 // When each meeting actually runs. Bruce, 13 Sept: "the listings meeting is every
@@ -19985,4 +20045,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-13f change-order-form-and-listings-meeting -->
+<!-- build: 2026-09-14a meeting-stops-eating-what-you-type -->
