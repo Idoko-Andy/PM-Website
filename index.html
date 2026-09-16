@@ -2609,6 +2609,21 @@ async function updatePropertyPhaseInSupabase(id, newPhase) {
     if (_frIdx>=0 && _npIdx>=_frIdx && (_cl.permitted==='yes') && !_cl.permits_cleared) {
       _cl.permits_cleared = _ymd(new Date()); _clChg=true;
     }
+    // Bruce, 16 Sept: "our start date on the property card automatically updates once
+    // the property has went into framing MEPs and insulation ... that's when I want to
+    // start the start date till listed, for permitted jobs."
+    // On a permitted house the permits coming through and the work actually starting are
+    // two different days, and it is the second one the build should be measured from.
+    // Reaching Framing stamps it, and the card's Start Date moves to match so every
+    // screen counts from the same day. The date that was there before is kept, not
+    // thrown away - a PM may have set it deliberately and we should be able to see it.
+    if (_frIdx>=0 && _npIdx>=_frIdx && (_cl.permitted==='yes') && !_cl.build_start) {
+      const _bs = _ymd(new Date());
+      _cl.build_start = _bs; _clChg=true;
+      const _prev = String((_pc && _pc.start) || '').trim();
+      if (_prev && _prev !== _bs) _cl.start_before_build = _prev;
+      patch.start_date = _bs;
+    }
     if (_clChg) patch.checklists = _cl;
   }
   // Permitted properties must pass Final Inspections before hitting Listed on the Market.
@@ -3441,10 +3456,21 @@ function _datesUnset(c){ return !c || !c.start || !c.end || _datesArePlaceholder
 // ignore a same-day placeholder start date entirely.
 function _consStart(c){
   if(!c) return null;
+  // A permitted house measures its build from the day it reached Framing, because that
+  // is the day work actually started. That stamp wins outright - taking the earlier of
+  // it and the old start date would put the clock back into the permit wait, which is
+  // the whole thing this is meant to separate out.
+  const build=(c.checklists && c.checklists.build_start) || null;
+  if(_isPermittedCard(c) && build) return build;
   const stamp=(c.checklists && c.checklists.construction_start) || null;
   const begun=_datesArePlaceholder(c) ? null : (c.start || null);
   if(stamp && begun) return String(begun)<String(stamp) ? begun : stamp;
   return stamp || begun || null;
+}
+// The day the build actually began on a permitted house, if it has got there yet.
+function _buildStart(c){
+  if(!_isPermittedCard(c)) return null;
+  return ((c && c.checklists) || {}).build_start || null;
 }
 function _velStart(c){ return _consStart(c); }
 
@@ -5409,28 +5435,77 @@ function _pdnAllPMs(key, title){
 async function _pdnToggleAll(pm,key,i){
   if(_blockIfReadOnly()) return;
   const l=(((window._pdnData||{})[pm]||{})[key])||[];
-  if(l[i]){ l[i].done=!l[i].done; await _pdnSave(); _pmBoardDrill(window._pdnCurPM||pm,key); }
+  if(!l[i]) return;
+  if(await _pdnMutate(pm,key,l[i],function(a,j){ a[j].done=!a[j].done; })) _pmBoardDrill(window._pdnCurPM||pm,key);
 }
 async function _pdnAddAll(pm,key,elId){
   if(_blockIfReadOnly()) return;
-  const el=document.getElementById(elId); if(!el||!el.value.trim()) return;
-  const d=window._pdnData=window._pdnData||{};
-  d[pm]=d[pm]||{}; d[pm][key]=d[pm][key]||[];
-  d[pm][key].push({t:el.value.trim(),done:false,at:_ymd(new Date())});
-  await _pdnSave(); _pmBoardDrill(window._pdnCurPM||pm,key);
+  await _pdnAddFrom(pm, key, elId, function(){ _pmBoardDrill(window._pdnCurPM||pm,key); });
 }
 function _pmBoardBack(pmName){ const el=document.getElementById('pd-content'); if(el) el.innerHTML=pmTabContent(pmName); }
 // ---- Drill-in Comments & Notes (persisted in pm_settings key 'pm_drill_notes') ----
 async function _pdnLoad(){ try{ const r=await supabase.from("pm_settings").select("data").eq("key","pm_drill_notes").maybeSingle(); if(r.error){ window._pdnLoadOk=false; window._pdnData={}; return; } window._pdnLoadOk=true; window._pdnData=(r.data&&r.data.data)||{}; }catch(e){ window._pdnLoadOk=false; window._pdnData={}; } }
-async function _pdnSave(){ if(window._pdnLoadOk===false){ alert("These comments could not be loaded a moment ago, so saving now would overwrite them all with a blank list. This save was stopped - refresh the page and try again."); return false; } const _err=await _pmSettingsWrite('pm_drill_notes', window._pdnData||{}); if(_err){ alert("YOUR COMMENT WAS NOT SAVED - "+_err); return false; } return true; }
-async function _pdnAdd(pm,key){ const el=document.getElementById('pdn-new'); if(!el||!el.value.trim()) return; const d=window._pdnData=window._pdnData||{}; d[pm]=d[pm]||{}; d[pm][key]=d[pm][key]||[]; d[pm][key].push({t:el.value.trim(),done:false,at:_ymd(new Date())}); await _pdnSave(); _pmBoardDrill(pm,key); }
-async function _pdnToggle(pm,key,i){ if(_blockIfReadOnly()) return; const l=(((window._pdnData||{})[pm]||{})[key])||[]; if(l[i]){ l[i].done=!l[i].done; await _pdnSave(); _pmBoardDrill(pm,key); } }
+// These comments had the same fault the meeting questions had: a save wrote the whole
+// record from this browser's copy, so two people commenting on two different PMs in
+// the same few minutes wiped each other. Adding now appends to the LIVE list, and
+// ticking or removing one finds that comment by what it says rather than by where it
+// sat on screen - somebody else may have added one above it since this page drew.
+function _pdnGuard(){
+  if(window._pdnLoadOk===false){ alert("These comments could not be loaded a moment ago, so saving now would overwrite them all with a blank list. This save was stopped - refresh the page and try again."); return false; }
+  return true;
+}
+async function _pdnAppend(pm, key, rec){
+  if(!_pdnGuard()) return false;
+  const fresh=await _pmSettingsRead('pm_drill_notes');
+  if(fresh===null || typeof fresh!=='object'){ alert("YOUR COMMENT WAS NOT SAVED - the comments could not be re-read, so nothing was written. Your words are still in the box; try again in a moment."); return false; }
+  fresh[pm]=fresh[pm]||{};
+  if(!Array.isArray(fresh[pm][key])) fresh[pm][key]=[];
+  fresh[pm][key].push(rec);
+  const err=await _pmSettingsWrite('pm_drill_notes', fresh);
+  if(err){ alert("YOUR COMMENT WAS NOT SAVED - "+err); return false; }
+  window._pdnData=fresh; window._pdnLoadOk=true;
+  return true;
+}
+async function _pdnMutate(pm, key, rec, fn){
+  if(!_pdnGuard()) return false;
+  if(!rec) return false;
+  const fresh=await _pmSettingsRead('pm_drill_notes');
+  if(fresh===null || typeof fresh!=='object'){ alert("NOT SAVED - the comments could not be re-read, so nothing was changed. Try again in a moment."); return false; }
+  const arr=Array.isArray((fresh[pm]||{})[key]) ? fresh[pm][key] : [];
+  let idx=arr.findIndex(function(x){ return x && x.t===rec.t && x.at===rec.at; });
+  if(idx<0) idx=arr.findIndex(function(x){ return x && x.t===rec.t; });
+  if(idx<0){ window._pdnData=fresh; alert("That comment is not on the list any more - somebody else may have removed it. The list has been refreshed."); return false; }
+  fn(arr, idx);
+  fresh[pm]=fresh[pm]||{}; fresh[pm][key]=arr;
+  const err=await _pmSettingsWrite('pm_drill_notes', fresh);
+  if(err){ alert("NOT SAVED - "+err); return false; }
+  window._pdnData=fresh; window._pdnLoadOk=true;
+  return true;
+}
+// One place that turns what is in a comment box into a saved comment, so all four
+// boxes behave identically and none of them can fail in silence.
+async function _pdnAddFrom(pm, key, elId, after){
+  if(_blockIfReadOnly()) return;
+  const el=document.getElementById(elId);
+  if(!el){ alert("Couldn't find the comment box - close this screen and open it again."); return; }
+  const t=(el.value||'').trim();
+  if(!t){ alert("Type the comment first, then press Add."); el.focus(); return; }
+  if(await _pdnAppend(pm, key, {t:t, done:false, at:_ymd(new Date())})){
+    el.value='';
+    if(typeof _wmDraftClear==='function') _wmDraftClear(elId);
+    if(typeof _toast==='function') _toast('Comment saved.');
+    if(after) after();
+  }
+}
+async function _pdnAdd(pm,key){ await _pdnAddFrom(pm, key, 'pdn-new', function(){ _pmBoardDrill(pm,key); }); }
+async function _pdnToggle(pm,key,i){ if(_blockIfReadOnly()) return; const l=(((window._pdnData||{})[pm]||{})[key])||[]; if(!l[i]) return; if(await _pdnMutate(pm,key,l[i],function(a,j){ a[j].done=!a[j].done; })) _pmBoardDrill(pm,key); }
 async function _pdnDel(pm,key,i){
   if(_blockIfReadOnly()) return;
   const l=(((window._pdnData||{})[pm]||{})[key])||[];
-  const gone=l[i]; const txt=String((gone&&(gone.text||gone.note))||gone||'').slice(0,70);
+  const gone=l[i]; if(!gone) return;
+  const txt=String((gone&&(gone.t||gone.text||gone.note))||'').slice(0,70);
   if(!_confirmDelete(txt?('this note - "'+txt+'"'):'this note')) return;
-  l.splice(i,1); await _pdnSave(); _pmBoardDrill(pm,key);
+  if(await _pdnMutate(pm,key,gone,function(a,j){ a.splice(j,1); })) _pmBoardDrill(pm,key);
 }
 
 function pmStatRow(label, val, color) {
@@ -5918,7 +5993,7 @@ async function _wmAddEvent(pid){
   openAddCalEvent(_ymd(new Date()));
   setTimeout(()=>{ const el=document.getElementById('cal-prop'); if(el){ el.value=pid; if(typeof _calAddrToggle==='function') _calAddrToggle('cal'); } },60);
 }
-async function _pdnToggle2(pm,i){ const l=(((window._pdnData||{})[pm]||{}).precon)||[]; if(l[i]){ l[i].done=!l[i].done; await _pdnSave(); openWeeklyMeeting('team'); } }
+async function _pdnToggle2(pm,i){ if(_blockIfReadOnly()) return; const l=(((window._pdnData||{})[pm]||{}).precon)||[]; if(!l[i]) return; if(await _pdnMutate(pm,'precon',l[i],function(a,j){ a[j].done=!a[j].done; })) openWeeklyMeeting('team'); }
 // Every pm_settings write goes through here. Supabase returns {error} rather than
 // throwing, so the old `try{ await upsert }catch(e){}` pattern swallowed EVERY
 // failure and the caller then showed a green "Saved ✓". Returns null on success,
@@ -5951,6 +6026,50 @@ async function _pmSettingsWrite(key, data){
 // The Monday meeting's scope, in one place. Vacant / On Standby through Pre List /
 // Punchout, plus Rental Handoff (Bruce, 8/29). Once a house is listed it leaves this
 // walk-through and picks up in the Listings Meeting instead.
+// ---- One record, several people ----------------------------------------------
+// Several things in this app live as ONE row in pm_settings that everybody writes to:
+// the Monday meeting's questions and long-lead items, the PM board's comments, the
+// full-day calendar. Saving used to mean "write the whole row from the copy this
+// browser is holding" - and that copy was taken when the page loaded. So if Marlo
+// added a question at 8:05 and Isaiah, whose page had been open since 7:50, added
+// one at 8:07, Isaiah's save wrote a record that had never heard of Marlo's question
+// and hers vanished. Whoever saved last won, and everybody else's typing was gone.
+// That is why Isaiah's questions for Bruce and Tommy were not there afterwards.
+//
+// A save now re-reads the live record first and puts back ONLY the entries this
+// browser actually touched. Everything anyone else added in the meantime is left
+// exactly as the database has it. If the re-read fails we refuse to save rather than
+// guess, because guessing is what lost the work in the first place.
+function _pmDeepGet(obj, path){
+  let o=obj;
+  for(let i=0;i<path.length;i++){ if(o===null||o===undefined) return undefined; o=o[path[i]]; }
+  return o;
+}
+function _pmDeepSet(obj, path, val){
+  let o=obj;
+  for(let i=0;i<path.length-1;i++){
+    const k=path[i];
+    if(o[k]===null||o[k]===undefined||typeof o[k]!=='object') o[k]={};
+    o=o[k];
+  }
+  const last=path[path.length-1];
+  if(val===undefined) delete o[last]; else o[last]=val;
+}
+// mine  - this browser's copy of the record
+// paths - the spots inside it this browser changed, e.g. ['q','k3f9a2'] or ['notes','p1::win']
+// Returns { err, base }. base is the record as it now stands in the database.
+async function _pmMergeWrite(key, mine, paths){
+  mine = mine || {};
+  paths = (paths||[]).filter(function(p){ return p && p.length; });
+  if(!paths.length) return { err:null, base:mine, nothing:true };
+  const fresh=await _pmSettingsRead(key);
+  if(fresh===null || typeof fresh!=='object'){
+    return { err:"could not re-read the record to save into, so nothing was written - your typing is still on screen, try again in a moment" };
+  }
+  paths.forEach(function(p){ _pmDeepSet(fresh, p, _pmDeepGet(mine, p)); });
+  const err=await _pmSettingsWrite(key, fresh);
+  return { err:err, base:fresh };
+}
 const WM_TEAM_PHASES=["Vacant / On Standby","Pre Construction","Waiting Permits","Framing, MEPS, Insulation","Drywall / Exterior Work","Finishes","Pre List / Punchout Process","Rental Handoff Process"];
 async function _wmLoad(){ try{ const r=await supabase.from("pm_settings").select("data").eq("key","meeting_notes").maybeSingle(); if(r.error){ window._wmLoadOk=false; window._wmData={}; return; } window._wmLoadOk=true; window._wmData=(r.data&&r.data.data)||{}; }catch(e){ window._wmLoadOk=false; window._wmData={}; } }
 // ---- Autosave --------------------------------------------------------------
@@ -6034,8 +6153,22 @@ async function _wmStampOpened(kind, wk){
   if(cur.first) return;
   try{ await _wmSetMeta(wk,kind,'__opened',{first:new Date().toISOString(), by:_miWho()}); }catch(e){}
 }
-async function _wmSaveNote(kind,pid,week){ if(_blockIfReadOnly()) return; const el=document.getElementById('wm-'+pid); if(!el) return; if(window._wmLoadOk===false){ alert("These meeting notes could not be loaded a moment ago. Saving now would overwrite the real record with a blank one, so this save was stopped. Refresh the page and try again."); return; } const d=window._wmData=window._wmData||{}; const wk=week||_wmWeekKey(); d[wk]=d[wk]||{}; d[wk][kind]=d[wk][kind]||{}; d[wk][kind][pid]=el.value; const _err=await _pmSettingsWrite('meeting_notes',d); if(_err){ alert("YOUR NOTE WAS NOT SAVED - "+_err+"\n\nCopy your text somewhere safe before you leave this page."); return; } const ok=document.getElementById('wm-ok-'+pid); if(ok){ ok.style.display='inline'; setTimeout(()=>{ok.style.display='none';},1500); } }
-async function _pdnAdd2(pm,key,elId){ const el=document.getElementById(elId); if(!el||!el.value.trim()) return; const d=window._pdnData=window._pdnData||{}; d[pm]=d[pm]||{}; d[pm][key]=d[pm][key]||[]; d[pm][key].push({t:el.value.trim(),done:false,at:_ymd(new Date())}); await _pdnSave(); openWeeklyMeeting('team'); }
+// The Save button under a note box. It used to write the WHOLE meeting record from this
+// browser's copy, which is the same fault that lost the questions: press Save at 8:07 on
+// a page loaded at 7:50 and every note anybody else typed in between went with it. It
+// now writes one box, into the live record, exactly like the autosave does.
+async function _wmSaveNote(kind,pid,week){
+  if(_blockIfReadOnly()) return;
+  const el=document.getElementById('wm-'+pid); if(!el) return;
+  if(window._wmLoadOk===false){ alert("These meeting notes could not be loaded a moment ago. Saving now would overwrite the real record with a blank one, so this save was stopped. Refresh the page and try again."); return; }
+  const wk=week||_wmWeekKey();
+  const _err=await _wmWriteField(wk, kind, pid, el.value);
+  if(_err){ alert("YOUR NOTE WAS NOT SAVED - "+_err+"\n\nCopy your text somewhere safe before you leave this page."); return; }
+  _wmDraftClear('wm-'+pid);
+  const ok=document.getElementById('wm-ok-'+pid);
+  if(ok){ ok.style.display='inline'; setTimeout(()=>{ok.style.display='none';},1500); }
+}
+async function _pdnAdd2(pm,key,elId){ await _pdnAddFrom(pm, key, elId, function(){ openWeeklyMeeting('team'); }); }
 // Backlog #95 (Start-of-Project dashboard) was never built, but six tiles on the
 // Start of Project and End of Project home screens were already wired to
 // openStartOfProjectDashboard() / openEndOfProjectDashboard(). Neither existed, so
@@ -6113,10 +6246,15 @@ async function _miLoad(){
     window._miLoadOk=true; window._miData=(r.data&&r.data.data)||{};
   }catch(e){ window._miLoadOk=false; window._miData={}; }
 }
+// Every place that changes a carried item says which one it changed, so the save can
+// put back that entry and nothing else.
+function _miTouch(){ (window.__miTouch=window.__miTouch||[]).push(Array.prototype.slice.call(arguments)); }
 async function _miSave(){
   if(window._miLoadOk===false){ alert("The carried-forward items could not be loaded a moment ago, so saving now would wipe them. This save was stopped — refresh the page and try again."); return false; }
-  const err=await _pmSettingsWrite('meeting_items', window._miData||{});
-  if(err){ alert("THAT WAS NOT SAVED — "+err); return false; }
+  const paths=window.__miTouch||[];
+  const r=await _pmMergeWrite('meeting_items', window._miData||{}, paths);
+  if(r.err){ alert("THAT WAS NOT SAVED — "+r.err); return false; }
+  if(!r.nothing){ window._miData=r.base; window.__miTouch=[]; }
   return true;
 }
 function _miAll(kind){ const d=(window._miData||{})[kind]||{}; return Object.keys(d).map(k=>Object.assign({id:k},d[k])); }
@@ -6136,15 +6274,30 @@ function _miAgeColor(raised){ const w=_miWeeks(raised); return w>=3?'#B42318':w>
 
 async function _miAdd(kind, pid, elId, whoSelId){
   if(_blockIfReadOnly()) return;
-  const el=document.getElementById(elId); if(!el) return;
-  const text=(el.value||'').trim(); if(!text) return;
+  const label = kind==='lag' ? 'long-lead item' : 'question';
+  const el=document.getElementById(elId);
+  // These used to return in silence. Pressing Add and having nothing at all happen is
+  // indistinguishable from pressing Add and having it quietly fail to save.
+  if(!el){ alert("Couldn't find the box for that "+label+" \u2014 close the meeting and open it again."); return; }
+  const text=(el.value||'').trim();
+  if(!text){ alert("Type the "+label+" in the box first, then press Add."); el.focus(); return; }
   const d=window._miData=window._miData||{}; d[kind]=d[kind]||{};
   const rec={pid:pid||null, text:text, by:_miWho(), raised:_ymd(new Date())};
   if(kind==='q'){ const w=document.getElementById(whoSelId); rec.who=(w&&w.value)||'Either'; }
-  d[kind][_miNewId()]=rec;
+  const id=_miNewId();
+  d[kind][id]=rec; _miTouch(kind, id);
   if(await _miSave()){
     _logAudit("created", kind==='lag'?"lag item":"question", text.slice(0,80), kind==='lag'?"Raised in the Monday meeting":("Needs "+(rec.who||'an answer')));
-    el.value=''; openWeeklyMeeting('team');
+    el.value='';
+    // Saved is saved. Without this the redraw puts the text straight back in the box
+    // and it reads as though the Add did nothing.
+    _wmDraftClear(elId);
+    if(typeof _toast==='function') _toast(kind==='lag'?'Long-lead item added.':('Question added \u2014 it stays on the list until '+(rec.who==='Either'?'Bruce or Tommy':rec.who)+' answers it.'));
+    openWeeklyMeeting('team');
+  } else {
+    // The save refused. Put the entry back out of memory so a retry does not double it,
+    // and leave the person's words in the box where they can see them.
+    delete d[kind][id];
   }
 }
 async function _miClose(kind, id){
@@ -6160,7 +6313,7 @@ async function _miClose(kind, id){
       rec.answered=stamp; rec.answer=a;
     }
   }
-  window._miData=d;
+  window._miData=d; _miTouch(kind, id);
   if(await _miSave()){
     _logAudit(((kind==='lag')?(rec.closed?"completed":"reopened"):(rec.answered?"completed":"reopened")), kind==='lag'?"lag item":"question", (rec.text||'').slice(0,80), rec.answer?("Answer: "+rec.answer):"");
     openWeeklyMeeting('team');
@@ -6169,7 +6322,7 @@ async function _miClose(kind, id){
 async function _miNote(kind, id, val){
   if(_blockIfReadOnly()) return;
   const d=window._miData||{}; const rec=(d[kind]||{})[id]; if(!rec) return;
-  rec.note=val; window._miData=d; await _miSave();
+  rec.note=val; window._miData=d; _miTouch(kind, id); await _miSave();
 }
 // "What are we waiting on" hangs off the scheduled item itself, so it is still
 // there next Monday without anybody retyping it.
@@ -6177,6 +6330,7 @@ async function _miItemNote(itemKey, val){
   if(_blockIfReadOnly()) return;
   const d=window._miData=window._miData||{}; d.notes=d.notes||{};
   if(val) d.notes[itemKey]=val; else delete d.notes[itemKey];
+  _miTouch('notes', itemKey);
   await _miSave();
 }
 function _miItemNoteVal(itemKey){ return ((window._miData||{}).notes||{})[itemKey]||''; }
@@ -7087,8 +7241,10 @@ async function _mktPrefillWeek(wk){
   try{
     d[wk]=d[wk]||{}; d[wk].market=Object.assign({}, d[wk].market||{}, patch);
     window._wmData=d;
-    const err=await _pmSettingsWrite('meeting_notes', d);
+    const _r=await _pmMergeWrite('meeting_notes', d, Object.keys(patch).map(function(k){ return [wk,'market',k]; }));
+    const err=_r.err;
     if(err){ delete d[wk].market; return 0; }
+    window._wmData=_r.base;
     if(typeof _logAudit==='function') _logAudit('updated','settings','Listings Meeting',
       'Prefilled '+Object.keys(patch).length+' answer'+(Object.keys(patch).length===1?'':'s')+
       ' for the week of '+wk+' from the week before, so the sheet is ready before Tuesday.');
@@ -7129,8 +7285,10 @@ async function _wmPrefillWeek(wk){
   try{
     d[wk]=d[wk]||{}; d[wk].team=Object.assign({}, d[wk].team||{}, patch);
     window._wmData=d;
-    const err=await _pmSettingsWrite('meeting_notes', d);
+    const _r=await _pmMergeWrite('meeting_notes', d, Object.keys(patch).map(function(k){ return [wk,'team',k]; }));
+    const err=_r.err;
     if(err){ delete d[wk].team; return 0; }
+    window._wmData=_r.base;
     const n=Object.keys(patch).length;
     if(typeof _logAudit==='function') _logAudit('updated','settings','Project team meeting',
       'Prefilled '+n+' answer'+(n===1?'':'s')+' for the week of '+wk+
@@ -7311,7 +7469,9 @@ async function _miAddQuick(kind, pid){
   const t=prompt("What needs an answer from Bruce or Tommy?");
   if(!t || !t.trim()) return;
   const d=window._miData=window._miData||{}; d[kind]=d[kind]||{};
-  d[kind][_miNewId()]={pid:pid||null, text:t.trim(), who:'Either', by:_miWho(), raised:_ymd(new Date())};
+  const qid=_miNewId();
+  d[kind][qid]={pid:pid||null, text:t.trim(), who:'Either', by:_miWho(), raised:_ymd(new Date())};
+  _miTouch(kind, qid);
   if(await _miSave()){
     _logAudit("created", kind==='lag'?"lag item":"question", t.trim().slice(0,80), "Raised from a meeting property block");
     openWeeklyMeeting(window.__wmLastKind||'market', window.__wmLastWeek);
@@ -7833,8 +7993,10 @@ async function _compPicSet(wk, slot, dataUrl){
   const d=window._wmData=window._wmData||{};
   d[wk]=d[wk]||{}; d[wk]['company']=d[wk]['company']||{};
   d[wk]['company']['__pic'+slot]=dataUrl||'';
-  const err=await _pmSettingsWrite('meeting_notes', d);
+  const _r=await _pmMergeWrite('meeting_notes', d, [[wk,'company','__pic'+slot]]);
+  const err=_r.err;
   if(err){ alert("That picture was NOT saved — "+err); return; }
+  window._wmData=_r.base;
   openWeeklyMeeting('company', wk);
 }
 // Read the file in the browser and shrink it to a square before storing, so the meeting
@@ -8544,6 +8706,26 @@ document.addEventListener('input',  _wmMarkDirty, true);
 // side task is exactly that: pick a name, and a redraw two seconds later put it back to
 // you. Both events mark the box, so whichever one fires, the pick survives.
 document.addEventListener('change', _wmMarkDirty, true);
+// A box you have typed in but never pressed Add on is the one place left in a meeting
+// where words can still go missing: the draft survives a redraw, but not the end of the
+// meeting. So make it impossible to miss - the box and its Add button light up amber
+// until the question, the long-lead item or the side task is actually in.
+function _wmAdderNudge(e){
+  const el=e&&e.target;
+  if(!el||!el.id||el.id.slice(0,3)==='wm-') return;
+  if(!_wmInMeetingEl(el)) return;
+  const row=el.parentElement; if(!row) return;
+  let btn=null;
+  const btns=row.querySelectorAll('button');
+  for(let i=0;i<btns.length;i++){ if(/^\s*add\s*$/i.test(btns[i].textContent||'')){ btn=btns[i]; break; } }
+  if(!btn) return;
+  const has=!!String(el.value||'').trim();
+  el.style.boxShadow = has ? '0 0 0 2px #F0C070' : '';
+  btn.style.boxShadow = has ? '0 0 0 3px rgba(240,192,112,.6)' : '';
+  btn.title = has ? 'Not added yet \u2014 press Add and it is saved for everyone' : '';
+}
+document.addEventListener('input',  _wmAdderNudge, true);
+document.addEventListener('change', _wmAdderNudge, true);
 // A save clears the draft for that box - saved is saved, and the next redraw should
 // show what the database has.
 function _wmDraftClear(id){ if(id) delete window.__wmDirty[id]; }
@@ -8720,6 +8902,31 @@ async function _wmPollTick(){
     return;
   }
   if(changed) _wmLiveBanner(changed);
+  await _wmPollCarried(kind);
+}
+// The questions, the long-lead items and the PM-board comments live in their own
+// records and used to be read exactly once, when the page loaded. So a question Marlo
+// raised at 8:05 was invisible on every other screen in the room for the rest of the
+// meeting - and worse, every one of those screens was still holding a copy from before
+// it existed, ready to write that copy back. Pull them in with everything else.
+async function _wmPollCarried(kind){
+  if((window.__miTouch||[]).length) return;     // a save of our own is still in flight
+  let mi=null, pdn=null;
+  try{ mi=await _pmSettingsRead('meeting_items'); }catch(e){}
+  try{ pdn=await _pmSettingsRead('pm_drill_notes'); }catch(e){}
+  let moved=false;
+  if(mi && typeof mi==='object'){
+    if(JSON.stringify(window._miData||{})!==JSON.stringify(mi)){ window._miData=mi; window._miLoadOk=true; moved=true; }
+  }
+  if(pdn && typeof pdn==='object'){
+    if(JSON.stringify(window._pdnData||{})!==JSON.stringify(pdn)){ window._pdnData=pdn; window._pdnLoadOk=true; moved=true; }
+  }
+  if(!moved) return;
+  // These are whole blocks of the screen, not one box, so the screen has to be redrawn -
+  // but not out from under somebody mid-sentence. Unsaved typing is carried across the
+  // redraw by the draft snapshot either way.
+  if(_wmTypingNow()) _wmRenderWhenIdle(kind, window.__wmLastWeek||undefined);
+  else openWeeklyMeeting(kind, window.__wmLastWeek||undefined);
 }
 // When each meeting actually runs. Bruce, 13 Sept: "the listings meeting is every
 // Tuesday at 9:00 or 9:15am just depends when we finish our full company meeting."
@@ -12272,17 +12479,36 @@ function _accumSegments(c){
   // whatever ends stretch one begins stretch two.
   const st1=_accumStage1(c);
   const mid=st1.to;
-  const s1=seg(bought,mid), s2=seg(mid,listed), s3=seg(listed,sold);
   const permNote=_isPermittedCard(c)
     ? (mid ? ((c.checklists||{}).permits_cleared ? "" : "from the permit tracker") : "waiting on permits")
     : "";
   const startNote = boughtIsFallback ? "no vacancy date — counting from the closing" : "";
-  return [
-    { label:st1.label, from:bought, to:mid, n:s1.n, bad:s1.bad, live:!!(bought&&!mid),
-      note:[startNote,permNote].filter(Boolean).join(" \u00b7 ") },
-    { label:st1.next,  from:mid, to:listed, n:s2.n, bad:s2.bad, live:!!(mid&&!listed), note:"" },
-    { label:"Listed \u2192 sold", from:listed, to:sold, n:s3.n, bad:s3.bad, live:!!(listed&&!sold), note:"" }
-  ];
+  const s1=seg(bought,mid), s3=seg(listed,sold);
+  const head={ label:st1.label, from:bought, to:mid, n:s1.n, bad:s1.bad, live:!!(bought&&!mid),
+      note:[startNote,permNote].filter(Boolean).join(" \u00b7 ") };
+  const tail={ label:"Listed \u2192 sold", from:listed, to:sold, n:s3.n, bad:s3.bad,
+      live:!!(listed&&!sold), note:"" };
+
+  // Bruce, 16 Sept. On a permitted house the permits coming through and the work
+  // actually starting are two different days, and the build should be measured from
+  // the second one. The gap between them is worth seeing on its own rather than being
+  // buried inside the build. The stretches still chain end to end, so the total is the
+  // same number it always was.
+  const build=_buildStart(c);
+  if(_isPermittedCard(c) && (build || mid)){
+    const sWait=seg(mid, build), sBuild=seg(build, listed);
+    return [ head,
+      { label:"Permits through \u2192 build started", from:mid, to:build, n:sWait.n, bad:sWait.bad,
+        live:!!(mid&&!build), note: build?"":"not into framing yet" },
+      { label:"Build started \u2192 listed", from:build, to:listed, n:sBuild.n, bad:sBuild.bad,
+        live:!!(build&&!listed), note:"" },
+      tail ];
+  }
+
+  const s2=seg(mid,listed);
+  return [ head,
+    { label:st1.next, from:mid, to:listed, n:s2.n, bad:s2.bad, live:!!(mid&&!listed), note:"" },
+    tail ];
 }
 // $/day for the property card. Spend to date over construction days, the same basis
 // the $/day Housing tab uses for its "whole project" setting.
@@ -12423,7 +12649,7 @@ function _pqOpen(){ return _pqAll().filter(x=>x.state!=="resolved"); }
 async function _pqOpenIt(id){
   if(_blockIfReadOnly()) return;
   const d=window._miData||{}; const rec=(d.q||{})[id]; if(!rec) return;
-  rec.opened=_ymd(new Date()); window._miData=d;
+  rec.opened=_ymd(new Date()); window._miData=d; _miTouch('q', id);
   if(await _miSave()) _pDrill('pq','tommy');
 }
 async function _pqAnswer(id){ await _miClose('q', id); _pDrill('pq','tommy'); }
@@ -12433,8 +12659,10 @@ async function _pqSet(week,state){
   d[week]=d[week]||{}; d[week].team=d[week].team||{};
   d[week].team.__pq_state=state;
   if(window._wmLoadOk===false){ alert("The meeting notes could not be loaded a moment ago. Changing the status now would overwrite them with a blank record, so this was stopped. Refresh the page and try again."); return; }
-  const _err=await _pmSettingsWrite('meeting_notes',d);
+  const _r=await _pmMergeWrite('meeting_notes', d, [[week,'team','__pq_state']]);
+  const _err=_r.err;
   if(_err){ alert("THAT STATUS CHANGE WAS NOT SAVED - "+_err); return; }
+  window._wmData=_r.base;
   _pDrill('pq','tommy');
 }
 function _pqPanel(){
@@ -13789,11 +14017,85 @@ function _utilDueDay(kind,pid){
 }
 // The next time this bill lands: the due day in the month after the last payment.
 // No last payment yet? The next due day from today.
+// ---- The last payment, in one place -------------------------------------------
+// Patience, 16 Sept (on video): the Property History said "Last payment 2026-09-11"
+// and the payment table underneath it said "No payments recorded yet."
+// Cause: there were TWO unrelated places to record that a bill got paid. The field
+// labelled "Last payment" on the Electric / Water / Gas sheets wrote to the provider
+// record and nothing else; the payment history was fed by "+ Payment". She was
+// filling in the field with the right name and looking at a table that would never
+// show it.
+// Now the payment records ARE the record. The four boxes on the sheet - last, amount,
+// charge, confirmation - are read back off the newest payment, so they cannot
+// disagree with the history again.
+function _utilLastPayRec(pid, sub){
+  const rows=_utilArr('upay', pid, sub);
+  if(!rows.length) return null;
+  // _utilArr keeps them newest-first; be defensive in case an old record is unsorted.
+  return rows.slice().sort(function(a,b){ return (a.d<b.d)?1:((a.d>b.d)?-1:0); })[0];
+}
+function _utilLastPayField(kind, pid, sub, field){
+  const r=_utilLastPayRec(pid, sub);
+  if(r){
+    if(field==='last') return r.d||'';
+    return r[field]||'';
+  }
+  // Nothing recorded yet: fall back to whatever is still typed on the sheet, so a
+  // property that has not been carried over yet still reads correctly.
+  return _trkVal(kind, pid, field==='last'?'last':field) || '';
+}
+// A payment that was carried over from the old sheet field has a date and nothing
+// else. It is a real record - it just needs finishing.
+function _utilPayNeedsDetail(r){
+  return !!(r && r.carried && !String(r.amt||'').trim());
+}
+function _utilCarriedCount(){
+  const d=window._trkData||{}; const up=d.upay||{}; let n=0;
+  Object.keys(up).forEach(function(pid){
+    const byUtil=up[pid]||{};
+    Object.keys(byUtil).forEach(function(k){
+      (Array.isArray(byUtil[k])?byUtil[k]:[]).forEach(function(r){ if(_utilPayNeedsDetail(r)) n++; });
+    });
+  });
+  return n;
+}
+// One-time carry-over. Every date already typed into "Last payment" on a sheet
+// becomes a real payment record, marked as carried over so it is obvious it still
+// needs an amount and a confirmation number. Runs once; the flag lives with the data.
+async function _utilCarryOverOnce(){
+  const d=window._trkData||{};
+  if(d.upay_carried) return 0;
+  if(typeof isReadOnly==='function' && isReadOnly()) return 0;
+  const cards=(typeof propCards!=='undefined'?propCards:[]).filter(function(c){ return !c.archived; });
+  let made=0;
+  cards.forEach(function(c){
+    _utilRowsFor(c).forEach(function(row){
+      UTILS.forEach(function(u){
+        const last=String(_trkVal(u.k, row.id, 'last')||'').trim();
+        if(!last) return;
+        const have=_utilArr('upay', row.id, u.key);
+        if(have.some(function(r){ return String(r.d||'')===last; })) return;   // already there
+        const rec={ d:last,
+                    amt:String(_trkVal(u.k,row.id,'amt')||'').trim(),
+                    chg:String(_trkVal(u.k,row.id,'chg')||'').trim(),
+                    conf:String(_trkVal(u.k,row.id,'conf')||'').trim(),
+                    method:'', note:'', by:'carried over from the sheet', carried:true };
+        d.upay=d.upay||{};
+        d.upay[row.id]=Object.assign({}, d.upay[row.id]||{});
+        d.upay[row.id][u.key]=have.concat([rec]).sort(function(a,b){ return (a.d<b.d)?1:-1; });
+        made++;
+      });
+    });
+  });
+  d.upay_carried=_ymd(new Date());
+  window._trkData=d;
+  if(made){ await _trkSave(); }
+  return made;
+}
 function _utilNextDue(kind,pid,sub){
   const day=_utilDueDay(kind,pid);
   if(!day) return null;
-  const pays=sub?_utilArr('upay',pid,sub):[];
-  const lastStr=(pays[0]&&pays[0].d)||_trkVal(kind,pid,'last')||'';
+  const lastStr=sub?_utilLastPayField(kind,pid,sub,'last'):(_trkVal(kind,pid,'last')||'');
   const base=lastStr?new Date(lastStr+'T12:00:00'):new Date();
   if(isNaN(base.getTime())) return null;
   const d=new Date(base.getFullYear(), base.getMonth(), 1);
@@ -13803,6 +14105,22 @@ function _utilNextDue(kind,pid,sub){
   const lastDayOfMonth=new Date(d.getFullYear(), d.getMonth()+1, 0).getDate();
   d.setDate(Math.min(day,lastDayOfMonth));
   return _ymd(d);
+}
+// The four payment boxes on a utility sheet. They are no longer typed into - they
+// show what the newest payment record says, and clicking opens the history where a
+// payment is actually entered. One place to record it, one number on every screen.
+function _utilPayCell(u, pid, field){
+  const v=_utilLastPayField(u.k, pid, u.key, field);
+  const rec=_utilLastPayRec(pid, u.key);
+  const needs=_utilPayNeedsDetail(rec) && field!=='last';
+  const shown = v ? _calEsc(v)
+                  : (needs ? '<span style="color:#B7791F;font-weight:600">add it</span>'
+                           : '<span style="color:#ccc">\u2014</span>');
+  const tip = v ? 'From the payment record of '+_calEsc((rec&&rec.d)||v)+' \u2014 click to open the payment history'
+                : 'No payment recorded yet \u2014 click to add one';
+  return '<span onclick="_utilOpenHistory(\''+pid+'\')" title="'+tip+'" '
+       + 'style="cursor:pointer;display:inline-block;min-width:60px;padding:3px 7px;border-radius:6px;'
+       + 'font-size:12.5px;'+(needs?'background:#FBF3E2;':'')+'">'+shown+'</span>';
 }
 function _utilDueChip(kind,pid,sub){
   const nx=_utilNextDue(kind,pid,sub);
@@ -13814,14 +14132,30 @@ function _utilDueChip(kind,pid,sub){
   const bg =late?'#FBEAE8':(near?'#FBF3E2':'#E6F4ED');
   return `<div style="margin-top:3px"><span title="Worked out from the due day and the last payment" style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:99px;background:${bg};color:${col};white-space:nowrap">${late?'overdue':'next'} ${_calEsc(nx)}</span></div>`;
 }
+// A duplex keeps its utilities under each unit - 818 and 820 have their own accounts.
+// These two used to read the PARENT record, which by design holds nothing, so a
+// duplex with both sides fully filled in was counted as outstanding for ever and
+// reported "Electric provider missing" about a property that had one.
 function _utilOutstanding(c){
-  return UTILS.some(u=>{ const prov=_trkVal(u.k,c.id,'prov'); return !prov || _utilIsOn(u.k,c)==='No'; });
+  return _utilRowsFor(c).some(function(row){
+    return UTILS.some(function(u){
+      const prov=_trkVal(u.k,row.id,'prov');
+      return !prov || _utilIsOn(u.k,row)==='No';
+    });
+  });
 }
 function _utilGaps(c){
   const out=[];
-  UTILS.forEach(u=>{ const prov=_trkVal(u.k,c.id,'prov');
-    if(!prov) out.push(u.label+' provider missing');
-    else if(_utilIsOn(u.k,c)==='No') out.push(u.label+' is off'); });
+  const rows=_utilRowsFor(c);
+  const multi=rows.length>1;
+  rows.forEach(function(row){
+    const where=multi?(' \u2014 unit '+(row._unit||'')):'';
+    UTILS.forEach(function(u){
+      const prov=_trkVal(u.k,row.id,'prov');
+      if(!prov) out.push(u.label+' provider missing'+where);
+      else if(_utilIsOn(u.k,row)==='No') out.push(u.label+' is off'+where);
+    });
+  });
   return out;
 }
 
@@ -15155,10 +15489,10 @@ function _vaTrackers(){
     <td style="padding:7px">${uta(u.k,c.id,'notes','Called on 00/00/26 …',230)}</td>
     <td style="padding:7px">${uta(u.k,c.id,'sched','Turn-on dates, inspections, meter installs…',200)}</td>
     <td style="padding:7px;text-align:center">${txt(u.k,c.id,'due','e.g. 15th',72)}${_utilDueChip(u.k,c.id,u.key)}</td>
-    <td style="padding:7px;text-align:center">${dt(u.k,c.id,'last')}</td>
-    <td style="padding:7px;text-align:center">${txt(u.k,c.id,'amt','$0.00',82)}</td>
-    <td style="padding:7px;text-align:center">${txt(u.k,c.id,'chg','$0.00',70)}</td>
-    <td style="padding:7px">${txt(u.k,c.id,'conf','Confirmation #',140)}</td>
+    <td style="padding:7px;text-align:center">${_utilPayCell(u,c.id,'last')}</td>
+    <td style="padding:7px;text-align:center">${_utilPayCell(u,c.id,'amt')}</td>
+    <td style="padding:7px;text-align:center">${_utilPayCell(u,c.id,'chg')}</td>
+    <td style="padding:7px">${_utilPayCell(u,c.id,'conf')}</td>
     ${u.key==='g'?`<td style="padding:7px;text-align:center">${dt(u.k,c.id,'tank')}</td>`:''}
     <td style="padding:7px;text-align:center">${fchk(u.k,c.id,'rcpt')}</td>
     <td style="padding:7px;text-align:center">${(()=>{const n=_utilArr('upay',c.id,u.key).length;return `<span onclick="_utilOpenHistory('${c.id}')" title="Every payment recorded against this utility" style="cursor:pointer;display:inline-block;padding:3px 10px;border-radius:99px;font-size:11.5px;font-weight:600;background:${n?'#E8F0FA':'#F4F5F7'};color:${n?'#185FA5':'#98a2b3'};white-space:nowrap">📜 ${n?(n+' payment'+(n===1?'':'s')):'add a payment'}</span>`;})()}</td></tr>`;
@@ -15417,6 +15751,15 @@ function _vaTrackers(){
   };
 
   if(view==='util'){
+    // First time anyone opens this after the change, every date already typed into
+    // "Last payment" on a sheet becomes a real payment record she can finish off.
+    if(!(window._trkData||{}).upay_carried && !(window.__utilCarryRunning)){
+      window.__utilCarryRunning=true;
+      _utilCarryOverOnce().then(function(n){
+        window.__utilCarryRunning=false;
+        if(n){ (window._trkRerender||function(){})(); }
+      }).catch(function(){ window.__utilCarryRunning=false; });
+    }
     const ut=window._utilTab||'p';
     const subtab=(k,label)=>`<span onclick="_utilTabTo('${k}')" style="cursor:pointer;padding:6px 13px;border-radius:7px;font-size:13px;font-weight:${ut===k?'600':'400'};background:${ut===k?'#122A4A':'#fff'};color:${ut===k?'#fff':'#444'};border:0.5px solid ${ut===k?'#122A4A':'#d8dce6'}">${label}</span>`;
     const bar=`<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px">${subtab('p','🏠 By property')}${subtab('e','⚡ Electric')}${subtab('w','💧 Water')}${subtab('g','🔥 Gas / Propane')}${subtab('m','📋 Master Sheet')}${ut==='h'?subtab('h','📜 Property History'):''}</div>`;
@@ -15429,15 +15772,15 @@ function _vaTrackers(){
       const money=(v)=>_calEsc(v||'');
       const payTable=(u)=>{
         const rows=_utilArr('upay',pid,u.key);
-        const body=rows.length?rows.map((r,i)=>`<tr style="border-top:0.5px solid #eef0f6"><td style="padding:7px 10px;white-space:nowrap">${_calEsc(r.d||'')}</td><td style="padding:7px;text-align:right">${money(r.amt)}</td><td style="padding:7px;text-align:right">${money(r.chg)}</td><td style="padding:7px">${_calEsc(r.method||'')}</td><td style="padding:7px">${_calEsc(r.conf||'')}</td><td style="padding:7px">${_calEsc(r.note||'')}</td><td style="padding:7px;font-size:11.5px;color:#999">${_calEsc(r.by||'')}</td><td style="padding:7px;text-align:center">${ro?'':`<span onclick="_utilPayDel('${pid}','${u.key}',${i})" style="cursor:pointer;color:#B42318">✕</span>`}</td></tr>`).join(''):'<tr><td colspan="8" style="padding:14px;color:#bbb;text-align:center">No payments recorded yet.</td></tr>';
-        const adder=ro?'':`<tr style="background:#F7F8FB;border-top:0.5px solid #e0e4ec"><td style="padding:7px 10px"><input type="date" id="up-d-${u.key}" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td style="padding:7px"><input id="up-a-${u.key}" placeholder="$0.00" style="width:80px;padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td style="padding:7px"><input id="up-c-${u.key}" placeholder="$0.00" style="width:70px;padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td style="padding:7px"><input id="up-m-${u.key}" placeholder="Card / ACH" style="width:100px;padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td style="padding:7px"><input id="up-n-${u.key}" placeholder="Confirmation #" style="width:140px;padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td style="padding:7px"><input id="up-t-${u.key}" placeholder="Notes" style="width:160px;padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td colspan="2" style="padding:7px;text-align:center"><button onclick="_utilPayAdd('${pid}','${u.key}')" style="padding:5px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">+ Add payment</button></td></tr>`;
         const total=rows.reduce((a,r)=>a+(parseFloat(String(r.amt||'').replace(/[^0-9.\-]/g,''))||0),0);
-        return _trkTable(`${u.icon} ${u.label} — payment records${rows.length?` &nbsp;<span style="font-weight:400;color:#888">${rows.length} payments, $${Math.round(total).toLocaleString()} total</span>`:''}`,u.color,'<th style="padding:9px 10px;text-align:left">Date paid</th><th style="padding:9px;text-align:right">Amount</th><th style="padding:9px;text-align:right">Charge</th><th style="padding:9px;text-align:left">Method</th><th style="padding:9px;text-align:left">Confirmation #</th><th style="padding:9px;text-align:left">Notes</th><th style="padding:9px;text-align:left">Logged by</th><th style="padding:9px"></th>',body+adder);
+        const body=rows.length?rows.map((r,i)=>`<tr style="border-top:0.5px solid #eef0f6"><td style="padding:7px 10px;white-space:nowrap">${_calEsc(r.d||'')}</td><td style="padding:7px;text-align:right">${money(r.amt)}</td><td style="padding:7px;text-align:right">${money(r.chg)}</td><td style="padding:7px">${_calEsc(r.method||'')}</td><td style="padding:7px">${_calEsc(r.conf||'')}</td><td style="padding:7px">${_calEsc(r.note||'')}</td><td style="padding:7px;font-size:11.5px;color:#999">${_calEsc(r.by||'')}${_utilPayNeedsDetail(r)?'<div style="color:#B7791F;font-weight:600;font-size:11px;margin-top:2px">needs the amount</div>':''}</td><td style="padding:7px;text-align:center">${ro?'':`<span onclick="_utilPayDel('${pid}','${u.key}',${i})" style="cursor:pointer;color:#B42318">✕</span>`}</td></tr>`).join(''):'<tr><td colspan="8" style="padding:14px;color:#bbb;text-align:center">No payments recorded yet.</td></tr>';
+        const adder=ro?'':`<tr style="background:#F7F8FB;border-top:0.5px solid #e0e4ec"><td style="padding:7px 10px"><input type="date" id="up-d-${u.key}" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td style="padding:7px"><input id="up-a-${u.key}" placeholder="$0.00" style="width:80px;padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td style="padding:7px"><input id="up-c-${u.key}" placeholder="$0.00" style="width:70px;padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td style="padding:7px"><input id="up-m-${u.key}" placeholder="Card / ACH" style="width:100px;padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td style="padding:7px"><input id="up-n-${u.key}" placeholder="Confirmation #" style="width:140px;padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td style="padding:7px"><input id="up-t-${u.key}" placeholder="Notes" style="width:160px;padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td colspan="2" style="padding:7px;text-align:center"><button onclick="_utilPayAdd('${pid}','${u.key}')" style="padding:5px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">+ Add payment</button></td></tr>`;
+        return _trkTable(`${u.icon} ${u.label} — payment records${rows.length?` &nbsp;<span style="font-weight:400;color:#888">${rows.length} payment${rows.length===1?'':'s'}${total?`, $${Math.round(total).toLocaleString()} total`:''}${rows.some(_utilPayNeedsDetail)?` &middot; <span style="color:#B7791F;font-weight:600">${rows.filter(_utilPayNeedsDetail).length} still need${rows.filter(_utilPayNeedsDetail).length===1?'s':''} an amount</span>`:''}</span>`:''}`,u.color,'<th style="padding:9px 10px;text-align:left">Date paid</th><th style="padding:9px;text-align:right">Amount</th><th style="padding:9px;text-align:right">Charge</th><th style="padding:9px;text-align:left">Method</th><th style="padding:9px;text-align:left">Confirmation #</th><th style="padding:9px;text-align:left">Notes</th><th style="padding:9px;text-align:left">Logged by</th><th style="padding:9px"></th>',body+adder);
       };
       const logs=_utilArr('ulog',pid);
       const logBody=logs.length?logs.map((r,i)=>`<tr style="border-top:0.5px solid #eef0f6"><td style="padding:7px 10px;white-space:nowrap">${_calEsc(r.d||'')}</td><td style="padding:7px">${_calEsc(r.u||'')}</td><td style="padding:7px;white-space:pre-wrap">${_calEsc(r.txt||'')}</td><td style="padding:7px;font-size:11.5px;color:#999">${_calEsc(r.by||'')}</td><td style="padding:7px;text-align:center">${ro?'':`<span onclick="_utilLogDel('${pid}',${i})" style="cursor:pointer;color:#B42318">✕</span>`}</td></tr>`).join(''):'<tr><td colspan="5" style="padding:14px;color:#bbb;text-align:center">Nothing logged yet.</td></tr>';
       const logAdd=ro?'':`<tr style="background:#F7F8FB;border-top:0.5px solid #e0e4ec"><td style="padding:7px 10px"><input type="date" id="ul-d" value="${_ymd(new Date())}" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td style="padding:7px"><select id="ul-u" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"><option value="">— Utility —</option><option>Electric</option><option>Water</option><option>Gas / Propane</option><option>Trash</option><option>Other</option></select></td><td style="padding:7px"><textarea id="ul-t" placeholder="Called on … to start service. Rep said …" style="width:100%;min-width:320px;min-height:44px;padding:5px 7px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;font-family:inherit;resize:vertical"></textarea></td><td colspan="2" style="padding:7px;text-align:center"><button onclick="_utilLogAdd('${pid}')" style="padding:5px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">+ Add entry</button></td></tr>`;
-      const provCard=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 15px;margin-bottom:16px"><div style="font-size:13.5px;font-weight:700;color:#111;margin-bottom:8px">🏷 Utility provider information</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px">${UTILS.map(u=>`<div style="border:0.5px solid #eef0f6;border-radius:8px;padding:10px 12px"><div style="font-size:12.5px;font-weight:600;color:${u.color};margin-bottom:5px">${u.icon} ${u.label}</div><div style="font-size:12.5px;color:#444;line-height:1.7"><b>Provider:</b> ${_calEsc(_trkVal(u.k,pid,'prov'))||'<span style="color:#ccc">not set</span>'}<br/><b>Account #:</b> ${_calEsc(_trkVal(u.k,pid,'acct'))||'<span style="color:#ccc">not set</span>'}<br/><b>Contact:</b> ${_calEsc(_trkVal(u.k,pid,'contact'))||'<span style="color:#ccc">not set</span>'}<br/><b>Service on:</b> ${_calEsc(_utilIsOn(u.k,c))||'<span style="color:#ccc">unknown</span>'}<br/><b>Due each month:</b> ${_calEsc(_trkVal(u.k,pid,'due'))||'<span style="color:#ccc">—</span>'}<br/><b>Last payment:</b> ${_calEsc(_trkVal(u.k,pid,'last'))||'<span style="color:#ccc">—</span>'}<br/><b>Next expected:</b> ${(()=>{const nx=_utilNextDue(u.k,pid,u.key);return nx?`<b style="color:#185FA5">${_calEsc(nx)}</b>`:'<span style="color:#ccc">set a due day first</span>';})()}</div></div>`).join('')}</div><div style="font-size:12px;color:#999;margin-top:8px">Edit these on the Electric / Water / Gas sheets.</div></div>`;
+      const provCard=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 15px;margin-bottom:16px"><div style="font-size:13.5px;font-weight:700;color:#111;margin-bottom:8px">🏷 Utility provider information</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px">${UTILS.map(u=>`<div style="border:0.5px solid #eef0f6;border-radius:8px;padding:10px 12px"><div style="font-size:12.5px;font-weight:600;color:${u.color};margin-bottom:5px">${u.icon} ${u.label}</div><div style="font-size:12.5px;color:#444;line-height:1.7"><b>Provider:</b> ${_calEsc(_trkVal(u.k,pid,'prov'))||'<span style="color:#ccc">not set</span>'}<br/><b>Account #:</b> ${_calEsc(_trkVal(u.k,pid,'acct'))||'<span style="color:#ccc">not set</span>'}<br/><b>Contact:</b> ${_calEsc(_trkVal(u.k,pid,'contact'))||'<span style="color:#ccc">not set</span>'}<br/><b>Service on:</b> ${_calEsc(_utilIsOn(u.k,c))||'<span style="color:#ccc">unknown</span>'}<br/><b>Due each month:</b> ${_calEsc(_trkVal(u.k,pid,'due'))||'<span style="color:#ccc">—</span>'}<br/><b>Last payment:</b> ${_calEsc(_trkVal(u.k,pid,'last'))||'<span style="color:#ccc">—</span>'}<br/><b>Next expected:</b> ${(()=>{const nx=_utilNextDue(u.k,pid,u.key);return nx?`<b style="color:#185FA5">${_calEsc(nx)}</b>`:'<span style="color:#ccc">set a due day first</span>';})()}</div></div>`).join('')}</div><div style="font-size:12px;color:#999;margin-top:8px">Provider, account number and contact are edited on the Electric / Water / Gas sheets. <b>Last payment comes from the payment records below</b> — record a payment there and it updates everywhere.</div></div>`;
       return shell(back+bar+`<div style="font-size:15px;font-weight:600;color:#111;margin-bottom:10px">📜 ${nm(c)}</div>`+provCard+UTILS.map(payTable).join('')+_trkTable('📞 Utility notes &amp; activity','#0B7285','<th style="padding:9px 10px;text-align:left">Date</th><th style="padding:9px;text-align:left">Utility</th><th style="padding:9px;text-align:left">What happened</th><th style="padding:9px;text-align:left">Logged by</th><th style="padding:9px"></th>',logBody+logAdd));
     }
     if(ut==='p'){
@@ -17747,10 +18090,12 @@ async function _fdLoad(){
     window._fdLoadOk=true; window._fdData=(r.data&&r.data.data)||{};
   }catch(e){ window._fdLoadOk=false; window._fdData={}; }
 }
+function _fdTouch(){ (window.__fdTouch=window.__fdTouch||[]).push(Array.prototype.slice.call(arguments)); }
 async function _fdSave(){
   if(window._fdLoadOk===false){ alert("The full-day list could not be loaded a moment ago, so saving now would wipe it. Refresh and try again."); return false; }
-  const err=await _pmSettingsWrite('full_days', window._fdData||{});
-  if(err){ alert("THAT DID NOT SAVE — "+err); return false; }
+  const r=await _pmMergeWrite('full_days', window._fdData||{}, window.__fdTouch||[]);
+  if(r.err){ alert("THAT DID NOT SAVE — "+r.err); return false; }
+  if(!r.nothing){ window._fdData=r.base; window.__fdTouch=[]; }
   return true;
 }
 function _fdIsFull(person, ds){
@@ -17777,6 +18122,7 @@ async function _fdToggle(person, ds){
     if(why===null) return;
     d[person][ds]={ by:_fdWho(), at:_ymd(new Date()), why:why||null };
   }
+  _fdTouch(person, ds);
   if(!Object.keys(d[person]).length) delete d[person];
   if(!(await _fdSave())) return;
   const _w=(!was && d[person] && d[person][ds] && d[person][ds].why) ? d[person][ds].why : '';
@@ -20045,4 +20391,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-14a meeting-stops-eating-what-you-type -->
+<!-- build: 2026-09-16b meeting-stops-eating-what-you-type -->
