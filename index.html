@@ -308,6 +308,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
     <div class="dd" id="dsn-d">
       <div class="ddl">Designer</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
+      <div class="ddi" onclick="openRealtorDashboard()">🔑 Realtor Dashboard</div>
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
     </div>
   </div>
@@ -1432,7 +1433,7 @@ const ROLE_DEFAULTS = {
   // Bruce, 17 Sept: a Designer works the design package with the project manager.
   // They need the houses and the design dashboard, and nothing else until the design
   // package form exists and tells us otherwise.
-  "Designer":                                  ["dash_project","dash_design","sops_view"],
+  "Designer":                                  ["dash_project","dash_design","dash_realtor","sops_view"],
   "Realtor":                                   ["dash_project","dash_realtor","rep_market","sops_view"],
   "Assistant / Intern":                        ["dash_project","sops_view"],
   // Bruce, 13 Sept: Eman "is gonna be filling stuff out for the kickoff meetings...
@@ -1481,6 +1482,7 @@ const ONCLICK_PERM = [
   ["openDesignDashboard",       "dash_design"],
   ["openPMAssistantDashboard",  "dash_pmassistant"],
   ["openClosedByYear",          "data_closed"],
+  ["openDesignPkgData",         "data_pmoverview"],
   ["openTaskDataHousing",       "data_pmoverview"],
   ["openDollarsDayHousing",     "data_pmoverview"],
   ["openAdminDashboard",        "dash_admin"],
@@ -1551,7 +1553,7 @@ function applyPermissionsUI() {
   // shared Tools/SOPs, and Data/Reporting where permitted). The 3 power roles see all.
   // rlt-t belongs here too - without it the Realtor menu was never explicitly shown
   // or hidden by role, it just happened to survive because nothing touched it.
-  const _roleTabs = ["pd-t","pm-t","am-t","adm-t","va-t","arch-t","rlt-t"];
+  const _roleTabs = ["pd-t","pm-t","am-t","adm-t","va-t","dsn-t","arch-t","rlt-t"];
   const _superSees = u.isSuperAdmin || isBruce(u) || NAV_SUPER_ROLES.indexOf(u.role) >= 0;
   if (_superSees) {
     _roleTabs.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = ""; });
@@ -2082,7 +2084,7 @@ document.addEventListener('focusin', function(e){ if(e.target && e.target.tagNam
 // missing from the day the Realtor menu was added (Bruce, 8 Sept: "when I'm clicking
 // on the realtor drop down, it is still not popping up"). The assertion below turns a
 // silently dead menu into an obvious one, so this cannot happen quietly again.
-const NAV_DROPDOWNS = [["pd-t","pd-d"],["pm-t","pm-d"],["am-t","am-d"],["adm-t","adm-d"],["va-t","va-d"],["rlt-t","rlt-d"],["arch-t","arch-d"],["tools-t","tools-d"],["rep-t","rep-d"],["data-t","data-d"]];
+const NAV_DROPDOWNS = [["pd-t","pd-d"],["pm-t","pm-d"],["am-t","am-d"],["adm-t","adm-d"],["va-t","va-d"],["dsn-t","dsn-d"],["rlt-t","rlt-d"],["arch-t","arch-d"],["tools-t","tools-d"],["rep-t","rep-d"],["data-t","data-d"]];
 NAV_DROPDOWNS.forEach(([tid,did]) => {
   const t = document.getElementById(tid), d = document.getElementById(did);
   if (!t || !d) return;
@@ -5588,60 +5590,113 @@ function _designCards(){
             .sort((a,b)=>DESIGN_PHASES.indexOf(a.phase)-DESIGN_PHASES.indexOf(b.phase)
                        || String(a.addr).localeCompare(String(b.addr)));
 }
-function openDesignDashboard() {
-  document.querySelectorAll(".dd").forEach(x => x.classList.remove("open"));
-  document.querySelectorAll(".ni.has-dd").forEach(x => x.classList.remove("on"));
-  const cards=_designCards();
+// The Design Dashboard reads like every other role board: a Main Dashboard, then a
+// tab per designer. Bruce, 17 Sept: "kind of the same setup as the realtor dashboard
+// or the admin dashboard." Main is the whole board; a person's tab is only their own
+// work and what is still waiting on them.
+function _dpDesignTabs(){
+  return _dpDesigners().map(n=>({ id:'dsn:'+n, label:(n.split(' ')[0]||n), icon:'👤' }));
+}
+function _dpStatusTag(d){
   const tag=(txt,bg,fg)=>`<span style="flex-shrink:0;font-size:11.5px;font-weight:700;padding:3px 10px;border-radius:99px;background:${bg};color:${fg};white-space:nowrap">${txt}</span>`;
-  const rows = cards.length ? cards.map(c=>{
-    const d=_dpOf(c);
-    const st = !d ? tag('not started','#F1F2F6','#6b7280')
-      : d.status==='complete' ? tag((_dpE(d.dsn.style)+' \u00b7 '+_dpE(d.dsn.tier)),'#14171C','#FFB612')
-      : d.status==='pm_done' ? tag('with the designer','#FBF3E2','#8a6d1a')
-      : tag('draft \u00b7 '+_dpAnswered(d).pct+'%','#EAF1FA','#185FA5');
-    const btn = !d ? 'Start the form' : (d.status==='complete' ? 'View the package' : 'Open the form');
-    return `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 15px;border-bottom:0.5px solid #f4f5f7">
-      <div style="min-width:0">
-        <div onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-size:14px;color:#185FA5;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_calEsc(c.addr)}</div>
-        <div style="font-size:12px;color:#aaa">${_calEsc(_phLabel?_phLabel(c.phase):c.phase)} &middot; ${_calEsc(c.pm||'no project manager yet')}</div>
-      </div>
-      <div style="display:flex;align-items:center;gap:9px;flex-shrink:0">${st}
-        <span onclick="_dpOpen('${c.id}')" style="cursor:pointer;font-size:12.5px;font-weight:700;color:#fff;background:#14171C;padding:6px 13px;border-radius:7px;white-space:nowrap">${btn}</span></div>
-    </div>`;}).join('')
-    : '<div style="padding:26px;text-align:center;color:#bbb;font-size:13.5px">No houses are sitting at a design stage right now.</div>';
-
-  const done=cards.filter(c=>{const d=_dpOf(c);return d&&d.status==='complete';}).length;
-  const waiting=cards.filter(c=>{const d=_dpOf(c);return d&&d.status==='pm_done';}).length;
-  const none=cards.length-done-waiting;
-
-  document.getElementById("dash-body").innerHTML = `
-  <div style="background:#f4f5f7;min-height:520px"><div style="padding:24px;max-width:900px;margin:0 auto">
-    <div style="font-size:17px;font-weight:600;color:#111">\uD83C\uDFA8 Design Dashboard</div>
-    <div style="font-size:13.5px;color:#666;margin-top:6px;margin-bottom:16px">
-      Where the design package for each house gets started, chosen and handed back.</div>
-
+  if(!d) return tag('not started','#F1F2F6','#6b7280');
+  if(d.status==='complete') return tag(_dpE(d.dsn.style)+' · '+_dpE(d.dsn.tier),'#14171C','#FFB612');
+  if(d.status==='pm_done') return tag('with the designer','#FBF3E2','#8a6d1a');
+  return tag('draft · '+_dpAnswered(d).pct+'%','#EAF1FA','#185FA5');
+}
+function _dpRow(c){
+  const d=_dpOf(c);
+  const btn = !d ? 'Start the form' : (d.status==='complete' ? 'View the package' : 'Open the form');
+  return `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 15px;border-bottom:0.5px solid #f4f5f7">
+    <div style="min-width:0">
+      <div onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-size:14px;color:#185FA5;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_calEsc(c.addr)}</div>
+      <div style="font-size:12px;color:#aaa">${_calEsc(_phLabel?_phLabel(c.phase):c.phase)} &middot; ${_calEsc(c.pm||'no project manager yet')}${c.type?(' &middot; '+_calEsc(c.type)):''}</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:9px;flex-shrink:0">${_dpStatusTag(d)}
+      <span onclick="_dpOpen('${c.id}')" style="cursor:pointer;font-size:12.5px;font-weight:700;color:#fff;background:#14171C;padding:6px 13px;border-radius:7px;white-space:nowrap">${btn}</span></div>
+  </div>`;
+}
+function _dpList(cards, emptyMsg){
+  return cards.length ? cards.map(_dpRow).join('')
+    : `<div style="padding:26px;text-align:center;color:#bbb;font-size:13.5px">${emptyMsg}</div>`;
+}
+// Houses whose form the PM has sent over and the designer has not finished. One
+// definition, used by this board AND the Trackers tile, so the two can never disagree.
+function _dpWaiting(){
+  return _designCards().filter(c=>{ const d=_dpOf(c); return d && d.status==='pm_done'; });
+}
+// Trackers → "Design forms needing completed". Two kinds of outstanding: a form the
+// PM has sent that the designer has not signed off, and a house at a design stage
+// where nobody has opened a form at all. Both are work somebody owes.
+function _dpTrackerItems(){
+  const cards=_designCards();
+  const out=[];
+  cards.filter(c=>{ const d=_dpOf(c); return d && d.status==='pm_done'; })
+    .forEach(c=>out.push('<b style="color:#8a6d1a">WITH THE DESIGNER:</b> '+_calEsc(c.addr||'')));
+  cards.filter(c=>{ const d=_dpOf(c); return d && d.status==='draft'; })
+    .forEach(c=>out.push('<b style="color:#185FA5">PM STARTED, NOT SENT:</b> '+_calEsc(c.addr||'')+' \u2014 '+_dpAnswered(_dpOf(c)).pct+'% answered'));
+  cards.filter(c=>!_dpOf(c))
+    .forEach(c=>out.push('<b style="color:#6b7280">NOT STARTED:</b> '+_calEsc(c.addr||'')+' \u2014 '+_calEsc(c.pm||'no PM yet')));
+  return out;
+}
+function _dpMainBody(){
+  const cards=_designCards();
+  const done=cards.filter(c=>{const d=_dpOf(c);return d&&d.status==='complete';});
+  const waiting=_dpWaiting();
+  const drafts=cards.filter(c=>{const d=_dpOf(c);return d&&d.status==='draft';});
+  const none=cards.filter(c=>!_dpOf(c));
+  const box=(n,label,color)=>`<div style="flex:1;min-width:128px;background:#fff;border:0.5px solid #e0e4ec;border-radius:9px;padding:11px 14px">
+      <div style="font-size:21px;font-weight:700;color:${color}">${n}</div><div style="font-size:12px;color:#888">${label}</div></div>`;
+  return `<div style="padding:24px;max-width:920px;margin:0 auto">
     <div style="background:#14171C;border-radius:10px;padding:14px 17px;margin-bottom:16px">
       <div style="font-size:10.5px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:#FFB612;margin-bottom:6px">How this works</div>
       <div style="font-size:13px;color:#dfe2e8;line-height:1.6">
-        The <b style="color:#fff">project manager</b> opens the form against a house \u2014 from a computer or the phone \u2014 and fills in
+        The <b style="color:#fff">project manager</b> opens the form against a house &mdash; from a computer or the phone &mdash; and fills in
         Section 1. It then lands on the <b style="color:#fff">designer's</b> task calendar, every day, until they have picked the package:
-        five styles, low end or high end, ten in all. When the designer signs off the form <b style="color:#fff">locks</b>.
-        One package per house. Anything that changes after that goes on as a revision with its own change order.
+        five styles, low end or high end, ten in all. When the designer signs off, the form <b style="color:#fff">locks</b>.
+        One package per house; anything that changes after that goes on as a revision with its own change order.
+        A <b style="color:#fff">Whole Tail / Flip</b> never gets a design package and never appears here.
       </div>
     </div>
-
     <div style="display:flex;gap:9px;margin-bottom:14px;flex-wrap:wrap">
-      <div style="flex:1;min-width:130px;background:#fff;border:0.5px solid #e0e4ec;border-radius:9px;padding:11px 14px">
-        <div style="font-size:21px;font-weight:700;color:#14171C">${done}</div><div style="font-size:12px;color:#888">package locked in</div></div>
-      <div style="flex:1;min-width:130px;background:#fff;border:0.5px solid #e0e4ec;border-radius:9px;padding:11px 14px">
-        <div style="font-size:21px;font-weight:700;color:#8a6d1a">${waiting}</div><div style="font-size:12px;color:#888">waiting on the designer</div></div>
-      <div style="flex:1;min-width:130px;background:#fff;border:0.5px solid #e0e4ec;border-radius:9px;padding:11px 14px">
-        <div style="font-size:21px;font-weight:700;color:#6b7280">${none}</div><div style="font-size:12px;color:#888">form not started</div></div>
+      ${box(done.length,'package locked in','#14171C')}
+      ${box(waiting.length,'waiting on the designer','#8a6d1a')}
+      ${box(drafts.length,'started, not sent','#185FA5')}
+      ${box(none.length,'form not started','#6b7280')}
     </div>
-
     <div style="font-size:12.5px;font-weight:700;color:#111;margin-bottom:7px">Houses at a design stage <span style="font-weight:400;color:#999">&middot; ${cards.length}</span></div>
-    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">${rows}</div>
-  </div></div>`;
+    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">${_dpList(cards,'No houses are sitting at a design stage right now.')}</div>
+  </div>`;
+}
+function _dpPersonBody(who){
+  const cards=_designCards();
+  const mine=_dpWaiting();
+  const locked=cards.filter(c=>{ const d=_dpOf(c); return d && d.status==='complete' && d.dsn_sign && _sameAssignee(d.dsn_sign.by, who); });
+  const revs=locked.reduce((n,c)=>n+(((_dpOf(c)||{}).revisions||[]).length),0);
+  const first=_calEsc((who||'').split(' ')[0]);
+  const tile=(n,label,color)=>`<div style="flex:1;min-width:150px;background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${color};border-radius:9px;padding:12px 15px">
+      <div style="font-size:24px;font-weight:700;color:${color}">${n}</div><div style="font-size:12.5px;color:#888">${label}</div></div>`;
+  return `<div style="padding:24px;max-width:920px;margin:0 auto">
+    <div style="font-size:17px;font-weight:600;color:#111">🎨 ${_calEsc(who)}</div>
+    <div style="font-size:13.5px;color:#666;margin-top:6px;margin-bottom:16px">What is waiting on ${first}, and what ${first} has already signed off.</div>
+    <div style="display:flex;gap:9px;margin-bottom:16px;flex-wrap:wrap">
+      ${tile(mine.length,'forms to complete','#8a6d1a')}
+      ${tile(locked.length,'packages signed off','#14171C')}
+      ${tile(revs,'revisions since','#B42318')}
+    </div>
+    <div style="font-size:12.5px;font-weight:700;color:#111;margin-bottom:7px">Waiting on you <span style="font-weight:400;color:#999">&middot; on your task calendar every day until it is finished</span></div>
+    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden;margin-bottom:18px">${_dpList(mine,'Nothing waiting on you right now.')}</div>
+    <div style="font-size:12.5px;font-weight:700;color:#111;margin-bottom:7px">Signed off by you <span style="font-weight:400;color:#999">&middot; ${locked.length}</span></div>
+    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">${_dpList(locked,'No packages signed off yet.')}</div>
+  </div>`;
+}
+function openDesignDashboard(activeTab) {
+  activeTab = activeTab || 'main';
+  const tabs=[{id:'main',label:'Main Dashboard',icon:'🎨'}].concat(_dpDesignTabs());
+  const content = (String(activeTab).indexOf('dsn:')===0)
+    ? _dpPersonBody(String(activeTab).slice(4))
+    : _dpMainBody();
+  _execShell('openDesignDashboard', tabs, activeTab, content);
 }
 
 // ===================== DESIGN PACKAGE FORM =====================
@@ -16637,7 +16692,7 @@ function _vaTrackers(){
   const wi=active.filter(_winInQueue).map(c=>{const a=_winNextAction(c); return a?(nm(c)+' — '+a):null;}).filter(Boolean);
   const ci=active.filter(c=>c.phase==="Vacant / On Standby").filter(c=>{const subs=c.subPhases||[];const f=subs.find(s=>s.name==="First Time Access Checklist");return !(f&&f.completed);}).map(c=>nm(c)+' — First Time Access still to fill in')
     .concat(active.filter(c=>{const subs=c.subPhases||[];const po=subs.find(x=>/punch/i.test(x.name||'')); return !!(po && !po.completed && (po.start||po.due));}).map(c=>nm(c)+' — Punch Out scheduled, still to fill in'));
-  return shell(`<div style="font-size:12.5px;color:#888;margin:-6px 0 10px">What's outstanding right now — click a tile to open the full tracker.</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">${sum('🧾 W-9s needed','#7A3FA8',w9i)}${sum('🪟 Windows','#185FA5',wi)}${sum('🌱 Mowing','#3B6D11',mi)}${sum('✅ Checklists','#0B7285',ci)}${_utilSummaryCard(sum,utilOutList,nm)}${sum('📄 Permits — paperwork for the warehouse','#B03A8B',_permitWarehouseDue().map(r=>_calEsc(r.addr||'')+' — approved, print it and take it over'))}</div>
+  return shell(`<div style="font-size:12.5px;color:#888;margin:-6px 0 10px">What's outstanding right now — click a tile to open the full tracker.</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">${sum('🧾 W-9s needed','#7A3FA8',w9i)}${sum('🪟 Windows','#185FA5',wi)}${sum('🌱 Mowing','#3B6D11',mi)}${sum('✅ Checklists','#0B7285',ci)}${_utilSummaryCard(sum,utilOutList,nm)}${sum('📄 Permits — paperwork for the warehouse','#B03A8B',_permitWarehouseDue().map(r=>_calEsc(r.addr||'')+' — approved, print it and take it over'))}${sum('🎨 Design forms — needing completed','#8a6d1a',_dpTrackerItems())}</div>
     <div onclick="openPermitDashboard('tracker')" style="margin-top:12px;background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid #B03A8B;border-radius:10px;padding:12px 15px;cursor:pointer">
       <div style="font-size:13.5px;font-weight:700;color:#111">📄 Permits moved to their own dashboard</div>
       <div style="font-size:12.5px;color:#888;margin-top:3px">The permit tracker, the inspection tracker and the zoning guidelines all live together now, under every role's menu. <span style="color:#185FA5">Open the Permit Dashboard &rsaquo;</span></div>
@@ -21313,4 +21368,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-17c design-package-revisions -->
+<!-- build: 2026-09-17d designer-tab-opens -->
