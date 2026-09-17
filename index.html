@@ -336,10 +336,11 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openPMDashboard()">👥 PM Team Overview</div>
       <div class="ddl" style="margin-top:4px">Closings</div>
       <div class="ddi" onclick="openClosedByYear()">🏁 Closed Properties by Year</div>
-      <div class="ddl" style="margin-top:4px">Task Data</div>
+      <div class="ddl" style="margin-top:4px">Data</div>
       <div class="ddi" onclick="openTaskDataHousing()">🗄 Task Data Housing</div>
       <div class="ddi" onclick="openDollarsDayHousing()">💵 $ / Day Housing</div>
       <div class="ddi" onclick="openPermitDataHousing()">📈 Permit &amp; Inspection Data</div>
+      <div class="ddi" onclick="openDesignPkgData()">🎨 Design Package Data</div>
     </div>
   </div>
   <div class="ni has-dd" id="rep-t">📊 Reporting ▾
@@ -984,6 +985,7 @@ async function _initInner() {
       // "Select from saved contractors" showed an empty list to anybody who had not
       // been to that screen first. 120 rows: load it with everything else.
       loadContractorsFromSupabase(),
+      _tkDoneLoad(),
       _nfLoad()
     ]);
     // A house sitting vacant with the checklist unfinished must always have somebody
@@ -994,6 +996,9 @@ async function _initInner() {
     try{ const m=await _advanceSweep(); if(m) _toast(m+" propert"+(m===1?"y":"ies")+" moved to the next phase \u2014 the PM has been told"); }catch(e){}
     // A house that has closed owes an End of Project Report. Raised on the PM's own board.
     try{ const e=await _eopSweep(); if(e) _toast(e+" End of Project Report"+(e===1?"":"s")+" now due \u2014 on the PM's task list"); }catch(e){}
+    // A design package form the PM has sent over stays on the designer's calendar
+    // every day until it is finished, rather than going stale on the day it was raised.
+    try{ await _dpSweep(); }catch(e){}
     document.getElementById("dash-body").innerHTML = renderGenericHome(user);
     applyPermissionsUI();
     _applyMobileMode();
@@ -1682,8 +1687,14 @@ const ROLE_NAVTAB = {
 const NAV_SUPER_ROLES = ["CEO","Project Director","Senior Virtual Administrative Assistant"];
 
 function roleOptions(selected, excludeElevated) {
+  // "Designer" is only offered to the people who actually hire designers -
+  // the Project Director, a CEO, and Idoko. Everyone else never sees the option.
+  // A role already on the account is always listed, or the dropdown would come
+  // up blank on somebody else's row and look broken.
+  const gated = (typeof canAssignDesignerRole==="function") ? !canAssignDesignerRole() : false;
   return ROLE_LIST
     .filter(r => !(excludeElevated && ELEVATED_ROLES.indexOf(r) >= 0))
+    .filter(r => !(gated && r === "Designer" && r !== selected))
     .map(r => `<option value="${r.replace(/"/g,'&quot;')}" ${r===selected?"selected":""}>${r}</option>`).join("");
 }
 
@@ -5580,33 +5591,679 @@ function openDesignDashboard() {
   document.querySelectorAll(".dd").forEach(x => x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x => x.classList.remove("on"));
   const cards=_designCards();
-  const rows = cards.length ? cards.map(c=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 15px;border-bottom:0.5px solid #f4f5f7">
+  const tag=(txt,bg,fg)=>`<span style="flex-shrink:0;font-size:11.5px;font-weight:700;padding:3px 10px;border-radius:99px;background:${bg};color:${fg};white-space:nowrap">${txt}</span>`;
+  const rows = cards.length ? cards.map(c=>{
+    const d=_dpOf(c);
+    const st = !d ? tag('not started','#F1F2F6','#6b7280')
+      : d.status==='complete' ? tag((_dpE(d.dsn.style)+' \u00b7 '+_dpE(d.dsn.tier)),'#14171C','#FFB612')
+      : d.status==='pm_done' ? tag('with the designer','#FBF3E2','#8a6d1a')
+      : tag('draft \u00b7 '+_dpAnswered(d).pct+'%','#EAF1FA','#185FA5');
+    const btn = !d ? 'Start the form' : (d.status==='complete' ? 'View the package' : 'Open the form');
+    return `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 15px;border-bottom:0.5px solid #f4f5f7">
       <div style="min-width:0">
         <div onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-size:14px;color:#185FA5;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_calEsc(c.addr)}</div>
         <div style="font-size:12px;color:#aaa">${_calEsc(_phLabel?_phLabel(c.phase):c.phase)} &middot; ${_calEsc(c.pm||'no project manager yet')}</div>
       </div>
-      <span style="flex-shrink:0;font-size:11.5px;font-weight:600;padding:3px 10px;border-radius:99px;background:#F1F2F6;color:#6b7280;white-space:nowrap">no design package yet</span>
-    </div>`).join('')
+      <div style="display:flex;align-items:center;gap:9px;flex-shrink:0">${st}
+        <span onclick="_dpOpen('${c.id}')" style="cursor:pointer;font-size:12.5px;font-weight:700;color:#fff;background:#14171C;padding:6px 13px;border-radius:7px;white-space:nowrap">${btn}</span></div>
+    </div>`;}).join('')
     : '<div style="padding:26px;text-align:center;color:#bbb;font-size:13.5px">No houses are sitting at a design stage right now.</div>';
+
+  const done=cards.filter(c=>{const d=_dpOf(c);return d&&d.status==='complete';}).length;
+  const waiting=cards.filter(c=>{const d=_dpOf(c);return d&&d.status==='pm_done';}).length;
+  const none=cards.length-done-waiting;
 
   document.getElementById("dash-body").innerHTML = `
   <div style="background:#f4f5f7;min-height:520px"><div style="padding:24px;max-width:900px;margin:0 auto">
-    <div style="font-size:17px;font-weight:600;color:#111">🎨 Design Dashboard</div>
+    <div style="font-size:17px;font-weight:600;color:#111">\uD83C\uDFA8 Design Dashboard</div>
     <div style="font-size:13.5px;color:#666;margin-top:6px;margin-bottom:16px">
       Where the design package for each house gets started, chosen and handed back.</div>
 
-    <div style="background:#F5F8FC;border:0.5px solid #CDD9E8;border-radius:10px;padding:13px 16px;margin-bottom:16px">
-      <div style="font-size:9.6pt;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#7a8396;margin-bottom:5px">How this will work</div>
-      <div style="font-size:13px;color:#333;line-height:1.55">
-        The <b>project manager</b> opens a design package form against a house — from a computer or the phone.
-        The <b>designer</b> picks which of the ten packages it is: five types, one low end and one high end of each.
-        The manager then works from what comes back. Marlo and the architect can see it too.
-        <div style="margin-top:7px;color:#888">The form itself is still being drawn up. This list is live in the meantime.</div>
+    <div style="background:#14171C;border-radius:10px;padding:14px 17px;margin-bottom:16px">
+      <div style="font-size:10.5px;font-weight:800;letter-spacing:.13em;text-transform:uppercase;color:#FFB612;margin-bottom:6px">How this works</div>
+      <div style="font-size:13px;color:#dfe2e8;line-height:1.6">
+        The <b style="color:#fff">project manager</b> opens the form against a house \u2014 from a computer or the phone \u2014 and fills in
+        Section 1. It then lands on the <b style="color:#fff">designer's</b> task calendar, every day, until they have picked the package:
+        five styles, low end or high end, ten in all. When the designer signs off the form <b style="color:#fff">locks</b>.
+        One package per house. Anything that changes after that goes on as a revision with its own change order.
       </div>
+    </div>
+
+    <div style="display:flex;gap:9px;margin-bottom:14px;flex-wrap:wrap">
+      <div style="flex:1;min-width:130px;background:#fff;border:0.5px solid #e0e4ec;border-radius:9px;padding:11px 14px">
+        <div style="font-size:21px;font-weight:700;color:#14171C">${done}</div><div style="font-size:12px;color:#888">package locked in</div></div>
+      <div style="flex:1;min-width:130px;background:#fff;border:0.5px solid #e0e4ec;border-radius:9px;padding:11px 14px">
+        <div style="font-size:21px;font-weight:700;color:#8a6d1a">${waiting}</div><div style="font-size:12px;color:#888">waiting on the designer</div></div>
+      <div style="flex:1;min-width:130px;background:#fff;border:0.5px solid #e0e4ec;border-radius:9px;padding:11px 14px">
+        <div style="font-size:21px;font-weight:700;color:#6b7280">${none}</div><div style="font-size:12px;color:#888">form not started</div></div>
     </div>
 
     <div style="font-size:12.5px;font-weight:700;color:#111;margin-bottom:7px">Houses at a design stage <span style="font-weight:400;color:#999">&middot; ${cards.length}</span></div>
     <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">${rows}</div>
+  </div></div>`;
+}
+
+// ===================== DESIGN PACKAGE FORM =====================
+// One form per house. The project manager fills Section 1 against a specific
+// property - from a computer or the field app - and hands it to the designer,
+// who fills Section 2 and picks the package. Once both sides sign off the form
+// LOCKS. It is never edited again: changes go on as revisions, which append to
+// a history inside the form. Cost never lives here - an agreed revision gets a
+// change order of its own.
+//
+// Stored on the property row at checklists.dpkg, written through _dpWrite(),
+// which re-reads the row first so two people saving at once cannot wipe each
+// other (the same failure we fixed on the meeting doc).
+const DP_STYLES = ["Country Vibe","Modern","Mid Century Modern","Entry Level High End","Basic"];
+const DP_TIERS  = ["Low End","High End"];
+const DP_PTYPES = ["Ranch / 1-Story","Basic 2-Story","Cape Cod","Cottage","Condo","Split Level","Tri-Level","Multi-Family","Townhouse"];
+const DP_FOUND  = ["Finished Basement","Unfinished Basement","Slab on Grade","Crawl Space"];
+const DP_ROOMS  = [["living","Living Room"],["kitchen","Kitchen"],["dining","Dining Room"],["ff","First Floor Total"],["sf","Second Floor Total"],["fb","Finished Basement"]];
+const DP_BATHS  = [["master","Master / Primary Bath"],["hall","Hall / Secondary Bath"],["half","Half Bath / Powder Room"],["bsmt","Basement Bath"],["add","Additional Bath"]];
+const DP_STEP   = "Design Package Form";
+
+// [key, question, follow-up label or null, only-ask-if-this-key-is-Yes or null]
+const DP_EXT = [
+  ["Siding", [
+    ["siding","Keeping the existing siding?","If yes — what type?",null],
+    ["siding_paint","Painting the siding?",null,"siding"]]],
+  ["Soffit & fascia", [
+    ["soffit","Keeping the existing soffit & fascia?","If yes — material / colour",null],
+    ["soffit_paint","Painting the soffit & fascia?",null,"soffit"]]],
+  ["Gutters", [
+    ["gutters","Keeping the existing gutters?","If yes — colour / material",null],
+    ["gutters_paint","Painting the existing gutters?",null,"gutters"]]],
+  ["Roof", [
+    ["roof","Keeping the existing roof?","If yes — type (shingle, flat, metal…)",null]]],
+  ["Windows", [
+    ["windows","Keeping the existing windows?","If yes — type (single, double hung…)",null]]],
+  ["Exterior doors", [
+    ["extdoors","Keeping the existing exterior doors?",null,null],
+    ["exthandrail","Keeping the existing exterior handrail?",null,null],
+    ["exthandrail_paint","Painting the exterior handrail?",null,"exthandrail"]]],
+  ["Exterior lights", [
+    ["extlights","Keeping the existing exterior lights?",null,null]]],
+  ["Mailbox & house numbers", [
+    ["mailbox","Keeping the existing mailbox?","If yes — wall mount or post mount?",null],
+    ["numbers","Keeping the existing house numbers?",null,null]]],
+  ["Garage door", [
+    ["garage","Keeping the existing garage door?","If yes — style / colour",null],
+    ["garage_opener","Keeping the existing garage door opener?",null,"garage"],
+    ["garage_paint","Painting the existing garage door?",null,"garage"]]]
+];
+const DP_INT = [
+  ["Interior doors", [
+    ["intdoors","Keeping the existing interior doors?","If yes — style / type (add a photo if you can)",null]]],
+  ["Baseboard & casing", [
+    ["baseboard","Keeping the existing baseboard?","If yes — profile / size",null],
+    ["casing","Keeping the existing casing?","If yes — profile / size",null]]],
+  ["Stair railing / handrail", [
+    ["handrail","Keeping the existing handrail?","If yes — material / style",null],
+    ["handrail_paint","Painting the existing handrail?",null,"handrail"]]],
+  ["Flooring", [
+    ["hardwood","Hardwood found under the carpet?","If yes — condition notes",null],
+    ["refinish","Refinishing the hardwood?",null,"hardwood"],
+    ["keepfloor","Keeping any existing flooring through the house?","If yes — what type, and where?",null]]],
+  ["Kitchen", [
+    ["cabinets","Keeping the existing kitchen cabinets?","If yes — are they being painted?",null],
+    ["counters","Keeping the existing countertops?",null,null],
+    ["appliances","Keeping any existing appliances?","If yes — which ones?",null]]],
+  ["Bathrooms", [
+    ["bathkeep","Keeping anything in the bathrooms?","If yes — what, and which bathroom?",null]]]
+];
+
+function _dpCard(pid){ return (typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid)||null; }
+function _dpOf(c){ const d=((c&&c.checklists)||{}).dpkg; return (d&&typeof d==='object')?d:null; }
+function _dpBlank(c){
+  return { v:1, status:'draft',
+    pm:{ addr:(c&&c.addr)||'', pm:(c&&c.pm)||'', year:'', beds:'', baths:'', sqft:'',
+         budget:(c&&c.budget)||'', arv:(c&&c.goalArv)||'', purchase:'', tier:'', tight:'',
+         ptypes:[], ptype_other:'',
+         found:[], found_other:'', rooms:{}, baths_rows:[], ext:{}, int:{}, notes_designer:'', notes_other:'' },
+    dsn:{ style:'', tier:'', extras:'', questions:'', notes:'' },
+    pm_sign:null, dsn_sign:null, locked_at:null, revisions:[],
+    started_at:null, started_by:null };
+}
+function _dpWho(){ const u=(typeof currentUser==='function')?currentUser():null; return u?((u.firstName||'')+' '+(u.lastName||'')).trim()||u.email:'someone'; }
+function _dpRole(){ const u=(typeof currentUser==='function')?currentUser():null; return u?(u.role||''):''; }
+function _dpIsSuper(){ const u=(typeof currentUser==='function')?currentUser():null; return !!(u&&u.isSuperAdmin); }
+// Who may fill which half. The designer half is the designer's; everything else
+// is the PM's. A director or super admin can do either - somebody has to be able
+// to finish a form when a person is off.
+function _dpCanPM(){ return _dpIsSuper() || ["Project Director","CEO","Project Manager","Senior Virtual Administrative Assistant"].indexOf(_dpRole())>=0; }
+function _dpCanDsn(){ return _dpIsSuper() || ["Designer","Project Director","CEO","Senior Virtual Administrative Assistant"].indexOf(_dpRole())>=0; }
+// The Designer job role itself is only handed out by the people who hire designers.
+function canAssignDesignerRole(u){
+  u = u || ((typeof currentUser==='function')?currentUser():null);
+  if(!u) return false;
+  if(u.isSuperAdmin) return true;
+  if(u.email==="idoko@legacyohiohomes.com") return true;
+  return ["Project Director","CEO"].indexOf(u.role)>=0;
+}
+
+// ---- progress ----------------------------------------------------------------
+function _dpAnswered(d){
+  let asked=0, done=0;
+  const walk=(spec,bag)=>{ spec.forEach(g=>g[1].forEach(q=>{
+    if(q[3] && !_dpKeeping(bag[q[3]])) return;     // hidden follow-up is not asked
+    asked++; if(bag[q[0]]) done++;
+  })); };
+  const p=d.pm||{};
+  walk(DP_EXT, p.ext||{}); walk(DP_INT, p.int||{});
+  const basics=[p.year,p.beds,p.baths,p.sqft,p.purchase,p.tier,p.tight];
+  basics.forEach(v=>{ asked++; if(String(v||'').trim()) done++; });
+  asked++; if((p.ptypes||[]).length) done++;
+  asked++; if((p.found||[]).length) done++;
+  return { asked:asked, done:done, pct: asked?Math.round(done*100/asked):0 };
+}
+
+// ---- state -------------------------------------------------------------------
+function _dpOpen(pid){
+  const c=_dpCard(pid); if(!c){ alert("That property could not be found. Refresh and try again."); return; }
+  window._dpP=pid;
+  window._dpD=JSON.parse(JSON.stringify(_dpOf(c) || _dpBlank(c)));
+  window._dpTab = (window._dpD.status==='pm_done' && _dpCanDsn()) ? 'dsn' : 'pm';
+  let host=document.getElementById('dp-modal');
+  if(!host){
+    host=document.createElement('div'); host.id='dp-modal';
+    host.style.cssText='position:fixed;inset:0;background:rgba(10,12,16,.55);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:20px;overflow:auto';
+    host.onclick=(e)=>{ if(e.target===host) _dpClose(); };
+    document.body.appendChild(host);
+  }
+  host.style.display='flex';
+  _dpRender();
+}
+function _dpClose(){
+  if(window._dpDirty && !confirm("You have changes that have not been saved yet. Close anyway?")) return;
+  window._dpDirty=false;
+  const h=document.getElementById('dp-modal'); if(h) h.remove();
+}
+function _dpMark(){ window._dpDirty=true; const s=document.getElementById('dp-dirty'); if(s) s.style.display='inline'; }
+// Typing NEVER redraws the form - that is what used to eat what people typed.
+function _dpText(scope,key,val){ const d=window._dpD; if(!d) return; if(scope==='dsn'){ d.dsn[key]=val; } else { d.pm[key]=val; } _dpMark(); }
+function _dpDeep(scope,key,val){ const d=window._dpD; if(!d) return; d.pm[scope]=d.pm[scope]||{}; d.pm[scope][key]=val; _dpMark(); }
+function _dpRoom(key,val){ const d=window._dpD; d.pm.rooms=d.pm.rooms||{}; d.pm.rooms[key]=val; _dpMark(); }
+function _dpBathSet(i,field,val){ const d=window._dpD; const r=(d.pm.baths_rows||[])[i]; if(r){ r[field]=val; _dpMark(); } }
+function _dpBathAdd(){ const d=window._dpD; d.pm.baths_rows=d.pm.baths_rows||[]; d.pm.baths_rows.push({name:'',sqft:'',vanity:'',notes:''}); _dpMark(); _dpRender(); }
+function _dpBathDel(i){ const d=window._dpD; (d.pm.baths_rows||[]).splice(i,1); _dpMark(); _dpRender(); }
+// A pill DOES redraw, because answering Yes can reveal a follow-up question.
+function _dpPill(scope,key,val){
+  const d=window._dpD; if(!d) return;
+  d.pm[scope]=d.pm[scope]||{};
+  d.pm[scope][key] = (d.pm[scope][key]===val) ? '' : val;
+  _dpMark(); _dpRender();
+}
+function _dpToggle(list,val){
+  const d=window._dpD; const arr=d.pm[list]=d.pm[list]||[];
+  const i=arr.indexOf(val); if(i>=0) arr.splice(i,1); else arr.push(val);
+  _dpMark(); _dpRender();
+}
+function _dpPickTier(scope,val){
+  const d=window._dpD;
+  if(scope==='dsn') d.dsn.tier=(d.dsn.tier===val?'':val); else d.pm.tier=(d.pm.tier===val?'':val);
+  _dpMark(); _dpRender();
+}
+function _dpPickStyle(val){ const d=window._dpD; d.dsn.style=(d.dsn.style===val?'':val); _dpMark(); _dpRender(); }
+// Bruce, 17 Sept: the designer needs to know whether the money is tight before they
+// start picking, not after. It sits next to the tier because it is the same decision.
+function _dpPickTight(val){ const d=window._dpD; d.pm.tight=(d.pm.tight===val?'':val); _dpMark(); _dpRender(); }
+const DP_BUDGET = ["Tight","Flexible","Other"];
+function _dpTabTo(t){ window._dpTab=t; _dpRender(); }
+
+// ---- writing ------------------------------------------------------------------
+// Re-read the row, set only dpkg, write it back. Two people cannot wipe each other.
+async function _dpWrite(pid, next){
+  const fresh=await supabase.from("pm_properties").select("checklists").eq("id",pid).maybeSingle();
+  if(fresh.error || !fresh.data){
+    alert("That was NOT saved — the property record could not be re-read. Your typing is still on screen; try again in a moment.");
+    return false;
+  }
+  const cl=(fresh.data.checklists && typeof fresh.data.checklists==='object') ? fresh.data.checklists : {};
+  cl.dpkg=next;
+  const w=await supabase.from("pm_properties").update({checklists:cl}).eq("id",pid).select("id");
+  if(w.error || !w.data || !w.data.length){
+    alert("That was NOT saved — "+((w.error&&w.error.message)||"nothing changed. Refresh and try again."));
+    return false;
+  }
+  const c=_dpCard(pid); if(c) c.checklists=cl;
+  return true;
+}
+async function _dpSave(quiet){
+  if(typeof _blockIfReadOnly==="function" && _blockIfReadOnly()) return false;
+  const d=window._dpD, pid=window._dpP; if(!d||!pid) return false;
+  if(!d.started_at){ d.started_at=_ymdToday(); d.started_by=_dpWho(); }
+  const ok=await _dpWrite(pid,d);
+  if(ok){
+    window._dpDirty=false;
+    const s=document.getElementById('dp-dirty'); if(s) s.style.display='none';
+    if(!quiet && typeof _logAudit==="function") _logAudit("updated","design package",(_dpCard(pid)||{}).addr||"",("Saved by "+_dpWho()));
+    if(!quiet) _dpRender();
+  }
+  return ok;
+}
+
+// ---- the step on the property card ---------------------------------------------
+// The form owns its own sub-phase step, and puts it immediately BEFORE
+// "SOW Creation & Approval" - the design package is decided before the scope is
+// written, not after.
+async function _dpEnsureStep(pid, opts){
+  opts=opts||{};
+  const fresh=await supabase.from("pm_properties").select("sub_phases").eq("id",pid).maybeSingle();
+  if(fresh.error||!fresh.data) return false;
+  const subs=Array.isArray(fresh.data.sub_phases)?fresh.data.sub_phases.slice():[];
+  let step=subs.find(s=>s && s.name===DP_STEP);
+  if(!step){
+    step={name:DP_STEP};
+    const at=subs.findIndex(s=>s && /^SOW Creation/i.test(s.name||''));
+    if(at>=0) subs.splice(at,0,step); else subs.push(step);
+  }
+  if(!step.start) step.start=_ymdToday();
+  if(!step.due)   step.due=(typeof _ymdPlus==="function")?_ymdPlus(5):"";
+  if(opts.complete) step.completed=true;
+  const w=await supabase.from("pm_properties").update({sub_phases:subs}).eq("id",pid).select("id");
+  if(w.error||!w.data||!w.data.length) return false;
+  const c=_dpCard(pid); if(c) c.subPhases=subs;
+  return true;
+}
+
+// ---- handing it to the designer --------------------------------------------------
+function _dpDesigners(){
+  return (typeof getUsers==="function"?getUsers():[])
+    .filter(u=>u.status==="approved" && (u.role||"")==="Designer")
+    .map(u=>((u.firstName||"")+" "+(u.lastName||"")).trim()||u.email)
+    .filter(Boolean);
+}
+// The designer's job stays on their task calendar EVERY DAY until the form is
+// finished - it is not a one-off reminder that can be missed on a busy Tuesday.
+// One open task per house is enough: the due date rolls forward each day it is
+// still outstanding, so it is always on today.
+async function _dpDesignerTask(pid){
+  const c=_dpCard(pid); if(!c) return false;
+  const who=_dpDesigners();
+  const title=(c.addr||"Property")+" — Design Package Form";
+  const ex=await supabase.from("pm_tasks").select("id,status").eq("property_id",pid).eq("category","Design Package Form");
+  if(!ex.error && (ex.data||[]).some(t=>t.status!=="done")) return true;   // already on their list
+  const ins=await supabase.from("pm_tasks").insert({
+    title:title, category:"Design Package Form",
+    start_date:_ymdToday(), due_date:_ymdToday(), status:"open",
+    property_id:pid, assignee:who[0]||null, assignees:who,
+    notes:"The project manager has finished their half of the design package form for this house. Open the property, pick the package and tier, add your notes, and sign off. This stays on your calendar every day until the form is completed."
+  }).select("id").single();
+  if(ins.error) return false;
+  if(typeof _logAudit==="function") _logAudit("created","task",title,"Raised automatically — the PM finished Section 1 of the design package form");
+  return true;
+}
+// Rolls any outstanding design-package task onto today. Called at startup with
+// the other sweeps, so the job reappears each morning rather than going stale.
+let _dpSweeping=false;
+async function _dpSweep(){
+  if(_dpSweeping) return 0; _dpSweeping=true;
+  try{
+    const today=_ymdToday();
+    const r=await supabase.from("pm_tasks").select("id,due_date,status").eq("category","Design Package Form").eq("status","open");
+    if(r.error) return 0;
+    const stale=(r.data||[]).filter(t=>!t.due_date || t.due_date<today);
+    for(const t of stale){ await supabase.from("pm_tasks").update({due_date:today}).eq("id",t.id); }
+    return stale.length;
+  } finally { _dpSweeping=false; }
+}
+
+// ---- the two sign-offs ------------------------------------------------------------
+async function _dpPMDone(){
+  if(typeof _blockIfReadOnly==="function" && _blockIfReadOnly()) return;
+  const d=window._dpD, pid=window._dpP; if(!d) return;
+  const p=d.pm||{};
+  const missing=[];
+  if(!String(p.year||'').trim()) missing.push("year the house was built");
+  if(!String(p.beds||'').trim()) missing.push("number of bedrooms");
+  if(!String(p.baths||'').trim()) missing.push("number of bathrooms");
+  if(!String(p.sqft||'').trim()) missing.push("total square footage");
+  if(!String(p.purchase||'').trim()) missing.push("purchase price of the home");
+  if(!p.tier) missing.push("package tier");
+  if(!p.tight) missing.push("whether the overall budget is tight, flexible or something else");
+  if(!(p.ptypes||[]).length) missing.push("property type");
+  if(missing.length){ alert("Before this goes to the designer, fill in:\n\n• "+missing.join("\n• ")); return; }
+  const prog=_dpAnswered(d);
+  if(prog.pct<100 && !confirm("You have answered "+prog.done+" of "+prog.asked+" questions. Anything left blank the designer will have to come back and ask about.\n\nSend it anyway?")) return;
+  d.status='pm_done'; d.pm_sign={by:_dpWho(), at:_ymdToday()};
+  if(!await _dpSave(true)) return;
+  await _dpEnsureStep(pid,{});
+  await _dpDesignerTask(pid);
+  if(typeof _logAudit==="function") _logAudit("completed","design package",(_dpCard(pid)||{}).addr||"","Section 1 finished by "+_dpWho()+" and handed to the designer");
+  const names=_dpDesigners();
+  alert(names.length
+    ? ("Sent to "+names.join(", ")+". It is on their task calendar from today and stays there until the form is finished.")
+    : "Section 1 is saved. There is nobody with the Designer job role yet, so there is nobody to send it to — add the designer's account and it will land on their calendar.");
+  _dpRender();
+}
+async function _dpDsnDone(){
+  if(typeof _blockIfReadOnly==="function" && _blockIfReadOnly()) return;
+  const d=window._dpD, pid=window._dpP; if(!d) return;
+  if(!d.dsn.style || !d.dsn.tier){ alert("Pick the design package style and the tier before signing off."); return; }
+  if(!confirm("Signing off locks this form.\n\nPackage: "+d.dsn.style+" — "+d.dsn.tier+"\n\nOne package per house. After this it cannot be edited — anything that changes goes on as a revision, with its own change order for the cost. Lock it?")) return;
+  d.dsn_sign={by:_dpWho(), at:_ymdToday()};
+  d.status='complete'; d.locked_at=_ymdToday();
+  if(!await _dpSave(true)) return;
+  await _dpEnsureStep(pid,{complete:true});
+  const c=_dpCard(pid);
+  const open=await supabase.from("pm_tasks").select("id").eq("property_id",pid).eq("category","Design Package Form").eq("status","open");
+  if(!open.error) for(const t of (open.data||[])) await supabase.from("pm_tasks").update({status:"done",completed_at:new Date().toISOString()}).eq("id",t.id);
+  if(typeof _logAudit==="function") _logAudit("approved","design package",(c||{}).addr||"",d.dsn.style+" — "+d.dsn.tier+", locked by "+_dpWho());
+  _dpRender();
+}
+// A locked form is never reopened. A revision is a dated entry on top of it:
+// what changed, and which change order carries the cost.
+async function _dpRevise(){
+  if(typeof _blockIfReadOnly==="function" && _blockIfReadOnly()) return;
+  const d=window._dpD; if(!d||d.status!=='complete') return;
+  const what=(prompt("REVISION — what is changing on this design package?\n\nThe original stays exactly as it was; this goes on top of it with today's date.","")||"").trim();
+  if(!what) return;
+  const co=(prompt("Which change order carries the cost of this? (number, or leave blank if there is no cost)","")||"").trim();
+  d.revisions=d.revisions||[];
+  d.revisions.push({ at:_ymdToday(), by:_dpWho(), what:what, co:co||null });
+  if(!await _dpSave(true)) return;
+  if(typeof _logAudit==="function") _logAudit("updated","design package",(_dpCard(window._dpP)||{}).addr||"","Revision "+d.revisions.length+" by "+_dpWho()+(co?(" — change order "+co):" — no cost"));
+  _dpRender();
+}
+
+// ---- drawing it ------------------------------------------------------------------
+const DP_C = { ink:"#14171C", gold:"#FFB612", goldDk:"#9A6F05", paper:"#FBFBF9",
+               line:"#E2E4E9", yes:"#0F7B54", no:"#B42318", tbd:"#8a6d1a", mute:"#6b7280" };
+function _dpE(s){ return (typeof _calEsc==="function")?_calEsc(s==null?"":s):String(s==null?"":s); }
+function _dpBar(label, sub){
+  return `<div style="background:${DP_C.ink};border-radius:8px;padding:10px 14px;margin:22px 0 10px;display:flex;align-items:baseline;gap:10px">
+    <div style="width:4px;height:15px;background:${DP_C.gold};border-radius:2px;flex-shrink:0"></div>
+    <div style="font-size:12.5px;font-weight:700;letter-spacing:.11em;text-transform:uppercase;color:${DP_C.gold}">${_dpE(label)}</div>
+    ${sub?`<div style="font-size:12px;color:#9aa3b0">${_dpE(sub)}</div>`:''}</div>`;
+}
+function _dpGrp(label){
+  return `<div style="font-size:11px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:${DP_C.goldDk};margin:16px 0 6px">${_dpE(label)}</div>`;
+}
+function _dpField(label, val, onin, ph){
+  return `<label style="display:block;margin-bottom:9px">
+    <div style="font-size:12px;color:${DP_C.mute};margin-bottom:3px">${_dpE(label)}</div>
+    <input value="${_dpE(val||'')}" placeholder="${_dpE(ph||'')}" oninput="${onin}"
+      style="width:100%;padding:9px 11px;border:1px solid ${DP_C.line};border-radius:7px;font-size:14px;background:#fff;color:#111"/></label>`;
+}
+function _dpArea(label, val, onin, ph, rows){
+  return `<label style="display:block;margin-bottom:9px">
+    <div style="font-size:12px;color:${DP_C.mute};margin-bottom:3px">${_dpE(label)}</div>
+    <textarea rows="${rows||3}" placeholder="${_dpE(ph||'')}" oninput="${onin}"
+      style="width:100%;padding:9px 11px;border:1px solid ${DP_C.line};border-radius:7px;font-size:14px;background:#fff;color:#111;font-family:inherit;resize:vertical">${_dpE(val||'')}</textarea></label>`;
+}
+function _dpChoice(text, on, colour, click, wide){
+  const bg = on ? colour : "#fff", fg = on ? "#fff" : "#4b5563", bd = on ? colour : DP_C.line;
+  return `<span onclick="${click}" style="cursor:pointer;user-select:none;display:inline-block;padding:7px ${wide?'16px':'14px'};border:1.5px solid ${bd};background:${bg};color:${fg};border-radius:99px;font-size:13px;font-weight:600;white-space:nowrap">${_dpE(text)}</span>`;
+}
+// One question: a Yes / No / TBD pill row, and the follow-up box only when it is Yes.
+function _dpAnsColour(v){ return v==='Yes'?DP_C.yes:(v==='No'?DP_C.no:(v==='Some'?'#185FA5':(v==='TBD'?DP_C.tbd:'#c3c7ce'))); }
+// "Some" is the multiple answer. A house is rarely all-or-nothing - some windows
+// stay and some go - and answering Some opens the same box, so the PM writes down
+// which ones rather than being pushed into a Yes that is not true.
+function _dpKeeping(v){ return v==='Yes' || v==='Some'; }
+function _dpQ(scope, q, bag, locked){
+  const [k,label,follow,dep]=q;
+  if(dep && !_dpKeeping(bag[dep])) return '';
+  const cur=bag[k]||'';
+  const pills=locked
+    ? `<span style="font-size:13.5px;font-weight:700;color:${_dpAnsColour(cur)}">${_dpE(cur||'not answered')}</span>`
+    : [["Yes",DP_C.yes],["Some",'#185FA5'],["No",DP_C.no],["TBD",DP_C.tbd]]
+        .map(([t,c])=>_dpChoice(t, cur===t, c, `_dpPill('${scope}','${k}','${t}')`)).join(' ');
+  const showFollow = follow && _dpKeeping(cur);
+  return `<div style="padding:11px 0;border-bottom:1px solid #F0F1F4">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap">
+      <div style="font-size:14px;color:#111;font-weight:500;flex:1;min-width:210px">${_dpE(label)}</div>
+      <div style="display:flex;gap:6px">${pills}</div></div>
+    ${showFollow?`<div style="margin-top:8px;max-width:520px">${
+       locked ? `<div style="font-size:13px;color:#374151"><b>${_dpE(follow)}</b> &nbsp;${_dpE(bag[k+'_n']||'—')}</div>`
+              : _dpField(cur==='Some'?(follow+' — and which ones stay?'):follow, bag[k+'_n'], `_dpDeep('${scope}','${k}_n',this.value)`, cur==='Some'?'e.g. the two front ones stay, the rest are replaced':'')}</div>`:''}</div>`;
+}
+function _dpSection(scope, spec, bag, locked){
+  return spec.map(([g,qs])=>{
+    const body=qs.map(q=>_dpQ(scope,q,bag,locked)).join('');
+    if(!body) return '';
+    return _dpGrp(g)+`<div style="background:#fff;border:1px solid ${DP_C.line};border-radius:9px;padding:2px 14px">${body}</div>`;
+  }).join('');
+}
+function _dpReadRow(label,val){
+  return `<div style="display:flex;gap:12px;padding:6px 0;border-bottom:1px solid #F0F1F4">
+    <div style="font-size:12.5px;color:${DP_C.mute};width:190px;flex-shrink:0">${_dpE(label)}</div>
+    <div style="font-size:13.5px;color:#111;font-weight:500">${_dpE(val||'—')}</div></div>`;
+}
+
+function _dpRender(){
+  const host=document.getElementById('dp-modal'); if(!host) return;
+  const d=window._dpD, pid=window._dpP, c=_dpCard(pid)||{};
+  if(!d) return;
+  const locked = d.status==='complete';
+  const p=d.pm||{}, prog=_dpAnswered(d);
+  const tab=window._dpTab||'pm';
+  const canPM = _dpCanPM() && !locked && d.status!=='pm_done';
+  const canDsn= _dpCanDsn() && !locked;
+
+  const statusChip = locked
+    ? `<span style="background:${DP_C.gold};color:${DP_C.ink};font-size:11.5px;font-weight:800;padding:3px 11px;border-radius:99px;letter-spacing:.05em">LOCKED &middot; ${_dpE(d.dsn.style)} &middot; ${_dpE(d.dsn.tier)}</span>`
+    : d.status==='pm_done'
+      ? `<span style="background:#FBF3E2;color:${DP_C.tbd};font-size:11.5px;font-weight:700;padding:3px 11px;border-radius:99px">WITH THE DESIGNER</span>`
+      : `<span style="background:#F1F2F6;color:${DP_C.mute};font-size:11.5px;font-weight:700;padding:3px 11px;border-radius:99px">DRAFT &middot; ${prog.pct}% ANSWERED</span>`;
+
+  // ---------- Section 1: the project manager ----------
+  let s1='';
+  if(locked || d.status==='pm_done'){
+    s1 = _dpBar("Section 1 \u2014 Project manager", "Filled in by "+((d.pm_sign&&d.pm_sign.by)||'\u2014')+(d.pm_sign?(" on "+d.pm_sign.at):""))
+      + `<div style="background:#fff;border:1px solid ${DP_C.line};border-radius:9px;padding:12px 16px">`
+      + _dpReadRow("Property", p.addr) + _dpReadRow("Project manager", p.pm)
+      + _dpReadRow("Year built", p.year) + _dpReadRow("Bedrooms", p.beds) + _dpReadRow("Bathrooms", p.baths)
+      + _dpReadRow("Total square footage", p.sqft) + _dpReadRow("Purchase price", p.purchase)
+      + _dpReadRow("Construction budget", p.budget)
+      + _dpReadRow("ARV", p.arv) + _dpReadRow("Package tier the PM expects", p.tier)
+      + _dpReadRow("Overall budget", p.tight==='Other'?("Other \u2014 "+(p.tight_n||'')):p.tight)
+      + _dpReadRow("Property type", (p.ptypes||[]).concat(p.ptype_other?["Other: "+p.ptype_other]:[]).join(", "))
+      + _dpReadRow("Foundation", (p.found||[]).concat(p.found_other?["Other: "+p.found_other]:[]).join(", "))
+      + `</div>`
+      + _dpGrp("Exterior \u2014 keeping or replacing")
+      + `<div style="background:#fff;border:1px solid ${DP_C.line};border-radius:9px;padding:2px 14px">${DP_EXT.map(([g,qs])=>qs.map(q=>_dpQ('ext',q,p.ext||{},true)).join('')).join('')}</div>`
+      + _dpGrp("Interior \u2014 keeping or replacing")
+      + `<div style="background:#fff;border:1px solid ${DP_C.line};border-radius:9px;padding:2px 14px">${DP_INT.map(([g,qs])=>qs.map(q=>_dpQ('int',q,p.int||{},true)).join('')).join('')}</div>`
+      + (p.notes_designer?_dpGrp("Notes for the designer")+`<div style="background:#fff;border:1px solid ${DP_C.line};border-radius:9px;padding:12px 15px;font-size:13.5px;color:#111;white-space:pre-wrap">${_dpE(p.notes_designer)}</div>`:'');
+  } else {
+    const rooms=p.rooms||{};
+    s1 = _dpBar("Section 1 \u2014 Project manager", "You fill this in, then hand it to the designer")
+      + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:0 16px">`
+      + _dpField("Property address", p.addr, "_dpText('pm','addr',this.value)")
+      + _dpField("Project manager", p.pm, "_dpText('pm','pm',this.value)")
+      + _dpField("Year the house was built", p.year, "_dpText('pm','year',this.value)", "e.g. 1962")
+      + _dpField("Number of bedrooms", p.beds, "_dpText('pm','beds',this.value)")
+      + _dpField("Number of bathrooms", p.baths, "_dpText('pm','baths',this.value)", "e.g. 3 full, 1 half")
+      + _dpField("Total square footage", p.sqft, "_dpText('pm','sqft',this.value)", "sq ft")
+      + _dpField("Purchase price of the home", p.purchase, "_dpText('pm','purchase',this.value)", "$")
+      + _dpField("Total construction budget", p.budget, "_dpText('pm','budget',this.value)", "$")
+      + _dpField("ARV (after repair value)", p.arv, "_dpText('pm','arv',this.value)", "$")
+      + `</div>`
+      + `<div style="background:#FFFBF0;border:1.5px solid ${DP_C.gold};border-radius:9px;padding:12px 15px;margin:10px 0 4px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+          <div style="font-size:12px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:${DP_C.goldDk}">Package tier</div>
+          <div style="display:flex;gap:8px">${DP_TIERS.map(t=>_dpChoice(t, p.tier===t, DP_C.ink, `_dpPickTier('pm','${t}')`, true)).join('')}</div>
+          <div style="width:1px;height:26px;background:${DP_C.gold};opacity:.5"></div>
+          <div style="font-size:12px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:${DP_C.goldDk}">Overall budget</div>
+          <div style="display:flex;gap:8px">${[["Tight",DP_C.no],["Flexible",DP_C.yes],["Other","#4b5563"]].map(([t,col])=>_dpChoice(t, p.tight===t, col, `_dpPickTight('${t}')`, true)).join('')}</div>
+        </div>
+        ${p.tight==='Other'?`<div style="max-width:520px;margin-bottom:4px">${_dpField("Describe the budget situation", p.tight_n, "_dpText('pm','tight_n',this.value)", "in your own words")}</div>`:''}
+        <div style="font-size:12px;color:${DP_C.mute};margin:0 0 4px 2px">The designer confirms the tier at the end. The budget line tells them how much room they have before they start picking.</div>`
+      + _dpGrp("Property type \u2014 tick everything that applies")
+      + `<div style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:8px">${DP_PTYPES.map(t=>_dpChoice(t,(p.ptypes||[]).indexOf(t)>=0,DP_C.ink,`_dpToggle('ptypes','${t.replace(/'/g,"\\'")}')`)).join('')}</div>`
+      + _dpField("Other property type", p.ptype_other, "_dpText('pm','ptype_other',this.value)", "only if it is not on the list")
+      + _dpGrp("Foundation / basement \u2014 tick everything that applies")
+      + `<div style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:8px">${DP_FOUND.map(t=>_dpChoice(t,(p.found||[]).indexOf(t)>=0,DP_C.ink,`_dpToggle('found','${t.replace(/'/g,"\\'")}')`)).join('')}</div>`
+      + _dpField("Other foundation type", p.found_other, "_dpText('pm','found_other',this.value)", "")
+      + _dpBar("Section 1B \u2014 Flooring", "Square footage room by room")
+      + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:0 16px">`
+      + DP_ROOMS.map(([k,l])=>_dpField(l+" (sq ft)", rooms[k], `_dpRoom('${k}',this.value)`)).join('')
+      + `</div>`
+      + _dpGrp("Bathrooms \u2014 square footage and vanity sizes")
+      + `<div style="background:#fff;border:1px solid ${DP_C.line};border-radius:9px;padding:12px 14px">`
+      + (p.baths_rows||[]).map((r,i)=>`<div style="display:grid;grid-template-columns:1.2fr .7fr .9fr 1.3fr 26px;gap:8px;align-items:end;margin-bottom:8px">
+            <div>${_dpField(i===0?"Bathroom":"", r.name, `_dpBathSet(${i},'name',this.value)`, "which bathroom")}</div>
+            <div>${_dpField(i===0?"Sq ft":"", r.sqft, `_dpBathSet(${i},'sqft',this.value)`, "")}</div>
+            <div>${_dpField(i===0?"Vanity size":"", r.vanity, `_dpBathSet(${i},'vanity',this.value)`, "")}</div>
+            <div>${_dpField(i===0?"Notes":"", r.notes, `_dpBathSet(${i},'notes',this.value)`, "")}</div>
+            <div style="padding-bottom:16px"><span onclick="_dpBathDel(${i})" title="Remove this bathroom" style="cursor:pointer;color:#c0392b;font-size:19px;line-height:1">&times;</span></div>
+          </div>`).join('')
+      + `<span onclick="_dpBathAdd()" style="cursor:pointer;display:inline-block;padding:7px 14px;border:1.5px dashed ${DP_C.line};border-radius:8px;font-size:13px;font-weight:600;color:${DP_C.goldDk}">+ Add a bathroom</span></div>`
+      + _dpBar("Section 1C \u2014 Exterior", "Keeping it, replacing it, or some of each? Yes or Some opens the detail box.")
+      + _dpSection('ext', DP_EXT, p.ext||{}, false)
+      + _dpBar("Section 1D \u2014 Interior", "Same again, inside")
+      + _dpSection('int', DP_INT, p.int||{}, false)
+      + _dpGrp("Before you hand it over")
+      + _dpArea("Notes for the designer \u2014 anything they need to know before they start", p.notes_designer, "_dpText('pm','notes_designer',this.value)","",4)
+      + _dpArea("Any other interior notes", p.notes_other, "_dpText('pm','notes_other',this.value)","",3);
+  }
+
+  // ---------- Section 2: the designer ----------
+  let s2 = _dpBar("Section 2 \u2014 Designer",
+      locked ? ("Signed off by "+((d.dsn_sign&&d.dsn_sign.by)||'\u2014')+" on "+((d.dsn_sign&&d.dsn_sign.at)||'')) : "Filled in after reading Section 1");
+  if(d.status==='draft'){
+    s2 += `<div style="background:#fff;border:1px dashed ${DP_C.line};border-radius:9px;padding:20px;text-align:center;color:${DP_C.mute};font-size:13.5px">
+      The designer picks up once the project manager has finished Section 1 and sent it over.</div>`;
+  } else if(locked){
+    s2 += `<div style="background:#fff;border:1px solid ${DP_C.line};border-radius:9px;padding:12px 16px">`
+       + _dpReadRow("Design package style", d.dsn.style) + _dpReadRow("Package tier", d.dsn.tier)
+       + _dpReadRow("Items not covered by the package", d.dsn.extras)
+       + _dpReadRow("Questions for the project manager", d.dsn.questions)
+       + _dpReadRow("General notes / direction", d.dsn.notes)
+       + `</div>`;
+  } else {
+    s2 += _dpGrp("Which package is this? \u2014 five styles, two tiers, ten packages in all")
+       + `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px">${DP_STYLES.map(t=>_dpChoice(t, d.dsn.style===t, DP_C.ink, `_dpPickStyle('${t.replace(/'/g,"\\'")}')`, true)).join('')}</div>`
+       + `<div style="background:#FFFBF0;border:1.5px solid ${DP_C.gold};border-radius:9px;padding:12px 15px;margin-bottom:6px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+            <div style="font-size:12px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:${DP_C.goldDk}">Tier</div>
+            <div style="display:flex;gap:8px">${DP_TIERS.map(t=>_dpChoice(t, d.dsn.tier===t, DP_C.ink, `_dpPickTier('dsn','${t}')`, true)).join('')}</div>
+            ${p.tier?`<div style="font-size:12px;color:${DP_C.mute}">The PM expected <b>${_dpE(p.tier)}</b>.</div>`:''}
+            ${p.tight==='Tight'?`<div style="font-size:12px;font-weight:700;color:${DP_C.no}">The PM has flagged the overall budget as TIGHT.</div>`:(p.tight?`<div style="font-size:12px;color:${DP_C.mute}">Budget: ${_dpE(p.tight==='Other'?(p.tight_n||'other'):p.tight)}.</div>`:'')}</div>`
+       + _dpArea("Additional items not covered by the package", d.dsn.extras, "_dpText('dsn','extras',this.value)", "custom or out-of-package selections",3)
+       + _dpArea("Questions for the project manager", d.dsn.questions, "_dpText('dsn','questions',this.value)", "anything to clear up before selections are final",3)
+       + _dpArea("General design notes / vision / direction for this property", d.dsn.notes, "_dpText('dsn','notes',this.value)", "",4);
+  }
+
+  // ---------- revisions ----------
+  let rev='';
+  if(locked){
+    const list=(d.revisions||[]);
+    rev = _dpBar("Revisions", list.length?(list.length+" on this package"):"None yet")
+      + `<div style="background:#fff;border:1px solid ${DP_C.line};border-radius:9px;padding:${list.length?'4px 16px':'18px'}">`
+      + (list.length
+          ? list.map((r,i)=>`<div style="padding:10px 0;border-bottom:${i===list.length-1?'none':'1px solid #F0F1F4'}">
+              <div style="font-size:11.5px;color:${DP_C.mute};font-weight:700;letter-spacing:.06em">REVISION ${i+1} &middot; ${_dpE(r.at)} &middot; ${_dpE(r.by)}${r.co?(' &middot; CHANGE ORDER '+_dpE(r.co)):' &middot; NO COST'}</div>
+              <div style="font-size:13.5px;color:#111;margin-top:3px;white-space:pre-wrap">${_dpE(r.what)}</div></div>`).join('')
+          : `<div style="text-align:center;color:${DP_C.mute};font-size:13.5px">The package has not been revised. The form above is exactly what was agreed on ${_dpE(d.locked_at)}.</div>`)
+      + `</div>`;
+  }
+
+  // ---------- buttons ----------
+  const btn=(txt,click,bg,fg)=>`<span onclick="${click}" style="cursor:pointer;display:inline-block;padding:10px 18px;background:${bg};color:${fg||'#fff'};border-radius:8px;font-size:13.5px;font-weight:700">${txt}</span>`;
+  let actions='';
+  if(locked){
+    actions = btn("Revise design package","_dpRevise()",DP_C.gold,DP_C.ink)
+      + `<span style="font-size:12.5px;color:${DP_C.mute};margin-left:12px">Locked on ${_dpE(d.locked_at)}. The original is never edited \u2014 a revision goes on top of it, and its cost goes on a change order.</span>`;
+  } else if(d.status==='pm_done'){
+    actions = (canDsn ? btn("Save","_dpSave()", "#4b5563") + " " + btn("Sign off and lock the package","_dpDsnDone()",DP_C.ink) : `<span style="font-size:13px;color:${DP_C.mute}">Waiting on the designer.</span>`);
+  } else {
+    actions = (canPM ? btn("Save draft","_dpSave()", "#4b5563") + " " + btn("Finish Section 1 and send to the designer","_dpPMDone()",DP_C.ink)
+                     : `<span style="font-size:13px;color:${DP_C.mute}">You can read this, but Section 1 belongs to the project manager.</span>`);
+  }
+
+  host.innerHTML=`<div style="background:${DP_C.paper};border-radius:14px;max-width:940px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3);margin:auto;overflow:hidden">
+    <div style="background:${DP_C.ink};padding:16px 22px;display:flex;justify-content:space-between;align-items:flex-start;gap:14px">
+      <div style="min-width:0">
+        <div style="font-size:11px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:${DP_C.gold}">Legacy Ohio Homes &middot; Design package</div>
+        <div style="font-size:19px;font-weight:700;color:#fff;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_dpE(c.addr||'Property')}</div>
+        <div style="margin-top:7px">${statusChip}</div>
+      </div>
+      <span onclick="_dpClose()" style="cursor:pointer;font-size:26px;color:#6b7280;line-height:1">&times;</span>
+    </div>
+    ${!locked?`<div style="height:5px;background:#E9EAEE"><div style="height:5px;width:${prog.pct}%;background:${DP_C.gold};transition:width .2s"></div></div>`:''}
+    <div style="padding:6px 22px 20px;max-height:74vh;overflow:auto">
+      ${s1}${s2}${rev}
+    </div>
+    <div style="background:#fff;border-top:1px solid ${DP_C.line};padding:13px 22px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      ${actions}
+      <span id="dp-dirty" style="display:${window._dpDirty?'inline':'none'};font-size:12.5px;color:${DP_C.no};font-weight:600;margin-left:6px">Unsaved changes</span>
+    </div>
+  </div>`;
+}
+
+// ---- Design Package Data ----------------------------------------------------------
+// The point of recording the package on the house, from the very first form: in six
+// months this answers which packages actually sold faster and which came in on
+// budget. Nothing here is typed in - it is read back off the forms.
+function _dpAllPicked(){
+  return (typeof propCards!=='undefined'?propCards:[])
+    .filter(c=>!c.archived)
+    .map(c=>{ const d=_dpOf(c); return (d && d.status==='complete') ? {c:c, d:d} : null; })
+    .filter(Boolean);
+}
+function _dpDays(a,b){
+  if(!a||!b) return null;
+  const x=Date.parse(a+"T00:00:00"), y=Date.parse(b+"T00:00:00");
+  if(isNaN(x)||isNaN(y)) return null;
+  return Math.round((y-x)/86400000);
+}
+function openDesignPkgData(){
+  document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
+  document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
+  const picked=_dpAllPicked();
+  const cells={};
+  DP_STYLES.forEach(s=>{ cells[s]={}; DP_TIERS.forEach(t=>cells[s][t]={n:0,sold:0,days:[]}); });
+  picked.forEach(({c,d})=>{
+    const s=d.dsn.style, t=d.dsn.tier;
+    if(!cells[s]||!cells[s][t]) return;
+    const cell=cells[s][t]; cell.n++;
+    const sold=c.closedDate||'';
+    if(sold){ cell.sold++; const dd=_dpDays(d.locked_at, sold); if(dd!=null) cell.days.push(dd); }
+  });
+  const avg=a=>a.length?Math.round(a.reduce((x,y)=>x+y,0)/a.length):null;
+  const grid=DP_STYLES.map(s=>`<tr style="border-top:0.5px solid #eef0f6">
+      <td style="padding:8px 10px;font-weight:600;color:#111">${_dpE(s)}</td>
+      ${DP_TIERS.map(t=>{const x=cells[s][t];const a=avg(x.days);
+        return `<td style="padding:8px 10px;text-align:center;color:${x.n?'#111':'#c9ccd4'}">${x.n||'—'}${x.sold?`<div style="font-size:11.5px;color:#6b7280">${x.sold} sold${a!=null?(' · '+a+'d to sell'):''}</div>`:''}</td>`;}).join('')}
+    </tr>`).join('');
+  const rows=picked.length?picked.sort((a,b)=>(b.d.locked_at||'').localeCompare(a.d.locked_at||'')).map(({c,d})=>`
+    <tr style="border-top:0.5px solid #eef0f6">
+      <td style="padding:8px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;color:#185FA5;font-weight:600">${_dpE(c.addr)}</span></td>
+      <td style="padding:8px 10px">${_dpE(d.dsn.style)}</td>
+      <td style="padding:8px 10px">${_dpE(d.dsn.tier)}</td>
+      <td style="padding:8px 10px;color:#6b7280">${_dpE(d.locked_at)}</td>
+      <td style="padding:8px 10px;color:#6b7280">${(d.revisions||[]).length||'—'}</td>
+      <td style="padding:8px 10px;color:#6b7280">${_dpE(c.phase)}</td>
+    </tr>`).join('')
+    :'<tr><td colspan="6" style="padding:22px;text-align:center;color:#bbb">No design package has been locked in yet. The first one that is signed off shows up here.</td></tr>';
+
+  document.getElementById("dash-body").innerHTML=`
+  <div style="background:#f4f5f7;min-height:520px"><div style="padding:24px;max-width:980px;margin:0 auto">
+    <div style="font-size:17px;font-weight:600;color:#111">🎨 Design Package Data</div>
+    <div style="font-size:13.5px;color:#666;margin-top:6px;margin-bottom:16px">
+      Which package went on which house, and what happened afterwards. Recorded from the first form onwards
+      so the comparison is there when there is enough of it to be worth reading.</div>
+    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden;margin-bottom:18px">
+      <div style="padding:11px 15px;font-size:12.5px;font-weight:700;color:#111;border-bottom:0.5px solid #eef0f6">Packages chosen — five styles, two tiers</div>
+      <table style="width:100%;border-collapse:collapse;font-size:13.5px">
+        <thead><tr style="background:#fafbfd"><th style="text-align:left;padding:7px 10px;font-size:11.5px;color:#6b7280;letter-spacing:.06em">STYLE</th>
+        ${DP_TIERS.map(t=>`<th style="padding:7px 10px;font-size:11.5px;color:#6b7280;letter-spacing:.06em">${t.toUpperCase()}</th>`).join('')}</tr></thead>
+        <tbody>${grid}</tbody></table>
+    </div>
+    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">
+      <div style="padding:11px 15px;font-size:12.5px;font-weight:700;color:#111;border-bottom:0.5px solid #eef0f6">Every locked package <span style="font-weight:400;color:#999">&middot; ${picked.length}</span></div>
+      <table style="width:100%;border-collapse:collapse;font-size:13.5px">
+        <thead><tr style="background:#fafbfd">
+          <th style="text-align:left;padding:7px 10px;font-size:11.5px;color:#6b7280">HOUSE</th>
+          <th style="text-align:left;padding:7px 10px;font-size:11.5px;color:#6b7280">STYLE</th>
+          <th style="text-align:left;padding:7px 10px;font-size:11.5px;color:#6b7280">TIER</th>
+          <th style="text-align:left;padding:7px 10px;font-size:11.5px;color:#6b7280">LOCKED</th>
+          <th style="text-align:left;padding:7px 10px;font-size:11.5px;color:#6b7280">REVISIONS</th>
+          <th style="text-align:left;padding:7px 10px;font-size:11.5px;color:#6b7280">PHASE NOW</th>
+        </tr></thead><tbody>${rows}</tbody></table>
+    </div>
+    <div style="font-size:12px;color:#999;margin-top:10px">Days to sell counts from the day the package was locked to the day the house closed.
+      Cost per package will join this once the design budget template is hyperlinked in.</div>
   </div></div>`;
 }
 
@@ -10607,7 +11264,7 @@ function threeCalendarWidgets(u){
   // everyone else (e.g. a Project Manager like Alex) sees only tasks assigned to them.
   const myName=(u?(`${u.firstName||""} ${u.lastName||""}`).trim():"");
   const seeAll=!!(u && (u.isSuperAdmin || u.accessLevel==="full" || u.role==="Project Director"));
-  const upTasks=(_tasksCache||[]).filter(t=>t.status==="open" && t.due_date && t.due_date>=todayStr && _taskHasAssignee(t,myName)).sort((a,b)=>a.due_date<b.due_date?-1:1).slice(0,4);
+  const upTasks=(_tasksCache||[]).filter(t=>_taskOpenFor(t,myName) && t.due_date && t.due_date>=todayStr && _taskHasAssignee(t,myName)).sort((a,b)=>a.due_date<b.due_date?-1:1).slice(0,4);
   const taskRows=upTasks.length? upTasks.map(t=>`<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:0.5px solid #1e1e1e"><div style="min-width:0"><div style="font-size:13px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(t.title)}</div><div style="font-size:11px;color:#666">${t.assignee?_calEsc(t.assignee):"Unassigned"}</div></div><div style="font-size:11px;color:#5dade2;white-space:nowrap">${_calEsc(t.due_date)}</div></div>`).join("") : `<div style="text-align:center;color:#555;font-size:13px;padding:16px 0">No upcoming tasks</div>`;
   const upEvents=(_calEventsCache||[]).filter(e=>e.event_date && e.event_date>=todayStr).sort((a,b)=>a.event_date<b.event_date?-1:1).slice(0,4);
   const evRows=upEvents.length? upEvents.map(e=>{const lbl=e.kind==="contractor"?("★ "+_contractorName(e.contractor_id)):("📦 "+(e.title||"Material"));return `<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:0.5px solid #1e1e1e"><div style="min-width:0"><div style="font-size:13px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(lbl)}</div><div style="font-size:11px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(_locLabel(e))}</div></div><div style="font-size:11px;color:#f0c674;white-space:nowrap">${_calEsc(e.event_date)}</div></div>`;}).join("") : `<div style="text-align:center;color:#555;font-size:13px;padding:16px 0">No upcoming construction items</div>`;
@@ -10624,7 +11281,7 @@ function threeCalendarWidgets(u){
       <div onclick="window.open('https://calendar.google.com','_blank')" style="display:inline-block;font-size:12px;color:#111;background:#fff;border-radius:6px;padding:6px 12px;cursor:pointer;font-weight:500">Open Google Calendar</div>
     </div>`;
   // ---- Overdue tasks strip (this person's, or everyone's for directors/super) ----
-  const overdue=(_tasksCache||[]).filter(t=>t.status==="open" && t.due_date && t.due_date<todayStr && _taskHasAssignee(t,myName)).sort((a,b)=>a.due_date<b.due_date?-1:1);
+  const overdue=(_tasksCache||[]).filter(t=>_taskOpenFor(t,myName) && t.due_date && t.due_date<todayStr && _taskHasAssignee(t,myName)).sort((a,b)=>a.due_date<b.due_date?-1:1);
   const overdueRows=overdue.length
     ? overdue.slice(0,8).map(t=>`<div onclick="openTaskDetail('${t.id}')" style="display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:0.5px solid #2e1c1c;cursor:pointer"><div style="min-width:0"><div style="font-size:13px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.category?`<span style="font-size:10px;background:#4a2020;color:#ffb4a8;padding:1px 6px;border-radius:99px;margin-right:5px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div><div style="font-size:11px;color:#b98a82">${taskAssignees(t).length?_calEsc(taskAssignees(t).join(", ")):"Unassigned"}${_locLabel(t)?" · "+_calEsc(_locLabel(t)):""}</div></div><div style="font-size:11px;color:#ff8a7a;white-space:nowrap">Due ${_calEsc(t.due_date)}</div></div>`).join("")
     : `<div style="text-align:center;color:#666;font-size:13px;padding:14px 0">🎉 Nothing overdue</div>`;
@@ -11014,7 +11671,7 @@ function renderSrVAHome(user){
 
 // Daily / weekly / monthly / quarterly grouping of a person's open tasks.
 function _rhTaskCadence(name){
-  const tasks=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status==="open" && _taskHasAssignee(t,name));
+  const tasks=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>_taskOpenFor(t,name) && _taskHasAssignee(t,name));
   const g=(re)=>tasks.filter(t=>re.test(String(t.category||"")+" "+String(t.title||""))).length;
   return _rhHead("My task cadence","tagged daily / weekly / monthly / quarterly")+_rhRow([
     _rhTile("Daily tasks",g(/daily/i),"#fff","","openProjectDashboard('taskcal')"),
@@ -11029,7 +11686,7 @@ function renderAdminHome(user){
   const name=_rhName(user);
   const today=new Date(); const day=today.getDay();
   const toFri=((5-day)+7)%7; const fri=_ymd(new Date(today.getTime()+toFri*86400000));
-  const openTasks=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status==="open" && _taskHasAssignee(t,name));
+  const openTasks=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>_taskOpenFor(t,name) && _taskHasAssignee(t,name));
   const followUps=openTasks.filter(t=>t.due_date && t.due_date<=_ymd(new Date(Date.now()+2*86400000))).length;
   return `<div style="padding:20px 24px;max-width:100%">
     ${welcomeHeader(user)}
@@ -11715,7 +12372,7 @@ function renderRealtorHome(user){
 
   // ---- overdue, theirs only ----
   const overdue=(typeof _tasksCache!=='undefined'?_tasksCache:[])
-    .filter(t=>t.status==='open' && t.due_date && t.due_date<todayStr && _taskHasAssignee(t,me))
+    .filter(t=>_taskOpenFor(t,me) && t.due_date && t.due_date<todayStr && _taskHasAssignee(t,me))
     .sort((a,b)=>a.due_date<b.due_date?-1:1);
   const overdueRows=overdue.length
     ? overdue.slice(0,8).map(t=>`<div onclick="openTaskDetail('${t.id}')" style="display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:0.5px solid #2e1c1c;cursor:pointer"><div style="min-width:0"><div style="font-size:13px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(t.title||'')}</div><div style="font-size:11px;color:#b98a82">${_calEsc(_locLabel(t)||'')}</div></div><div style="font-size:11px;color:#ff8a7a;white-space:nowrap">Due ${_calEsc(t.due_date)}</div></div>`).join('')
@@ -11740,7 +12397,7 @@ function renderRealtorHome(user){
 
   // ---- their tasks, nobody else's ----
   const myTasks=(typeof _tasksCache!=='undefined'?_tasksCache:[])
-    .filter(t=>t.status==='open' && t.due_date && t.due_date>=todayStr && _taskHasAssignee(t,me))
+    .filter(t=>_taskOpenFor(t,me) && t.due_date && t.due_date>=todayStr && _taskHasAssignee(t,me))
     .sort((a,b)=>a.due_date<b.due_date?-1:1).slice(0,6);
   const tRows=myTasks.length?myTasks.map(t=>`<div onclick="openTaskDetail('${t.id}')" style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:0.5px solid #1e1e1e;cursor:pointer"><div style="min-width:0"><div style="font-size:13px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(t.title||'')}</div><div style="font-size:11px;color:#666">${_calEsc(_locLabel(t)||'')}</div></div><div style="font-size:11px;color:#5dade2;white-space:nowrap">${_calEsc(t.due_date)}</div></div>`).join(''):empty('No upcoming tasks assigned to you');
 
@@ -11827,6 +12484,7 @@ function _pmaRerender(){ const el=document.getElementById("pd-content"); if(el &
 async function pmaToggleTask(id){
   if(_blockIfReadOnly()) return;
   const t=(_tasksCache||[]).find(x=>x.id===id); if(!t) return;
+  if(await _tkSharedToggle(t)){ await loadTasks(); _pmaRerender(); return; }
   const ns=t.status==="done"?"open":"done";
   const { error } = await supabase.from("pm_tasks").update({status:ns}).eq("id",id);
   if(error){ alert("Couldn't update task: "+(error.message||"")); return; }
@@ -12083,7 +12741,7 @@ function getPMAContent(tab){
 function _pmaDueTasks(holders){
   const today=new Date(); today.setHours(0,0,0,0);
   const todayStr=_ymd(today); const tom=new Date(today); tom.setDate(today.getDate()+1); const tomStr=_ymd(tom);
-  return (_tasksCache||[]).filter(t=>t.status!=="done" && (t.due_date===todayStr||t.due_date===tomStr) && holders.some(n=>_taskHasAssignee(t,n)))
+  return (_tasksCache||[]).filter(t=>(t.due_date===todayStr||t.due_date===tomStr) && holders.some(n=>_taskOpenFor(t,n) && _taskHasAssignee(t,n)))
     .sort((a,b)=>(a.due_date||'')<(b.due_date||'')?-1:1).map(t=>({...t,_today:t.due_date===todayStr}));
 }
 function _pmaWeekEvents(phases){
@@ -12440,7 +13098,7 @@ function pmAssistantRoleContent(key){
 }
 function _assistantOpenTasks(name){
   const today=(()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;})();
-  return (_tasksCache||[]).filter(t=>t.status!=="done" && _taskHasAssignee(t,name))
+  return (_tasksCache||[]).filter(t=>_taskOpenFor(t,name) && _taskHasAssignee(t,name))
     .map(t=>({...t, overdue: t.due_date && t.due_date<today}))
     .sort((a,b)=> (a.due_date||'9999')<(b.due_date||'9999')?-1:1);
 }
@@ -12924,7 +13582,7 @@ function _pDrill(kind, back){
 }
 function _personDashView(name, title){
   const today=new Date(); today.setHours(0,0,0,0); const todayStr=_ymd(today);
-  const mine=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status!=="done" && _taskHasAssignee(t,name));
+  const mine=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>_taskOpenFor(t,name) && _taskHasAssignee(t,name));
   const overdue=mine.filter(t=>t.due_date && t.due_date<todayStr);
   const dueToday=mine.filter(t=>t.due_date===todayStr);
   const rows=mine.slice().sort((a,b)=>(a.due_date||'zzz')<(b.due_date||'zzz')?-1:1).map(_pmaTaskRow).join('');
@@ -13066,9 +13724,9 @@ function _marloTab(){
   const _resPct7=_mine7.length?Math.round(_t7.resched/_mine7.length*100):null;
   // 3. Her own tasks due inside 48 hours.
   const _in48=_ymd(new Date(today.getTime()+2*86400000));
-  const _due48=_tasksAll.filter(t=>t.status!=='done' && _taskHasAssignee(t,_mName) && t.due_date && t.due_date>=todayStr && t.due_date<=_in48)
+  const _due48=_tasksAll.filter(t=>_taskOpenFor(t,_mName) && _taskHasAssignee(t,_mName) && t.due_date && t.due_date>=todayStr && t.due_date<=_in48)
     .sort((a,b)=>(a.due_date||'')<(b.due_date||'')?-1:1);
-  const _overdue=_tasksAll.filter(t=>t.status!=='done' && _taskHasAssignee(t,_mName) && t.due_date && t.due_date<todayStr).length;
+  const _overdue=_tasksAll.filter(t=>_taskOpenFor(t,_mName) && _taskHasAssignee(t,_mName) && t.due_date && t.due_date<todayStr).length;
   const wkEnd=new Date(today);wkEnd.setDate(today.getDate()+7);const wkEndStr=_ymd(wkEnd);
   const tasks=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status!=='done'&&t.due_date&&t.due_date>=todayStr&&t.due_date<=wkEndStr).sort((a,b)=>(a.due_date||'')<(b.due_date||'')?-1:1);
   const mats=(typeof _calEventsCache!=='undefined'?_calEventsCache:[]).filter(e=>e.kind==='material'&&e.event_date>=todayStr&&e.event_date<=wkEndStr).sort((a,b)=>a.event_date<b.event_date?-1:1);
@@ -13662,7 +14320,7 @@ function _utilitiesDashboard(){
 }
 // VA-Admin main: quick overview boxes (no utilities table here — that lives on its own tab).
 function _vaMainDashboard(vaName){
-  const mine=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status!=="done" && _taskHasAssignee(t,vaName));
+  const mine=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>_taskOpenFor(t,vaName) && _taskHasAssignee(t,vaName));
   const phases=["Vacant / On Standby","Pre Construction","Waiting Permits","Framing, MEPS, Insulation","Drywall / Exterior Work","Finishes","Pre List / Punchout Process","Listed on the Market"];
   const cards=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived);
   const utilPending=cards.filter(c=>phases.includes(c.phase) && ["vos_util_electric","vos_util_water","vos_util_gas"].some(k=>!((c.checklists||{})[k]||{}).done)).length;
@@ -14322,7 +14980,7 @@ function _utilTasksForViewer(){
   if(!nm) return [];
   const rx=/utilit|electric|water|gas\b|propane|aep|columbia gas|meter/i;
   return (typeof _tasksCache!=='undefined'?_tasksCache:[])
-    .filter(t=>t.status!=='done' && _taskHasAssignee(t,nm) && rx.test((t.title||'')+' '+(t.category||'')+' '+(t.notes||'')));
+    .filter(t=>_taskOpenFor(t,nm) && _taskHasAssignee(t,nm) && rx.test((t.title||'')+' '+(t.category||'')+' '+(t.notes||'')));
 }
 function _utilSummaryCard(sum, utilOutList, nm){
   const mine=_utilTasksForViewer();
@@ -18137,6 +18795,101 @@ function _taskTallyLine(tasks, suffix){
 }
 // Does task t belong to the person "name" (tolerant of first-name-only assignments)?
 function _taskHasAssignee(t,name){ return taskAssignees(t).some(a=>_sameAssignee(a,name)); }
+// ===================== SHARED TASKS: EACH PERSON TICKS THEIR OWN =====================
+// A task can carry several people. Marking it done used to close it for everyone -
+// so Bruce ticking off a job he shared with Gabe took it off Gabe's list too, whether
+// or not Gabe had done his part.
+//
+// Now each person ticks their own. The task itself only closes once every name on it
+// has ticked. Held in pm_settings under "task_done_by" as { taskId: { "Name": date } };
+// the entry is dropped the moment the task closes, so this stays small - it only ever
+// holds part-finished shared tasks.
+window._tkDone = window._tkDone || {};
+async function _tkDoneLoad(){
+  const d=await _pmSettingsRead("task_done_by");
+  window._tkDone = (d && typeof d==='object') ? d : {};
+  return window._tkDone;
+}
+function _tkTickers(t){ const m=window._tkDone[t && t.id]; return (m&&typeof m==='object')?m:{}; }
+// Has THIS person already ticked their part?
+function _tkTicked(t,name){
+  const m=_tkTickers(t);
+  return Object.keys(m).some(n=>_sameAssignee(n,name));
+}
+// Done as far as this person is concerned: either the whole task is closed, or they
+// have ticked their own part of a shared one.
+function _taskStatusFor(t,name){
+  if(!t) return 'done';
+  if(t.status==='done') return 'done';
+  return _tkTicked(t,name) ? 'done' : 'open';
+}
+function _taskOpenFor(t,name){ return _taskStatusFor(t,name)!=='done'; }
+// How many of the people on it are still to tick.
+function _tkOutstanding(t){
+  const all=taskAssignees(t)||[];
+  if(all.length<2) return all.length;
+  return all.filter(n=>!_tkTicked(t,n)).length;
+}
+function _tkWaitingOn(t){
+  const all=taskAssignees(t)||[];
+  return all.filter(n=>!_tkTicked(t,n));
+}
+// Record one person's tick. Returns 'closed' when that was the last one outstanding,
+// 'partial' when others are still on the hook, or null if nothing was written.
+async function _tkTick(t, name, on){
+  if(!t || !t.id) return null;
+  const who=_canonName(name||'')||name||'';
+  const fresh=await _pmSettingsRead("task_done_by");
+  const all=(fresh && typeof fresh==='object')?fresh:{};
+  const mine=(all[t.id] && typeof all[t.id]==='object')?all[t.id]:{};
+  if(on){ mine[who]=_ymdToday(); }
+  else { Object.keys(mine).forEach(n=>{ if(_sameAssignee(n,who)) delete mine[n]; }); }
+  const names=taskAssignees(t)||[];
+  const everyone = names.length>0 && names.every(n=>Object.keys(mine).some(x=>_sameAssignee(x,n)));
+  if(everyone || !Object.keys(mine).length) delete all[t.id]; else all[t.id]=mine;
+  const err=await _pmSettingsWrite("task_done_by", all);
+  if(err){ alert("That tick was NOT saved — "+err); return null; }
+  window._tkDone=all;
+  return (on && everyone) ? 'closed' : (on ? 'partial' : 'reopened');
+}
+// The shared half of a completion tick. Returns true when it handled the click -
+// the caller then just refreshes. Returns false for an ordinary single-person task,
+// which the caller closes the way it always has.
+async function _tkSharedToggle(t){
+  const names=taskAssignees(t)||[];
+  if(names.length<2) return false;                 // nobody to share it with
+  const me=_miWho();
+  if(!_taskHasAssignee(t,me)){
+    // Somebody who is not on the task - a director closing it out. Ask, because it
+    // closes the job for everybody at once.
+    const left=_tkWaitingOn(t);
+    if(t.status!=='done' && left.length &&
+       !confirm("This task is shared by "+names.join(", ")+".\n\nYou are not on it. Closing it here closes it for "+left.join(" and ")+" too.\n\nClose it for everyone?")) return true;
+    return false;
+  }
+  const already=_tkTicked(t,me);
+  const res=await _tkTick(t, me, !already);
+  if(res===null) return true;
+  if(res==='closed'){
+    const st=new Date().toISOString();
+    let { error } = await supabase.from("pm_tasks").update({status:"done", completed_at:st}).eq("id",t.id);
+    if(error && /completed_at/.test(error.message||"")) ({ error } = await supabase.from("pm_tasks").update({status:"done"}).eq("id",t.id));
+    if(error){ alert("Your tick was saved, but the task itself would not close: "+(error.message||"")); return true; }
+    if(typeof _logAudit==="function") _logAudit("completed","task",t.title,"Everyone on it has now ticked it off: "+names.join(", "));
+    if(typeof _toast==="function") _toast("Everyone has ticked that off — the task is closed.");
+  } else if(res==='partial'){
+    const left=_tkWaitingOn(t);
+    if(typeof _logAudit==="function") _logAudit("completed","task",t.title,me+" ticked off their part — still with "+left.join(", "));
+    if(typeof _toast==="function") _toast("Off your list. Still with "+left.join(" and ")+".");
+  } else {
+    if(t.status==='done'){
+      await supabase.from("pm_tasks").update({status:"open", completed_at:null}).eq("id",t.id);
+    }
+    if(typeof _logAudit==="function") _logAudit("reopened","task",t.title,me+" put it back on their list");
+  }
+  return true;
+}
+
 // ---- FULL days on the Task Calendar ------------------------------------------
 // Anyone on the team can close out a day for a person: "Isaiah is full on Tuesday".
 // Nothing sets this automatically - it is a human saying the day is packed. It is a
@@ -18346,6 +19099,7 @@ async function toggleTaskDone(id){
   // completed_at is what makes "finished on time" answerable - without it a task
   // finished three weeks late is indistinguishable from one finished early.
   // Reopening clears it, so a reopened task is scored on its next real completion.
+  if(await _tkSharedToggle(t)){ await loadTasks(); _taskRerender(); return; }
   const _stamp = newStatus==="done" ? new Date().toISOString() : null;
   let { error } = await supabase.from("pm_tasks").update({status:newStatus, completed_at:_stamp}).eq("id",id);
   if(error && /completed_at/.test(error.message||"")){
@@ -19483,6 +20237,7 @@ function _mDayTab(){
 async function _mToggleTask(id){
   if(_blockIfReadOnly()) return;
   const t=_tasksCache.find(x=>x.id===id); if(!t) return;
+  if(await _tkSharedToggle(t)){ await loadTasks(); _mRender(); return; }
   const ns=t.status==="done"?"open":"done";
   const { error }=await supabase.from("pm_tasks").update({status:ns}).eq("id",id);
   if(error){ alert("Couldn't update task: "+(error.message||"")); return; }
@@ -19492,6 +20247,7 @@ async function _mToggleTask(id){
 async function _mToggleTaskStay(id){
   if(_blockIfReadOnly()) return;
   const t=_tasksCache.find(x=>x.id===id); if(!t) return;
+  if(await _tkSharedToggle(t)){ await loadTasks(); _mOpenTask(id); return; }
   const ns=t.status==="done"?"open":"done";
   const { error }=await supabase.from("pm_tasks").update({status:ns}).eq("id",id);
   if(error){ alert("Couldn't update task: "+(error.message||"")); return; }
@@ -19546,13 +20302,18 @@ function _mEditTask(id){
   if(_blockIfReadOnly()) return;
   const t=(typeof _tasksCache!=="undefined"?_tasksCache:[]).find(x=>x.id===id);
   if(!t){ alert("That task could not be found. Pull down to refresh and try again."); return; }
-  const who=(taskAssignees(t)[0])||"";
-  const whoOpts=`<option value="">— Unassigned —</option>`+teamMembers().map(n=>`<option value="${_calEsc(n)}" ${n===who?"selected":""}>${_calEsc(n)}</option>`).join("");
+  // A task can carry several people. This used to be a single-name dropdown that
+  // came up holding only the FIRST name on the task - so saving an edit from the
+  // phone, even one that only moved the due date, silently dropped everyone else.
+  // It is now a multi-select, pre-ticked with every name already on the task.
+  const whoNow=taskAssignees(t);
+  const whoOpts=teamMembers().map(n=>`<option value="${_calEsc(n)}" ${whoNow.some(a=>_sameAssignee(a,n))?"selected":""}>${_calEsc(n)}</option>`).join("");
   const body=document.getElementById("m-body"); if(!body) return;
   body.innerHTML=_mFormWrap("Edit task",`
     <div class="m-label">Task</div><input id="me-title" class="m-input" value="${_calEsc(t.title||"")}"/>
     <div class="m-label" style="margin-top:12px">Header / category</div><input id="me-cat" class="m-input" value="${_calEsc(t.category||"")}" placeholder="Optional"/>
-    <div class="m-label" style="margin-top:12px">Assign to</div><select id="me-who" class="m-select">${whoOpts}</select>
+    <div class="m-label" style="margin-top:12px">Assign to <span style="font-weight:400;color:#888">— tap to add or remove; everyone already on it stays on it</span></div>
+    <select id="me-who" class="m-select" multiple size="${Math.min(6,Math.max(3,teamMembers().length))}" style="height:auto">${whoOpts}</select>
     <div class="m-label" style="margin-top:12px">Property / address</div>${_mAddrPicker("me")}
     <div style="display:flex;gap:10px">
       <div style="flex:1"><div class="m-label" style="margin-top:12px">Start</div><input id="me-start" type="date" class="m-input" value="${_calEsc(t.start_date||"")}"/></div>
@@ -19579,12 +20340,13 @@ async function _mSubmitTaskEdit(id){
   const due=document.getElementById("me-due").value||null;
   const start=document.getElementById("me-start").value||null;
   if(start && due && start>due){ alert("Start date can't be after the due date."); return; }
-  const who=document.getElementById("me-who").value||null;
+  const _sel=document.getElementById("me-who");
+  const who=_canonUnique(Array.prototype.slice.call(_sel.selectedOptions||[]).map(o=>o.value).filter(Boolean));
   const _pl=_mResolveAddr("me");
   const patch={
     title,
     category:(document.getElementById("me-cat").value||"").trim()||null,
-    assignee:who, assignees:who?[who]:[],
+    assignee:who[0]||null, assignees:who,
     due_date:due, due_time:(((document.getElementById("me-time")||{}).value||"")||null), start_date:start,
     property_id:_pl.property_id, location:_pl.location,
     notes:(document.getElementById("me-notes").value||"").trim()||null
@@ -20452,4 +21214,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-17a meeting-stops-eating-what-you-type -->
+<!-- build: 2026-09-17b design-package-form -->
