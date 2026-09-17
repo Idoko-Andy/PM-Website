@@ -315,6 +315,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
     <div class="dd" id="rlt-d" style="min-width:230px">
       <div class="ddl">Realtor</div>
       <div class="ddi" onclick="openRealtorDashboard()">🔑 Realtor Dashboard</div>
+      <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
     </div>
   </div>
   <div class="ni has-dd" id="arch-t">📐 Architect ▾
@@ -5583,7 +5584,7 @@ const DESIGN_PHASES = ["Upcoming Takedowns","Occupied / Closed","Vacant / On Sta
                        "Pre Construction","Waiting Permits"];
 function _designCards(){
   const all = (typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived);
-  return all.filter(c=>DESIGN_PHASES.indexOf(c.phase)>=0)
+  return all.filter(c=>DESIGN_PHASES.indexOf(c.phase)>=0 && _dpNeedsPackage(c))
             .sort((a,b)=>DESIGN_PHASES.indexOf(a.phase)-DESIGN_PHASES.indexOf(b.phase)
                        || String(a.addr).localeCompare(String(b.addr)));
 }
@@ -5661,6 +5662,10 @@ const DP_FOUND  = ["Finished Basement","Unfinished Basement","Slab on Grade","Cr
 const DP_ROOMS  = [["living","Living Room"],["kitchen","Kitchen"],["dining","Dining Room"],["ff","First Floor Total"],["sf","Second Floor Total"],["fb","Finished Basement"]];
 const DP_BATHS  = [["master","Master / Primary Bath"],["hall","Hall / Secondary Bath"],["half","Half Bath / Powder Room"],["bsmt","Basement Bath"],["add","Additional Bath"]];
 const DP_STEP   = "Design Package Form";
+// Bruce, 17 Sept: a Whole Tail / Flip never gets a design package. Those houses stay
+// off the Design Dashboard entirely rather than sitting there looking unstarted.
+const DP_NO_PACKAGE = ["Whole Tail / Flip"];
+function _dpNeedsPackage(c){ return !!c && DP_NO_PACKAGE.indexOf(String(c.type||'').trim())<0; }
 
 // [key, question, follow-up label or null, only-ask-if-this-key-is-Yes or null]
 const DP_EXT = [
@@ -5718,7 +5723,7 @@ function _dpBlank(c){
   return { v:1, status:'draft',
     pm:{ addr:(c&&c.addr)||'', pm:(c&&c.pm)||'', year:'', beds:'', baths:'', sqft:'',
          budget:(c&&c.budget)||'', arv:(c&&c.goalArv)||'', purchase:'', tier:'', tight:'',
-         ptypes:[], ptype_other:'',
+         rehab:((c&&c.type)?[c.type]:[]), ptypes:[], ptype_other:'',
          found:[], found_other:'', rooms:{}, baths_rows:[], ext:{}, int:{}, notes_designer:'', notes_other:'' },
     dsn:{ style:'', tier:'', extras:'', questions:'', notes:'' },
     pm_sign:null, dsn_sign:null, locked_at:null, revisions:[],
@@ -5745,13 +5750,14 @@ function canAssignDesignerRole(u){
 function _dpAnswered(d){
   let asked=0, done=0;
   const walk=(spec,bag)=>{ spec.forEach(g=>g[1].forEach(q=>{
-    if(q[3] && !_dpKeeping(bag[q[3]])) return;     // hidden follow-up is not asked
-    asked++; if(bag[q[0]]) done++;
+    if(q[3] && !_dpKeeping(bag,q[3])) return;      // hidden follow-up is not asked
+    asked++; if(_dpAns(bag,q[0]).length) done++;
   })); };
   const p=d.pm||{};
   walk(DP_EXT, p.ext||{}); walk(DP_INT, p.int||{});
   const basics=[p.year,p.beds,p.baths,p.sqft,p.purchase,p.tier,p.tight];
   basics.forEach(v=>{ asked++; if(String(v||'').trim()) done++; });
+  asked++; if((p.rehab||[]).length) done++;
   asked++; if((p.ptypes||[]).length) done++;
   asked++; if((p.found||[]).length) done++;
   return { asked:asked, done:done, pct: asked?Math.round(done*100/asked):0 };
@@ -5760,9 +5766,14 @@ function _dpAnswered(d){
 // ---- state -------------------------------------------------------------------
 function _dpOpen(pid){
   const c=_dpCard(pid); if(!c){ alert("That property could not be found. Refresh and try again."); return; }
+  if(!_dpNeedsPackage(c) && !_dpOf(c)){
+    alert("A "+(c.type||'this job type')+" does not get a design package.\n\nIf that is wrong for this house, change the rehab type on the property card first.");
+    return;
+  }
   window._dpP=pid;
   window._dpD=JSON.parse(JSON.stringify(_dpOf(c) || _dpBlank(c)));
   window._dpTab = (window._dpD.status==='pm_done' && _dpCanDsn()) ? 'dsn' : 'pm';
+  window._dpRev=null;
   let host=document.getElementById('dp-modal');
   if(!host){
     host=document.createElement('div'); host.id='dp-modal';
@@ -5790,7 +5801,10 @@ function _dpBathDel(i){ const d=window._dpD; (d.pm.baths_rows||[]).splice(i,1); 
 function _dpPill(scope,key,val){
   const d=window._dpD; if(!d) return;
   d.pm[scope]=d.pm[scope]||{};
-  d.pm[scope][key] = (d.pm[scope][key]===val) ? '' : val;
+  const cur=_dpAns(d.pm[scope],key).slice();
+  const i=cur.indexOf(val);
+  if(i>=0) cur.splice(i,1); else cur.push(val);
+  d.pm[scope][key]=cur;
   _dpMark(); _dpRender();
 }
 function _dpToggle(list,val){
@@ -5812,14 +5826,14 @@ function _dpTabTo(t){ window._dpTab=t; _dpRender(); }
 
 // ---- writing ------------------------------------------------------------------
 // Re-read the row, set only dpkg, write it back. Two people cannot wipe each other.
-async function _dpWrite(pid, next){
+async function _dpPatch(pid, mut){
   const fresh=await supabase.from("pm_properties").select("checklists").eq("id",pid).maybeSingle();
   if(fresh.error || !fresh.data){
     alert("That was NOT saved — the property record could not be re-read. Your typing is still on screen; try again in a moment.");
     return false;
   }
   const cl=(fresh.data.checklists && typeof fresh.data.checklists==='object') ? fresh.data.checklists : {};
-  cl.dpkg=next;
+  mut(cl);
   const w=await supabase.from("pm_properties").update({checklists:cl}).eq("id",pid).select("id");
   if(w.error || !w.data || !w.data.length){
     alert("That was NOT saved — "+((w.error&&w.error.message)||"nothing changed. Refresh and try again."));
@@ -5828,6 +5842,7 @@ async function _dpWrite(pid, next){
   const c=_dpCard(pid); if(c) c.checklists=cl;
   return true;
 }
+async function _dpWrite(pid, next){ return _dpPatch(pid, function(cl){ cl.dpkg=next; }); }
 async function _dpSave(quiet){
   if(typeof _blockIfReadOnly==="function" && _blockIfReadOnly()) return false;
   const d=window._dpD, pid=window._dpP; if(!d||!pid) return false;
@@ -5921,6 +5936,7 @@ async function _dpPMDone(){
   if(!String(p.purchase||'').trim()) missing.push("purchase price of the home");
   if(!p.tier) missing.push("package tier");
   if(!p.tight) missing.push("whether the overall budget is tight, flexible or something else");
+  if(!(p.rehab||[]).length) missing.push("rehab type");
   if(!(p.ptypes||[]).length) missing.push("property type");
   if(missing.length){ alert("Before this goes to the designer, fill in:\n\n• "+missing.join("\n• ")); return; }
   const prog=_dpAnswered(d);
@@ -5951,21 +5967,66 @@ async function _dpDsnDone(){
   if(typeof _logAudit==="function") _logAudit("approved","design package",(c||{}).addr||"",d.dsn.style+" — "+d.dsn.tier+", locked by "+_dpWho());
   _dpRender();
 }
-// A locked form is never reopened. A revision is a dated entry on top of it:
-// what changed, and which change order carries the cost.
-async function _dpRevise(){
+// A locked form is never reopened. A revision goes on top of it: what changed, and
+// the cost, which is a real change order raised right here and written into the same
+// list the property card and the change order tracker already read. Bruce, 17 Sept:
+// the change order part belongs inside the revision, pre-filled from the property, so
+// nobody re-types it into a second form and lets the two drift apart.
+function _dpRevOpen(){
   if(typeof _blockIfReadOnly==="function" && _blockIfReadOnly()) return;
-  const d=window._dpD; if(!d||d.status!=='complete') return;
-  const what=(prompt("REVISION — what is changing on this design package?\n\nThe original stays exactly as it was; this goes on top of it with today's date.","")||"").trim();
-  if(!what) return;
-  const co=(prompt("Which change order carries the cost of this? (number, or leave blank if there is no cost)","")||"").trim();
-  d.revisions=d.revisions||[];
-  d.revisions.push({ at:_ymdToday(), by:_dpWho(), what:what, co:co||null });
-  if(!await _dpSave(true)) return;
-  if(typeof _logAudit==="function") _logAudit("updated","design package",(_dpCard(window._dpP)||{}).addr||"","Revision "+d.revisions.length+" by "+_dpWho()+(co?(" — change order "+co):" — no cost"));
+  const c=_dpCard(window._dpP)||{};
+  window._dpRev={ what:'', cause:'', est:'', appr:'', d:_ymdToday(), pm:String(c.pm||''), nocost:false };
   _dpRender();
 }
-
+function _dpRevCancel(){ window._dpRev=null; _dpRender(); }
+function _dpRevSet(k,v){ if(window._dpRev) window._dpRev[k]=v; }
+function _dpRevNoCost(){ if(window._dpRev){ window._dpRev.nocost=!window._dpRev.nocost; _dpRender(); } }
+async function _dpRevSave(){
+  if(typeof _blockIfReadOnly==="function" && _blockIfReadOnly()) return;
+  const d=window._dpD, pid=window._dpP, r=window._dpRev;
+  if(!d || d.status!=='complete' || !r) return;
+  const what=String(r.what||'').trim();
+  if(!what){ alert("Say what is changing on the design package."); return; }
+  if(!r.nocost){
+    if(typeof _coNum==="function" && _coNum(r.est)==null){
+      alert("Put the estimated cost in, or tick \u201cthis revision has no cost\u201d.\n\nA revision with a number raises a change order so the budget sees it. One with no number does not.");
+      return;
+    }
+    if(!String(r.appr||'').trim()){
+      alert("Put down who approved it. A change order is agreed before it is typed in — this form is the record of who agreed.");
+      return;
+    }
+  }
+  const c=_dpCard(pid)||{};
+  const me=_dpWho();
+  const revNo=((d.revisions||[]).length)+1;
+  const coId = r.nocost ? null : (Date.now().toString(36)+Math.random().toString(36).slice(2,5));
+  const rec = r.nocost ? null : {
+    id:coId, d:(r.d||_ymdToday()), pm:String(r.pm||c.pm||''),
+    t:"Design package revision "+revNo+" — "+what,
+    cause:String(r.cause||'').trim() || ("Design package revision "+revNo),
+    appr:String(r.appr||'').trim(), est:String(r.est||'').trim(), act:'',
+    by:me, made:new Date().toISOString(), src:'design-revision', rev:revNo
+  };
+  d.revisions=d.revisions||[];
+  d.revisions.push({ at:_ymdToday(), by:me, what:what,
+                     co: coId, cost:(rec?rec.est:null), appr:(rec?rec.appr:null), cause:(rec?rec.cause:null) });
+  const ok=await _dpPatch(pid, function(cl){
+    cl.dpkg=d;
+    if(rec){ const arr=Array.isArray(cl.co)?cl.co.slice():[]; arr.push(rec); cl.co=arr; }
+  });
+  if(!ok){ d.revisions.pop(); return; }
+  window._dpRev=null; window._dpDirty=false;
+  if(typeof _logAudit==="function"){
+    _logAudit("updated","design package",c.addr||"",
+      "Revision "+revNo+" by "+me+(rec?(" — change order raised, estimated "+rec.est+", approved by "+rec.appr):" — no cost"));
+  }
+  if(rec && typeof _coRerender==="function"){ try{ _coRerender(pid); }catch(e){} }
+  alert(rec
+    ? ("Revision "+revNo+" saved, and a change order for "+rec.est+" is now on "+(c.addr||"this house")+" — it shows on the property card and in the change order tracker.")
+    : ("Revision "+revNo+" saved. No change order was raised, because you marked it as no cost."));
+  _dpRender();
+}
 // ---- drawing it ------------------------------------------------------------------
 const DP_C = { ink:"#14171C", gold:"#FFB612", goldDk:"#9A6F05", paper:"#FBFBF9",
                line:"#E2E4E9", yes:"#0F7B54", no:"#B42318", tbd:"#8a6d1a", mute:"#6b7280" };
@@ -5997,26 +6058,33 @@ function _dpChoice(text, on, colour, click, wide){
 }
 // One question: a Yes / No / TBD pill row, and the follow-up box only when it is Yes.
 function _dpAnsColour(v){ return v==='Yes'?DP_C.yes:(v==='No'?DP_C.no:(v==='Some'?'#185FA5':(v==='TBD'?DP_C.tbd:'#c3c7ce'))); }
-// "Some" is the multiple answer. A house is rarely all-or-nothing - some windows
-// stay and some go - and answering Some opens the same box, so the PM writes down
-// which ones rather than being pushed into a Yes that is not true.
-function _dpKeeping(v){ return v==='Yes' || v==='Some'; }
+// Bruce, 17 Sept: "yeah, click two answers at once." An answer is a SET, not one
+// choice. A house where the front windows stay and the back ones go is a Yes and a
+// No at the same time, and forcing one of them out loses what the PM actually knows.
+// Older forms stored a single string; _dpAns reads both shapes.
+function _dpAns(bag,k){ const v=bag&&bag[k]; return Array.isArray(v)?v:(v?[v]:[]); }
+function _dpHas(bag,k,val){ return _dpAns(bag,k).indexOf(val)>=0; }
+function _dpKeeping(bag,k){ const a=_dpAns(bag,k); return a.indexOf('Yes')>=0||a.indexOf('Some')>=0; }
 function _dpQ(scope, q, bag, locked){
   const [k,label,follow,dep]=q;
-  if(dep && !_dpKeeping(bag[dep])) return '';
-  const cur=bag[k]||'';
+  if(dep && !_dpKeeping(bag,dep)) return '';
+  const cur=_dpAns(bag,k);
+  const some=cur.indexOf('Some')>=0, mixed=cur.length>1;
   const pills=locked
-    ? `<span style="font-size:13.5px;font-weight:700;color:${_dpAnsColour(cur)}">${_dpE(cur||'not answered')}</span>`
+    ? (cur.length
+        ? cur.map(v=>`<span style="font-size:12.5px;font-weight:700;color:#fff;background:${_dpAnsColour(v)};padding:2px 9px;border-radius:99px;margin-left:5px">${_dpE(v)}</span>`).join('')
+        : `<span style="font-size:13.5px;font-weight:700;color:#c3c7ce">not answered</span>`)
     : [["Yes",DP_C.yes],["Some",'#185FA5'],["No",DP_C.no],["TBD",DP_C.tbd]]
-        .map(([t,c])=>_dpChoice(t, cur===t, c, `_dpPill('${scope}','${k}','${t}')`)).join(' ');
-  const showFollow = follow && _dpKeeping(cur);
+        .map(([t,c])=>_dpChoice(t, _dpHas(bag,k,t), c, `_dpPill('${scope}','${k}','${t}')`)).join(' ');
+  const showFollow = follow && _dpKeeping(bag,k);
+  const followLabel = (some||mixed) ? (follow+' \u2014 and which ones stay?') : follow;
   return `<div style="padding:11px 0;border-bottom:1px solid #F0F1F4">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap">
       <div style="font-size:14px;color:#111;font-weight:500;flex:1;min-width:210px">${_dpE(label)}</div>
-      <div style="display:flex;gap:6px">${pills}</div></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">${pills}</div></div>
     ${showFollow?`<div style="margin-top:8px;max-width:520px">${
-       locked ? `<div style="font-size:13px;color:#374151"><b>${_dpE(follow)}</b> &nbsp;${_dpE(bag[k+'_n']||'—')}</div>`
-              : _dpField(cur==='Some'?(follow+' — and which ones stay?'):follow, bag[k+'_n'], `_dpDeep('${scope}','${k}_n',this.value)`, cur==='Some'?'e.g. the two front ones stay, the rest are replaced':'')}</div>`:''}</div>`;
+       locked ? `<div style="font-size:13px;color:#374151"><b>${_dpE(followLabel)}</b> &nbsp;${_dpE(bag[k+'_n']||'\u2014')}</div>`
+              : _dpField(followLabel, bag[k+'_n'], `_dpDeep('${scope}','${k}_n',this.value)`, (some||mixed)?'e.g. the two front ones stay, the rest are replaced':'')}</div>`:''}</div>`;
 }
 function _dpSection(scope, spec, bag, locked){
   return spec.map(([g,qs])=>{
@@ -6058,6 +6126,7 @@ function _dpRender(){
       + _dpReadRow("Construction budget", p.budget)
       + _dpReadRow("ARV", p.arv) + _dpReadRow("Package tier the PM expects", p.tier)
       + _dpReadRow("Overall budget", p.tight==='Other'?("Other \u2014 "+(p.tight_n||'')):p.tight)
+      + _dpReadRow("Rehab type", (p.rehab||[]).join(", "))
       + _dpReadRow("Property type", (p.ptypes||[]).concat(p.ptype_other?["Other: "+p.ptype_other]:[]).join(", "))
       + _dpReadRow("Foundation", (p.found||[]).concat(p.found_other?["Other: "+p.found_other]:[]).join(", "))
       + `</div>`
@@ -6089,6 +6158,8 @@ function _dpRender(){
         </div>
         ${p.tight==='Other'?`<div style="max-width:520px;margin-bottom:4px">${_dpField("Describe the budget situation", p.tight_n, "_dpText('pm','tight_n',this.value)", "in your own words")}</div>`:''}
         <div style="font-size:12px;color:${DP_C.mute};margin:0 0 4px 2px">The designer confirms the tier at the end. The budget line tells them how much room they have before they start picking.</div>`
+      + _dpGrp("Rehab type \u2014 tick everything that applies")
+      + `<div style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:10px">${PROP_TYPES.map(t=>_dpChoice(t,(p.rehab||[]).indexOf(t)>=0,DP_C.ink,`_dpToggle('rehab','${t.replace(/'/g,"\\'")}')`)).join('')}</div>`
       + _dpGrp("Property type \u2014 tick everything that applies")
       + `<div style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:8px">${DP_PTYPES.map(t=>_dpChoice(t,(p.ptypes||[]).indexOf(t)>=0,DP_C.ink,`_dpToggle('ptypes','${t.replace(/'/g,"\\'")}')`)).join('')}</div>`
       + _dpField("Other property type", p.ptype_other, "_dpText('pm','ptype_other',this.value)", "only if it is not on the list")
@@ -6148,21 +6219,49 @@ function _dpRender(){
   let rev='';
   if(locked){
     const list=(d.revisions||[]);
+    const r=window._dpRev;
+    const panel = r ? `
+      <div style="background:#FFFBF0;border:1.5px solid ${DP_C.gold};border-radius:9px;padding:14px 16px;margin-top:10px">
+        <div style="font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:${DP_C.goldDk};margin-bottom:8px">Revision ${list.length+1}</div>
+        ${_dpArea("What is changing on the design package?", r.what, "_dpRevSet('what',this.value)", "the original above stays exactly as it was", 3)}
+        <div style="border-top:1px solid #EFE3C2;margin:6px 0 10px"></div>
+        <div style="display:flex;align-items:center;gap:9px;margin-bottom:9px;flex-wrap:wrap">
+          <div style="font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase;color:${DP_C.goldDk}">Change order</div>
+          ${_dpChoice(r.nocost?"\u2713 This revision has no cost":"This revision has no cost", r.nocost, "#4b5563", "_dpRevNoCost()")}
+        </div>
+        ${r.nocost
+          ? `<div style="font-size:12.5px;color:${DP_C.mute}">No change order will be raised. The revision is still recorded on the form.</div>`
+          : `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:0 14px">
+               ${_dpField("Property", (c.addr||''), "", "")}
+               ${_dpField("Project manager", r.pm, "_dpRevSet('pm',this.value)", "")}
+               ${_dpField("Date", r.d, "_dpRevSet('d',this.value)", "YYYY-MM-DD")}
+               ${_dpField("Estimated cost", r.est, "_dpRevSet('est',this.value)", "$")}
+               ${_dpField("Approved by", r.appr, "_dpRevSet('appr',this.value)", "who agreed it")}
+               ${_dpField("What caused it", r.cause, "_dpRevSet('cause',this.value)", "optional")}
+             </div>
+             <div style="font-size:12px;color:${DP_C.mute}">This raises a real change order on ${_dpE(c.addr||'this house')} \u2014 it lands on the property card and in the change order tracker, and comes off the budget the same as any other.</div>`}
+        <div style="margin-top:11px;display:flex;gap:9px">
+          <span onclick="_dpRevSave()" style="cursor:pointer;display:inline-block;padding:9px 16px;background:${DP_C.ink};color:#fff;border-radius:8px;font-size:13.5px;font-weight:700">Save revision${r.nocost?'':' and raise the change order'}</span>
+          <span onclick="_dpRevCancel()" style="cursor:pointer;display:inline-block;padding:9px 16px;background:#fff;border:1px solid ${DP_C.line};color:#4b5563;border-radius:8px;font-size:13.5px;font-weight:600">Cancel</span>
+        </div>
+      </div>` : '';
     rev = _dpBar("Revisions", list.length?(list.length+" on this package"):"None yet")
       + `<div style="background:#fff;border:1px solid ${DP_C.line};border-radius:9px;padding:${list.length?'4px 16px':'18px'}">`
       + (list.length
-          ? list.map((r,i)=>`<div style="padding:10px 0;border-bottom:${i===list.length-1?'none':'1px solid #F0F1F4'}">
-              <div style="font-size:11.5px;color:${DP_C.mute};font-weight:700;letter-spacing:.06em">REVISION ${i+1} &middot; ${_dpE(r.at)} &middot; ${_dpE(r.by)}${r.co?(' &middot; CHANGE ORDER '+_dpE(r.co)):' &middot; NO COST'}</div>
-              <div style="font-size:13.5px;color:#111;margin-top:3px;white-space:pre-wrap">${_dpE(r.what)}</div></div>`).join('')
+          ? list.map((x,i)=>`<div style="padding:10px 0;border-bottom:${i===list.length-1?'none':'1px solid #F0F1F4'}">
+              <div style="font-size:11.5px;color:${DP_C.mute};font-weight:700;letter-spacing:.06em">REVISION ${i+1} &middot; ${_dpE(x.at)} &middot; ${_dpE(x.by)}${x.co?(' &middot; CHANGE ORDER RAISED'+(x.cost?(' \u00b7 '+_dpE(x.cost)):'')+(x.appr?(' \u00b7 approved by '+_dpE(x.appr)):'')):' &middot; NO COST'}</div>
+              <div style="font-size:13.5px;color:#111;margin-top:3px;white-space:pre-wrap">${_dpE(x.what)}</div></div>`).join('')
           : `<div style="text-align:center;color:${DP_C.mute};font-size:13.5px">The package has not been revised. The form above is exactly what was agreed on ${_dpE(d.locked_at)}.</div>`)
-      + `</div>`;
+      + `</div>` + panel;
   }
 
   // ---------- buttons ----------
   const btn=(txt,click,bg,fg)=>`<span onclick="${click}" style="cursor:pointer;display:inline-block;padding:10px 18px;background:${bg};color:${fg||'#fff'};border-radius:8px;font-size:13.5px;font-weight:700">${txt}</span>`;
   let actions='';
   if(locked){
-    actions = btn("Revise design package","_dpRevise()",DP_C.gold,DP_C.ink)
+    actions = window._dpRev
+      ? `<span style="font-size:13px;color:${DP_C.mute}">Fill the revision in above, then save it.</span>`
+      : btn("Revise design package","_dpRevOpen()",DP_C.gold,DP_C.ink)
       + `<span style="font-size:12.5px;color:${DP_C.mute};margin-left:12px">Locked on ${_dpE(d.locked_at)}. The original is never edited \u2014 a revision goes on top of it, and its cost goes on a change order.</span>`;
   } else if(d.status==='pm_done'){
     actions = (canDsn ? btn("Save","_dpSave()", "#4b5563") + " " + btn("Sign off and lock the package","_dpDsnDone()",DP_C.ink) : `<span style="font-size:13px;color:${DP_C.mute}">Waiting on the designer.</span>`);
@@ -21214,4 +21313,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-17b design-package-form -->
+<!-- build: 2026-09-17c design-package-revisions -->
