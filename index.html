@@ -268,10 +268,10 @@ body.mobile-on .overlay{z-index:6000 !important;}
     <div class="dd" id="pm-d">
       <div class="ddl">Project Manager</div>
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
-      <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
-      <div class="ddi" onclick="openPMAssistantDashboard()">🗂 PM Assistant Dashboard</div>
-      <div class="ddi" onclick="openAdminDashboard('trackers')">📋 Trackers</div>
       <div class="ddi" onclick="openPermitDashboard()">📄 Permit Dashboard</div>
+      <div class="ddi" onclick="openPMAssistantDashboard()">🗂 PM Assistant Dashboard</div>
+      <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
+      <div class="ddi" onclick="openAdminDashboard('trackers')">📋 Trackers</div>
     </div>
   </div>
   <div class="ni has-dd" id="am-t">👤 Asst. Manager ▾
@@ -302,6 +302,13 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openPermitDashboard()">📄 Permit Dashboard</div>
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
+    </div>
+  </div>
+  <div class="ni has-dd" id="dsn-t">✏️ Designer ▾
+    <div class="dd" id="dsn-d">
+      <div class="ddl">Designer</div>
+      <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
+      <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
     </div>
   </div>
   <div class="ni has-dd" id="rlt-t">🔑 Realtor ▾
@@ -1416,6 +1423,10 @@ const ROLE_DEFAULTS = {
   "Start of Project Assistant":                ["dash_project","dash_pmassistant","sops_view"],
   "End of Project Assistant":                  ["dash_project","dash_pmassistant","sops_view"],
   "Architect":                                 ["dash_project","dash_design","dash_architect","sops_view"],
+  // Bruce, 17 Sept: a Designer works the design package with the project manager.
+  // They need the houses and the design dashboard, and nothing else until the design
+  // package form exists and tells us otherwise.
+  "Designer":                                  ["dash_project","dash_design","sops_view"],
   "Realtor":                                   ["dash_project","dash_realtor","rep_market","sops_view"],
   "Assistant / Intern":                        ["dash_project","sops_view"],
   // Bruce, 13 Sept: Eman "is gonna be filling stuff out for the kickoff meetings...
@@ -1623,10 +1634,20 @@ const BASE_ROLES = [
   "CEO","Project Director","Administrative Manager","Project Manager","PM Assistant",
   "Senior Administrative Assistant","Administrative Assistant",
   "Senior Virtual Administrative Assistant","Virtual Administrative Assistant",
-  "Start of Project Assistant","End of Project Assistant","Architect","Realtor",
+  "Start of Project Assistant","End of Project Assistant","Architect","Designer","Realtor",
   "Acquisitions Member","Assistant / Intern","Other"
 ];
-let ROLE_LIST = BASE_ROLES.slice();
+// Bruce, 17 Sept: "let's go ahead and order those job roles by alphabetical order".
+// Applied in one place so it holds for the built-in list AND any role an admin adds
+// later, which otherwise arrived in whatever order the database returned them.
+// "Other" is pinned last - it is the absence of a job, not a job beginning with O.
+function _roleSort(list){
+  const rest=list.filter(r=>r!=="Other").sort(function(a,b){
+    return a.localeCompare(b, undefined, {sensitivity:'base'});
+  });
+  return list.indexOf("Other")>=0 ? rest.concat(["Other"]) : rest;
+}
+let ROLE_LIST = _roleSort(BASE_ROLES.slice());
 
 async function loadRolesFromSupabase() {
   const { data, error } = await supabase.from("pm_roles").select("name").order("sort", { ascending: true });
@@ -1634,7 +1655,7 @@ async function loadRolesFromSupabase() {
   const names = (data || []).map(r => r.name).filter(Boolean);
   const merged = names.slice();
   BASE_ROLES.forEach(r => { if (merged.indexOf(r) < 0) merged.push(r); });
-  ROLE_LIST = merged.length ? merged : BASE_ROLES.slice();
+  ROLE_LIST = _roleSort(merged.length ? merged : BASE_ROLES.slice());
 }
 
 // Roles that only an admin can assign — they can never be self-selected at sign-up,
@@ -1654,6 +1675,7 @@ const ROLE_NAVTAB = {
   "Administrative Manager":"adm-t","Senior Administrative Assistant":"adm-t","Administrative Assistant":"adm-t",
   "Senior Virtual Administrative Assistant":"va-t","Virtual Administrative Assistant":"va-t",
   "Architect":"arch-t",
+  "Designer":"dsn-t",
   "Realtor":"rlt-t",
   "Acquisitions Member":"am-t"
 };
@@ -5537,16 +5559,55 @@ function pmStatRow(label, val, color) {
   </div>`;
 }
 
+// ===================== DESIGN DASHBOARD =====================
+// Bruce, 17 Sept. The design package is a form three people fill in between them:
+// the project manager opens it against a house (on a computer or from the phone),
+// the designer picks the package, and the manager works from what comes back.
+// Five package types, two of each - one low end, one high end - so ten in total.
+// The form itself arrives as a PDF; this is the shell it will live in.
+//
+// Until that form exists this screen does the one useful thing it can: show every
+// house that is at a stage where design matters, so the room can see what is waiting.
+const DESIGN_PHASES = ["Upcoming Takedowns","Occupied / Closed","Vacant / On Standby",
+                       "Pre Construction","Waiting Permits"];
+function _designCards(){
+  const all = (typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived);
+  return all.filter(c=>DESIGN_PHASES.indexOf(c.phase)>=0)
+            .sort((a,b)=>DESIGN_PHASES.indexOf(a.phase)-DESIGN_PHASES.indexOf(b.phase)
+                       || String(a.addr).localeCompare(String(b.addr)));
+}
 function openDesignDashboard() {
   document.querySelectorAll(".dd").forEach(x => x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x => x.classList.remove("on"));
+  const cards=_designCards();
+  const rows = cards.length ? cards.map(c=>`<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 15px;border-bottom:0.5px solid #f4f5f7">
+      <div style="min-width:0">
+        <div onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-size:14px;color:#185FA5;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_calEsc(c.addr)}</div>
+        <div style="font-size:12px;color:#aaa">${_calEsc(_phLabel?_phLabel(c.phase):c.phase)} &middot; ${_calEsc(c.pm||'no project manager yet')}</div>
+      </div>
+      <span style="flex-shrink:0;font-size:11.5px;font-weight:600;padding:3px 10px;border-radius:99px;background:#F1F2F6;color:#6b7280;white-space:nowrap">no design package yet</span>
+    </div>`).join('')
+    : '<div style="padding:26px;text-align:center;color:#bbb;font-size:13.5px">No houses are sitting at a design stage right now.</div>';
+
   document.getElementById("dash-body").innerHTML = `
-    <div class="empty-state">
-      <div class="icon">🎨</div>
-      <p style="color:#888;font-size:16px;font-weight:500">Design Dashboard</p>
-      <p style="color:#555;font-size:14px;margin-top:6px">This dashboard is being built out. Check back soon.</p>
+  <div style="background:#f4f5f7;min-height:520px"><div style="padding:24px;max-width:900px;margin:0 auto">
+    <div style="font-size:17px;font-weight:600;color:#111">🎨 Design Dashboard</div>
+    <div style="font-size:13.5px;color:#666;margin-top:6px;margin-bottom:16px">
+      Where the design package for each house gets started, chosen and handed back.</div>
+
+    <div style="background:#F5F8FC;border:0.5px solid #CDD9E8;border-radius:10px;padding:13px 16px;margin-bottom:16px">
+      <div style="font-size:9.6pt;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#7a8396;margin-bottom:5px">How this will work</div>
+      <div style="font-size:13px;color:#333;line-height:1.55">
+        The <b>project manager</b> opens a design package form against a house — from a computer or the phone.
+        The <b>designer</b> picks which of the ten packages it is: five types, one low end and one high end of each.
+        The manager then works from what comes back. Marlo and the architect can see it too.
+        <div style="margin-top:7px;color:#888">The form itself is still being drawn up. This list is live in the meantime.</div>
+      </div>
     </div>
-  `;
+
+    <div style="font-size:12.5px;font-weight:700;color:#111;margin-bottom:7px">Houses at a design stage <span style="font-weight:400;color:#999">&middot; ${cards.length}</span></div>
+    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">${rows}</div>
+  </div></div>`;
 }
 
 // ===================== DATA DASHBOARD =====================
@@ -20391,4 +20452,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-16b meeting-stops-eating-what-you-type -->
+<!-- build: 2026-09-17a meeting-stops-eating-what-you-type -->
