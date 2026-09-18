@@ -1694,7 +1694,12 @@ function roleOptions(selected, excludeElevated) {
   // the Project Director, a CEO, and Idoko. Everyone else never sees the option.
   // A role already on the account is always listed, or the dropdown would come
   // up blank on somebody else's row and look broken.
-  const gated = (typeof canAssignDesignerRole==="function") ? !canAssignDesignerRole() : false;
+  // Only gate it when somebody is signed in and assigning a role to another account.
+  // The sign-up form runs signed OUT: picking "Designer" there is a request, not a
+  // grant - an admin still has to approve the account - and hiding it there would
+  // push a new designer into "Other", where nothing can be assigned to them.
+  const _me = (typeof currentUser==="function") ? currentUser() : null;
+  const gated = !!_me && (typeof canAssignDesignerRole==="function") && !canAssignDesignerRole(_me);
   return ROLE_LIST
     .filter(r => !(excludeElevated && ELEVATED_ROLES.indexOf(r) >= 0))
     .filter(r => !(gated && r === "Designer" && r !== selected))
@@ -5597,6 +5602,32 @@ function _designCards(){
 function _dpDesignTabs(){
   return _dpDesigners().map(n=>({ id:'dsn:'+n, label:(n.split(' ')[0]||n), icon:'👤' }));
 }
+// Bruce, 18 Sept: the designer needs to be able to say "this one is not getting a
+// design package" and have it leave the list. It is a decision, not a filter, so it
+// is written to the property record with who said it and when - and it can be undone.
+// Kept next to the form data at checklists.dpkg_none.
+function _dpSkipped(c){ const v=((c&&c.checklists)||{}).dpkg_none; return (v&&typeof v==='object')?v:null; }
+async function _dpSetSkip(pid, on){
+  if(typeof _blockIfReadOnly==="function" && _blockIfReadOnly()) return;
+  const c=_dpCard(pid); if(!c) return;
+  if(on){
+    const d=_dpOf(c);
+    if(d && d.status==='complete'){
+      alert("This house already has a package signed off and locked \u2014 it cannot be marked as not getting one.\n\nIf the package is being dropped, raise a revision on the form so the change is on the record.");
+      return;
+    }
+    const extra = d ? "\n\nA form has already been started on it. The form is kept, not deleted \u2014 unticking this puts it back exactly as it was." : "";
+    if(!confirm("Mark "+(c.addr||"this house")+" as NOT getting a design package?"+extra+"\n\nIt comes off the design list and off the Trackers tile.")) return;
+  }
+  const rec = on ? { at:_ymdToday(), by:_dpWho() } : null;
+  const ok=await _dpPatch(pid, function(cl){ if(on) cl.dpkg_none=rec; else delete cl.dpkg_none; });
+  if(!ok) return;
+  if(typeof _logAudit==="function"){
+    _logAudit(on?"updated":"reopened","design package",c.addr||"",
+      on?("Marked as not getting a design package by "+_dpWho()):("Put back on the design list by "+_dpWho()));
+  }
+  openDesignDashboard(window._dpTabNow||'main');
+}
 function _dpStatusTag(d){
   const tag=(txt,bg,fg)=>`<span style="flex-shrink:0;font-size:11.5px;font-weight:700;padding:3px 10px;border-radius:99px;background:${bg};color:${fg};white-space:nowrap">${txt}</span>`;
   if(!d) return tag('not started','#F1F2F6','#6b7280');
@@ -5612,8 +5643,22 @@ function _dpRow(c){
       <div onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-size:14px;color:#185FA5;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_calEsc(c.addr)}</div>
       <div style="font-size:12px;color:#aaa">${_calEsc(_phLabel?_phLabel(c.phase):c.phase)} &middot; ${_calEsc(c.pm||'no project manager yet')}${c.type?(' &middot; '+_calEsc(c.type)):''}</div>
     </div>
-    <div style="display:flex;align-items:center;gap:9px;flex-shrink:0">${_dpStatusTag(d)}
+    <div style="display:flex;align-items:center;gap:9px;flex-shrink:0">
+      <span onclick="_dpSetSkip('${c.id}',true)" title="This house is not getting a design package" style="cursor:pointer;font-size:11.5px;color:#98a2b3;white-space:nowrap;user-select:none">&#9744; not getting one</span>
+      ${_dpStatusTag(d)}
       <span onclick="_dpOpen('${c.id}')" style="cursor:pointer;font-size:12.5px;font-weight:700;color:#fff;background:#14171C;padding:6px 13px;border-radius:7px;white-space:nowrap">${btn}</span></div>
+  </div>`;
+}
+// A house somebody has ruled out. Shown on its own, with who ruled it out, and
+// one click to put it back.
+function _dpSkipRow(c){
+  const sk=_dpSkipped(c)||{};
+  return `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 15px;border-bottom:0.5px solid #f4f5f7">
+    <div style="min-width:0">
+      <div onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-size:13.5px;color:#6b7280;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${_calEsc(c.addr)}</div>
+      <div style="font-size:11.5px;color:#aaa">${_calEsc(_phLabel?_phLabel(c.phase):c.phase)} &middot; ruled out by ${_calEsc(sk.by||'someone')}${sk.at?(' on '+_calEsc(sk.at)):''}</div>
+    </div>
+    <span onclick="_dpSetSkip('${c.id}',false)" style="cursor:pointer;font-size:12px;font-weight:700;color:#185FA5;white-space:nowrap">Put it back</span>
   </div>`;
 }
 function _dpList(cards, emptyMsg){
@@ -5623,13 +5668,13 @@ function _dpList(cards, emptyMsg){
 // Houses whose form the PM has sent over and the designer has not finished. One
 // definition, used by this board AND the Trackers tile, so the two can never disagree.
 function _dpWaiting(){
-  return _designCards().filter(c=>{ const d=_dpOf(c); return d && d.status==='pm_done'; });
+  return _designCards().filter(c=>!_dpSkipped(c) && (function(){ const d=_dpOf(c); return d && d.status==='pm_done'; })());
 }
 // Trackers → "Design forms needing completed". Two kinds of outstanding: a form the
 // PM has sent that the designer has not signed off, and a house at a design stage
 // where nobody has opened a form at all. Both are work somebody owes.
 function _dpTrackerItems(){
-  const cards=_designCards();
+  const cards=_designCards().filter(c=>!_dpSkipped(c));
   const out=[];
   cards.filter(c=>{ const d=_dpOf(c); return d && d.status==='pm_done'; })
     .forEach(c=>out.push('<b style="color:#8a6d1a">WITH THE DESIGNER:</b> '+_calEsc(c.addr||'')));
@@ -5640,7 +5685,9 @@ function _dpTrackerItems(){
   return out;
 }
 function _dpMainBody(){
-  const cards=_designCards();
+  const all=_designCards();
+  const skipped=all.filter(_dpSkipped);
+  const cards=all.filter(c=>!_dpSkipped(c));
   const done=cards.filter(c=>{const d=_dpOf(c);return d&&d.status==='complete';});
   const waiting=_dpWaiting();
   const drafts=cards.filter(c=>{const d=_dpOf(c);return d&&d.status==='draft';});
@@ -5657,6 +5704,8 @@ function _dpMainBody(){
         One package per house; anything that changes after that goes on as a revision with its own change order.
         A <b style="color:#fff">Whole Tail / Flip</b> never gets a design package and never appears here.
       </div>
+      ${_dpDesigners().length ? '' : `<div style="margin-top:9px;background:#3A2A0C;border-radius:7px;padding:9px 12px;font-size:12.5px;color:#FFD98A">
+        <b>No account has the Designer job role yet.</b> A form can still be filled in and sent, but there is nobody for it to land on \u2014 approve the designer\u2019s account and set their role to Designer, and every waiting form appears on their calendar straight away.</div>`}
     </div>
     <div style="display:flex;gap:9px;margin-bottom:14px;flex-wrap:wrap">
       ${box(done.length,'package locked in','#14171C')}
@@ -5666,11 +5715,17 @@ function _dpMainBody(){
     </div>
     <div style="font-size:12.5px;font-weight:700;color:#111;margin-bottom:7px">Houses at a design stage <span style="font-weight:400;color:#999">&middot; ${cards.length}</span></div>
     <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">${_dpList(cards,'No houses are sitting at a design stage right now.')}</div>
+    ${skipped.length?`<details style="margin-top:16px">
+      <summary style="cursor:pointer;font-size:12.5px;font-weight:700;color:#6b7280;padding:4px 0">Not getting a design package <span style="font-weight:400;color:#999">&middot; ${skipped.length}</span></summary>
+      <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden;margin-top:7px">${skipped.map(_dpSkipRow).join('')}</div>
+      <div style="font-size:11.5px;color:#aaa;margin-top:6px">Saved on each property, with who ruled it out. They stay off the Trackers tile until somebody puts one back.</div>
+    </details>`:''}
   </div>`;
 }
 function _dpPersonBody(who){
   const cards=_designCards();
   const mine=_dpWaiting();
+  const team=_dpDesigners().length>1;
   const locked=cards.filter(c=>{ const d=_dpOf(c); return d && d.status==='complete' && d.dsn_sign && _sameAssignee(d.dsn_sign.by, who); });
   const revs=locked.reduce((n,c)=>n+(((_dpOf(c)||{}).revisions||[]).length),0);
   const first=_calEsc((who||'').split(' ')[0]);
@@ -5678,20 +5733,23 @@ function _dpPersonBody(who){
       <div style="font-size:24px;font-weight:700;color:${color}">${n}</div><div style="font-size:12.5px;color:#888">${label}</div></div>`;
   return `<div style="padding:24px;max-width:920px;margin:0 auto">
     <div style="font-size:17px;font-weight:600;color:#111">🎨 ${_calEsc(who)}</div>
-    <div style="font-size:13.5px;color:#666;margin-top:6px;margin-bottom:16px">What is waiting on ${first}, and what ${first} has already signed off.</div>
+    <div style="font-size:13.5px;color:#666;margin-top:6px;margin-bottom:16px">${team
+      ? ('The design queue, and what '+first+' has already signed off. Every designer sees the same queue \u2014 whoever takes a house signs it off, and it comes off the others\u2019 lists.')
+      : ('What is waiting on '+first+', and what '+first+' has already signed off.')}</div>
     <div style="display:flex;gap:9px;margin-bottom:16px;flex-wrap:wrap">
-      ${tile(mine.length,'forms to complete','#8a6d1a')}
+      ${tile(mine.length, team?'in the design queue':'forms to complete','#8a6d1a')}
       ${tile(locked.length,'packages signed off','#14171C')}
       ${tile(revs,'revisions since','#B42318')}
     </div>
-    <div style="font-size:12.5px;font-weight:700;color:#111;margin-bottom:7px">Waiting on you <span style="font-weight:400;color:#999">&middot; on your task calendar every day until it is finished</span></div>
-    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden;margin-bottom:18px">${_dpList(mine,'Nothing waiting on you right now.')}</div>
+    <div style="font-size:12.5px;font-weight:700;color:#111;margin-bottom:7px">${team?'The design queue':'Waiting on you'} <span style="font-weight:400;color:#999">&middot; on your task calendar every day until it is finished</span></div>
+    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden;margin-bottom:18px">${_dpList(mine, team?'Nothing in the queue right now.':'Nothing waiting on you right now.')}</div>
     <div style="font-size:12.5px;font-weight:700;color:#111;margin-bottom:7px">Signed off by you <span style="font-weight:400;color:#999">&middot; ${locked.length}</span></div>
     <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">${_dpList(locked,'No packages signed off yet.')}</div>
   </div>`;
 }
 function openDesignDashboard(activeTab) {
   activeTab = activeTab || 'main';
+  window._dpTabNow = activeTab;
   const tabs=[{id:'main',label:'Main Dashboard',icon:'🎨'}].concat(_dpDesignTabs());
   const content = (String(activeTab).indexOf('dsn:')===0)
     ? _dpPersonBody(String(activeTab).slice(4))
@@ -5937,11 +5995,23 @@ async function _dpEnsureStep(pid, opts){
 }
 
 // ---- handing it to the designer --------------------------------------------------
+// Every approved designer, not one hard-coded person. A brand-new account may have
+// signed up without filling its name in yet, so fall back the same way teamMembers()
+// does - the email's name part, tidied - rather than putting a raw address on a tab.
+function _dpName(u){
+  const nm=((u.firstName||"")+" "+(u.lastName||"")).trim();
+  if(nm) return nm;
+  const em=String(u.email||"").trim();
+  if(!em) return "";
+  const lp=em.split("@")[0].replace(/[._]+/g," ").trim();
+  return lp ? lp.replace(/\b\w/g,c=>c.toUpperCase()) : em;
+}
 function _dpDesigners(){
   return (typeof getUsers==="function"?getUsers():[])
     .filter(u=>u.status==="approved" && (u.role||"")==="Designer")
-    .map(u=>((u.firstName||"")+" "+(u.lastName||"")).trim()||u.email)
-    .filter(Boolean);
+    .map(_dpName)
+    .filter(Boolean)
+    .sort((a,b)=>a.localeCompare(b));
 }
 // The designer's job stays on their task calendar EVERY DAY until the form is
 // finished - it is not a one-off reminder that can be missed on a busy Tuesday.
@@ -21368,4 +21438,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-17d designer-tab-opens -->
+<!-- build: 2026-09-18a designers-and-ruled-out-houses -->
