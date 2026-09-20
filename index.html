@@ -1861,9 +1861,15 @@ function renderAdminUsers() {
       <div style="font-size:14px;color:#fff;font-weight:500;margin-bottom:8px">Housekeeping</div>
       <div style="font-size:12px;color:#666;margin-bottom:10px;line-height:1.6">Work still sitting open on houses that are finished. It keeps showing up on people&rsquo;s task lists and in the counts, long after there is anything to do.</div>
       <div id="hk-out" style="font-size:12px;line-height:1.6"></div>
+    </div>
+    <div style="margin-top:22px;padding-top:16px;border-top:1px solid #2a2a2a">
+      <div style="font-size:14px;color:#fff;font-weight:500;margin-bottom:8px">Maintenance check</div>
+      <div style="font-size:12px;color:#666;margin-bottom:10px;line-height:1.6">Everything the board is telling us but nobody is being shown. None of it is broken software &mdash; it is a number, a date or a name that is missing or does not add up, and every one of them ends up being found the hard way in a meeting. Nothing here changes anything; it is a list to work down.</div>
+      <div id="dh-out" style="font-size:12px;line-height:1.6"></div>
     </div>`;
   renderRoleManager();
   try{ _hkRender(); }catch(e){}
+  try{ _dhRender(); }catch(e){}
 }
 
 // ---- Housekeeping: work still open on houses that are finished -----------------
@@ -1936,6 +1942,96 @@ async function _hkClose(which){
   try{ await loadTasks(); }catch(e){}
   _hkRender();
   if(bad.length) alert(ok+" closed. "+bad.length+" could not be:\n\n"+bad.join('\n'));
+}
+
+// ---- Maintenance check: what the data is quietly telling us ------------------
+// Bruce, 20 Sept: "literally go through and do a maintenance check ... this is what
+// you're going to be built for."
+// The app already refuses to show a wrong number - it shows a dash instead. That is
+// honest, but a dash is easy to walk past, and a house with no budget and $8,828 spent
+// looks exactly like a house nobody has opened yet. This gathers the things that are
+// findable from the board itself and puts them on one screen, so they get dealt with
+// on a Tuesday instead of surfacing in Monday's meeting.
+// Deliberately NOT a fix-it button: every one of these needs a person who knows the
+// house to decide. A bulk "correct" here would just write confident nonsense.
+function _dhMoney(v){ const n=parseFloat(String(v||'').replace(/[^0-9.\-]/g,'')); return isNaN(n)?null:n; }
+function _dhScan(){
+  const cards=(typeof propCards!=='undefined'?propCards:[]).filter(function(c){ return !c.archived; });
+  const tasks=(typeof _tasksCache!=='undefined'?_tasksCache:[]);
+  const evs=(typeof _calEventsCache!=='undefined'?_calEventsCache:[])||[];
+  const today=_ymd(new Date());
+  const BUILD=['Framing, MEPS, Insulation','Drywall / Exterior Work','Finishes','Pre List / Punchout Process'];
+  const LIVE=['Pre Construction','Waiting Permits'].concat(BUILD);
+  const out=[];
+  const add=function(key,label,note,rows){ if(rows.length) out.push({key:key,label:label,note:note,rows:rows}); };
+
+  add('over','Spent more than the budget',
+      'The house is past its number. Either the work grew and the budget never followed it, or the budget is the one that is wrong.',
+      cards.filter(function(c){
+        if(LIVE.indexOf(c.phase)<0) return false;
+        const b=_dhMoney(c.budget), sp=_dhMoney(c.spent);
+        return b!=null && sp!=null && b>0 && sp>b;
+      }).map(function(c){
+        const b=_dhMoney(c.budget), sp=_dhMoney(c.spent);
+        return {id:c.id, addr:c.addr, detail:'$'+Math.round(sp-b).toLocaleString()+' over &middot; budget $'+Math.round(b).toLocaleString()+', spent $'+Math.round(sp).toLocaleString()};
+      }));
+
+  add('nobudget','Money going out against no budget',
+      'Nothing to measure the spend against, so every $/day and leftover figure on this house is a dash.',
+      cards.filter(function(c){
+        if(LIVE.indexOf(c.phase)<0) return false;
+        const b=_dhMoney(c.budget), sp=_dhMoney(c.spent);
+        return (b==null||b<=0) && sp!=null && sp>0;
+      }).map(function(c){ return {id:c.id, addr:c.addr, detail:'$'+Math.round(_dhMoney(c.spent)).toLocaleString()+' spent, budget not set'}; }));
+
+  add('takedown','Takedowns with no closing date',
+      'It cannot be planned around, counted in a month, or chased - it just sits in the column.',
+      cards.filter(function(c){ return c.phase==='Upcoming Takedowns' && !c.closingDate; })
+           .map(function(c){ return {id:c.id, addr:c.addr, detail:'no purchase closing date'}; }));
+
+  add('agent','On the market with no listing agent',
+      'The listings meeting and the realtor screens have nobody to name against the house.',
+      cards.filter(function(c){ return /Listed on the Market/.test(c.phase||'') && !String(c.listingAgent||'').trim(); })
+           .map(function(c){ return {id:c.id, addr:c.addr, detail:'listing agent not set'}; }));
+
+  add('permits','Waiting on permits that nobody is tracking',
+      'The house says it is permitted and is sitting in Waiting Permits, but the Permit Tracker has no row for it - so there is no number, no status and no date to chase.',
+      cards.filter(function(c){ return c.phase==='Waiting Permits' && !_hasPermitRows(c); })
+           .map(function(c){ return {id:c.id, addr:c.addr, detail:'no rows in the Permit Tracker'}; }));
+
+  const byId={}; cards.forEach(function(c){ byId[c.id]=c; });
+  add('booked','Bookings that came and went',
+      'Scheduled for a day that has passed and never marked done or moved. Last week reads as if none of it happened.',
+      evs.filter(function(e){ return e.event_date && e.event_date<today && !e.completed && byId[e.property_id]; })
+         .sort(function(a,b){ return String(a.event_date).localeCompare(String(b.event_date)); })
+         .map(function(e){ return {id:e.property_id, addr:(byId[e.property_id]||{}).addr||'', detail:e.event_date+' &middot; '+_calEsc(e.title||_dhWho(e)||'booking')}; }));
+
+  add('nobody','Open work with nobody on it',
+      'It will never appear on anybody\u2019s list, so it will not get done and nobody will be asked about it.',
+      tasks.filter(function(t){ return t.status!=='done' && !(taskAssignees(t)||[]).length; })
+           .map(function(t){ return {id:t.property_id||'', addr:(byId[t.property_id]||{}).addr||'not tied to a house',
+                                     detail:_calEsc(t.title||'task')+(t.due_date?(' &middot; due '+t.due_date):' &middot; no due date')}; }));
+
+  return out;
+}
+function _dhWho(e){ const c=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).find(function(x){ return x.id===e.contractor_id; }); return c?c.name:''; }
+function _dhRender(){
+  const box=document.getElementById('dh-out'); if(!box) return;
+  const groups=_dhScan();
+  const total=groups.reduce(function(n,g){ return n+g.rows.length; },0);
+  if(!total){ box.innerHTML='<div style="color:#18854A">Nothing outstanding &mdash; every house has its numbers, its dates and its names.</div>'; return; }
+  box.innerHTML='<div style="color:#b4bcc8;margin-bottom:10px">'+total+' thing'+(total===1?'':'s')+' to look at.</div>'+
+    groups.map(function(g){
+      const rows=g.rows.slice(0,40).map(function(r){
+        const click=r.id?(' onclick="openPropDetail(\''+r.id+'\')" style="cursor:pointer"'):'';
+        return '<div'+click+' style="padding:4px 0;border-bottom:1px solid #1e1e1e">'+
+          '<span style="color:#7FB3EA">'+_calEsc(r.addr||'')+'</span> <span style="color:#636b7a">&middot; '+r.detail+'</span></div>';
+      }).join('');
+      const more=g.rows.length>40?('<div style="color:#636b7a;padding-top:5px">&hellip; and '+(g.rows.length-40)+' more</div>'):'';
+      return '<div style="margin-top:14px"><div style="color:#fff;font-weight:500">'+g.label+' &middot; '+g.rows.length+'</div>'+
+        '<div style="color:#636b7a;margin:4px 0 7px;line-height:1.6">'+g.note+'</div>'+
+        '<div style="font-size:12px;max-height:200px;overflow:auto;background:#111;border:1px solid #2a2a2a;border-radius:6px;padding:7px 10px">'+rows+more+'</div></div>';
+    }).join('');
 }
 
 // ---- One person, one spelling ------------------------------------------------
@@ -10581,9 +10677,23 @@ function openWeeklyMeeting(kind, week){
     const roNow=isReadOnly()||isClosed||isPast;
     // A plain box with no "last week" panel above it, for the things that are
     // meant to start empty every Monday.
+    // Bruce, 20 Sept: "comments on the weeks ahead needs to be blank and ready to be
+    // filled out with new information." Until this morning the forward box carried its
+    // own text into the new week, so ten houses opened Monday with last week's plan
+    // sitting in the box for the week ahead - and the same words also showing under
+    // "Last week" and again as carried tick boxes. The rotation is fixed going forward;
+    // this clears up the week that was already built the old way. The text is not
+    // touched or lost - it is in "Last week", which is where it belongs now.
+    const _fwdStale=(key)=>{
+      if(!/::nextc$/.test(key)) return false;
+      const here=String(notes[key]==null?'':notes[key]).trim();
+      if(!here) return false;
+      const last=String(notes[key.replace(/::nextc$/,'::lastc')]||'').trim();
+      return !!last && here===last;
+    };
     const ta2=(key,ph,minH)=>roNow
-      ? `<div style="font-size:13px;color:#333;white-space:pre-wrap;background:#F7F8FB;border-radius:8px;padding:9px 11px;min-height:34px">${_calEsc(notes[key]||'')||'<span style="color:#636b7a">Nothing written</span>'}</div>`
-      : `<textarea id="wm-${key}" placeholder="${ph}" style="width:100%;min-height:${minH?(minH+22):76}px;padding:11px 13px;border:0.5px solid #d8dce6;border-radius:8px;font-size:15px;line-height:1.5;color:#222;resize:vertical;font-family:inherit">${_calEsc(notes[key]||'')}</textarea>
+      ? `<div style="font-size:13px;color:#333;white-space:pre-wrap;background:#F7F8FB;border-radius:8px;padding:9px 11px;min-height:34px">${(_fwdStale(key)?'':_calEsc(notes[key]||''))||'<span style="color:#636b7a">Nothing written</span>'}</div>`
+      : `${_fwdStale(key)?`<div style="font-size:12px;color:#633806;background:#FFF7E0;border:0.5px solid #EAD9A8;border-radius:8px;padding:7px 11px;margin-bottom:6px">Last week&rsquo;s plan moved across into <b>How last week actually went</b>. This box is yours for the week ahead.</div>`:''}<textarea id="wm-${key}" placeholder="${ph}" style="width:100%;min-height:${minH?(minH+22):76}px;padding:11px 13px;border:0.5px solid #d8dce6;border-radius:8px;font-size:15px;line-height:1.5;color:#222;resize:vertical;font-family:inherit">${_fwdStale(key)?'':_calEsc(notes[key]||'')}</textarea>
          <div style="display:flex;align-items:center;gap:8px;margin-top:4px"><button onclick="_wmSaveNote('${kind}','${key}','${wk}')" style="padding:5px 13px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer">Save</button><span id="wm-ok-${key}" style="display:none;font-size:12px;color:#16794C">Saved &#10003;</span></div>`;
     const secHead=(t,right)=>`<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;background:#F7F8FB;border-radius:8px 8px 0 0;padding:7px 12px;border-bottom:0.5px solid #eef0f6"><div style="font-size:12px;font-weight:700;color:#111">${t}</div><div style="font-size:11.5px;color:#566070">${right||''}</div></div>`;
     const secWrap=(head,inner)=>`<div style="border:0.5px solid #e6e8ee;border-radius:9px;margin-top:11px;overflow:hidden">${head}<div style="padding:9px 12px">${inner}</div></div>`;
@@ -11282,7 +11392,7 @@ function openDataSection(type) {
     return;
   }
 
-  const label = type === "overhead" ? "💼 PT Overhead & Expenses" : "💸 Project Team Spent";
+  const label = type === "overhead" ? "PT Overhead & Expenses" : "Project Team Spent";
   document.getElementById("dash-body").innerHTML = `
     <div class="empty-state">
       <div class="icon">${type === "overhead" ? "💼" : "💸"}</div>
@@ -22726,4 +22836,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-20m meeting-fills-the-screen, prepared-per-topic -->
+<!-- build: 2026-09-20n maintenance-check, forward-box-clears -->
