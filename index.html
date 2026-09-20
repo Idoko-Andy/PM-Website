@@ -1851,8 +1851,86 @@ function renderAdminUsers() {
       <div style="font-size:12px;color:#666;margin-bottom:10px;line-height:1.6">The screens already read <b style="color:#566070">Tom</b> and <b style="color:#566070">Tommy</b> as the same person, so nothing looks wrong. But the records underneath still hold both, and anything reading the database straight &mdash; a Slack automation, an export &mdash; still sees two people. This rewrites them to one spelling. It shows you every change before it makes any.</div>
       <button id="name-fix-btn" class="action-btn approve-btn" onclick="_nameFixRun()">Check and fix spellings</button>
       <div id="name-fix-out" style="font-size:12px;margin-top:9px;line-height:1.6"></div>
+    </div>
+    <div style="margin-top:22px;padding-top:16px;border-top:1px solid #2a2a2a">
+      <div style="font-size:14px;color:#fff;font-weight:500;margin-bottom:8px">Housekeeping</div>
+      <div style="font-size:12px;color:#666;margin-bottom:10px;line-height:1.6">Work still sitting open on houses that are finished. It keeps showing up on people&rsquo;s task lists and in the counts, long after there is anything to do.</div>
+      <div id="hk-out" style="font-size:12px;line-height:1.6"></div>
     </div>`;
   renderRoleManager();
+  try{ _hkRender(); }catch(e){}
+}
+
+// ---- Housekeeping: work still open on houses that are finished -----------------
+// Bruce, 17 Sept: "open tasks on closed houses. Go ahead and mark them all as
+// completed." Most of them are process steps that outlived the job - a SOW approval
+// still sitting open on a house that sold months ago - and closing those is pure
+// tidying. But some of them are End of Project Reports, which are real work somebody
+// still owes, and quietly ticking those off means they never get written. So the two
+// are listed separately and closed separately, and nothing happens until the list has
+// been read. This lives here because it is the one job that needs doing in bulk, and
+// doing it a task at a time across ten property cards is how it got left this long.
+function _hkScan(){
+  const cards=(typeof propCards!=='undefined'?propCards:[]);
+  const done=cards.filter(function(c){ return c.phase==='Closed' || c.archived; });
+  const byId={}; done.forEach(function(c){ byId[c.id]=c; });
+  const stale=[], reports=[];
+  (typeof _tasksCache!=='undefined'?_tasksCache:[]).forEach(function(t){
+    if(t.status==='done') return;
+    const c=byId[t.property_id]; if(!c) return;
+    const isReport=/end of project report/i.test(String(t.category||'')+' '+String(t.title||''));
+    const row={ id:t.id, title:t.title||'Task', addr:c.addr||'', due:t.due_date||'',
+                who:(taskAssignees(t).join(', ')||'nobody') };
+    (isReport?reports:stale).push(row);
+  });
+  const by=function(a,b){ return String(a.addr).localeCompare(String(b.addr))||String(a.due).localeCompare(String(b.due)); };
+  return { stale:stale.sort(by), reports:reports.sort(by) };
+}
+function _hkRender(){
+  const box=document.getElementById('hk-out'); if(!box) return;
+  const s=_hkScan();
+  const row=function(x){ return '<div style="padding:4px 0;border-bottom:1px solid #1e1e1e">'+
+      '<span style="color:#b4bcc8">'+_calEsc(x.addr)+'</span> &middot; '+_calEsc(x.title)+
+      '<span style="color:#636b7a"> &middot; '+_calEsc(x.who)+(x.due?(' &middot; due '+_calEsc(x.due)):'')+'</span></div>'; };
+  const block=function(title, list, note, btn){
+    if(!list.length) return '<div style="margin-top:12px;color:#18854A">'+title+': nothing outstanding.</div>';
+    return '<div style="margin-top:14px"><div style="color:#fff;font-weight:500">'+title+' &middot; '+list.length+'</div>'+
+      '<div style="color:#636b7a;margin:4px 0 7px;line-height:1.6">'+note+'</div>'+
+      '<div style="font-size:12px;max-height:190px;overflow:auto;background:#111;border:1px solid #2a2a2a;border-radius:6px;padding:7px 10px">'+
+      list.map(row).join('')+'</div>'+btn+'</div>';
+  };
+  box.innerHTML =
+    block('Process steps still open', s.stale,
+      'Steps like a SOW or budget approval that were never ticked before the house closed. Closing these changes nothing anybody still has to do.',
+      '<button class="action-btn approve-btn" style="margin-top:9px" onclick="_hkClose(\'stale\')">Close these '+s.stale.length+'</button>')
+    + block('End of Project Reports', s.reports,
+      'These are real reports somebody still owes. Close them only if you have decided they are not being written &mdash; otherwise leave them and chase them.',
+      '<button class="action-btn" style="margin-top:9px;background:#3a2a10;border:1px solid #8A5A10;color:#E7D6A8" onclick="_hkClose(\'reports\')">Close these '+s.reports.length+' anyway</button>');
+}
+async function _hkClose(which){
+  if(_blockIfReadOnly()) return;
+  const s=_hkScan();
+  const list=(which==='reports')?s.reports:s.stale;
+  if(!list.length) return;
+  const what=(which==='reports')
+    ? "Close "+list.length+" End of Project Report"+(list.length===1?'':'s')+"?\n\nThese are reports somebody still owes. Closing them here means they will not be written.\n\n"
+    : "Close "+list.length+" process step"+(list.length===1?'':'s')+" left open on houses that are finished?\n\n";
+  if(!confirm(what+list.map(function(x){ return '• '+x.addr+' — '+x.title+' ('+x.who+')'; }).join('\n'))) return;
+  const box=document.getElementById('hk-out');
+  if(box) box.innerHTML='<div style="color:#b4bcc8">Closing…</div>';
+  const stamp=new Date().toISOString();
+  let ok=0; const bad=[];
+  for(const x of list){
+    let r=await supabase.from("pm_tasks").update({status:'done', completed_at:stamp}).eq("id",x.id).select("id");
+    if(r.error && /completed_at/.test(r.error.message||'')){
+      r=await supabase.from("pm_tasks").update({status:'done'}).eq("id",x.id).select("id");
+    }
+    if(r.error || !r.data || !r.data.length) bad.push(x.addr+' — '+x.title+': '+((r.error&&r.error.message)||'nothing was saved'));
+    else { ok++; _logAudit('completed','task', x.title, 'Closed in housekeeping — '+x.addr+' is finished'+(which==='reports'?' (End of Project Report, closed deliberately)':'')); }
+  }
+  try{ await loadTasks(); }catch(e){}
+  _hkRender();
+  if(bad.length) alert(ok+" closed. "+bad.length+" could not be:\n\n"+bad.join('\n'));
 }
 
 // ---- One person, one spelling ------------------------------------------------
@@ -22219,4 +22297,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-20i marlo-future-proof -->
+<!-- build: 2026-09-20j housekeeping -->
