@@ -220,6 +220,9 @@ body.mobile-on .overlay{z-index:6000 !important;}
 .m-seg button.on{background:#111;color:#fff;border-color:#111;}
 .m-row{padding:12px 0;border-bottom:0.5px solid #f1f3f7;}
 .m-row:last-child{border-bottom:none;}
+.wm-3col{display:grid;grid-template-columns:196px minmax(0,1fr) 178px;gap:13px;align-items:start}
+.wm-rail{position:sticky;top:8px}
+@media(max-width:1150px){.wm-3col{grid-template-columns:1fr}.wm-rail{position:static}}
 </style>
 </head>
 <body>
@@ -7090,11 +7093,28 @@ function _wmAgentPick(pid, sel){
   if(txt){ txt.style.display='none'; txt.value=''; }
   _wmDeal(pid,'listing_agent',sel.value,sel);
 }
-function _wmAddTask(pid){
+function _wmAddTask(pid){ return _wmAddTaskFor(pid, ''); }
+// Bruce, 20 Sept: on permits "be able to assign tasks for Jen the architect", and on
+// timeline and budget the same for Marlo. The person is looked up by JOB ROLE, not by
+// name, so it keeps working when somebody new holds the job.
+function _wmRolePerson(role){
+  const u=(typeof getUsers==='function'?getUsers():[]).find(function(x){ return x.status==='approved' && x.role===role; });
+  return u ? ((((u.firstName||'')+' '+(u.lastName||'')).trim())||'') : '';
+}
+function _wmAddTaskFor(pid, person){
   if(typeof openAddTask!=='function') return;
   openAddTask(_ymd(new Date()));
   _wmMarkReturn();
-  setTimeout(()=>{ const el=document.getElementById('task-prop'); if(el){ el.value=pid; if(typeof _taskPropChange==='function') _taskPropChange(); } },60);
+  setTimeout(function(){
+    const el=document.getElementById('task-prop');
+    if(el){ el.value=pid; if(typeof _taskPropChange==='function') _taskPropChange(); }
+    if(person){
+      const box=[].slice.call(document.querySelectorAll('.task-asg-cb')).find(function(b){
+        try{ return _sameAssignee(b.value, person); }catch(e){ return b.value===person; }
+      });
+      if(box && !box.checked){ box.checked=true; box.dispatchEvent(new Event('change',{bubbles:true})); }
+    }
+  },60);
 }
 async function _wmAddEvent(pid){
   if(typeof openAddCalEvent!=='function') return;
@@ -7733,6 +7753,193 @@ function _wmMovedToast(msg){
   b.style.display='block';
   clearTimeout(window.__wmMovedT);
   window.__wmMovedT=setTimeout(function(){ b.style.display='none'; }, 3200);
+}
+
+// ---- The two rails beside the meeting ------------------------------------------
+// Bruce, 20 Sept: "show on the left side of the screen the box for the four PDFs ... so
+// we can kind of also click on those and visualize and see how their task schedule is
+// being built out while in the meeting", and on the right "the total number of upcoming
+// takedowns ... vacant on standby and in pre-construction ... waiting on permits ...
+// active projects ... on the market ... in contract ... request to remedy ... clear to
+// close. Like a little square, going up and down on the screen, so that way the meeting
+// doc's still the same size."
+// Both rails are sticky, so they stay put while the room scrolls the houses, and both
+// fold underneath on a narrow screen rather than squeezing the part that matters.
+function _wmPrioRail(wk, roNow){
+  const people=_prioPeople(wk);
+  if(!people.length) return '';
+  const rows=people.map(function(p){
+    const n=_prioCount(p,wk);
+    const first=String(p).split(' ')[0];
+    return `<div style="border-top:0.5px solid #eef0f6;padding:7px 0 6px">
+      <div onclick="_wmTeamTabTo('priority')" title="Open their list" style="cursor:pointer;display:flex;align-items:baseline;gap:6px">
+        <span style="font-size:12.5px;font-weight:700;color:#111">${_calEsc(first)}</span>
+        <span style="font-size:11px;color:#566070">${n} job${n===1?'':'s'}</span>
+        <span style="margin-left:auto;font-size:11px;color:#185FA5">open &rsaquo;</span>
+      </div>
+      ${roNow?'':`<div style="display:flex;gap:5px;margin-top:5px">
+        <input id="rail-${_wmReschedId(p)}" placeholder="Add a job&hellip;" style="flex:1;min-width:0;padding:4px 7px;border:0.5px solid #e0e4ec;border-radius:5px;font-size:11.5px"/>
+        <button onclick="_prioAdd('${wk}','${_argEsc(p)}','','rail-${_wmReschedId(p)}','')" style="padding:4px 8px;background:#111;color:#fff;border:none;border-radius:5px;font-size:11px;cursor:pointer">Add</button>
+      </div>`}
+    </div>`;
+  }).join('');
+  return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:11px 13px">
+    <div style="font-size:12px;font-weight:700;color:#111">\u{1F4CB} This week's lists</div>
+    <div style="font-size:10.5px;color:#566070;margin:3px 0 2px;line-height:1.5">Building as you go. Anything added here is not tied to a house.</div>
+    ${rows}
+    <div onclick="_wmTeamTabTo('priority')" style="cursor:pointer;margin-top:9px;font-size:11.5px;color:#185FA5;font-weight:600">See all &amp; preview the PDFs &rsaquo;</div>
+  </div>`;
+}
+// Where every house in the company stands, in one column, without leaving the meeting.
+const WM_PIPE = [
+  {label:'Upcoming takedowns', phases:['Upcoming Takedowns'],        col:'#AF2C2B'},
+  {label:'Vacant / on standby',phases:['Vacant / On Standby'],       col:'#93600A'},
+  {label:'Pre construction',   phases:['Pre Construction'],          col:'#378ADD'},
+  {label:'Waiting permits',    phases:['Waiting Permits'],           col:'#A63258'},
+  {label:'Active builds',      phases:['Framing, MEPS, Insulation','Drywall / Exterior Work','Finishes','Pre List / Punchout Process','Rental Handoff Process'], col:'#639922'},
+  {label:'On the market',      phases:['Listed on the Market','Listed on the Market / Final Inspections'], col:'#3B6D11'},
+  {label:'In contract',        phases:['In Contract'],               col:'#185FA5'},
+  {label:'Request a remedy',   phases:['RTR In Process'],            col:'#BA7517'},
+  {label:'Clear to close',     phases:['RTR Completed (Pending Closing)'], col:'#534AB7'}
+];
+function _wmPipeRail(){
+  const all=(typeof propCards!=='undefined'?propCards:[]).filter(function(c){ return !c.archived; });
+  const sq=WM_PIPE.map(function(g){
+    const n=all.filter(function(c){ return g.phases.indexOf(c.phase)>=0; }).length;
+    return `<div onclick="openProjectDashboard('trello')" title="Open the Property Dashboard" style="cursor:pointer;display:flex;align-items:center;gap:8px;background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid ${g.col};border-radius:8px;padding:6px 9px">
+      <span style="font-size:17px;font-weight:700;color:${n?'#111':'#9aa2ad'};min-width:22px;text-align:right;font-variant-numeric:tabular-nums">${n}</span>
+      <span style="font-size:10.5px;color:#566070;line-height:1.25">${g.label}</span></div>`;
+  }).join('');
+  return `<div>
+    <div style="font-size:12px;font-weight:700;color:#111;margin-bottom:6px">\u{1F3E0} Where everything stands</div>
+    <div style="display:flex;flex-direction:column;gap:5px">${sq}</div>
+    <div style="font-size:10px;color:#636b7a;margin-top:7px;line-height:1.5">${all.length} houses on the board. Click any square for the Property Dashboard.</div>
+  </div>`;
+}
+
+// ===================== THE MEETING WALKS ONE TOPIC AT A TIME =====================
+// Bruce, 20 Sept: "each property is its own drop down now ... below that you would have
+// five drop downs with five different topics ... so we can go over each topic
+// individually one at a time ... and then we can mark completed per topic and bounce
+// around if needed, but in an organized way to where we don't overlook things."
+// The order is his, and it is the order the room actually talks: permits first while
+// the architect is still on the call, then what happened, then what is coming, then the
+// things that carry week to week, and the money last.
+// Permits only appears on a job that is marked permitted - on everything else the card
+// is four topics, not five, rather than a dead box saying "not applicable".
+const WM_TOPICS = [
+  {key:'permits', icon:'\u{1F4C4}', title:'Permits, drawings & the engineer', sub:'Jen', when:function(c){ return _isPermittedCard(c); }},
+  {key:'last',    icon:'\u{1F4C5}', title:'Last week',                        sub:'what was scheduled, and what went right'},
+  {key:'next',    icon:'\u{1F5D3}', title:'This week & next week',            sub:'what is booked'},
+  {key:'lag',     icon:'\u{23F3}',  title:'Lag time & questions',             sub:'carried until somebody closes them'},
+  {key:'money',   icon:'\u{1F4B0}', title:'Timeline & budget',                sub:'dates, money, vacancy, closing'}
+];
+function _wmTopicsFor(c){ return WM_TOPICS.filter(function(t){ return !t.when || t.when(c); }); }
+function _wmTopicMap(wk){ const m=_wmMeta(wk,'team','__topic'); return (m&&typeof m==='object')?m:{}; }
+function _wmTopicDone(wk,pid,key){ return !!_wmTopicMap(wk)[pid+'::'+key]; }
+function _wmTopicCount(wk,c){
+  const ts=_wmTopicsFor(c);
+  return { done:ts.filter(function(t){ return _wmTopicDone(wk,c.id,t.key); }).length, total:ts.length };
+}
+// Bruce chose the roll-up: the house only goes green once every topic on it is ticked,
+// so a house cannot be called finished with a topic nobody opened. Ticking the last one
+// marks the house covered; un-ticking one takes that back - but only if the house was
+// marked by this roll-up and not by somebody pressing the button themselves.
+async function _wmTopicTick(wk,pid,key){
+  if(_blockIfReadOnly()) return;
+  const m=Object.assign({}, _wmTopicMap(wk));
+  const k=pid+'::'+key;
+  if(m[k]) delete m[k]; else m[k]={at:new Date().toISOString(), by:_miWho()};
+  if(!(await _wmSetMeta(wk,'team','__topic',m))) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===pid; });
+  if(c){
+    const all=_wmTopicsFor(c).every(function(t){ return !!m[pid+'::'+t.key]; });
+    const cov=Object.assign({}, _wmMeta(wk,'team','__covered'));
+    if(all && !cov[pid]){
+      cov[pid]={at:new Date().toISOString(), by:_miWho(), auto:true};
+      await _wmSetMeta(wk,'team','__covered',cov);
+    } else if(!all && cov[pid] && cov[pid].auto){
+      delete cov[pid];
+      await _wmSetMeta(wk,'team','__covered',cov);
+    }
+  }
+  openWeeklyMeeting('team', window.__wmLastWeek||undefined);
+}
+// One topic on one house. A topic that has been covered starts closed, so the room
+// moves down the card instead of scrolling back through ground it has already walked.
+function _wmTopicWrap(wk, c, t, inner, roNow){
+  const done=_wmTopicDone(wk,c.id,t.key);
+  const btn = roNow
+    ? `<span style="font-size:11.5px;font-weight:600;color:${done?'#0F7B54':'#636b7a'}">${done?'✓ covered':'not covered'}</span>`
+    : `<span onclick="event.preventDefault();event.stopPropagation();_wmTopicTick('${wk}','${c.id}','${t.key}')" title="${done?'Put this topic back on the list':'Mark this topic covered'}" style="cursor:pointer;font-size:11.5px;font-weight:700;padding:3px 11px;border-radius:99px;border:0.5px solid ${done?'#0F7B54':'#cdd7e6'};background:${done?'#0F7B54':'#fff'};color:${done?'#fff':'#185FA5'};white-space:nowrap">${done?'✓ Covered':'Mark covered'}</span>`;
+  return `<details ${done?'':'open'} style="border:0.5px solid ${done?'#BFE5D4':'#e0e4ec'};border-radius:10px;margin-top:10px;overflow:hidden;background:${done?'#F7FCF9':'#fff'}">
+    <summary style="cursor:pointer;padding:9px 13px;background:${done?'#EDF8F2':'#F7F8FB'};border-bottom:0.5px solid ${done?'#DCEFE5':'#eef0f6'};display:flex;align-items:center;gap:9px;flex-wrap:wrap">
+      <span style="font-size:14px;line-height:1">${t.icon}</span>
+      <span style="font-size:13px;font-weight:700;color:${done?'#0F7B54':'#111'}">${t.title}</span>
+      ${t.sub?`<span style="font-size:11px;color:#566070">${t.sub}</span>`:''}
+      <span style="margin-left:auto">${btn}</span>
+    </summary>
+    <div style="padding:11px 13px">${inner}</div>
+  </details>`;
+}
+// ---- Notes that have to survive the week ---------------------------------------
+// Bruce, 20 Sept: "my notes that I put in there last week - we need to make sure WB
+// Bailey runs a floor drain for the water softener - that needs to be in its own box,
+// and it needs to be a check box that gets marked off ... if it's no longer relevant."
+// A paragraph typed into a comment box is read once and then scrolls away. So when the
+// week rolls over, every LINE of what was written about the week ahead arrives as its
+// own tickable item against that house. Tick it and it stops carrying. Leave it and it
+// comes back every Monday until somebody deals with it, which is the whole point.
+function _wmCarryMap(wk){ const m=_wmMeta(wk,'team','__carry'); return (m&&typeof m==='object')?m:{}; }
+function _wmCarryFor(wk,pid){ const v=_wmCarryMap(wk)[pid]; return Array.isArray(v)?v:[]; }
+function _wmCarryLines(txt){
+  return String(txt==null?'':txt).split(/\r?\n/)
+    .map(function(x){ return x.replace(/^[\s•*-]+/,'').trim(); })
+    .filter(function(x){ return x.length>2; });
+}
+async function _wmCarryTick(wk,pid,id){
+  if(_blockIfReadOnly()) return;
+  const m=Object.assign({}, _wmCarryMap(wk));
+  const list=(Array.isArray(m[pid])?m[pid]:[]).map(function(x){
+    if(x.id!==id) return x;
+    const y=Object.assign({}, x);
+    if(y.done){ delete y.done; delete y.doneBy; delete y.doneAt; }
+    else { y.done=true; y.doneBy=_miWho(); y.doneAt=new Date().toISOString(); }
+    return y;
+  });
+  m[pid]=list;
+  if(await _wmSetMeta(wk,'team','__carry',m)) openWeeklyMeeting('team', window.__wmLastWeek||undefined);
+}
+async function _wmCarryAdd(wk,pid,inputId){
+  if(_blockIfReadOnly()) return;
+  const el=document.getElementById(inputId);
+  const txt=(el&&el.value?el.value:'').trim();
+  if(!txt){ if(el) el.focus(); return; }
+  const m=Object.assign({}, _wmCarryMap(wk));
+  const list=(Array.isArray(m[pid])?m[pid]:[]).slice();
+  list.push({ id:'k'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), text:txt, from:wk, by:_miWho() });
+  m[pid]=list;
+  if(await _wmSetMeta(wk,'team','__carry',m)){ if(el) el.value=''; openWeeklyMeeting('team', window.__wmLastWeek||undefined); }
+}
+function _wmCarryBlock(wk, c, roNow){
+  const list=_wmCarryFor(wk,c.id);
+  const open=list.filter(function(x){ return !x.done; });
+  const id='cy-'+_wmReschedId(c.id);
+  const rows=list.length?list.map(function(x){
+    const tick=roNow
+      ? `<span style="font-size:14px;flex-shrink:0">${x.done?'✅':'⬜'}</span>`
+      : `<span onclick="_wmCarryTick('${wk}','${c.id}','${x.id}')" title="${x.done?'Put it back':'No longer relevant — tick it off'}" style="cursor:pointer;font-size:14px;flex-shrink:0">${x.done?'✅':'⬜'}</span>`;
+    return `<div style="display:flex;gap:8px;align-items:flex-start;padding:5px 0;border-bottom:0.5px solid #f4f5f7">
+      ${tick}<div style="flex:1;min-width:0;font-size:12.5px;color:${x.done?'#566070':'#111'};${x.done?'text-decoration:line-through':''}">${_calEsc(x.text)}
+      <span style="font-size:10px;color:#636b7a"> &middot; from ${_calEsc(String(x.from||'').slice(0,10))}</span></div></div>`;
+  }).join(''):'<div style="font-size:12px;color:#636b7a;padding:4px 0">Nothing carried over onto this one.</div>';
+  const add=roNow?'':`<div style="display:flex;gap:6px;margin-top:7px">
+    <input id="${id}" placeholder="Something that must not be forgotten next week&hellip;" style="flex:1;min-width:0;padding:6px 9px;border:0.5px solid #ddd;border-radius:6px;font-size:12.5px"/>
+    <button onclick="_wmCarryAdd('${wk}','${c.id}','${id}')" style="padding:6px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">Add</button></div>`;
+  return `<div style="border:0.5px solid #EAD9A8;background:#FFFCF4;border-radius:9px;padding:9px 12px;margin-top:10px">
+    <div style="font-size:12px;font-weight:700;color:#8A5A10;margin-bottom:5px">\u{1F4CC} Carried over${open.length?(' &middot; '+open.length+' still open'):''}</div>
+    <div style="font-size:11px;color:#8A5A10;margin-bottom:6px">Each line you write about the weeks ahead arrives here next Monday. Tick one off when it is no longer relevant &mdash; anything left keeps coming back.</div>
+    ${rows}${add}</div>`;
 }
 
 // ===================== MONDAY MEETING — THE TWO FINISH DATES =====================
@@ -8541,6 +8748,33 @@ async function _wmPrefillWeek(wk){
     if(!String(prev[k]==null?'':prev[k]).trim()) continue;
     patch[dest]=prev[k];
   }
+  // Bruce, 20 Sept: every LINE written about the weeks ahead becomes its own tickable
+  // item next Monday, and anything not ticked keeps coming back. Built here, at the
+  // moment the week rolls, so the list is waiting before anybody sits down.
+  const prevCarry=((d[_wmPrevWeek(wk)]||{}).team||{})['__carry']||{};
+  const curCarry=(cur['__carry']&&typeof cur['__carry']==='object')?cur['__carry']:{};
+  const carry={};
+  const seen={};
+  Object.keys(prevCarry).forEach(function(pid){
+    const keep=(Array.isArray(prevCarry[pid])?prevCarry[pid]:[]).filter(function(x){ return x && !x.done; });
+    if(keep.length){ carry[pid]=keep.map(function(x){ return Object.assign({},x); }); }
+    keep.forEach(function(x){ seen[pid+'|'+String(x.text||'').toLowerCase()]=true; });
+  });
+  Object.keys(prev).forEach(function(k){
+    if(k.indexOf('::')<0) return;
+    const bits=k.split('::'), pid=bits[0];
+    if(bits[1]!=='nextc') return;
+    _wmCarryLines(prev[k]).forEach(function(line){
+      const sig=pid+'|'+line.toLowerCase();
+      if(seen[sig]) return; seen[sig]=true;
+      carry[pid]=carry[pid]||[];
+      carry[pid].push({ id:'k'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
+                        text:line, from:_wmPrevWeek(wk) });
+    });
+  });
+  // Never write over a list this week has already started working through.
+  if(Object.keys(carry).length && !Object.keys(curCarry).length) patch['__carry']=carry;
+
   if(!Object.keys(patch).length) return 0;
   _wmPrefilling=true;
   try{
@@ -10404,7 +10638,11 @@ function openWeeklyMeeting(kind, week){
         <summary style="cursor:pointer;padding:11px 14px 11px 4px;outline:none">
           <div style="display:inline-flex;width:calc(100% - 26px);vertical-align:middle;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
             <span style="font-size:15px;font-weight:700;color:#185FA5">${isCov?'<span style="color:#16794C">&#10003; </span>':''}${_calEsc(c.addr||'')}${c.jvDeal?' <span style="font-size:11px;background:#EEEDFE;color:#3C3489;padding:1px 7px;border-radius:99px;vertical-align:middle">JV</span>':''}</span>
-            <span style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">${summaryChips}<span style="font-size:11.5px;color:#566070;margin-left:4px">${_calEsc(_phLabel(c.phase))} &middot; ${_calEsc(c.pm)||'no PM'}</span></span>
+            <span style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">${summaryChips}${(function(){
+              const tc=_wmTopicCount(wk,c);
+              const all=tc.total&&tc.done===tc.total;
+              return `<span title="topics covered" style="font-size:10.5px;font-weight:700;padding:1px 8px;border-radius:99px;background:${all?'#E0F3EA':'#F1F3F7'};color:${all?'#0F7B54':'#566070'}">${tc.done}/${tc.total} topics</span>`;
+            })()}<span style="font-size:11.5px;color:#566070;margin-left:4px">${_calEsc(_phLabel(c.phase))} &middot; ${_calEsc(c.pm)||'no PM'}</span></span>
           </div>
         </summary>
         <div style="padding:0 16px 14px">
@@ -10431,28 +10669,53 @@ function openWeeklyMeeting(kind, week){
           ${fld('Project manager',_pmField(c,'wm'))}
           ${fld('JV deal',ro?(c.jvDeal?'Yes':'No'):`<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" ${c.jvDeal?'checked':''} onchange="_wmDeal('${c.id}','jv_deal',this.checked,this)" style="width:15px;height:15px;cursor:pointer"/> Yes</label>`)}
         </div>
-        ${secWrap(secHead('Timeline check','asked every Monday'), pace+trail)}
+        ${(function(){
+          // Bruce's order: permits first while the architect is on the call, then what
+          // happened, then what is coming, then what carries, then the money.
+          const _jen=_wmRolePerson('Architect');
+          const _mar=_wmRolePerson('Senior Administrative Assistant');
+          const _roleBtn=(who,label)=>(roNow||!who)?'':`<button onclick="_wmAddTaskFor('${c.id}','${_argEsc(who)}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">&#65291; ${label}</button>`;
+          const _anyBtn=roNow?'':`<button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #e6e8ee;border-radius:7px;font-size:12.5px;color:#566070;cursor:pointer">&#65291; Task for somebody else</button>`;
+          const _bar=(inner)=>inner?`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;padding-top:9px;border-top:0.5px dashed #e6e8ee">${inner}</div>`:'';
+          const _sub=(t)=>`<div style="font-size:9.5px;color:#566070;text-transform:uppercase;letter-spacing:.05em;margin:11px 0 4px">${t}</div>`;
+          const _dt=(v)=>v?_calEsc(v):'&mdash;';
+          const body={};
 
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:11px;margin-top:11px;align-items:start">
-          <div>${_wmPermitBlock(c) || `<div style="border:0.5px dashed #e6e8ee;border-radius:9px;padding:11px 13px;font-size:12.5px;color:#636b7a">&#128196; Permits &mdash; this job is not marked permitted.</div>`}
-            ${_isPermittedCard(c)?`<div style="margin-top:7px"><div style="font-size:9.5px;color:#566070;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Comments on permits</div>${ta2(c.id+'::permc','Where the permits actually stand, in your words&hellip;',44)}</div>`:''}
-          </div>
-          <div><div style="font-size:12px;font-weight:700;color:#111;margin-bottom:4px">&#128176; Money analysis &mdash; on or off budget, and why</div>${ta2(c.id+'::money','On or off budget, and why?')}</div>
-        </div>
+          body.permits = _wmPermitBlock(c)
+            + _sub('Comments on permits')
+            + ta2(c.id+'::permc','Where the permits actually stand, in your words&hellip;',44)
+            + _bar(_roleBtn(_jen,'Task for '+String(_jen).split(' ')[0])+_anyBtn);
 
-        ${secWrap(secHead('What was scheduled last week', (lastItems.length?(lastItems.filter(x=>x.done).length+' of '+lastItems.length+' done &middot; '):'')+_wmLabel(lastWk).replace(/^\w+, /,'')+' &rarr; Sun'), lastRows+
-          `<div style="border-top:1px dashed #e6e8ee;padding-top:8px;margin-top:6px"><div style="font-size:9.5px;color:#566070;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Comments on last week</div>${ta2(c.id+'::lastc','Anything about how last week actually went&hellip;',44)}</div>`)}
+          body.last = `<div style="font-size:11.5px;color:#566070;margin-bottom:6px">${lastItems.length?(lastItems.filter(x=>x.done).length+' of '+lastItems.length+' done &middot; '):''}${_wmLabel(lastWk).replace(/^\w+, /,'')} &rarr; Sun</div>`
+            + lastRows
+            + _wmCarryBlock(wk, c, roNow)
+            + _sub('How last week actually went')
+            + ta2(c.id+'::lastc','The recap in your words&hellip;',44)
+            + _sub('&#127942; Wins')
+            + ta2(c.id+'::wins','What went right on this property this week?');
 
-        ${secWrap(secHead('Lag-time items','carried until they close'), lagRows+lagAdd)}
+          body.next = `<div style="font-size:11.5px;color:#566070;margin-bottom:6px">${fwdItems.length?(fwdItems.filter(x=>x.done).length+' of '+fwdItems.length+' done &middot; '):''}${fwdR.from} &rarr; ${fwdR.to} &middot; in date order</div>`
+            + fwdRows
+            + _sub('Anything about what is coming up')
+            + ta2(c.id+'::nextc','One thought per line &mdash; each line carries into next Monday as its own tickable item&hellip;',44)
+            + _bar(roNow?'':`<button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">&#65291; Add task</button><button onclick="_wmAddEvent('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#4A7318;cursor:pointer;font-weight:600">&#65291; Add calendar event</button>`);
 
-        ${secWrap(secHead('Scheduled this week &amp; next week', (fwdItems.length?(fwdItems.filter(x=>x.done).length+' of '+fwdItems.length+' done &middot; '):'')+fwdR.from+' &rarr; '+fwdR.to+' &middot; in date order'), fwdRows+
-          `<div style="border-top:1px dashed #e6e8ee;padding-top:8px;margin-top:6px"><div style="font-size:9.5px;color:#566070;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Comments on the weeks ahead</div>${ta2(c.id+'::nextc','Anything about what is coming up&hellip;',44)}</div>`)}
+          body.lag = _sub('Lag-time items &middot; carried until they close') + lagRows + lagAdd
+            + _sub('Questions for Bruce / Tommy &middot; carried until answered') + qRows + qAdd;
 
-        ${secWrap(secHead('Questions for Bruce / Tommy','carried until answered'), qRows+qAdd)}
+          body.money = pace + trail
+            + `<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:11px;padding-top:10px;border-top:0.5px solid #eef0f6">
+                 <div><div style="font-size:9.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em">Goes vacant</div><div style="font-size:13px;font-weight:600;color:${c.vacancyDate?'#111':'#8A5A10'}">${_dt(c.vacancyDate)}</div></div>
+                 <div><div style="font-size:9.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em">Closing &middot; us buying</div><div style="font-size:13px;font-weight:600;color:${c.closingDate?'#111':'#8A5A10'}">${_dt(c.closingDate)}</div></div>
+                 <div><div style="font-size:9.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em">Closing &middot; us selling</div><div style="font-size:13px;font-weight:600;color:${c.closingDateSell?'#111':'#8A5A10'}">${_dt(c.closingDateSell)}</div></div>
+               </div>`
+            + _sub('&#128176; Money analysis &mdash; on or off budget, and why')
+            + ta2(c.id+'::money','On or off budget, and why?')
+            + _sqBody(c, true)
+            + _bar(_roleBtn(_mar,'Task for '+String(_mar).split(' ')[0])+_anyBtn);
 
-        <div style="margin-top:11px"><div style="font-size:12px;font-weight:700;color:#111;margin-bottom:4px">&#127942; Wins this week</div>${ta2(c.id+'::wins','What went right on this property this week?')}</div>
-
-        ${_sqBody(c, true)}
+          return _wmTopicsFor(c).map(function(t){ return _wmTopicWrap(wk, c, t, body[t.key]||'', roNow); }).join('');
+        })()}
 
         ${roNow?'':`<div style="margin-top:11px;display:flex;gap:8px;flex-wrap:wrap;background:#F7F8FB;border:0.5px dashed #d5d9e2;border-radius:9px;padding:9px 12px;align-items:center">
           <span style="font-size:12px;color:#566070">Add to this property, right now:</span>
@@ -10516,7 +10779,13 @@ function openWeeklyMeeting(kind, week){
       ${_wmClosedBanner(wk, closedRec, 'team')}
       ${_teamTabBar}
       ${cards.length?walkBar:''}
-      ${blocks || '<div style="color:#636b7a;font-size:14px;padding:20px 0">No construction properties right now.</div>'}
+      <div class="wm-3col">
+        <div class="wm-rail">${_wmPrioRail(wk, roNow)}</div>
+        <div>
+          ${blocks || '<div style="color:#636b7a;font-size:14px;padding:20px 0">No construction properties right now.</div>'}
+        </div>
+        <div class="wm-rail">${_wmPipeRail()}</div>
+      </div>
       ${_wmOpenQuestionsPanel(cards)}
       <div style="font-size:14px;font-weight:700;color:#111;margin:18px 0 8px">&#128172; Pre Construction comments &mdash; all PMs</div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">${pmNotes||'<div style="color:#636b7a;font-size:13px">No PMs with construction properties.</div>'}</div>
@@ -22343,4 +22612,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-20k version-notice -->
+<!-- build: 2026-09-20l meeting-topics -->
