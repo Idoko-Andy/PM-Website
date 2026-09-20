@@ -220,9 +220,11 @@ body.mobile-on .overlay{z-index:6000 !important;}
 .m-seg button.on{background:#111;color:#fff;border-color:#111;}
 .m-row{padding:12px 0;border-bottom:0.5px solid #f1f3f7;}
 .m-row:last-child{border-bottom:none;}
-.wm-3col{display:grid;grid-template-columns:196px minmax(0,1fr) 178px;gap:13px;align-items:start}
+.wm-2col{display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:22px;align-items:start}
 .wm-rail{position:sticky;top:8px}
-@media(max-width:1150px){.wm-3col{grid-template-columns:1fr}.wm-rail{position:static}}
+@media(max-width:1280px){.wm-2col{grid-template-columns:minmax(0,1fr) 210px;gap:14px}}
+@media(max-width:980px){.wm-2col{grid-template-columns:1fr}.wm-rail{position:static}}
+.wm-doc{max-width:none;margin:0 auto}
 </style>
 </head>
 <body>
@@ -7609,15 +7611,22 @@ function _wmItems(pid, from, to){
     const d=t.due_date||''; if(!d || d<from || d>to) return;
     out.push({key:'t:'+t.id, id:t.id, type:'task', date:d, title:t.title||'Task',
               sub:(taskAssignees(t).join(', ')||'Unassigned')+(t.category?(' · '+t.category):''),
+              note:String(t.notes||'').trim(),
               done:t.status==='done', kind:'t', kindLabel:'Task'});
   });
   (typeof _calEventsCache!=='undefined'?_calEventsCache:[]).forEach(e=>{
     if(e.property_id!==pid) return;
     const d=e.event_date||''; if(!d || d<from || d>to) return;
     const isC=e.kind==='contractor';
+    const trade=isC?(_contractorTrade(e.contractor_id)||''):'';
+    // The notes ARE the description of the work. Boilerplate the app wrote itself is
+    // not worth a line in the meeting.
+    let enote=String(e.notes||'').trim();
+    if(/^auto-added from the/i.test(enote)) enote='';
     out.push({key:'e:'+e.id, id:e.id, type:'event', date:d,
               title:isC?(_contractorName(e.contractor_id)||'Contractor'):(e.title||(e.kind==='material'?'Material':'Event')),
-              sub:isC?'Contractor booking':(e.kind==='material'?'Material / delivery':'Scheduled'),
+              sub:isC?(trade?('Contractor \u00b7 '+trade):'Contractor booking'):(e.kind==='material'?'Material / delivery':'Scheduled'),
+              note:enote,
               done:!!e.completed, kind:isC?'c':'m', kindLabel:isC?'Contractor':(e.kind==='material'?'Material':'Scheduled')});
   });
   return out.sort((a,b)=>a.date<b.date?-1:(a.date>b.date?1:String(a.title).localeCompare(String(b.title))));
@@ -7765,6 +7774,23 @@ function _wmMovedToast(msg){
 // doc's still the same size."
 // Both rails are sticky, so they stay put while the room scrolls the houses, and both
 // fold underneath on a narrow screen rather than squeezing the part that matters.
+// Bruce, 20 Sept: "I want Jennifer, Marlo, Patience and VA Andy to be like their own
+// dashboards that you click into that shows the task list clean and organized by person,
+// so you don't have to scroll through and see somebody else's."
+// Same shape as the realtor and admin boards: an Everyone view for the walk-through,
+// then one tab per person that shows only their week.
+function _prioTab(){ return window._prioSel || 'all'; }
+function _prioTabTo(k){ window._prioSel=k; openWeeklyMeeting('team', window.__wmLastWeek||undefined); }
+function _prioTabBar(wk){
+  const people=_prioPeople(wk);
+  const sel=_prioTab();
+  const btn=(k,label,n)=>`<span onclick="_prioTabTo('${_argEsc(k)}')" style="cursor:pointer;padding:7px 14px;border-radius:8px;font-size:13px;font-weight:${sel===k?'700':'400'};background:${sel===k?'#122A4A':'#fff'};color:${sel===k?'#fff':'#444'};border:0.5px solid ${sel===k?'#122A4A':'#d8dce6'};white-space:nowrap">${label}${n!=null?(' &middot; '+n):''}</span>`;
+  const total=people.reduce(function(a,p){ return a+_prioCount(p,wk); },0);
+  return `<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:13px">
+    ${btn('all','\u{1F465} Everyone',total)}
+    ${people.map(function(p){ return btn(p, _calEsc(String(p).split(' ')[0]), _prioCount(p,wk)); }).join('')}
+  </div>`;
+}
 function _wmPrioRail(wk, roNow){
   const people=_prioPeople(wk);
   if(!people.length) return '';
@@ -7793,10 +7819,12 @@ function _wmPrioRail(wk, roNow){
 // Where every house in the company stands, in one column, without leaving the meeting.
 const WM_PIPE = [
   {label:'Upcoming takedowns', phases:['Upcoming Takedowns'],        col:'#AF2C2B'},
+  {label:'Occupied / closed',  phases:['Occupied / Closed'],         col:'#888780'},
   {label:'Vacant / on standby',phases:['Vacant / On Standby'],       col:'#93600A'},
   {label:'Pre construction',   phases:['Pre Construction'],          col:'#378ADD'},
   {label:'Waiting permits',    phases:['Waiting Permits'],           col:'#A63258'},
-  {label:'Active builds',      phases:['Framing, MEPS, Insulation','Drywall / Exterior Work','Finishes','Pre List / Punchout Process','Rental Handoff Process'], col:'#639922'},
+  {label:'Active builds',      phases:['Framing, MEPS, Insulation','Drywall / Exterior Work','Finishes','Rental Handoff Process'], col:'#639922'},
+  {label:'Pre list / punchout',phases:['Pre List / Punchout Process'], col:'#A63F1C'},
   {label:'On the market',      phases:['Listed on the Market','Listed on the Market / Final Inspections'], col:'#3B6D11'},
   {label:'In contract',        phases:['In Contract'],               col:'#185FA5'},
   {label:'Request a remedy',   phases:['RTR In Process'],            col:'#BA7517'},
@@ -7828,7 +7856,7 @@ function _wmPipeRail(){
 // Permits only appears on a job that is marked permitted - on everything else the card
 // is four topics, not five, rather than a dead box saying "not applicable".
 const WM_TOPICS = [
-  {key:'permits', icon:'\u{1F4C4}', title:'Permits, drawings & the engineer', sub:'Jen', when:function(c){ return _isPermittedCard(c); }},
+  {key:'permits', icon:'\u{1F4C4}', title:'Permits, drawings & the engineer', sub:'Jen', when:function(c){ return _wmShowPermits(c); }},
   {key:'last',    icon:'\u{1F4C5}', title:'Last week',                        sub:'what was scheduled, and what went right'},
   {key:'next',    icon:'\u{1F5D3}', title:'This week & next week',            sub:'what is booked'},
   {key:'lag',     icon:'\u{23F3}',  title:'Lag time & questions',             sub:'carried until somebody closes them'},
@@ -7836,31 +7864,67 @@ const WM_TOPICS = [
 ];
 function _wmTopicsFor(c){ return WM_TOPICS.filter(function(t){ return !t.when || t.when(c); }); }
 function _wmTopicMap(wk){ const m=_wmMeta(wk,'team','__topic'); return (m&&typeof m==='object')?m:{}; }
-function _wmTopicDone(wk,pid,key){ return !!_wmTopicMap(wk)[pid+'::'+key]; }
+function _wmTopicDone(wk,pid,key){ return _wmTopicState(wk,pid,key)==='done'; }
+// Bruce, 20 Sept: "as we are preparing for the meeting, mark each category as prepared,
+// just like we do for the whole section total - for that property I want to do it for
+// each topic as well." So a topic now has the same three states a house has:
+//   todo   nobody has touched it
+//   ready  the person who owns it filled it in before the meeting  (blue)
+//   done   the room talked about it and closed it out              (green)
+// Records written before today are a bare {at,by} with no .state - those were ticks of
+// the old single Covered button, so they read as 'done' and nothing is lost.
+function _wmTopicStateIn(m,pid,key){
+  const v=m[pid+'::'+key];
+  if(!v) return 'todo';
+  return (v && v.state==='ready') ? 'ready' : 'done';
+}
+function _wmTopicState(wk,pid,key){ return _wmTopicStateIn(_wmTopicMap(wk),pid,key); }
 function _wmTopicCount(wk,c){
-  const ts=_wmTopicsFor(c);
-  return { done:ts.filter(function(t){ return _wmTopicDone(wk,c.id,t.key); }).length, total:ts.length };
+  const ts=_wmTopicsFor(c), m=_wmTopicMap(wk);
+  return {
+    done:  ts.filter(function(t){ return _wmTopicStateIn(m,c.id,t.key)==='done';  }).length,
+    ready: ts.filter(function(t){ return _wmTopicStateIn(m,c.id,t.key)==='ready'; }).length,
+    total: ts.length
+  };
 }
 // Bruce chose the roll-up: the house only goes green once every topic on it is ticked,
 // so a house cannot be called finished with a topic nobody opened. Ticking the last one
 // marks the house covered; un-ticking one takes that back - but only if the house was
 // marked by this roll-up and not by somebody pressing the button themselves.
-async function _wmTopicTick(wk,pid,key){
+async function _wmTopicTick(wk,pid,key,want){
   if(_blockIfReadOnly()) return;
+  const target=(want==='ready')?'ready':'done';
   const m=Object.assign({}, _wmTopicMap(wk));
   const k=pid+'::'+key;
-  if(m[k]) delete m[k]; else m[k]={at:new Date().toISOString(), by:_miWho()};
+  // Pressing the pill you are already on puts the topic back on the list, so there is
+  // always a way out without hunting for an undo.
+  if(_wmTopicStateIn(m,pid,key)===target) delete m[k];
+  else m[k]={at:new Date().toISOString(), by:_miWho(), state:target};
   if(!(await _wmSetMeta(wk,'team','__topic',m))) return;
   const c=(typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===pid; });
   if(c){
-    const all=_wmTopicsFor(c).every(function(t){ return !!m[pid+'::'+t.key]; });
+    const ts=_wmTopicsFor(c);
+    const st=function(t){ return _wmTopicStateIn(m,pid,t.key); };
+    const allDone  = !!ts.length && ts.every(function(t){ return st(t)==='done'; });
+    const allReady = !!ts.length && ts.every(function(t){ return st(t)!=='todo'; });
+    // Every topic closed rolls the house up to green; every topic at least prepared
+    // rolls it up to blue. Only roll-ups this code made get taken back - if somebody
+    // pressed the house button themselves, that stands.
     const cov=Object.assign({}, _wmMeta(wk,'team','__covered'));
-    if(all && !cov[pid]){
+    if(allDone && !cov[pid]){
       cov[pid]={at:new Date().toISOString(), by:_miWho(), auto:true};
       await _wmSetMeta(wk,'team','__covered',cov);
-    } else if(!all && cov[pid] && cov[pid].auto){
+    } else if(!allDone && cov[pid] && cov[pid].auto){
       delete cov[pid];
       await _wmSetMeta(wk,'team','__covered',cov);
+    }
+    const rdy=Object.assign({}, _wmMeta(wk,'team','__ready'));
+    if(allReady && !allDone && !rdy[pid]){
+      rdy[pid]={at:new Date().toISOString(), by:_miWho(), auto:true};
+      await _wmSetMeta(wk,'team','__ready',rdy);
+    } else if((!allReady || allDone) && rdy[pid] && rdy[pid].auto){
+      delete rdy[pid];
+      await _wmSetMeta(wk,'team','__ready',rdy);
     }
   }
   openWeeklyMeeting('team', window.__wmLastWeek||undefined);
@@ -7868,18 +7932,34 @@ async function _wmTopicTick(wk,pid,key){
 // One topic on one house. A topic that has been covered starts closed, so the room
 // moves down the card instead of scrolling back through ground it has already walked.
 function _wmTopicWrap(wk, c, t, inner, roNow){
-  const done=_wmTopicDone(wk,c.id,t.key);
+  const stt=_wmTopicState(wk,c.id,t.key);
+  const done=(stt==='done'), ready=(stt==='ready');
+  const pill=function(on, colour, label, title, want){
+    return `<span onclick="event.preventDefault();event.stopPropagation();_wmTopicTick('${wk}','${c.id}','${t.key}','${want}')" title="${title}" style="cursor:pointer;font-size:13px;font-weight:700;padding:5px 15px;border-radius:99px;border:0.5px solid ${on?colour:'#cdd7e6'};background:${on?colour:'#fff'};color:${on?'#fff':colour};white-space:nowrap">${on?'✓ ':''}${label}</span>`;
+  };
   const btn = roNow
-    ? `<span style="font-size:11.5px;font-weight:600;color:${done?'#0F7B54':'#636b7a'}">${done?'✓ covered':'not covered'}</span>`
-    : `<span onclick="event.preventDefault();event.stopPropagation();_wmTopicTick('${wk}','${c.id}','${t.key}')" title="${done?'Put this topic back on the list':'Mark this topic covered'}" style="cursor:pointer;font-size:11.5px;font-weight:700;padding:3px 11px;border-radius:99px;border:0.5px solid ${done?'#0F7B54':'#cdd7e6'};background:${done?'#0F7B54':'#fff'};color:${done?'#fff':'#185FA5'};white-space:nowrap">${done?'✓ Covered':'Mark covered'}</span>`;
-  return `<details ${done?'':'open'} style="border:0.5px solid ${done?'#BFE5D4':'#e0e4ec'};border-radius:10px;margin-top:10px;overflow:hidden;background:${done?'#F7FCF9':'#fff'}">
-    <summary style="cursor:pointer;padding:9px 13px;background:${done?'#EDF8F2':'#F7F8FB'};border-bottom:0.5px solid ${done?'#DCEFE5':'#eef0f6'};display:flex;align-items:center;gap:9px;flex-wrap:wrap">
-      <span style="font-size:14px;line-height:1">${t.icon}</span>
-      <span style="font-size:13px;font-weight:700;color:${done?'#0F7B54':'#111'}">${t.title}</span>
-      ${t.sub?`<span style="font-size:11px;color:#566070">${t.sub}</span>`:''}
+    ? `<span style="font-size:12px;font-weight:600;color:${done?'#0F7B54':(ready?'#185FA5':'#636b7a')}">${done?'✓ covered':(ready?'✓ prepared':'not prepared')}</span>`
+    // Prepared disappears once the topic is covered - covered already says the work
+    // happened, and two ticks side by side is the clutter Bruce asked me to keep out.
+    : (done ? pill(true,'#0F7B54','Covered','Put this topic back on the list','done')
+            : pill(ready,'#185FA5',ready?'Prepared':'Prepared','Mark this topic prepared before the meeting','ready')
+              + ' ' + pill(false,'#0F7B54','Mark covered','Mark this topic covered in the meeting','done'));
+  // Bruce, 20 Sept: "make sure when you click on a property the five tabs aren't all
+  // open automatically. I want them to be closed." Opening a house should show you the
+  // house and five headings, not a wall of boxes to scroll past.
+  const _bd = done?'#BFE5D4':(ready?'#B8D4F0':'#e0e4ec');
+  const _bg = done?'#F7FCF9':(ready?'#F8FBFE':'#fff');
+  const _hd = done?'#EDF8F2':(ready?'#EAF3FC':'#F7F8FB');
+  const _hb = done?'#DCEFE5':(ready?'#D7E7F7':'#eef0f6');
+  const _tx = done?'#0F7B54':(ready?'#185FA5':'#111');
+  return `<details style="border:0.5px solid ${_bd};border-radius:10px;margin-top:10px;overflow:hidden;background:${_bg}">
+    <summary style="cursor:pointer;padding:12px 16px;background:${_hd};border-bottom:0.5px solid ${_hb};display:flex;align-items:center;gap:9px;flex-wrap:wrap">
+      <span style="font-size:17px;line-height:1">${t.icon}</span>
+      <span style="font-size:15.5px;font-weight:700;color:${_tx}">${t.title}</span>
+      ${t.sub?`<span style="font-size:12.5px;color:#566070">${t.sub}</span>`:''}
       <span style="margin-left:auto">${btn}</span>
     </summary>
-    <div style="padding:11px 13px">${inner}</div>
+    <div style="padding:15px 17px">${inner}</div>
   </details>`;
 }
 // ---- Notes that have to survive the week ---------------------------------------
@@ -7930,14 +8010,14 @@ function _wmCarryBlock(wk, c, roNow){
       ? `<span style="font-size:14px;flex-shrink:0">${x.done?'✅':'⬜'}</span>`
       : `<span onclick="_wmCarryTick('${wk}','${c.id}','${x.id}')" title="${x.done?'Put it back':'No longer relevant — tick it off'}" style="cursor:pointer;font-size:14px;flex-shrink:0">${x.done?'✅':'⬜'}</span>`;
     return `<div style="display:flex;gap:8px;align-items:flex-start;padding:5px 0;border-bottom:0.5px solid #f4f5f7">
-      ${tick}<div style="flex:1;min-width:0;font-size:12.5px;color:${x.done?'#566070':'#111'};${x.done?'text-decoration:line-through':''}">${_calEsc(x.text)}
+      ${tick}<div style="flex:1;min-width:0;font-size:14.5px;line-height:1.45;color:${x.done?'#566070':'#111'};${x.done?'text-decoration:line-through':''}">${_calEsc(x.text)}
       <span style="font-size:10px;color:#636b7a"> &middot; from ${_calEsc(String(x.from||'').slice(0,10))}</span></div></div>`;
   }).join(''):'<div style="font-size:12px;color:#636b7a;padding:4px 0">Nothing carried over onto this one.</div>';
   const add=roNow?'':`<div style="display:flex;gap:6px;margin-top:7px">
     <input id="${id}" placeholder="Something that must not be forgotten next week&hellip;" style="flex:1;min-width:0;padding:6px 9px;border:0.5px solid #ddd;border-radius:6px;font-size:12.5px"/>
     <button onclick="_wmCarryAdd('${wk}','${c.id}','${id}')" style="padding:6px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">Add</button></div>`;
   return `<div style="border:0.5px solid #EAD9A8;background:#FFFCF4;border-radius:9px;padding:9px 12px;margin-top:10px">
-    <div style="font-size:12px;font-weight:700;color:#8A5A10;margin-bottom:5px">\u{1F4CC} Carried over${open.length?(' &middot; '+open.length+' still open'):''}</div>
+    <div style="font-size:13.5px;font-weight:700;color:#8A5A10;margin-bottom:5px">\u{1F4CC} Carried over${open.length?(' &middot; '+open.length+' still open'):''}</div>
     <div style="font-size:11px;color:#8A5A10;margin-bottom:6px">Each line you write about the weeks ahead arrives here next Monday. Tick one off when it is no longer relevant &mdash; anything left keeps coming back.</div>
     ${rows}${add}</div>`;
 }
@@ -8214,7 +8294,7 @@ function _wmAgo(ds){
 }
 function _wmPermitBlock(c){
   if(!c) return '';
-  if(((c.checklists||{}).permitted)!=='yes') return '';
+  if(!_wmShowPermits(c)) return '';
   const head=`<div style="padding:6px 11px;background:#FBF4F8;border-bottom:0.5px solid #F0E2EA;font-size:10.5px;font-weight:700;color:#72243E;text-transform:uppercase;letter-spacing:.05em">&#128196; Permits &mdash; read live from the Permit Tracker</div>`;
   const wrap=(inner)=>`<div style="margin-top:9px;border:0.5px solid #EBD8E4;border-radius:9px;overflow:hidden">${head}<div style="padding:9px 11px">${inner}</div></div>`;
   // An unloaded tracker must say so. Printing "no permits" for a house that has
@@ -10503,7 +10583,7 @@ function openWeeklyMeeting(kind, week){
     // meant to start empty every Monday.
     const ta2=(key,ph,minH)=>roNow
       ? `<div style="font-size:13px;color:#333;white-space:pre-wrap;background:#F7F8FB;border-radius:8px;padding:9px 11px;min-height:34px">${_calEsc(notes[key]||'')||'<span style="color:#636b7a">Nothing written</span>'}</div>`
-      : `<textarea id="wm-${key}" placeholder="${ph}" style="width:100%;min-height:${minH||54}px;padding:9px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:13.5px;color:#222;resize:vertical;font-family:inherit">${_calEsc(notes[key]||'')}</textarea>
+      : `<textarea id="wm-${key}" placeholder="${ph}" style="width:100%;min-height:${minH?(minH+22):76}px;padding:11px 13px;border:0.5px solid #d8dce6;border-radius:8px;font-size:15px;line-height:1.5;color:#222;resize:vertical;font-family:inherit">${_calEsc(notes[key]||'')}</textarea>
          <div style="display:flex;align-items:center;gap:8px;margin-top:4px"><button onclick="_wmSaveNote('${kind}','${key}','${wk}')" style="padding:5px 13px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer">Save</button><span id="wm-ok-${key}" style="display:none;font-size:12px;color:#16794C">Saved &#10003;</span></div>`;
     const secHead=(t,right)=>`<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;background:#F7F8FB;border-radius:8px 8px 0 0;padding:7px 12px;border-bottom:0.5px solid #eef0f6"><div style="font-size:12px;font-weight:700;color:#111">${t}</div><div style="font-size:11.5px;color:#566070">${right||''}</div></div>`;
     const secWrap=(head,inner)=>`<div style="border:0.5px solid #e6e8ee;border-radius:9px;margin-top:11px;overflow:hidden">${head}<div style="padding:9px 12px">${inner}</div></div>`;
@@ -10522,10 +10602,10 @@ function openWeeklyMeeting(kind, week){
       const perm=(c.checklists&&c.checklists.permitted)==='yes';
       // Metric boxes sit on the same visual tier as the deal fields below them -
       // they were shouting over the row that actually gets filled in.
-      const cell=(l,v,color,note,id)=>`<div ${id?`id="${id}" data-label="${l}"`:''} style="background:#f7f8fb;border-radius:6px;padding:5px 9px"><div style="font-size:9.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap">${l}</div><div style="font-size:13px;font-weight:700;color:${color||'#111'}">${v}</div>${note?`<div style="font-size:9.5px;color:#566070">${note}</div>`:''}</div>`;
+      const cell=(l,v,color,note,id)=>`<div ${id?`id="${id}" data-label="${l}"`:''} style="background:#f7f8fb;border-radius:6px;padding:5px 9px"><div style="font-size:10.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap">${l}</div><div style="font-size:16px;font-weight:700;color:${color||'#111'}">${v}</div>${note?`<div style="font-size:10.5px;color:#566070">${note}</div>`:''}</div>`;
       const ro=roNow;
       const inp=(col,val,ph,w)=>ro?`<span style="font-size:13px;color:#111">${_calEsc(val)||'&mdash;'}</span>`:`<input value="${_calEsc(val)}" placeholder="${ph}" onchange="_wmDeal('${c.id}','${col}',this.value,this)" style="width:${w||100}px;padding:5px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px"/>`;
-      const fld=(label,inner)=>`<div style="display:flex;flex-direction:column;gap:3px"><div style="font-size:10.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em">${label}</div>${inner}</div>`;
+      const fld=(label,inner)=>`<div style="display:flex;flex-direction:column;gap:4px"><div style="font-size:11.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em">${label}</div>${inner}</div>`;
 
       const est=_wmEst(c), pushes=_wmPushes(c), drift=_wmEstDrift(c);
       const paceDate=est||c.end||'';
@@ -10548,10 +10628,10 @@ function openWeeklyMeeting(kind, week){
           return `<label onclick="${call}" style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:${on?col:'#566070'};cursor:pointer"><span style="font-size:14px">${on?'&#9745;':'&#9744;'}</span>${label}</label>`;
         };
         return `<div style="display:flex;gap:10px;align-items:flex-start;padding:${it.done?'5px':'7px'} 0;border-bottom:0.5px solid #f4f5f7;${it.done?'opacity:.62':''}">
-          <div style="font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#566070;width:74px;flex-shrink:0;padding-top:2px">${dayLbl(it.date)}</div>
+          <div style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:#566070;width:88px;flex-shrink:0;padding-top:2px">${dayLbl(it.date)}</div>
           <div style="flex:1;min-width:0">
-            <div style="font-size:13px;color:${it.done?'#0F7B54':'#111'}">${kindPill(it.kind,it.kindLabel)}${_calEsc(it.title)}</div>
-            <div style="font-size:11.5px;color:#566070;margin-top:1px">${_calEsc(it.sub)}</div>
+            <div style="font-size:15px;color:${it.done?'#0F7B54':'#111'}">${kindPill(it.kind,it.kindLabel)}${_calEsc(it.title)}</div>
+            <div style="font-size:12.5px;color:#566070;margin-top:2px">${_calEsc(it.sub)}</div>${it.note?`<div style="font-size:13.5px;color:#333;margin-top:3px;line-height:1.45">${_calEsc(it.note)}</div>`:''}
             <div style="display:flex;gap:13px;flex-wrap:wrap;align-items:center;margin-top:${it.done?'3px':'5px'}">${tick('yes','Completed','#0F7B54')}${it.done?'':tick('no','Not completed','#B42318')+rsBtn(it)}</div>
           </div></div>`;
       }).join(''):'<div style="font-size:12.5px;color:#636b7a;padding:8px 0">Nothing was scheduled on this property last week.</div>';
@@ -10570,10 +10650,10 @@ function openWeeklyMeeting(kind, week){
           ? `<span style="font-size:11.5px;font-weight:600;color:${x.done?'#0F7B54':'#636b7a'}">${x.done?'&#9745;':'&#9744;'} Completed</span>`
           : `<label onclick="_wmDone('${x.key}',${x.done?'false':'true'})" style="display:flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;color:${x.done?'#0F7B54':'#566070'};cursor:pointer"><span style="font-size:14px">${x.done?'&#9745;':'&#9744;'}</span>Completed</label>`;
         return `<div style="display:flex;gap:10px;align-items:flex-start;padding:${it.done?'5px':'7px'} 0;border-bottom:0.5px solid #f4f5f7;${it.done?'opacity:.62':''}">
-          <div style="font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#566070;width:74px;flex-shrink:0;padding-top:2px">${dayLbl(it.date)}</div>
+          <div style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:#566070;width:88px;flex-shrink:0;padding-top:2px">${dayLbl(it.date)}</div>
           <div style="flex:1;min-width:0">
-            <div style="font-size:13px;color:${it.done?'#0F7B54':'#111'}">${kindPill(it.kind,it.kindLabel)}${_calEsc(it.title)}${it.done?' <span style="font-size:9.5px;font-weight:700;color:#0F7B54;background:#E6F4ED;padding:1px 6px;border-radius:99px;vertical-align:middle">DONE</span>':''}</div>
-            <div style="font-size:11.5px;color:#566070;margin-top:1px">${_calEsc(it.sub)}</div>
+            <div style="font-size:15px;color:${it.done?'#0F7B54':'#111'}">${kindPill(it.kind,it.kindLabel)}${_calEsc(it.title)}${it.done?' <span style="font-size:9.5px;font-weight:700;color:#0F7B54;background:#E6F4ED;padding:1px 6px;border-radius:99px;vertical-align:middle">DONE</span>':''}</div>
+            <div style="font-size:12.5px;color:#566070;margin-top:2px">${_calEsc(it.sub)}</div>${it.note?`<div style="font-size:13.5px;color:#333;margin-top:3px;line-height:1.45">${_calEsc(it.note)}</div>`:''}
             ${it.done
               ? `<div style="display:flex;gap:13px;flex-wrap:wrap;align-items:center;margin-top:4px">${doneBox(it)}${note?`<span style="font-size:11.5px;color:#566070">&middot; ${_calEsc(note)}</span>`:''}</div>`
               : `<div style="display:flex;gap:13px;flex-wrap:wrap;align-items:center;margin-top:5px">${doneBox(it)}${box('c','Confirmed starting?')}${box('f','Followed up?')}${box('e','They have everything they need')}${rsBtn(it)}</div>
@@ -10637,11 +10717,12 @@ function openWeeklyMeeting(kind, week){
       return `<details data-wm-prop="${c.id}" ${_wmIsOpen(c.id)?'open':''} ontoggle="_wmToggleOpen('${c.id}',this.open)" data-wm-state="${_st}" style="background:${_sc.bg};border:1px solid ${_sc.bd};border-left:4px solid ${_sc.chip};border-radius:12px;margin-bottom:9px;color:#111;${isCov?'opacity:0.8;':''}">
         <summary style="cursor:pointer;padding:11px 14px 11px 4px;outline:none">
           <div style="display:inline-flex;width:calc(100% - 26px);vertical-align:middle;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
-            <span style="font-size:15px;font-weight:700;color:#185FA5">${isCov?'<span style="color:#16794C">&#10003; </span>':''}${_calEsc(c.addr||'')}${c.jvDeal?' <span style="font-size:11px;background:#EEEDFE;color:#3C3489;padding:1px 7px;border-radius:99px;vertical-align:middle">JV</span>':''}</span>
+            <span style="font-size:17.5px;font-weight:700;color:#185FA5">${isCov?'<span style="color:#16794C">&#10003; </span>':''}${_calEsc(c.addr||'')}${c.jvDeal?' <span style="font-size:11px;background:#EEEDFE;color:#3C3489;padding:1px 7px;border-radius:99px;vertical-align:middle">JV</span>':''}</span>
             <span style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">${summaryChips}${(function(){
               const tc=_wmTopicCount(wk,c);
               const all=tc.total&&tc.done===tc.total;
-              return `<span title="topics covered" style="font-size:10.5px;font-weight:700;padding:1px 8px;border-radius:99px;background:${all?'#E0F3EA':'#F1F3F7'};color:${all?'#0F7B54':'#566070'}">${tc.done}/${tc.total} topics</span>`;
+              const prep=!all&&tc.ready>0;
+              return `<span title="${all?'every topic covered':(prep?tc.ready+' topic'+(tc.ready===1?'':'s')+' prepared, '+tc.done+' covered':'topics covered')}" style="font-size:10.5px;font-weight:700;padding:1px 8px;border-radius:99px;background:${all?'#E0F3EA':(prep?'#E4EEFA':'#F1F3F7')};color:${all?'#0F7B54':(prep?'#185FA5':'#566070')}">${tc.done}/${tc.total} topics${prep?' &middot; '+tc.ready+' prepped':''}</span>`;
             })()}<span style="font-size:11.5px;color:#566070;margin-left:4px">${_calEsc(_phLabel(c.phase))} &middot; ${_calEsc(c.pm)||'no PM'}</span></span>
           </div>
         </summary>
@@ -10677,11 +10758,14 @@ function openWeeklyMeeting(kind, week){
           const _roleBtn=(who,label)=>(roNow||!who)?'':`<button onclick="_wmAddTaskFor('${c.id}','${_argEsc(who)}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">&#65291; ${label}</button>`;
           const _anyBtn=roNow?'':`<button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #e6e8ee;border-radius:7px;font-size:12.5px;color:#566070;cursor:pointer">&#65291; Task for somebody else</button>`;
           const _bar=(inner)=>inner?`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;padding-top:9px;border-top:0.5px dashed #e6e8ee">${inner}</div>`:'';
-          const _sub=(t)=>`<div style="font-size:9.5px;color:#566070;text-transform:uppercase;letter-spacing:.05em;margin:11px 0 4px">${t}</div>`;
+          const _sub=(t)=>`<div style="font-size:11px;font-weight:600;color:#566070;text-transform:uppercase;letter-spacing:.05em;margin:15px 0 6px">${t}</div>`;
           const _dt=(v)=>v?_calEsc(v):'&mdash;';
           const body={};
 
-          body.permits = _wmPermitBlock(c)
+          body.permits = ((!_isPermittedCard(c) && _hasPermitRows(c))
+              ? `<div style="background:#FFF7E0;border:0.5px solid #EAD9A8;border-radius:9px;padding:9px 12px;font-size:13px;color:#633806;margin-bottom:10px">This house is <b>not ticked as permitted</b> on its card, but the Permit Tracker has live permits for it. The tracker is what is showing below. Worth ticking the card so every other screen agrees.</div>`
+              : '')
+            + _wmPermitBlock(c)
             + _sub('Comments on permits')
             + ta2(c.id+'::permc','Where the permits actually stand, in your words&hellip;',44)
             + _bar(_roleBtn(_jen,'Task for '+String(_jen).split(' ')[0])+_anyBtn);
@@ -10766,30 +10850,26 @@ function openWeeklyMeeting(kind, week){
         <button onclick="_wmExpandAll(false)" style="padding:5px 12px;border:0.5px solid #e6e8ee;border-radius:7px;background:#fff;font-size:12.5px;color:#566070;cursor:pointer">Collapse all</button>
       </div></div>`;
     body = (_teamTab==='priority')
-      ? `${_wmClosedBanner(wk, closedRec, 'team')}
+      ? `<div class="wm-doc">${_wmClosedBanner(wk, closedRec, 'team')}
       ${_teamTabBar}
       ${_prioBody(wk, roNow, isClosed)}
-      ${_wmCloseBar(wk, closedRec, isPast, 'team')}`
+      ${_wmCloseBar(wk, closedRec, isPast, 'team')}</div>`
       : (_teamTab==='takedowns')
-      ? `${_wmClosedBanner(wk, closedRec, 'team')}
+      ? `<div class="wm-doc">${_wmClosedBanner(wk, closedRec, 'team')}
       ${_teamTabBar}
       ${_wmTakedownBody(wk, notes, prevNotes, roNow, ta2)}
-      ${_wmCloseBar(wk, closedRec, isPast, 'team')}`
+      ${_wmCloseBar(wk, closedRec, isPast, 'team')}</div>`
       : `
-      ${_wmClosedBanner(wk, closedRec, 'team')}
+      <div class="wm-doc">${_wmClosedBanner(wk, closedRec, 'team')}
       ${_teamTabBar}
-      ${cards.length?walkBar:''}
-      <div class="wm-3col">
-        <div class="wm-rail">${_wmPrioRail(wk, roNow)}</div>
+      ${cards.length?walkBar:''}</div>
+      <div class="wm-2col">
         <div>
           ${blocks || '<div style="color:#636b7a;font-size:14px;padding:20px 0">No construction properties right now.</div>'}
         </div>
         <div class="wm-rail">${_wmPipeRail()}</div>
       </div>
-      ${_wmOpenQuestionsPanel(cards)}
-      <div style="font-size:14px;font-weight:700;color:#111;margin:18px 0 8px">&#128172; Pre Construction comments &mdash; all PMs</div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px">${pmNotes||'<div style="color:#636b7a;font-size:13px">No PMs with construction properties.</div>'}</div>
-      ${_wmCloseBar(wk, closedRec, isPast, 'team')}`;
+      <div class="wm-doc">${_wmCloseBar(wk, closedRec, isPast, 'team')}</div>`;
 
   } else if(kind==='market'){
     const closedRec=_wmMeta(wk,'market','__closed');
@@ -10818,7 +10898,20 @@ function openWeeklyMeeting(kind, week){
       body=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:14px 16px">${ta('__agenda',agendas[kind]||'Agenda…')}</div>`;
     }
   }
-  document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div style="padding:20px;max-width:1000px;margin:0 auto">
+  // Bruce, 20 Sept: "why has it got everything scrunched down to fit like on a piece of
+  // paper? The only portion that technically needs to fit on a piece of paper is the
+  // per-property information."
+  // He is right, and it was a leftover rather than a decision. Every meeting screen here
+  // was built as a DOCUMENT and given a 1000px column, which is the correct width for
+  // something only ever read top to bottom. The Monday construction walk is not that any
+  // more - it has a rail of people's lists down one side and the pipeline down the other
+  // - and squeezing those inside the same 1000px left the part that actually matters
+  // about 420px wide on a screen three times that. The page now uses the room it has;
+  // the property cards keep a readable column inside it, because that half IS the
+  // document. The other meetings are still single-column write-ups, so they keep the
+  // narrow measure - long lines of prose are genuinely harder to read.
+  const _wmWide = (kind==='team');
+  document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div style="padding:20px ${_wmWide?'26px':'20px'};max-width:${_wmWide?'none':'1000px'};margin:0 auto">
     <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:4px"><div style="font-size:18px;font-weight:700;color:#111">${titles[kind]||'Weekly Meeting'}</div><div style="font-size:13px;color:#566070">Week of ${_calEsc(_wmLabel(wk))} &middot; ${_wmWhenLabel(kind)}${isPast?' &middot; archived':''}</div></div>
     <div style="font-size:12.5px;color:#566070;margin-bottom:14px">Auto-prefilled from live data. <b style="color:#0F7B54">Everything saves itself as you type</b> — the Save buttons still work, you just don't need them. Notes are shared with everyone for this week's meeting.${isPast?' <b style="color:#8a6d1a">You are looking back at a past week.</b>':''}</div>
     ${_wmArchive(kind, wk)}
@@ -13985,6 +14078,20 @@ function pmAssistantTabContent(name){
 }
 // Is this house permitted? The Yes/No on the property card, nothing inferred.
 function _isPermittedCard(c){ return !!(c && c.checklists && c.checklists.permitted==='yes'); }
+// Bruce, 20 Sept: "the Hanford one doesn't have a permit drop down, which it should
+// because it has permits and it's in the permit tracker."
+// He was right, and the card was lying: 427-439 Hanford carries six rows in the Permit
+// Tracker - two of them Issued - while its own "permitted" tick was never set and its
+// type still reads "Full Rehab No Permit". The tracker is the record of whether permits
+// exist; the tick is somebody's memory of setting it. So the meeting now asks the
+// tracker as well, and a house with real permits gets its permits topic either way.
+function _hasPermitRows(c){
+  if(!c || typeof _permitList!=='function' || typeof _permitProp!=='function') return false;
+  try{
+    return _permitList().some(function(r){ const pr=_permitProp(r); return pr && pr.id===c.id; });
+  }catch(e){ return false; }
+}
+function _wmShowPermits(c){ return _isPermittedCard(c) || _hasPermitRows(c); }
 // The day the permits actually came through, for a permitted house.
 // First choice is the stamp written when it cleared Waiting Permits. Houses that
 // cleared before that stamp existed fall back to the permit tracker: the day the LAST
@@ -18604,6 +18711,7 @@ async function setContractorField(id, field, val){
   _logAudit("updated","contractor", c.name||"", field.replace("_"," ")+" set to "+(val||"(blank)"));
 }
 function _contractorName(id){ const c=_contractorsCache.find(x=>x.id===id); return c?c.name:"Contractor"; }
+function _contractorTrade(id){ const c=(typeof _contractorsCache!=="undefined"?_contractorsCache:[]).find(x=>x.id===id); return (c&&c.trade)?c.trade:""; }
 function _propAddr(id){ const p=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===id); return p?p.addr:""; }
 // Reusable free-typed addresses (warehouses, rentals, not-yet-ours properties).
 // Only added when the user explicitly checks "save this address".
@@ -22352,7 +22460,10 @@ function _prioBody(wk, roNow, isClosed){
 
   if(!people.length) return picker+`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:22px;text-align:center;font-size:13.5px;color:#566070">Nobody is set to get a weekly list yet. Open &ldquo;Who gets a list&rdquo; above and tick the people who should.</div>`;
 
-  const blocks=people.map(function(person){
+  // One person at a time unless you ask for everyone.
+  const sel=_prioTab();
+  const show = (sel==='all') ? people : people.filter(function(p){ return _sameAssignee(p,sel); });
+  const blocks=(show.length?show:people).map(function(person){
     const groups=_prioBuild(person, wk);
     const n=groups.reduce(function(a,g){ return a+g.items.length+g.extra.length; },0);
     const late=groups.reduce(function(a,g){ return a+g.items.filter(function(i){ return i.late; }).length; },0);
@@ -22385,7 +22496,7 @@ function _prioBody(wk, roNow, isClosed){
     }).join(''):`<div style="font-size:12.5px;color:#636b7a;padding:10px 0">Nothing on ${esc(person.split(' ')[0])}&rsquo;s plate for this week or next.</div>`;
 
     // somewhere to put work that belongs to no house at all
-    const loose=groups.some(function(g){ return !g.pid; });
+    const loose=false;   // always offer it: this is where houseless work gets added now
     const lid='pl-'+_wmReschedId(person);
     const lidD='pld-'+_wmReschedId(person);
     const looseAdd=(roNow||loose)?'':`<div style="border:0.5px dashed #E7D6A8;border-radius:9px;margin-top:10px;padding:9px 12px;background:#FDF8EC">
@@ -22395,7 +22506,7 @@ function _prioBody(wk, roNow, isClosed){
         <input type="date" id="${lidD}" title="Due date (optional)" style="padding:6px 8px;border:0.5px solid #ddd;border-radius:6px;font-size:12.5px"/>
         <button onclick="_prioAdd('${wk}','${_argEsc(person)}','','${lid}','${lidD}')" style="padding:6px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">Add</button></div></div>`;
 
-    return `<details style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;margin-bottom:11px;overflow:hidden" ${n?'open':''}>
+    return `<details style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;margin-bottom:11px;overflow:hidden" ${(sel!=='all'||n)?'open':''}>
       <summary style="cursor:pointer;padding:11px 15px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <span style="font-size:14.5px;font-weight:700;color:#111">${esc(person)}</span>
         <span style="font-size:12px;color:#566070">${n} job${n===1?'':'s'}</span>
@@ -22407,7 +22518,10 @@ function _prioBody(wk, roNow, isClosed){
     </details>`;
   }).join('');
 
-  return picker+head+blocks;
+  // On somebody's own tab, show their week and nothing else - the picker lists every
+  // name in the company, which is exactly the noise Bruce wanted gone from a person's
+  // own view. It stays on Everyone, where choosing who gets a list belongs.
+  return _prioTabBar(wk) + (sel==='all' ? (picker+head) : '') + blocks;
 }
 // What the person will actually receive, on screen, so nothing goes out unseen.
 // Printing this page is how you get a paper or PDF copy by hand; the Monday mailer
@@ -22612,4 +22726,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-20l meeting-topics -->
+<!-- build: 2026-09-20m meeting-fills-the-screen, prepared-per-topic -->
