@@ -261,6 +261,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openDirectorCEODashboard()">🏛 Director / CEO Dashboard</div>
       <div class="ddi" onclick="openPermitDashboard()">📄 Permit Dashboard</div>
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
+      <div class="ddi" onclick="openProjectDashboard('trello')">🏗 Property Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
     </div>
   </div>
@@ -268,6 +269,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
     <div class="dd" id="pm-d">
       <div class="ddl">Project Manager</div>
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
+      <div class="ddi" onclick="openProjectDashboard('trello')">🏗 Property Dashboard</div>
       <div class="ddi" onclick="openPermitDashboard()">📄 Permit Dashboard</div>
       <div class="ddi" onclick="openPMAssistantDashboard()">🗂 PM Assistant Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
@@ -279,6 +281,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddl">Assistant Manager</div>
       <div class="ddi" onclick="openPMAssistantDashboard()">🗂 PM Assistant Dashboard</div>
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
+      <div class="ddi" onclick="openProjectDashboard('trello')">🏗 Property Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
       <div class="ddi" onclick="openAdminDashboard('trackers')">📋 Trackers</div>
       <div class="ddi" onclick="openPermitDashboard()">📄 Permit Dashboard</div>
@@ -291,6 +294,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openPermitDashboard()">📄 Permit Dashboard</div>
       <div class="ddi" onclick="openPMAssistantDashboard()">🗂 PM Assistant Dashboard</div>
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
+      <div class="ddi" onclick="openProjectDashboard('trello')">🏗 Property Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
     </div>
   </div>
@@ -301,6 +305,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openVAAdminDashboard()">🖥 VA Admin Dashboard</div>
       <div class="ddi" onclick="openPermitDashboard()">📄 Permit Dashboard</div>
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
+      <div class="ddi" onclick="openProjectDashboard('trello')">🏗 Property Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
     </div>
   </div>
@@ -310,6 +315,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
       <div class="ddi" onclick="openRealtorDashboard()">🔑 Realtor Dashboard</div>
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
+      <div class="ddi" onclick="openProjectDashboard('trello')">🏗 Property Dashboard</div>
     </div>
   </div>
   <div class="ni has-dd" id="rlt-t">🔑 Realtor ▾
@@ -326,6 +332,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openPermitDashboard()">📄 Permit Dashboard</div>
       <div class="ddi" onclick="openPMAssistantDashboard()">🗂 PM Assistant Dashboard</div>
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
+      <div class="ddi" onclick="openProjectDashboard('trello')">🏗 Property Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
     </div>
   </div>
@@ -2822,7 +2829,36 @@ async function _ftaSweep(){
 
 // Move a property to a chosen phase via dropdown (no dragging). Same gate as drag:
 // non-privileged roles can't skip forward past unfinished/unapproved subphases.
-async function movePropertyToPhase(id, newPhase){
+// Bruce, 20 Sept, about Marlo: "she doesn't have access to move it, the property card
+// on the property dashboard, herself."
+// Her account was never the problem - she is allowed to move a card and has done it
+// before. The only way to move one ON THE BOARD was to DRAG it, and a browser's drag
+// and drop does not work on a touchscreen at all and is fiddly on a trackpad. So for
+// anybody not working at a desktop mouse there was no way to do it, which from her
+// side is indistinguishable from not being allowed. Every card now carries a plain
+// "Move to" dropdown as well; dragging still works for anyone who prefers it.
+function _pdBoardMove(c){
+  if(typeof isReadOnly==='function' && isReadOnly()) return '';
+  const opts=PROP_PHASES.filter(pp=>pp.name!==c.phase)
+    .map(pp=>`<option value="${pp.name.replace(/"/g,'&quot;')}">${_phLabel(pp.name)}</option>`).join('');
+  return `<select onclick="event.stopPropagation()" onchange="if(this.value)movePropertyToPhase('${c.id}',this.value,'board')" title="Move this house to another phase" style="font-size:11px;padding:2px 4px;border:0.5px solid #d8dce6;border-radius:5px;background:#fff;color:#185FA5;cursor:pointer;max-width:118px">
+      <option value="">Move to &#9662;</option>${opts}
+    </select>`;
+}
+// A move made from the board says so and leaves you on the board, instead of throwing
+// you into the property card and leaving you to find your way back.
+function _pdMovedToast(msg){
+  let b=document.getElementById('pd-moved-toast');
+  if(!b){
+    b=document.createElement('div'); b.id='pd-moved-toast';
+    b.style.cssText='position:fixed;left:50%;transform:translateX(-50%);bottom:22px;z-index:9000;background:#111;color:#fff;padding:9px 18px;border-radius:99px;font-size:13px;font-weight:600;box-shadow:0 6px 20px rgba(0,0,0,.22)';
+    document.body.appendChild(b);
+  }
+  b.textContent=msg; b.style.display='block';
+  clearTimeout(window.__pdMovedT);
+  window.__pdMovedT=setTimeout(function(){ b.style.display='none'; }, 3200);
+}
+async function movePropertyToPhase(id, newPhase, back){
   if(_blockIfReadOnly()) return;
   const card=propCards.find(c=>c.id===id); if(!card) return;
   const oldPhase=card.phase;
@@ -2835,7 +2871,13 @@ async function movePropertyToPhase(id, newPhase){
     if(blocking.length){ alert("Can't advance \""+(card.addr||"this property")+"\" to "+newPhase+" yet.\n\nFinish these first (approvals by Bruce/Marlo/Tommy where required):\n\n• "+blocking.join("\n• ")); openPropDetail(id); return; }
   }
   const ok=await updatePropertyPhaseInSupabase(id,newPhase);
-  if(ok) openPropDetail(id);
+  if(!ok) return;
+  if(back==='board'){
+    openProjectDashboard('trello');
+    _pdMovedToast((card.addr||'That house')+'  \u2192  '+_phLabel(newPhase));
+    return;
+  }
+  openPropDetail(id);
 }
 
 async function setPropertyCompanyCamInSupabase(id, url) {
@@ -3972,9 +4014,12 @@ function renderPropertyBoard() {
             `<div style="font-size:11px;color:#566070;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">· ${sp.name}${sp.due?' ('+sp.due+')':''}</div>`
           ).join('');
           return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid ${ph.dot};border-radius:6px;overflow:hidden">
-            <div draggable="true" ondragstart="propDragStart(event,'${c.id}')" style="background:#f9f9f9;border-bottom:0.5px solid #f0f0f0;padding:5px 10px;cursor:grab;display:flex;align-items:center;gap:6px;user-select:none" title="Drag to move phase">
-              <span style="font-size:15px;color:#636b7a;letter-spacing:-2px;line-height:1">⠿</span>
-              <span style="font-size:11px;color:#636b7a;text-transform:uppercase;letter-spacing:0.05em">Drag to move</span>
+            <div style="background:#f9f9f9;border-bottom:0.5px solid #f0f0f0;padding:4px 6px 4px 10px;display:flex;align-items:center;gap:6px;justify-content:space-between">
+              <span draggable="true" ondragstart="propDragStart(event,'${c.id}')" title="Drag to move phase" style="display:flex;align-items:center;gap:6px;cursor:grab;user-select:none;flex-shrink:0">
+                <span style="font-size:15px;color:#636b7a;letter-spacing:-2px;line-height:1">⠿</span>
+                <span style="font-size:11px;color:#636b7a;text-transform:uppercase;letter-spacing:0.05em">Drag</span>
+              </span>
+              ${_pdBoardMove(c)}
             </div>
             <div onclick="openPropDetail('${c.id}')" style="padding:8px 10px;cursor:pointer">
             ${_confirmFlag(c)}
@@ -21591,4 +21636,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-20d reschedule-and-access -->
+<!-- build: 2026-09-20e move-from-the-board -->
