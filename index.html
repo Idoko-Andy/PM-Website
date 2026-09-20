@@ -6919,13 +6919,12 @@ function _wmAgentPick(pid, sel){
 }
 function _wmAddTask(pid){
   if(typeof openAddTask!=='function') return;
-  _wmMarkReturn();
   openAddTask(_ymd(new Date()));
+  _wmMarkReturn();
   setTimeout(()=>{ const el=document.getElementById('task-prop'); if(el){ el.value=pid; if(typeof _taskPropChange==='function') _taskPropChange(); } },60);
 }
 async function _wmAddEvent(pid){
   if(typeof openAddCalEvent!=='function') return;
-  _wmMarkReturn();
   // If the directory has not landed yet, get it before drawing the picker - an empty
   // "saved contractors" list reads as "we have not got them", which is how duplicates
   // get typed in.
@@ -6933,6 +6932,7 @@ async function _wmAddEvent(pid){
     try{ await loadContractorsFromSupabase(); }catch(e){}
   }
   openAddCalEvent(_ymd(new Date()));
+  _wmMarkReturn();
   setTimeout(()=>{ const el=document.getElementById('cal-prop'); if(el){ el.value=pid; if(typeof _calAddrToggle==='function') _calAddrToggle('cal'); } },60);
 }
 async function _pdnToggle2(pm,i){ if(_blockIfReadOnly()) return; const l=(((window._pdnData||{})[pm]||{}).precon)||[]; if(!l[i]) return; if(await _pdnMutate(pm,'precon',l[i],function(a,j){ a[j].done=!a[j].done; })) openWeeklyMeeting('team'); }
@@ -6961,7 +6961,16 @@ async function _pmSettingsWrite(key, data){
       return "the database accepted the request but saved nothing - refresh and sign in again";
     if(!error) return null;
     const m = error.message || "";
-    if(/row-level security|permission|policy/i.test(m)) return "your account does not have permission to save this yet - tell Bruce";
+    // Bruce, 20 Sept, about Marlo: "she needs to have access to be able to do stuff".
+    // The old wording ("you do not have permission - tell Bruce") reads like the person
+    // has been locked out of the app, which is not what happened and is a horrible thing
+    // to read when you are just trying to tick a task off. Say what it actually is: one
+    // setting on the database, nothing to do with them, and exactly what to show Bruce.
+    if(/row-level security|permission|policy/i.test(m))
+      return "the database has not been told that your account is allowed to save this one yet.\n\n"
+           + "Nothing is wrong with your account and you have not done anything wrong \u2014 it is a single "
+           + "database setting that only Bruce can change. Send him a screenshot of this and tell him:\n\n"
+           + "    the pm_settings access rule is missing \u201c" + key + "\u201d";
     return m || "unknown error";
   }catch(e){ return (e && e.message) || "network error"; }
 }
@@ -7416,39 +7425,135 @@ function _wmItems(pid, from, to){
 }
 // Reschedule from inside the meeting. This is the whole point of the button:
 // the new date goes onto the calendar or the task itself, not into a note.
-function _wmReschedOpen(itemKey){
-  const host=document.getElementById('rs-'+itemKey.replace(':','-'));
-  if(!host) return;
-  host.innerHTML=`<input type="date" onchange="_wmReschedDo('${itemKey}',this.value)" style="padding:3px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:11.5px"/>`;
-  const inp=host.querySelector('input'); if(inp) inp.focus();
+//
+// Bruce, 20 Sept: "It's also not letting me reschedule tasks from the reschedule
+// button in the project meeting doc as well."
+// Cause: the date box the button opened was loose DOM. It existed nowhere in the
+// app's memory - only on the screen. The meeting redraws itself whenever anybody
+// else in the room saves a note (it polls every nine seconds so the room stays in
+// sync), and every one of those redraws wiped the open box and put the plain
+// button back. On a quiet screen it works; in a live Monday meeting, with five
+// people typing, it is pulled out from under you. Nothing was broken - the box
+// kept disappearing before it could be used.
+//
+// Three things fix it for good:
+//   1. The open box is now part of the meeting's state, so a redraw puts it back
+//      with the date still in it.
+//   2. It opens already filled in with the date the item is on today, so the
+//      picker lands on the right month instead of on "mm/dd/yyyy".
+//   3. There is a "Move it" button. It no longer depends on the browser deciding
+//      to fire a change event at the right moment - and there is a Cancel.
+// And every path that used to give up silently now says why.
+function _wmReschedId(k){ return String(k).replace(/[^A-Za-z0-9_-]/g,'-'); }
+function _wmReschedHost(k){ return document.getElementById('rs-'+_wmReschedId(k)); }
+function _wmReschedVal(k){
+  const inp=document.getElementById('rsi-'+_wmReschedId(k));
+  if(inp && inp.value) return inp.value;
+  const st=window.__wmResched;
+  return (st && st.key===k && st.val) ? st.val : '';
 }
-async function _wmReschedDo(itemKey, val){
+function _wmReschedPick(itemKey, val){
+  if(!window.__wmResched || window.__wmResched.key!==itemKey) window.__wmResched={key:itemKey, val:''};
+  window.__wmResched.val=val||'';
+}
+// The open box, drawn from state so it survives a redraw.
+function _wmReschedBox(itemKey){
+  const id=_wmReschedId(itemKey);
+  const v=(window.__wmResched && window.__wmResched.key===itemKey) ? (window.__wmResched.val||'') : '';
+  return `<span style="display:inline-flex;align-items:center;gap:6px;background:#FDF8EC;border:0.5px solid #E7D6A8;border-radius:8px;padding:4px 7px;vertical-align:middle">`
+    + `<span style="font-size:11px;font-weight:700;color:#8A5A10;text-transform:uppercase;letter-spacing:.04em">Move to</span>`
+    + `<input id="rsi-${id}" type="date" value="${v}" onchange="_wmReschedPick('${itemKey}',this.value)" oninput="_wmReschedPick('${itemKey}',this.value)" style="padding:3px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12px;background:#fff"/>`
+    + `<button onclick="_wmReschedDo('${itemKey}')" style="padding:4px 12px;border:none;border-radius:6px;background:#111;color:#fff;font-size:11.5px;font-weight:700;cursor:pointer">Move it</button>`
+    + `<button onclick="_wmReschedCancel('${itemKey}')" style="padding:4px 9px;border:0.5px solid #e6e8ee;border-radius:6px;background:#fff;font-size:11.5px;color:#566070;cursor:pointer">Cancel</button>`
+    + `</span>`;
+}
+// The closed button.
+function _wmReschedBtn(itemKey, curDate){
+  return `<button onclick="_wmReschedOpen('${itemKey}','${curDate||''}')" style="padding:2px 9px;border:0.5px solid #e6e8ee;border-radius:6px;background:#fff;font-size:11.5px;color:#8A5A10;cursor:pointer">&#8635; Reschedule</button>`;
+}
+// One span per item, drawn open or closed depending on the meeting's state.
+function _wmReschedCell(itemKey, curDate){
+  const open = !!(window.__wmResched && window.__wmResched.key===itemKey);
+  return `<span id="rs-${_wmReschedId(itemKey)}">${open?_wmReschedBox(itemKey):_wmReschedBtn(itemKey,curDate)}</span>`;
+}
+function _wmReschedOpen(itemKey, curDate){
   if(_blockIfReadOnly()) return;
-  if(!val) return;
+  const keep=(window.__wmResched && window.__wmResched.key===itemKey) ? window.__wmResched.val : '';
+  window.__wmResched={ key:itemKey, val:keep || curDate || '' };
+  const host=_wmReschedHost(itemKey);
+  if(host) host.innerHTML=_wmReschedBox(itemKey);
+  const inp=document.getElementById('rsi-'+_wmReschedId(itemKey));
+  if(inp){ try{ inp.focus({preventScroll:true}); }catch(e){ try{ inp.focus(); }catch(e2){} } }
+}
+function _wmReschedCancel(itemKey){
+  window.__wmResched=null;
+  const host=_wmReschedHost(itemKey);
+  if(host) host.innerHTML=_wmReschedBtn(itemKey,'');
+}
+async function _wmReschedDo(itemKey, valArg){
+  if(_blockIfReadOnly()) return;
+  const val = valArg || _wmReschedVal(itemKey);
+  if(!val){
+    alert("Pick a date first, then press “Move it”.");
+    const inp=document.getElementById('rsi-'+_wmReschedId(itemKey));
+    if(inp){ try{ inp.focus(); }catch(e){} }
+    return;
+  }
   const [kind,id]=[itemKey.slice(0,1), itemKey.slice(2)];
   // Weekends and federal holidays are not work days, so a reschedule lands on
   // the next business day the same way every other date in the app does.
   let due=(typeof _nextBusinessDay==='function')?_nextBusinessDay(val):val;
   if(due!==val && !confirm(val+" is a weekend or a holiday.\n\nMove it to "+due+" instead?")) return;
   if(kind==='t'){
-    const t=(_tasksCache||[]).find(x=>x.id===id); if(!t) return;
+    const t=(_tasksCache||[]).find(x=>x.id===id);
+    if(!t){ alert("That task is no longer on this screen — somebody may have deleted or completed it.\n\nRefresh the meeting and take another look."); window.__wmResched=null; return; }
+    if(t.due_date===due){ alert("That task is already on "+due+"."); return; }
     const asg=taskAssignees(t);
-    if(typeof _fdConfirmSchedule==='function' && !_fdConfirmSchedule(asg, due)) return;
+    // A person marked FULL that day gets a warning, not a silent refusal - if the
+    // room says no, say so, so nobody is left wondering whether it saved.
+    if(typeof _fdConfirmSchedule==='function' && !_fdConfirmSchedule(asg, due)){
+      alert("Left where it was — nothing was moved.");
+      return;
+    }
     // A reschedule starts a new attempt: the on-time score counts it as another
     // go at the same job, which is what makes "one for two" work.
     const patch={due_date:due, reschedule_count:(t.reschedule_count||0)+1};
     const {data,error}=await supabase.from("pm_tasks").update(patch).eq("id",id).select("id");
     if(error||!data||!data.length){ alert("That task was NOT rescheduled — "+((error&&error.message)||"nothing saved, refresh and try again")); return; }
     _logAudit("updated","task",t.title||"",'Rescheduled in the Monday meeting: '+(t.due_date||'no date')+' → '+due);
+    window.__wmResched=null;
     await loadTasks();
+    _wmMovedToast((t.title||'That task')+" moved to "+_wmNiceDate(due));
   } else {
-    const e=(_calEventsCache||[]).find(x=>x.id===id); if(!e) return;
+    const e=(_calEventsCache||[]).find(x=>x.id===id);
+    if(!e){ alert("That booking is no longer on this screen — somebody may have removed it.\n\nRefresh the meeting and take another look."); window.__wmResched=null; return; }
+    if(e.event_date===due){ alert("That booking is already on "+due+"."); return; }
     const {data,error}=await supabase.from("pm_calendar_events").update({event_date:due}).eq("id",id).select("id");
     if(error||!data||!data.length){ alert("That booking was NOT rescheduled — "+((error&&error.message)||"nothing saved, refresh and try again")); return; }
     _logAudit("updated","calendar",_locLabel(e),'Rescheduled in the Monday meeting: '+(e.event_date||'no date')+' → '+due);
+    window.__wmResched=null;
     await loadCalendarEventsFromSupabase();
+    _wmMovedToast("Booking moved to "+_wmNiceDate(due));
   }
-  openWeeklyMeeting('team');
+  // Stay on the week that is actually open, not whichever week is current.
+  openWeeklyMeeting('team', window.__wmLastWeek||undefined);
+}
+function _wmNiceDate(d){
+  try{ return new Date(d+"T00:00:00").toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long'}); }catch(e){ return d; }
+}
+// A move is a real change to somebody's week. Say so on screen rather than
+// leaving the room to work out whether it took.
+function _wmMovedToast(msg){
+  let b=document.getElementById('wm-moved-toast');
+  if(!b){
+    b=document.createElement('div'); b.id='wm-moved-toast';
+    b.style.cssText='position:fixed;left:50%;transform:translateX(-50%);bottom:22px;z-index:9000;background:#111;color:#fff;padding:9px 18px;border-radius:99px;font-size:13px;font-weight:600;box-shadow:0 6px 20px rgba(0,0,0,.22)';
+    document.body.appendChild(b);
+  }
+  b.textContent='↻ '+msg;
+  b.style.display='block';
+  clearTimeout(window.__wmMovedT);
+  window.__wmMovedT=setTimeout(function(){ b.style.display='none'; }, 3200);
 }
 
 // ===================== MONDAY MEETING — THE TWO FINISH DATES =====================
@@ -9640,10 +9745,20 @@ window.__wmReturn=null;
 function _wmMarkReturn(){
   window.__wmReturn = window.__wmLastKind ? {kind:window.__wmLastKind, week:window.__wmLastWeek||undefined} : null;
 }
-function _wmReturnOrRerender(){
+// Bruce, 20 Sept: "I'm in the meeting on 8 Hide Away Hills, I add a task, and it
+// takes me out of the meeting doc and drops me on the task calendar."
+//
+// Whether to go back is decided by __wmReturn alone - it is only ever set by the
+// meeting's own Add buttons - rather than by guessing from the DOM. The old version
+// also sniffed for a [data-wm-prop] card, which is not drawn by every meeting, so
+// some rooms could never be returned to.
+function _wmReturnAfterSave(){
   const r=window.__wmReturn; window.__wmReturn=null;
-  const inMeeting=!!document.querySelector('[data-wm-prop]');
-  if(r && inMeeting && typeof openWeeklyMeeting==='function'){ openWeeklyMeeting(r.kind, r.week); return true; }
+  if(r && r.kind && typeof openWeeklyMeeting==='function'){ openWeeklyMeeting(r.kind, r.week); return true; }
+  return false;
+}
+function _wmReturnOrRerender(){
+  if(_wmReturnAfterSave()) return true;
   if(typeof _calRerender==='function') _calRerender();
   return false;
 }
@@ -9733,7 +9848,7 @@ openWeeklyMeeting = function(kind, week){
   const same = (window.__wmLastKind===kind) && ((window.__wmLastWeek||null)===(week||null));
   // Leaving this meeting for a different one throws the drafts away - they belong to
   // the document they were typed in.
-  if(!same) _wmDraftClearAll();
+  if(!same){ _wmDraftClearAll(); window.__wmResched=null; }
   const snap = same ? _wmSnap() : null;
   const y = same ? snap.y : 0;
   const r = _wmOpenRaw.apply(this, arguments);
@@ -9962,7 +10077,9 @@ function openWeeklyMeeting(kind, week){
     const secWrap=(head,inner)=>`<div style="border:0.5px solid #e6e8ee;border-radius:9px;margin-top:11px;overflow:hidden">${head}<div style="padding:9px 12px">${inner}</div></div>`;
     const kindPill=(k,l)=>{ const st=k==='c'?'background:#E1F5EE;color:#0F7B54':k==='m'?'background:#FBF3E2;color:#8A5A10':'background:#E7EFF8;color:#185FA5'; return `<span style="font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;padding:1px 6px;border-radius:99px;font-weight:600;margin-right:6px;${st}">${l}</span>`; };
     const dayLbl=(d)=>{ try{ return new Date(d+"T00:00:00").toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short'}); }catch(e){ return d; } };
-    const rsBtn=(it)=>roNow?'':`<span id="rs-${it.key.replace(':','-')}"><button onclick="_wmReschedOpen('${it.key}')" style="padding:2px 9px;border:0.5px solid #e6e8ee;border-radius:6px;background:#fff;font-size:11.5px;color:#8A5A10;cursor:pointer">&#8635; Reschedule</button></span>`;
+    // Drawn through _wmReschedCell so that an open date box is redrawn open, with the
+    // date still in it, every time the meeting refreshes underneath the room.
+    const rsBtn=(it)=>roNow?'':_wmReschedCell(it.key, it.date);
 
     const blocks=cards.map(c=>{
       const _m=_wmCalc(c);
@@ -18640,6 +18757,7 @@ function renderConstructionCalendar(){
 // ---- Add calendar event dialog ----
 function openAddCalEvent(dateStr){
   if(_blockIfReadOnly()) return;
+  window.__wmReturn=null;
   const props=(typeof propCards!=='undefined'?propCards:[]);
   const propOpts=props.map(p=>`<option value="${p.id}" ${_calState.prop===p.id?"selected":""}>${_calEsc(p.addr)}</option>`).join("");
   const html=`
@@ -19374,6 +19492,7 @@ function _taskCatToggle(){
 }
 function openAddTask(dateStr, pre){
   if(_blockIfReadOnly()) return;
+  window.__wmReturn=null;
   const props=(typeof propCards!=='undefined'?propCards:[]);
   const propOpts=props.map(p=>`<option value="${p.id}">${_calEsc(p.addr)}</option>`).join("");
   const team=teamMembers();
@@ -19903,7 +20022,8 @@ async function _saveTaskInner(){
     : ('Task added: '+title+(_steps.length?(' \u2014 '+_steps.length+' step'+(_steps.length===1?'':'s')):'')+(asgArr.length?(' \u2014 '+asgArr.join(', ')):' \u2014 nobody assigned yet')));
   _newStepsReset();
   await loadTasks();
-  _taskRerender();
+  // Opened from a meeting? Back to the meeting. Otherwise redraw wherever we are.
+  if(!_wmReturnAfterSave()) _taskRerender();
 }
 
 // ===================== EDIT HISTORY (AUDIT LOG) =====================
@@ -21471,4 +21591,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-20b readable-text -->
+<!-- build: 2026-09-20d reschedule-and-access -->
