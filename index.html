@@ -6884,8 +6884,8 @@ function _wmMonday(dateStr){ const d=new Date(dateStr+"T00:00:00"); const day=d.
 // Thursday-noon roll that suits the Monday meeting.
 window.__mktPrefilled_ = window.__mktPrefilled_ || {};
 function _wmWeekKeyFor(kind){
-  // The full company meeting is Tuesday 8:45am, but Bruce sends the PDF to Suzette on
-  // Sunday night - so the new week has to be sitting there ready on SATURDAY morning.
+  // The full company meeting is Tuesday 8:45am, but the PDF goes out on Sunday night -
+  // so the new week has to be sitting there ready on SATURDAY morning.
   if(kind==='company'){
     const d=new Date(); d.setHours(0,0,0,0);
     const day=d.getDay();                       // 0 Sun ... 6 Sat
@@ -7901,7 +7901,7 @@ function _wmClosedBanner(wk, rec, kind){
   kind=kind||'team';
   const can=(typeof canApprove==='function') && canApprove(typeof _myProfile!=='undefined'?_myProfile:null);
   const summary=(kind==='team')?`<button onclick="_wmOpenSummary('${wk}')" style="padding:6px 13px;background:#122A4A;color:#fff;border:none;border-radius:7px;font-size:12.5px;cursor:pointer;font-weight:600">&#8595; Summary / PDF</button>
-      <button onclick="_wmEmailFlow('${wk}')" style="padding:6px 13px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">&#9993; Email it to Tommy &amp; Suzette</button>`:'';
+      <button onclick="_wmEmailFlow('${wk}')" style="padding:6px 13px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">&#9993; Email it to Tommy</button>`:'';
   return `<div style="background:#EAF7F1;border:1px solid #BFE5D4;border-radius:10px;padding:11px 15px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
     <div style="font-size:13.5px;color:#0d6b4a"><b>&#10003; This meeting is closed.</b> Marked complete by ${_calEsc(rec.by||'someone')} on ${_calEsc(_wmWhen(rec.at))}. The boxes are locked so the record matches what the room agreed.</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -7916,7 +7916,7 @@ function _wmCloseBar(wk, rec, isPast, kind){
   if(isReadOnly()) return '';
   if(isPast) return `<div style="margin-top:18px;font-size:12.5px;color:#566070">This is a past week and was never marked complete. Whatever was typed into it is still on the record.${kind==='team'?` <span onclick="_wmOpenSummary('${wk}')" style="color:#185FA5;cursor:pointer">Build a summary from it anyway &rsaquo;</span>`:''}</div>`;
   const summary=(kind==='team')?`<button onclick="_wmOpenSummary('${wk}')" style="padding:8px 15px;background:#fff;border:0.5px solid #cdd7e6;border-radius:8px;font-size:13px;color:#185FA5;cursor:pointer;font-weight:600">&#8595; Preview the summary</button>
-    <button onclick="_wmEmailFlow('${wk}')" style="padding:8px 15px;background:#fff;border:0.5px solid #cdd7e6;border-radius:8px;font-size:13px;color:#185FA5;cursor:pointer;font-weight:600">&#9993; Email it to Tommy &amp; Suzette</button>`:'';
+    <button onclick="_wmEmailFlow('${wk}')" style="padding:8px 15px;background:#fff;border:0.5px solid #cdd7e6;border-radius:8px;font-size:13px;color:#185FA5;cursor:pointer;font-weight:600">&#9993; Email it to Tommy</button>`:'';
   return `<div style="margin-top:20px;background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:14px 16px;display:flex;gap:9px;align-items:center;flex-wrap:wrap">
     <div style="font-size:13px;color:#555;margin-right:4px"><b>When the meeting is over:</b></div>
     <button onclick="_wmComplete('${wk}','${kind}')" style="padding:8px 16px;background:#122A4A;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">&#10003; Meeting complete</button>
@@ -8332,9 +8332,13 @@ function _compMondayBanner(wk){
     <button onclick="_compEmailFlow('${wk}')" style="padding:7px 15px;background:#122A4A;color:#fff;border:none;border-radius:7px;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">&#9993; Build it and send</button>
   </div>`;
 }
-// Bruce, 13 Sept: "The Monday PDF also goes to Suzette." She is not on the website, so
-// her address is held here rather than read from an account.
-const WM_ALSO_EMAIL = ['suzette@legacyohiohomes.com'];
+// People who get the Monday PDF but have no account on the website, so their address
+// cannot be read from one. It is deliberately empty: the one person who was on it left
+// the company on 20 Sept and Bruce asked for them to come off. Emptying this list is
+// the part that actually matters - a name on a button is cosmetic, but an address left
+// in here would have carried on receiving the company's numbers every Monday. Anyone
+// added here is emailed by hand from the meeting doc, so add with that in mind.
+const WM_ALSO_EMAIL = [];
 function _wmEmailFlow(wk){
   const addrs=[...new Set(_wmDirectorEmails().concat(WM_ALSO_EMAIL))];
   const who=addrs.length?addrs.join(', '):'nobody with a CEO or Project Director account has an email on file';
@@ -9165,7 +9169,7 @@ function _compFrom(wk, kind){ return (((window._wmData||{})[wk]||{})[kind])||{};
 // Bruce, 3 Sep: the company meeting is short and performance-based. It pulls the same
 // Project Team Overview numbers the PMs already work to - production $/day and how much
 // of the budget has been drawn - rolled up per person, plus what actually moved this
-// week. The PDF goes to Suzette on Sunday night, so the week has to be ready Saturday.
+// week. The PDF goes out on Sunday night, so the week has to be ready Saturday.
 const COMP_WINDOW_DAYS = 7;
 function _compMoney(v){ const n=parseFloat(String(v||'').replace(/[^0-9.\-]/g,'')); return isNaN(n)?null:n; }
 function _compDaysAgo(d){
@@ -9389,7 +9393,7 @@ function _compPerfBlock(wk, forPrint){
     + picsRow;
 }
 
-// Open the company meeting as a printable page - this is what goes to Suzette.
+// Open the company meeting as a printable page - this is what gets emailed out.
 function _compOpenPDF(wk){
   const html=_compPrintHtml(wk);
   const w=window.open('','_blank');
@@ -22177,6 +22181,48 @@ function _prioPreview(person, wk){
   w.document.write(html); w.document.close();
 }
 
+// ===================== A NEW VERSION IS READY =====================
+// Bruce, 20 Sept: "there's some stuff missing that's not fixed in live on the website."
+// Nothing was missing. The site had been deployed six times that day and his browser
+// had been sitting on the same tab since the first one - the whole app is a single
+// page, so it only picks up a new build when it is reloaded, and there was nothing to
+// tell him a new one existed. That is a rotten way to find out, and it wastes the time
+// of whoever is trying to help.
+// This checks the deployed file every few minutes and, when it changes, shows a small
+// bar offering a refresh. It never reloads on its own - somebody is always mid-sentence
+// in a meeting box - and if you wave it away it stays quiet until the NEXT new version,
+// rather than nagging every few minutes about one you have already decided to ignore.
+const VER_MS = 240000;
+function _verBar(tag){
+  if(document.getElementById('ver-bar')) return;
+  const b=document.createElement('div'); b.id='ver-bar';
+  b.style.cssText='position:fixed;left:50%;transform:translateX(-50%);bottom:20px;z-index:9500;'+
+    'background:#122A4A;color:#fff;padding:9px 10px 9px 17px;border-radius:99px;font-size:13px;'+
+    'font-weight:600;box-shadow:0 6px 22px rgba(0,0,0,.28);display:flex;align-items:center;gap:11px';
+  b.innerHTML='<span>A newer version of the site is ready.</span>'+
+    '<button id="ver-go" style="padding:5px 14px;border:none;border-radius:99px;background:#fff;color:#122A4A;font-size:12.5px;font-weight:700;cursor:pointer">Refresh</button>'+
+    '<span id="ver-x" title="Not now" style="cursor:pointer;opacity:.65;padding:0 6px;font-size:16px;line-height:1">×</span>';
+  document.body.appendChild(b);
+  const go=b.querySelector('#ver-go'); if(go) go.onclick=function(){ location.reload(); };
+  const x=b.querySelector('#ver-x');
+  if(x) x.onclick=function(){ window.__verTag=tag; b.remove(); };   // quiet until the next one
+}
+async function _verCheck(){
+  try{
+    if(document.hidden) return;
+    const r=await fetch(location.pathname, {method:'HEAD', cache:'no-store'});
+    if(!r || !r.ok) return;
+    const tag=r.headers.get('etag') || r.headers.get('last-modified') || '';
+    if(!tag) return;
+    if(!window.__verTag){ window.__verTag=tag; return; }   // first look: just remember it
+    if(tag===window.__verTag) return;
+    _verBar(tag);
+  }catch(e){ /* offline, a blocked HEAD - never break the page over a version check */ }
+}
+window.__verTimer = window.__verTimer || setInterval(_verCheck, VER_MS);
+setTimeout(_verCheck, 8000);
+document.addEventListener('visibilitychange', function(){ if(!document.hidden) setTimeout(_verCheck, 1200); });
+
 // ===================== EVERYTHING ON SCREEN STAYS CURRENT =====================
 // Bruce, 20 Sept: "all places should be constantly updating."
 // The property cards and the task list were read once, when the page loaded. The
@@ -22297,4 +22343,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-20j housekeeping -->
+<!-- build: 2026-09-20k version-notice -->
