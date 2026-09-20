@@ -9663,7 +9663,7 @@ function _wmTakedownCards(){
     .sort((a,b)=>String(a.closingDate||'9999').localeCompare(String(b.closingDate||'9999'))
                || _n(a.addr)-_n(b.addr));
 }
-function _wmTeamTab(){ return (window._wmTeamTabSel==='takedowns')?'takedowns':'construction'; }
+function _wmTeamTab(){ const k=window._wmTeamTabSel; return (k==='takedowns'||k==='priority')?k:'construction'; }
 function _wmTeamTabTo(k){ window._wmTeamTabSel=k; openWeeklyMeeting('team', window.__wmLastWeek||undefined); }
 // Days until we own it - the only number that decides whether this is a
 // conversation for today or for three weeks' time.
@@ -10401,7 +10401,9 @@ function openWeeklyMeeting(kind, week){
     const _tdCards=_wmTakedownCards();
     const _teamTab=_wmTeamTab();
     const _ttBtn=(k,label,n)=>`<span onclick="_wmTeamTabTo('${k}')" style="cursor:pointer;padding:7px 14px;border-radius:8px;font-size:13px;font-weight:${_teamTab===k?'600':'400'};background:${_teamTab===k?'#122A4A':'#fff'};color:${_teamTab===k?'#fff':'#444'};border:0.5px solid ${_teamTab===k?'#122A4A':'#d8dce6'}">${label}${n!=null?(' &middot; '+n):''}</span>`;
-    const _teamTabBar=`<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:13px">${_ttBtn('construction','\ud83d\udd28 Construction',cards.length)}${_ttBtn('takedowns','\ud83d\udce6 Upcoming Takedowns',_tdCards.length)}</div>`;
+    // Bruce, 20 Sept: the office team's weekly priority lists live in the meeting too.
+    const _prioN=_prioPeople(wk).reduce(function(n,p){ return n+_prioCount(p,wk); },0);
+    const _teamTabBar=`<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:13px">${_ttBtn('construction','\ud83d\udd28 Construction',cards.length)}${_ttBtn('takedowns','\ud83d\udce6 Upcoming Takedowns',_tdCards.length)}${_ttBtn('priority','\ud83d\udccb Priority Tasks',_prioN)}</div>`;
     const covN=cards.filter(c=>coveredMap[c.id]).length;
     // Where the room stands before it starts: how many houses are still waiting on
     // their PM, how many are ready to talk about, how many are already covered.
@@ -10417,7 +10419,12 @@ function openWeeklyMeeting(kind, week){
         <button onclick="_wmExpandAll(true)" style="padding:5px 12px;border:0.5px solid #cdd7e6;border-radius:7px;background:#fff;font-size:12.5px;color:#185FA5;cursor:pointer">Expand all</button>
         <button onclick="_wmExpandAll(false)" style="padding:5px 12px;border:0.5px solid #e6e8ee;border-radius:7px;background:#fff;font-size:12.5px;color:#566070;cursor:pointer">Collapse all</button>
       </div></div>`;
-    body = (_teamTab==='takedowns')
+    body = (_teamTab==='priority')
+      ? `${_wmClosedBanner(wk, closedRec, 'team')}
+      ${_teamTabBar}
+      ${_prioBody(wk, roNow, isClosed)}
+      ${_wmCloseBar(wk, closedRec, isPast, 'team')}`
+      : (_teamTab==='takedowns')
       ? `${_wmClosedBanner(wk, closedRec, 'team')}
       ${_teamTabBar}
       ${_wmTakedownBody(wk, notes, prevNotes, roNow, ta2)}
@@ -21760,6 +21767,262 @@ function _chkTrackerBody(){
       prog||`<tr><td colspan="4" style="padding:16px;color:#636b7a;text-align:center">No properties are using these checklists yet.</td></tr>`)}`;
 }
 
+// ===================== PRIORITY TASKS — THE WEEKLY LIST FOR THE OFFICE TEAM =====================
+// Bruce, 20 Sept: the old Monday meeting Google Doc carried a priority-task list for
+// Jen, Marlo and Patience. "One will go to Jen, one will go to Marlo, one will go to
+// Patience ... it'll auto populate from the info we're filling out ... organize it by
+// property ... with due dates ... and then add an option to where you can add to that
+// PDF under each property, a description of it."
+// And: "give me an option to where I can give them tasks not related to any property
+// at all."
+//
+// So each person's list is built for them, not typed out again: everything already
+// assigned to them due this week or next (plus anything overdue, which is the thing
+// most worth saying out loud), grouped by house. The room adds the colour - a note per
+// house, extra jobs raised in the meeting, and jobs that belong to nobody's house.
+// Nothing is sent from here. The list is saved with the meeting, and the mailer only
+// goes out once the meeting is marked finished - Bruce's rule, so a half-walked meeting
+// never lands in somebody's inbox as their week.
+const PRIO_DEFAULT = ['Jennifer Tatum','Marlo Berry-Kinison','patience ochefije','Idoko Andrew'];
+// Who gets a list is a standing choice, so it is read forward from the last week that
+// set it rather than re-picked every Monday.
+function _prioPeople(wk){
+  let w=wk||_wmWeekKeyFor('team');
+  for(let i=0;i<12;i++){
+    const m=_wmMeta(w,'team','__prio_people');
+    if(m && Array.isArray(m.list) && m.list.length) return m.list.slice();
+    w=_wmPrevWeek(w);
+  }
+  return PRIO_DEFAULT.slice();
+}
+function _prioNotes(wk){ const m=_wmMeta(wk,'team','__prio_notes'); return (m&&typeof m==='object')?m:{}; }
+function _prioExtra(wk, person){
+  const m=_wmMeta(wk,'team','__prio_extra');
+  const v=m&&m[person];
+  return Array.isArray(v)?v:[];
+}
+function _prioSent(wk){ const m=_wmMeta(wk,'team','__prio_sent'); return (m&&typeof m==='object')?m:{}; }
+function _prioKey(person, pid){ return person+'||'+(pid||'_none'); }
+// Everything on this person's plate for the fortnight, plus anything already late.
+// Late first: it is the part of the list that needs saying.
+function _prioTasksFor(person, wk){
+  const R=_wmRange(wk,2);
+  const out=[];
+  (typeof _tasksCache!=='undefined'?_tasksCache:[]).forEach(function(t){
+    if(t.status==='done') return;
+    if(typeof _taskStatusFor==='function' && _taskStatusFor(t,person)==='done') return;
+    const names=taskAssignees(t)||[];
+    if(!names.some(function(n){ return _sameAssignee(n,person); })) return;
+    const d=t.due_date||'';
+    const late=!!(d && d<R.from);
+    if(!late && (!d || d>R.to)) return;
+    out.push({ id:t.id, title:t.title||'Task', due:d, late:late,
+               cat:t.category||'', pid:t.property_id||'',
+               where:(t.property_id?(_propAddr(t.property_id)||''):(t.location||'')),
+               notes:t.notes||'' });
+  });
+  return out.sort(function(a,b){
+    if(a.late!==b.late) return a.late?-1:1;
+    return (a.due||'9999').localeCompare(b.due||'9999') || String(a.title).localeCompare(String(b.title));
+  });
+}
+// The list as it will be read: by house, with the houseless work last, because that is
+// how the meeting walks it and how the person will work it.
+function _prioBuild(person, wk){
+  const groups={}; const order=[];
+  const add=(pid,label)=>{ const k=pid||'_none';
+    if(!groups[k]){ groups[k]={pid:pid||'', label:label||'Not tied to a property', items:[], extra:[]}; order.push(k); }
+    return groups[k]; };
+  _prioTasksFor(person, wk).forEach(function(t){
+    add(t.pid, t.where||'Not tied to a property').items.push(t);
+  });
+  _prioExtra(wk, person).forEach(function(x){
+    const label = x.pid ? (_propAddr(x.pid)||'') : 'Not tied to a property';
+    add(x.pid, label).extra.push(x);
+  });
+  const notes=_prioNotes(wk);
+  const list=order.map(function(k){
+    const g=groups[k];
+    g.note=notes[_prioKey(person,g.pid)]||'';
+    return g;
+  });
+  // Houses first (by house number, the way the room walks them), loose work last.
+  const num=(s)=>{ const m=String(s||'').match(/\d+/); return m?parseInt(m[0],10):999999; };
+  list.sort(function(a,b){
+    if(!a.pid!==!b.pid) return a.pid?-1:1;
+    return num(a.label)-num(b.label)||String(a.label).localeCompare(String(b.label));
+  });
+  return list;
+}
+function _prioCount(person, wk){
+  return _prioBuild(person, wk).reduce(function(n,g){ return n+g.items.length+g.extra.length; },0);
+}
+async function _prioSetNote(wk, person, pid, val){
+  const m=Object.assign({}, _prioNotes(wk));
+  const k=_prioKey(person,pid);
+  if(String(val||'').trim()) m[k]=val; else delete m[k];
+  return _wmSetMeta(wk,'team','__prio_notes',m);
+}
+async function _prioAdd(wk, person, pid, inputId, dueId){
+  if(_blockIfReadOnly()) return;
+  const el=document.getElementById(inputId);
+  const text=(el&&el.value?el.value:'').trim();
+  if(!text){ alert("Type what the job is first."); if(el) el.focus(); return; }
+  const dEl=dueId?document.getElementById(dueId):null;
+  const due=(dEl&&dEl.value)?dEl.value:'';
+  const m=Object.assign({}, _wmMeta(wk,'team','__prio_extra'));
+  const list=Array.isArray(m[person])?m[person].slice():[];
+  list.push({ id:'x'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
+              text:text, due:due, pid:pid||'', by:_miWho(), at:new Date().toISOString() });
+  m[person]=list;
+  if(await _wmSetMeta(wk,'team','__prio_extra',m)){ if(el) el.value=''; if(dEl) dEl.value=''; openWeeklyMeeting('team', window.__wmLastWeek||undefined); }
+}
+async function _prioDrop(wk, person, id){
+  if(_blockIfReadOnly()) return;
+  const m=Object.assign({}, _wmMeta(wk,'team','__prio_extra'));
+  const list=(Array.isArray(m[person])?m[person]:[]).filter(function(x){ return x.id!==id; });
+  m[person]=list;
+  if(await _wmSetMeta(wk,'team','__prio_extra',m)) openWeeklyMeeting('team', window.__wmLastWeek||undefined);
+}
+async function _prioSetPeople(wk){
+  if(_blockIfReadOnly()) return;
+  const cur=_prioPeople(wk);
+  const boxes=[].slice.call(document.querySelectorAll('input[data-prio-person]'));
+  const list=boxes.filter(function(b){ return b.checked; }).map(function(b){ return b.getAttribute('data-prio-person'); });
+  if(!list.length && !confirm("Nobody is selected, so no priority lists will be prepared this week.\n\nIs that what you want?")) return;
+  if(await _wmSetMeta(wk,'team','__prio_people',{list:list, by:_miWho(), at:new Date().toISOString()})){
+    openWeeklyMeeting('team', window.__wmLastWeek||undefined);
+  }
+  void cur;
+}
+
+// ---- the panel ----------------------------------------------------------------
+function _prioBody(wk, roNow, isClosed){
+  const people=_prioPeople(wk);
+  const sent=_prioSent(wk);
+  const all=(typeof getUsers==='function')?getUsers().filter(function(u){ return u.status==='approved'; }):[];
+  const nameOf=(u)=>((u.firstName||'')+' '+(u.lastName||'')).trim()||u.email;
+  const esc=_calEsc;
+  const dayLbl=(d)=>{ if(!d) return 'no date'; try{ return new Date(d+"T00:00:00").toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short'}); }catch(e){ return d; } };
+
+  // who the lists get made for
+  const picker=roNow?'':`<details style="margin-bottom:13px;background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:10px 14px">
+    <summary style="cursor:pointer;font-size:13px;font-weight:600;color:#111">Who gets a list &middot; ${people.length} ${people.length===1?'person':'people'}</summary>
+    <div style="font-size:12.5px;color:#566070;margin:8px 0 9px">Tick anybody who should get their own weekly list. It stays this way every week until you change it.</div>
+    <div style="display:flex;flex-wrap:wrap;gap:9px 18px">
+      ${all.map(function(u){ const n=nameOf(u);
+        return `<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#222;cursor:pointer">
+          <input type="checkbox" data-prio-person="${esc(n)}" ${people.some(function(p){ return _sameAssignee(p,n); })?'checked':''} style="width:15px;height:15px;cursor:pointer"/>
+          ${esc(n)}<span style="font-size:11px;color:#566070">${esc(u.role||'')}</span></label>`; }).join('')}
+    </div>
+    <button onclick="_prioSetPeople('${wk}')" style="margin-top:11px;padding:6px 14px;background:#111;color:#fff;border:none;border-radius:7px;font-size:12.5px;cursor:pointer">Save who gets a list</button>
+  </details>`;
+
+  const head=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:11px 15px;margin-bottom:12px">
+    <div style="font-size:13px;color:#333">Each list below is built from what is already on that person's plate &mdash; anything due this week or next, and anything already late. Add the detail as you walk the meeting. ${isClosed
+      ? `<b style="color:#0F7B54">The meeting is marked finished, so the lists go out on the next run after 9:30am.</b>`
+      : `Nothing is sent until you mark the meeting finished at the bottom of the Construction tab.`}</div></div>`;
+
+  if(!people.length) return picker+`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:22px;text-align:center;font-size:13.5px;color:#566070">Nobody is set to get a weekly list yet. Open &ldquo;Who gets a list&rdquo; above and tick the people who should.</div>`;
+
+  const blocks=people.map(function(person){
+    const groups=_prioBuild(person, wk);
+    const n=groups.reduce(function(a,g){ return a+g.items.length+g.extra.length; },0);
+    const late=groups.reduce(function(a,g){ return a+g.items.filter(function(i){ return i.late; }).length; },0);
+    const when=sent[person];
+    const body=groups.length?groups.map(function(g){
+      const nid='pn-'+_wmReschedId(person+'-'+(g.pid||'none'));
+      const aid='pa-'+_wmReschedId(person+'-'+(g.pid||'none'));
+      const did='pd-'+_wmReschedId(person+'-'+(g.pid||'none'));
+      const rows=g.items.map(function(t){
+        return `<div style="display:flex;gap:9px;align-items:baseline;padding:4px 0;border-bottom:0.5px solid #f4f5f7">
+          <span style="font-family:ui-monospace,Menlo,monospace;font-size:11px;color:${t.late?'#B42318':'#566070'};width:86px;flex-shrink:0;font-weight:${t.late?'700':'400'}">${t.late?'LATE &middot; ':''}${esc(dayLbl(t.due))}</span>
+          <span style="flex:1;min-width:0;font-size:13px;color:#111">${esc(t.title)}${t.cat?`<span style="font-size:10.5px;color:#566070"> &middot; ${esc(t.cat)}</span>`:''}</span></div>`;
+      }).join('');
+      const xrows=g.extra.map(function(x){
+        return `<div style="display:flex;gap:9px;align-items:baseline;padding:4px 0;border-bottom:0.5px solid #f4f5f7">
+          <span style="font-family:ui-monospace,Menlo,monospace;font-size:11px;color:#185FA5;width:86px;flex-shrink:0">${esc(x.due?dayLbl(x.due):'added here')}</span>
+          <span style="flex:1;min-width:0;font-size:13px;color:#111">${esc(x.text)}</span>
+          ${roNow?'':`<span onclick="_prioDrop('${wk}','${_argEsc(person)}','${x.id}')" title="Take this off the list" style="cursor:pointer;font-size:12px;color:#B42318">&times;</span>`}</div>`;
+      }).join('');
+      const adder=roNow?'':`<div style="display:flex;gap:6px;margin-top:7px;flex-wrap:wrap">
+        <input id="${aid}" placeholder="Add a job for ${esc(person.split(' ')[0])} on this one&hellip;" style="flex:1;min-width:150px;padding:6px 9px;border:0.5px solid #ddd;border-radius:6px;font-size:12.5px"/>
+        <input type="date" id="${did}" title="Due date (optional)" style="padding:6px 8px;border:0.5px solid #ddd;border-radius:6px;font-size:12.5px"/>
+        <button onclick="_prioAdd('${wk}','${_argEsc(person)}','${g.pid}','${aid}','${did}')" style="padding:6px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">Add</button></div>`;
+      const note=roNow
+        ? (g.note?`<div style="margin-top:7px;background:#F7F8FB;border-radius:7px;padding:7px 10px;font-size:12.5px;color:#333;white-space:pre-wrap">${esc(g.note)}</div>`:'')
+        : `<textarea id="${nid}" onchange="_prioSetNote('${wk}','${_argEsc(person)}','${g.pid}',this.value)" placeholder="Anything they need to know about this one&hellip;" style="width:100%;min-height:34px;margin-top:7px;padding:6px 9px;border:0.5px solid #e6e8ee;border-radius:7px;font-size:12.5px;resize:vertical;font-family:inherit">${esc(g.note)}</textarea>`;
+      return `<div style="border:0.5px solid #e6e8ee;border-radius:9px;margin-top:10px;overflow:hidden">
+        <div style="background:${g.pid?'#F7F8FB':'#FDF8EC'};padding:7px 12px;border-bottom:0.5px solid #eef0f6;font-size:12.5px;font-weight:700;color:#111">${esc(g.label)}</div>
+        <div style="padding:8px 12px">${rows}${xrows}${note}${adder}</div></div>`;
+    }).join(''):`<div style="font-size:12.5px;color:#636b7a;padding:10px 0">Nothing on ${esc(person.split(' ')[0])}&rsquo;s plate for this week or next.</div>`;
+
+    // somewhere to put work that belongs to no house at all
+    const loose=groups.some(function(g){ return !g.pid; });
+    const lid='pl-'+_wmReschedId(person);
+    const lidD='pld-'+_wmReschedId(person);
+    const looseAdd=(roNow||loose)?'':`<div style="border:0.5px dashed #E7D6A8;border-radius:9px;margin-top:10px;padding:9px 12px;background:#FDF8EC">
+      <div style="font-size:12.5px;font-weight:700;color:#8A5A10;margin-bottom:6px">Not tied to a property</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <input id="${lid}" placeholder="A job for ${esc(person.split(' ')[0])} that is not about a house&hellip;" style="flex:1;min-width:170px;padding:6px 9px;border:0.5px solid #ddd;border-radius:6px;font-size:12.5px"/>
+        <input type="date" id="${lidD}" title="Due date (optional)" style="padding:6px 8px;border:0.5px solid #ddd;border-radius:6px;font-size:12.5px"/>
+        <button onclick="_prioAdd('${wk}','${_argEsc(person)}','','${lid}','${lidD}')" style="padding:6px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">Add</button></div></div>`;
+
+    return `<details style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;margin-bottom:11px;overflow:hidden" ${n?'open':''}>
+      <summary style="cursor:pointer;padding:11px 15px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span style="font-size:14.5px;font-weight:700;color:#111">${esc(person)}</span>
+        <span style="font-size:12px;color:#566070">${n} job${n===1?'':'s'}</span>
+        ${late?`<span style="font-size:10.5px;font-weight:700;color:#B42318;background:#FBEAE8;padding:2px 8px;border-radius:99px">${late} late</span>`:''}
+        ${when?`<span style="font-size:10.5px;font-weight:700;color:#0F7B54;background:#E6F4ED;padding:2px 8px;border-radius:99px">sent ${esc(String(when).slice(0,10))}</span>`:''}
+        <span style="margin-left:auto"><span onclick="event.preventDefault();event.stopPropagation();_prioPreview('${_argEsc(person)}','${wk}')" style="cursor:pointer;font-size:12px;color:#185FA5;text-decoration:underline">Preview their PDF</span></span>
+      </summary>
+      <div style="padding:0 15px 14px">${body}${looseAdd}</div>
+    </details>`;
+  }).join('');
+
+  return picker+head+blocks;
+}
+// What the person will actually receive, on screen, so nothing goes out unseen.
+// Printing this page is how you get a paper or PDF copy by hand; the Monday mailer
+// builds its own from the same saved list.
+function _prioPreview(person, wk){
+  const groups=_prioBuild(person, wk);
+  const esc=_calEsc;
+  const dayLbl=(d)=>{ if(!d) return ''; try{ return new Date(d+"T00:00:00").toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long'}); }catch(e){ return d; } };
+  const R=_wmRange(wk,2);
+  const rows=groups.map(function(g){
+    const items=g.items.map(function(t){
+      return `<tr><td class="d${t.late?' late':''}">${t.late?'LATE &middot; ':''}${esc(dayLbl(t.due))||'no date'}</td><td>${esc(t.title)}${t.cat?`<span class="c"> &middot; ${esc(t.cat)}</span>`:''}</td></tr>`;
+    }).join('')+g.extra.map(function(x){
+      return `<tr><td class="d">${esc(x.due?dayLbl(x.due):'this week')}</td><td>${esc(x.text)}</td></tr>`;
+    }).join('');
+    return `<section><h2>${esc(g.label)}</h2><table>${items}</table>${g.note?`<p class="n">${esc(g.note)}</p>`:''}</section>`;
+  }).join('');
+  const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(person)} — week of ${esc(R.from)}</title>
+  <style>
+    @page{margin:18mm 16mm}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#14171C;margin:0;padding:26px 30px;max-width:780px}
+    h1{font-size:21px;margin:0 0 2px} .sub{font-size:12.5px;color:#566070;margin-bottom:20px}
+    section{margin-bottom:17px;break-inside:avoid}
+    h2{font-size:13px;margin:0 0 6px;padding-bottom:4px;border-bottom:1.5px solid #14171C;text-transform:uppercase;letter-spacing:.04em}
+    table{width:100%;border-collapse:collapse} td{padding:4px 0;vertical-align:top;font-size:13px;border-bottom:.5px solid #eceef2}
+    td.d{width:180px;font-size:11.5px;color:#566070;white-space:nowrap;padding-right:12px}
+    td.d.late{color:#B42318;font-weight:700}
+    .c{font-size:11px;color:#566070}
+    p.n{margin:7px 0 0;font-size:12.5px;color:#333;background:#F7F8FB;border-left:3px solid #cdd7e6;padding:7px 10px;white-space:pre-wrap}
+    .empty{font-size:13px;color:#566070}
+    @media print{ .noprint{display:none} }
+  </style></head><body>
+  <h1>${esc(person)} &mdash; priorities for the week</h1>
+  <div class="sub">Week of ${esc(R.from)} &middot; from the Monday project team meeting</div>
+  ${rows||'<p class="empty">Nothing on the list for this week.</p>'}
+  <p class="noprint" style="margin-top:26px;font-size:12px;color:#566070">Use your browser&rsquo;s Print &rarr; Save as PDF to keep a copy.</p>
+  </body></html>`;
+  const w=window.open('','_blank');
+  if(!w){ alert("Your browser blocked the preview window. Allow pop-ups for this site and try again."); return; }
+  w.document.write(html); w.document.close();
+}
+
 // ===================== EVERYTHING ON SCREEN STAYS CURRENT =====================
 // Bruce, 20 Sept: "all places should be constantly updating."
 // The property cards and the task list were read once, when the page loaded. The
@@ -21880,4 +22143,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-20g live everywhere -->
+<!-- build: 2026-09-20h priority tasks -->
