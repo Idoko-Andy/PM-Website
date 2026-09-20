@@ -6888,6 +6888,21 @@ function _wmCalc(c){
           accAnchor:accAnchor,accDays:accDays,accLive:accLive};
 }
 function _wmFmt(n){ return n==null?'—':('$'+Math.round(n).toLocaleString()); }
+// Bruce, 20 Sept: "the budgeted still says 185,000 when it should say 441,400."
+// The Budgeted figure on the card is the job's ceiling INCLUDING contingency, which is
+// the number he agreed on 30 Aug it should be measured against - but on screen it is a
+// single figure with nothing saying so, so it reads as wrong to anyone holding the
+// tracker sheet, where the headline total is the figure BEFORE contingency. The tracker
+// sync already stamps both parts onto the card; this says them out loud underneath, so
+// nobody in the room has to guess which of the two numbers they are looking at.
+function _wmBudNote(c){
+  const cl=(c&&c.checklists)||{};
+  const base=String(cl.budget_base||'').trim();
+  const cont=String(cl.budget_contingency||'').trim();
+  if(!base || !cont) return '';
+  const trim=(v)=>v.replace(/\.00$/,'');
+  return trim(base)+' + '+trim(cont)+' contingency';
+}
 // Redraw just the numbers on one card. Never re-renders the page: somebody is
 // usually mid-sentence in a notes box while this fires.
 function _wmRefreshMetrics(pid){
@@ -6899,7 +6914,7 @@ function _wmRefreshMetrics(pid){
       `<div style="font-size:13px;font-weight:700;color:${color||'#111'}">${val}</div>`+
       (note?`<div style="font-size:9.5px;color:#566070">${note}</div>`:'');
   };
-  put('wm-bud-'+pid,_wmFmt(m.b));
+  put('wm-bud-'+pid,_wmFmt(m.b),_wmBudNote(c));
   put('wm-spent-'+pid,_wmFmt(m.s));
   put('wm-left-'+pid,_wmFmt(m.left),'',m.left!=null&&m.left<0?'#B42318':'#0F7B54');
   put('wm-prod-'+pid, m.rate!=null?('$'+m.rate.toLocaleString()):'—',
@@ -10315,7 +10330,7 @@ function openWeeklyMeeting(kind, week){
           <span style="font-size:12px;color:#666">${_calEsc(_phLabel(c.phase))} &middot; PM: ${_calEsc(c.pm)||'&mdash;'}${perm?' &middot; &#127963; Permitted':''}</span>
         </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:6px">
-          ${cell('Budgeted',fmt(b),null,'','wm-bud-'+c.id)}
+          ${cell('Budgeted',fmt(b),null,_wmBudNote(c),'wm-bud-'+c.id)}
           ${cell('Spent',fmt(s),null,'','wm-spent-'+c.id)}
           ${cell('Leftover',fmt(left),left!=null&&left<0?'#B42318':'#0F7B54','','wm-left-'+c.id)}
           ${cell('Production $ / day',rate!=null?('$'+rate.toLocaleString()):'&mdash;',_m.prodThin?'#566070':'#4A1D6E',prodDays!=null?(_m.prodThin?(prodDays+' day'+(prodDays===1?'':'s')+' &mdash; too early to mean much'):(prodDays+' days'+(prodLive?' &middot; LIVE':''))):'set a start date','wm-prod-'+c.id)}
@@ -21745,6 +21760,103 @@ function _chkTrackerBody(){
       prog||`<tr><td colspan="4" style="padding:16px;color:#636b7a;text-align:center">No properties are using these checklists yet.</td></tr>`)}`;
 }
 
+// ===================== EVERYTHING ON SCREEN STAYS CURRENT =====================
+// Bruce, 20 Sept: "all places should be constantly updating."
+// The property cards and the task list were read once, when the page loaded. The
+// tracker sync, the Slack syncs and the rest of the team then change them all day, so
+// a screen left open since breakfast quotes breakfast - which is how the Monday meeting
+// came to read out a budget of $185,000 on a house the sheet had at $441,400.
+//
+// This re-reads the houses and the tasks in the background and redraws whatever screen
+// is open, with three rules that matter more than being up to date:
+//   1. It never redraws while somebody is typing, has a box focused, or has a dialog
+//      open. Losing a half-typed sentence to a refresh is far worse than a stale number.
+//   2. It only redraws when something actually MOVED. An identical redraw is all cost
+//      and no benefit, and it would fight the person using the screen.
+//   3. It puts the scroll position back, so the page does not jump under a cursor.
+// The Monday meeting is left alone here: it has its own, gentler refresh that updates
+// the number boxes without touching the page, because that room is always mid-sentence.
+const LIVE_MS = 45000;
+// Screens that know how to redraw themselves from scratch. Each one records how it was
+// last called so it can be called the same way again.
+const LIVE_SCREENS = ['openProjectDashboard','openAdminDashboard','openPMAssistantDashboard',
+  'openRealtorDashboard','openDesignDashboard','openArchitectDashboard','openSeniorVADashboard',
+  'openVAAdminDashboard','openPermitDashboard','openDirectorCEODashboard','openPMDashboard',
+  'openClosedByYear','openDataSection','openTaskDataHousing','openDollarsDayHousing',
+  'openDesignPkgData'];
+window.__liveScreen=null;
+LIVE_SCREENS.forEach(function(name){
+  const fn=window[name];
+  if(typeof fn!=='function') return;
+  window[name]=function(){
+    window.__liveScreen={ fn:name, args:Array.prototype.slice.call(arguments) };
+    return fn.apply(this, arguments);
+  };
+});
+document.addEventListener('input', function(){ window.__liveLastKeyAt=Date.now(); }, true);
+document.addEventListener('keydown', function(){ window.__liveLastKeyAt=Date.now(); }, true);
+function _liveBusy(){
+  const a=document.activeElement;
+  if(a && (a.tagName==='TEXTAREA'||a.tagName==='INPUT'||a.tagName==='SELECT'||a.isContentEditable)) return true;
+  if(Date.now()-(window.__liveLastKeyAt||0) < 4000) return true;
+  if(document.querySelector('.modal.show, .show[id$="-modal"]')) return true;   // a dialog is open
+  if(window.getSelection && String(window.getSelection()||'').length>0) return true; // mid-copy
+  return false;
+}
+function _liveHash(str){ let h=0; for(let i=0;i<str.length;i++){ h=(h*31+str.charCodeAt(i))|0; } return h; }
+// A cheap fingerprint of the things a screen actually shows.
+function _liveStamp(){
+  const p=(typeof propCards!=='undefined'?propCards:[]).map(function(c){
+    return c.id+':'+c.phase+':'+c.budget+':'+c.spent+':'+c.end+':'+c.start+':'+c.pm+':'+(c.archived?1:0);
+  }).join('|');
+  const t=(typeof _tasksCache!=='undefined'?_tasksCache:[]).map(function(x){
+    return x.id+':'+x.status+':'+x.due_date+':'+(x.assignees||x.assignee||'');
+  }).join('|');
+  return p.length+'.'+t.length+'.'+_liveHash(p)+'.'+_liveHash(t);
+}
+function _liveBanner(){
+  let b=document.getElementById('live-banner');
+  if(!b){
+    b=document.createElement('div'); b.id='live-banner';
+    b.style.cssText='position:fixed;right:18px;bottom:18px;z-index:8000;background:#16794C;color:#fff;'+
+      'padding:7px 14px;border-radius:99px;font-size:12px;font-weight:600;box-shadow:0 4px 14px rgba(0,0,0,.18)';
+    document.body.appendChild(b);
+  }
+  b.textContent='Updated just now';
+  b.style.display='block';
+  clearTimeout(window.__liveBannerT);
+  window.__liveBannerT=setTimeout(function(){ b.style.display='none'; }, 2600);
+}
+function _liveRerender(){
+  const r=window.__liveScreen;
+  if(!r || typeof window[r.fn]!=='function') return false;
+  const y=window.pageYOffset||document.documentElement.scrollTop||0;
+  try{ window[r.fn].apply(null, r.args||[]); }catch(e){ return false; }
+  const put=function(){ if(y>0) window.scrollTo(0,y); };
+  put(); requestAnimationFrame(put); setTimeout(put,0); setTimeout(put,70);
+  _liveBanner();
+  return true;
+}
+async function _liveTick(){
+  try{
+    if(document.hidden) return;
+    if(typeof currentUser==='function' && !currentUser()) return;
+    if(!document.getElementById('dash-body')) return;
+    if(document.querySelector('[data-wm-prop]')) return;   // a meeting looks after itself
+    if(!window.__liveScreen) return;                        // nothing redrawable open
+    if(_liveBusy()) return;
+    const before=_liveStamp();
+    if(typeof loadPropertiesFromSupabase==='function') await loadPropertiesFromSupabase();
+    if(typeof loadTasks==='function') await loadTasks();
+    if(_liveStamp()===before) return;                       // nothing moved
+    if(_liveBusy()) return;                                 // somebody started typing meanwhile
+    _liveRerender();
+  }catch(e){ /* a refresh must never break the screen it is refreshing */ }
+}
+window.__liveTimer=window.__liveTimer||setInterval(_liveTick, LIVE_MS);
+// Coming back to the tab is the moment a stale screen is most likely to be read.
+document.addEventListener('visibilitychange', function(){ if(!document.hidden) setTimeout(_liveTick, 400); });
+
 // ===================== BOOT =====================
 // Paint a usable screen before touching the network, then load.
 _bootPaint();
@@ -21768,4 +21880,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-20f marlo-can-tick, live money, comments rotate -->
+<!-- build: 2026-09-20g live everywhere -->
