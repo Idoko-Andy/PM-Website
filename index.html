@@ -6913,7 +6913,42 @@ function _wmRefreshMetrics(pid){
 function _wmRefreshAllMetrics(){
   document.querySelectorAll('[data-wm-prop]').forEach(el=>_wmRefreshMetrics(el.getAttribute('data-wm-prop')));
 }
-document.addEventListener('visibilitychange',()=>{ if(!document.hidden) { try{ _wmRefreshAllMetrics(); }catch(e){} } });
+// Bruce, 20 Sept: "8 Hide Away Hills ... the budgeted still says 185,000 when it should
+// say 441,400 ... those numbers aren't updating live like they should be, specifically
+// in the meeting doc."
+// The budget and spent figures come off the property card, and the property cards were
+// read once when the page loaded. The tracker sync updates them during the day, so a
+// meeting screen that had been open since breakfast was quoting breakfast's numbers -
+// and the Monday meeting is exactly where somebody reads them out loud. The open
+// meeting now re-reads the money along with everything else it polls for, redraws just
+// the number boxes (never the page - somebody is always mid-sentence), and flashes any
+// figure that actually moved so the room can see it happen.
+async function _wmRefreshFinancials(){
+  if(!document.querySelector('[data-wm-prop]')) return 0;
+  const before={};
+  (typeof propCards!=='undefined'?propCards:[]).forEach(function(c){
+    before[c.id]=String(c.budget||'')+'|'+String(c.spent||'');
+  });
+  try{ await loadPropertiesFromSupabase(); }catch(e){ return 0; }
+  let moved=0;
+  document.querySelectorAll('[data-wm-prop]').forEach(function(el){
+    const pid=el.getAttribute('data-wm-prop');
+    const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return;
+    try{ _wmRefreshMetrics(pid); }catch(e){ return; }
+    const now=String(c.budget||'')+'|'+String(c.spent||'');
+    if(before[pid]!==undefined && before[pid]!==now){
+      moved++;
+      ['wm-bud-','wm-spent-','wm-left-'].forEach(function(pre){
+        try{ _wmLiveFlash(document.getElementById(pre+pid)); }catch(e){}
+      });
+    }
+  });
+  return moved;
+}
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden) {
+  try{ _wmRefreshAllMetrics(); }catch(e){}
+  try{ _wmRefreshFinancials(); }catch(e){}
+} });
 async function _wmDeal(pid, col, val, el){
   if(_blockIfReadOnly()) return;
   if(!_WM_COL_TO_CARD[col]) return;
@@ -7002,10 +7037,15 @@ async function _pmSettingsWrite(key, data){
     const { data:_rows, error } = await supabase.from("pm_settings")
       .upsert({ key:key, data:(data||{}), updated_at:new Date().toISOString() }, { onConflict:'key' })
       .select("key");
-    if(!error && (!_rows || !_rows.length))
+    if(!error && (!_rows || !_rows.length)){
+      window.__pmDenied = true;
       return "the database accepted the request but saved nothing - refresh and sign in again";
-    if(!error) return null;
+    }
+    if(!error){ window.__pmDenied=false; return null; }
     const m = error.message || "";
+    // Callers need to know WHY, not just that it failed: a permission refusal has a
+    // fallback, a network error does not.
+    window.__pmDenied = /row-level security|permission|policy|not authorized|violates/i.test(m);
     // Bruce, 20 Sept, about Marlo: "she needs to have access to be able to do stuff".
     // The old wording ("you do not have permission - tell Bruce") reads like the person
     // has been locked out of the app, which is not what happened and is a horrible thing
@@ -8369,12 +8409,20 @@ async function _mktPrefillWeek(wk){
 // next week's template is prepared from this week's, so nobody opens a blank page on
 // Thursday. Only the standing answers carry - anything that is a report on the week
 // just gone stays behind, or the room would read last week's news as if it were new.
-const WM_TEAM_CARRY = [
-  'nextc',    // "Comments on the weeks ahead" - still true next week until someone changes it
-  'money'     // "on or off budget, and why" - a standing position, not a weekly event
-];
-// Deliberately NOT carried: 'wins' (explicitly "wins this week") and 'lastc'
-// ("comments on last week"), which would be a week out of date the moment they moved.
+// Bruce, 20 Sept: "comments on the weeks ahead - what I fill out in this week's meeting
+// needs to be then saved and moved into comments from last week. And then comments on
+// the weeks ahead needs to be blank and ready to be filled out with new information."
+// It rotates, it does not sit still. What the room said was coming up IS the week that
+// has just been had, so it moves across into "last week" as the starting point for the
+// write-up, and the forward box opens empty for whatever is next. Before this, the
+// forward box carried its own text into the new week and quietly went stale.
+// Read as { the field it was written in : the field it lands in next week }.
+const WM_TEAM_CARRY = {
+  nextc: 'lastc',   // "Comments on the weeks ahead" becomes "Comments on last week"
+  money: 'money'    // "on or off budget, and why" - a standing position, not a weekly event
+};
+// Deliberately NOT carried: 'wins' (explicitly "wins this week"), and 'lastc' does not
+// carry itself - it is written fresh each week on top of whatever rotated in.
 let _wmPrefilling=false;
 window.__wmPrefilled_ = window.__wmPrefilled_ || {};
 async function _wmPrefillWeek(wk){
@@ -8388,11 +8436,12 @@ async function _wmPrefillWeek(wk){
   const patch={};
   for(const k in prev){
     if(k.indexOf('::')<0) continue;               // skip __closed / __done / __conf metadata
-    const f=k.split('::')[1];
-    if(WM_TEAM_CARRY.indexOf(f)<0) continue;
-    if(String(cur[k]==null?'':cur[k]).trim()) continue;      // never overwrite an answer already given
+    const bits=k.split('::'), pid=bits[0], f=bits[1];
+    const to=WM_TEAM_CARRY[f]; if(!to) continue;
+    const dest=pid+'::'+to;                       // where it lands THIS week
+    if(String(cur[dest]==null?'':cur[dest]).trim()) continue; // never overwrite an answer already given
     if(!String(prev[k]==null?'':prev[k]).trim()) continue;
-    patch[k]=prev[k];
+    patch[dest]=prev[k];
   }
   if(!Object.keys(patch).length) return 0;
   _wmPrefilling=true;
@@ -9902,6 +9951,7 @@ openWeeklyMeeting = function(kind, week){
     put(); requestAnimationFrame(put); setTimeout(put,0); setTimeout(put,70);
   }
   _wmPollStart();
+  if(!same){ try{ _wmRefreshFinancials(); }catch(e){} }
   return r;
 };
 // ---- Two people in the same document ------------------------------------------
@@ -10027,6 +10077,11 @@ async function _wmPollTick(){
   }
   if(changed) _wmLiveBanner(changed);
   await _wmPollCarried(kind);
+  // Every fourth tick, about half a minute: re-read the money off the property cards.
+  window.__wmMoneyTick=(window.__wmMoneyTick||0)+1;
+  if(window.__wmMoneyTick%4===0){
+    try{ const n=await _wmRefreshFinancials(); if(n) _wmLiveBanner(n); }catch(e){}
+  }
 }
 // The questions, the long-lead items and the PM-board comments live in their own
 // records and used to be read exactly once, when the page loaded. So a question Marlo
@@ -19230,7 +19285,62 @@ async function _tkDoneLoad(){
   window._tkDone = (d && typeof d==='object') ? d : {};
   return window._tkDone;
 }
-function _tkTickers(t){ const m=window._tkDone[t && t.id]; return (m&&typeof m==='object')?m:{}; }
+// ---- when the database will not take the shared-tick record --------------------
+// Bruce, 20 Sept: "Marlo is trying to mark a task completed ... it says that tick was
+// not saved. Your account does not have permission to save this yet."
+// The record that remembers who has ticked their half lives in pm_settings under
+// "task_done_by", and the database keeps a list of which shared records ordinary staff
+// are allowed to write. That list was written before shared tasks existed and never
+// included this one, so every account below director level was refused. Nothing was
+// wrong with Marlo's account.
+//
+// The proper fix is one line of database policy, and Bruce has it. But nobody should
+// be unable to do their job while an access rule waits to be applied. So a refusal now
+// falls back to recording the tick ON THE TASK ITSELF, which everybody who can use the
+// app is already allowed to update. It goes in as a plain readable comment, so it is
+// obvious what it is to anyone looking at the task or at the database, and it is read
+// back alongside the main record. Once the policy is in place the main record takes
+// over again by itself and this stops being used - no migration, no second switch.
+const TK_MARK='Marked their part of this shared task done.';
+function _tkTicksOnTask(t){
+  const out={};
+  (Array.isArray(t&&t.comments)?t.comments:[]).forEach(function(c){
+    if(!c || c.tick!=='done') return;
+    const by=String(c.by||'').trim(); if(!by) return;
+    out[by]=String(c.at||'').slice(0,10);
+  });
+  return out;
+}
+// Drop this person's ticks from a comment list - or, with who omitted, every tick on it.
+function _tkStripTicks(list, who){
+  return (Array.isArray(list)?list:[]).filter(function(c){
+    if(!c || c.tick!=='done') return true;
+    return who ? !_sameAssignee(String(c.by||''), who) : false;
+  });
+}
+// Returns null on success, or a message. .select() matters: without it a write blocked
+// by row-level security comes back looking like a success.
+async function _tkOnTask(t, who, on){
+  const before=Array.isArray(t.comments)?t.comments:[];
+  const list=_tkStripTicks(before, who);
+  if(on && who) list.push({ by:who, at:new Date().toISOString(), text:TK_MARK, tick:'done' });
+  if(list.length===before.length && !(on && who)) return null;      // nothing to do
+  const {data,error}=await supabase.from("pm_tasks").update({comments:list}).eq("id",t.id).select("id");
+  if(error||!data||!data.length) return (error&&error.message)||"nothing saved";
+  t.comments=list;
+  return null;
+}
+// Everyone has ticked, or nobody has - either way the task itself now carries the
+// answer, so the working notes come off. Leaving them would make a reopened task look
+// finished for people who never ticked it.
+async function _tkClearOnTask(t){ return _tkOnTask(t, null, false); }
+function _tkTickers(t){
+  const m=window._tkDone[t && t.id];
+  const fromRecord=(m&&typeof m==='object')?m:{};
+  // The shared record wins where both have an answer; the task carries anything the
+  // shared record was refused.
+  return Object.assign(_tkTicksOnTask(t), fromRecord);
+}
 // Has THIS person already ticked their part?
 function _tkTicked(t,name){
   const m=_tkTickers(t);
@@ -19261,16 +19371,38 @@ async function _tkTick(t, name, on){
   const who=_canonName(name||'')||name||'';
   const fresh=await _pmSettingsRead("task_done_by");
   const all=(fresh && typeof fresh==='object')?fresh:{};
-  const mine=(all[t.id] && typeof all[t.id]==='object')?all[t.id]:{};
+  // Start from everything known about this task: the shared record AND anything
+  // written onto the task itself while the shared record was being refused.
+  const mine=Object.assign(_tkTicksOnTask(t), (all[t.id] && typeof all[t.id]==='object')?all[t.id]:{});
   if(on){ mine[who]=_ymdToday(); }
   else { Object.keys(mine).forEach(n=>{ if(_sameAssignee(n,who)) delete mine[n]; }); }
   const names=taskAssignees(t)||[];
   const everyone = names.length>0 && names.every(n=>Object.keys(mine).some(x=>_sameAssignee(x,n)));
-  if(everyone || !Object.keys(mine).length) delete all[t.id]; else all[t.id]=mine;
+  const settled = everyone || !Object.keys(mine).length;
+  if(settled) delete all[t.id]; else all[t.id]=mine;
+  const result = (on && everyone) ? 'closed' : (on ? 'partial' : 'reopened');
+
+  window.__pmDenied=false;
   const err=await _pmSettingsWrite("task_done_by", all);
-  if(err){ alert("That tick was NOT saved — "+err); return null; }
-  window._tkDone=all;
-  return (on && everyone) ? 'closed' : (on ? 'partial' : 'reopened');
+  if(!err){
+    window._tkDone=all;
+    await _tkClearOnTask(t);          // the shared record now holds the lot
+    return result;
+  }
+  if(!window.__pmDenied){
+    // Not an access problem - the database could not be reached. Do not pretend.
+    alert("That tick was NOT saved — "+err);
+    return null;
+  }
+  // Blocked by the access rule. Put it on the task instead; everyone can write that.
+  const err2 = settled ? await _tkClearOnTask(t) : await _tkOnTask(t, who, on);
+  if(err2){
+    alert("That tick was NOT saved.\n\n"+err+"\n\nRecording it on the task itself did not work either: "+err2);
+    return null;
+  }
+  window._tkDone=window._tkDone||{};
+  if(settled) delete window._tkDone[t.id]; else window._tkDone[t.id]=mine;
+  return result;
 }
 // The shared half of a completion tick. Returns true when it handled the click -
 // the caller then just refreshes. Returns false for an ordinary single-person task,
@@ -21636,4 +21768,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-20e move-from-the-board -->
+<!-- build: 2026-09-20f marlo-can-tick, live money, comments rotate -->
