@@ -7302,6 +7302,28 @@ function _wmExpandAll(on){
 // "Covered" is the room saying it has finished with this house this week. It ticks
 // the header, collapses the card and is remembered with the week, so if the meeting
 // gets interrupted you can see exactly where you got to.
+// Bruce, 20 Sept: a house should say where it is before the room gets to it.
+// Three states, per week, per house:
+//   RED       nobody has filled it in yet
+//   BABY BLUE filled in and marked ready for the meeting
+//   GREEN     talked about in the meeting and closed up
+// "Ready" does not close the card - it is the PM saying their half is done. Stored
+// beside __covered on the same weekly record, so it resets itself every Monday.
+const WM_STATE = {
+  todo:  { bg:'#FDF3F2', bd:'#F0C9C4', chip:'#B42318', chipBg:'#FBEAE8', label:'not filled in' },
+  ready: { bg:'#EAF3FC', bd:'#B8D4F0', chip:'#185FA5', chipBg:'#E4EEFA', label:'ready for the meeting' },
+  done:  { bg:'#EDF8F2', bd:'#BFE5D4', chip:'#0F7B54', chipBg:'#E0F3EA', label:'covered' }
+};
+function _wmStateOf(wk, pid){
+  if((_wmMeta(wk,'team','__covered')||{})[pid]) return 'done';
+  if((_wmMeta(wk,'team','__ready')||{})[pid])   return 'ready';
+  return 'todo';
+}
+async function _wmReady(wk, pid){
+  const m=Object.assign({}, _wmMeta(wk,'team','__ready'));
+  if(m[pid]) delete m[pid]; else m[pid]=true;
+  if(await _wmSetMeta(wk,'team','__ready',m)) openWeeklyMeeting('team', wk);
+}
 async function _wmCovered(wk, pid){
   const m=Object.assign({}, _wmMeta(wk,'team','__covered'));
   if(m[pid]) delete m[pid]; else m[pid]=true;
@@ -10053,15 +10075,17 @@ function openWeeklyMeeting(kind, week){
       const openLag=_miFor('lag',c.id).length, openQ=_miFor('q',c.id).length;
       const notConf=fwdItems.filter(it=>!((confMap[it.key]||{}).c)).length;
       const isCov=!!coveredMap[c.id];
+      const _st=_wmStateOf(wk,c.id), _sc=WM_STATE[_st];
       const chip=(txt,col,bg)=>`<span style="font-size:10.5px;font-weight:600;color:${col};background:${bg};padding:1px 7px;border-radius:99px;white-space:nowrap">${txt}</span>`;
       const summaryChips=[
+        chip(_sc.label,_sc.chip,_sc.chipBg),
         (left!=null?chip((left<0?'&minus;':'')+'$'+Math.abs(Math.round(left)).toLocaleString()+' left',left<0?'#B42318':'#0F7B54',left<0?'#FBEAE8':'#E6F4ED'):''),
         (est?chip('est '+_calEsc(est),(drift!=null&&drift>0)?'#B7791F':'#555',(drift!=null&&drift>0)?'#FBF3E2':'#F1F2F6'):''),
         (notConf?chip(notConf+' not confirmed','#B42318','#FBEAE8'):''),
         (openLag?chip(openLag+' lag','#B7791F','#FBF3E2'):''),
         (openQ?chip(openQ+' question'+(openQ===1?'':'s'),'#4A1D6E','#F3E8FB'):'')
       ].filter(Boolean).join(' ');
-      return `<details data-wm-prop="${c.id}" ${_wmIsOpen(c.id)?'open':''} ontoggle="_wmToggleOpen('${c.id}',this.open)" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;margin-bottom:9px;color:#111;${isCov?'opacity:0.72;':''}">
+      return `<details data-wm-prop="${c.id}" ${_wmIsOpen(c.id)?'open':''} ontoggle="_wmToggleOpen('${c.id}',this.open)" data-wm-state="${_st}" style="background:${_sc.bg};border:1px solid ${_sc.bd};border-left:4px solid ${_sc.chip};border-radius:12px;margin-bottom:9px;color:#111;${isCov?'opacity:0.8;':''}">
         <summary style="cursor:pointer;padding:11px 14px 11px 4px;outline:none">
           <div style="display:inline-flex;width:calc(100% - 26px);vertical-align:middle;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
             <span style="font-size:15px;font-weight:700;color:#185FA5">${isCov?'<span style="color:#1D9E75">&#10003; </span>':''}${_calEsc(c.addr||'')}${c.jvDeal?' <span style="font-size:11px;background:#EEEDFE;color:#3C3489;padding:1px 7px;border-radius:99px;vertical-align:middle">JV</span>':''}</span>
@@ -10122,6 +10146,7 @@ function openWeeklyMeeting(kind, week){
           <button onclick="openPropDetail('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #e6e8ee;border-radius:7px;font-size:12.5px;color:#777;cursor:pointer">Open card</button>
         </div>`}
         ${roNow?'':`<div style="margin-top:12px;padding-top:11px;border-top:0.5px solid #eef0f6">
+          <button onclick="_wmReady('${wk}','${c.id}')" style="padding:7px 15px;background:${_st==='ready'?'#fff':'#185FA5'};border:${_st==='ready'?'0.5px solid #B8D4F0':'none'};border-radius:8px;font-size:13px;font-weight:600;color:${_st==='ready'?'#185FA5':'#fff'};cursor:pointer;margin-right:8px">${_st==='ready'?'Not ready after all':'&#9998; Ready for the meeting'}</button>
           <button onclick="_wmCovered('${wk}','${c.id}')" style="padding:7px 15px;background:${isCov?'#fff':'#0F7B54'};border:${isCov?'0.5px solid #cdd7e6':'none'};border-radius:8px;font-size:13px;font-weight:600;color:${isCov?'#777':'#fff'};cursor:pointer">${isCov?'Reopen this one':'&#10003; Done with this one &mdash; close it up'}</button>
         </div>`}
         </div>
@@ -10146,8 +10171,16 @@ function openWeeklyMeeting(kind, week){
     const _ttBtn=(k,label,n)=>`<span onclick="_wmTeamTabTo('${k}')" style="cursor:pointer;padding:7px 14px;border-radius:8px;font-size:13px;font-weight:${_teamTab===k?'600':'400'};background:${_teamTab===k?'#122A4A':'#fff'};color:${_teamTab===k?'#fff':'#444'};border:0.5px solid ${_teamTab===k?'#122A4A':'#d8dce6'}">${label}${n!=null?(' &middot; '+n):''}</span>`;
     const _teamTabBar=`<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:13px">${_ttBtn('construction','\ud83d\udd28 Construction',cards.length)}${_ttBtn('takedowns','\ud83d\udce6 Upcoming Takedowns',_tdCards.length)}</div>`;
     const covN=cards.filter(c=>coveredMap[c.id]).length;
+    // Where the room stands before it starts: how many houses are still waiting on
+    // their PM, how many are ready to talk about, how many are already covered.
+    const _stN={todo:0,ready:0,done:0};
+    cards.forEach(c=>{ _stN[_wmStateOf(wk,c.id)]++; });
+    const _dot=(n,st)=>`<span style="display:inline-flex;align-items:center;gap:5px;font-size:12.5px;color:${WM_STATE[st].chip};font-weight:600;white-space:nowrap"><span style="width:9px;height:9px;border-radius:2px;background:${WM_STATE[st].chip};display:inline-block"></span>${n} ${WM_STATE[st].label}</span>`;
     const walkBar=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:9px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
-      <div style="font-size:13px;color:#555"><b>${covN} of ${cards.length}</b> covered &middot; every property starts closed &mdash; click one to open it</div>
+      <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+        ${_dot(_stN.todo,'todo')}${_dot(_stN.ready,'ready')}${_dot(_stN.done,'done')}
+        <span style="font-size:12px;color:#999">every property starts closed &mdash; click one to open it</span>
+      </div>
       <div style="display:flex;gap:7px">
         <button onclick="_wmExpandAll(true)" style="padding:5px 12px;border:0.5px solid #cdd7e6;border-radius:7px;background:#fff;font-size:12.5px;color:#185FA5;cursor:pointer">Expand all</button>
         <button onclick="_wmExpandAll(false)" style="padding:5px 12px;border:0.5px solid #e6e8ee;border-radius:7px;background:#fff;font-size:12.5px;color:#777;cursor:pointer">Collapse all</button>
@@ -21438,4 +21471,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-18a designers-and-ruled-out-houses -->
+<!-- build: 2026-09-20a ready-for-the-meeting -->
