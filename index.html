@@ -7056,8 +7056,9 @@ async function _pmSettingsWrite(key, data){
       window.__pmDenied = true;
       return "the database accepted the request but saved nothing - refresh and sign in again";
     }
-    if(!error){ window.__pmDenied=false; return null; }
+    if(!error){ window.__pmDenied=false; window.__pmLastErr=null; return null; }
     const m = error.message || "";
+    window.__pmLastErr = m;
     // Callers need to know WHY, not just that it failed: a permission refusal has a
     // fallback, a network error does not.
     window.__pmDenied = /row-level security|permission|policy|not authorized|violates/i.test(m);
@@ -14512,7 +14513,24 @@ async function _nfLoad(){
   const d=await _pmSettingsRead('notif_read');
   window._nfRead=(d&&typeof d==='object')?d:{};
 }
-function _nfReadMap(){ const me=_nfMe()||'_'; return ((window._nfRead||{})[me])||{}; }
+// A "seen it" mark is this person's own, and nobody else's business - so when the
+// shared record will not take it (the same access rule that stopped Marlo ticking a
+// shared task), it is kept in this browser instead. It is the one piece of the app
+// where that is genuinely the right home: losing it on a new laptop costs nothing,
+// and the alternative was notifications quietly springing back unread forever.
+function _nfLocalRead(){
+  try{ const raw=localStorage.getItem('pm_nf_read_'+(_nfMe()||'_'));
+       const o=raw?JSON.parse(raw):null; return (o&&typeof o==='object')?o:{}; }
+  catch(e){ return {}; }
+}
+function _nfLocalSet(map){
+  try{ localStorage.setItem('pm_nf_read_'+(_nfMe()||'_'), JSON.stringify(map||{})); return true; }
+  catch(e){ return false; }
+}
+function _nfReadMap(){
+  const me=_nfMe()||'_';
+  return Object.assign(_nfLocalRead(), ((window._nfRead||{})[me])||{});
+}
 async function _nfSetRead(ids){
   const me=_nfMe()||'_';
   const fresh=await _pmSettingsRead('notif_read');
@@ -14521,7 +14539,16 @@ async function _nfSetRead(ids){
   const now=new Date().toISOString();
   (ids||[]).forEach(function(id){ base[me][id]=now; });
   window._nfRead=base;
-  await _pmSettingsWrite('notif_read', base);
+  window.__pmDenied=false;
+  const err=await _pmSettingsWrite('notif_read', base);
+  if(err){
+    // Do not leave it looking read when nothing was kept - put it in this browser.
+    const mine=_nfLocalRead();
+    (ids||[]).forEach(function(id){ mine[id]=now; });
+    if(!_nfLocalSet(mine) && !window.__pmDenied){
+      alert("Those notifications could not be marked as read \u2014 "+err);
+    }
+  }
   _nfBadge(); _nfRender();
 }
 function _nfItems(){
@@ -21533,7 +21560,44 @@ function _chkApplies(c){
   return CHK_KINDS.some(k=>Object.keys(p[k.key]||{}).length>0);
 }
 function _chkSteps(kind){ return (((window._chkTpl||{})[kind])||[]).filter(i=>i&&i.t); }
-function _chkTicks(pid,kind){ return (((window._chkProg||{})[pid]||{})[kind])||{}; }
+// Bruce, 20 Sept: "make sure Marlo stuff is good to go for the future too, not just
+// today." Ticking a checklist item on a house writes to the same shared record the
+// database was refusing her, so it would have failed tomorrow exactly the way the
+// shared-task tick failed today. It now falls back to the HOUSE's own record, which
+// everybody who can use the app is already allowed to write - and which is arguably
+// where a house's own checklist belonged in the first place.
+// Whichever store last saved successfully for a property is the truth for that
+// property: a successful shared-record save clears the copy on the house, so the two
+// can never drift apart and disagree.
+function _chkProgFor(pid){
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===pid; });
+  const own=c && c.checklists && c.checklists.chk && c.checklists.chk.prog;
+  if(own && typeof own==='object') return own;
+  return ((window._chkProg||{})[pid])||{};
+}
+function _chkTicks(pid,kind){ return (_chkProgFor(pid)[kind])||{}; }
+// Put this house's ticks on the house itself. Returns null, or why it could not.
+// .select() matters: a write blocked by row-level security comes back looking fine.
+async function _chkPropSave(pid){
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===pid; });
+  if(!c) return "that property is not on this screen any more";
+  const cl=Object.assign({}, c.checklists||{});
+  const prog=((window._chkProg||{})[pid])||{};
+  if(Object.keys(prog).length) cl.chk={at:new Date().toISOString(), prog:prog};
+  else delete cl.chk;
+  const r=await supabase.from("pm_properties").update({checklists:cl}).eq("id",pid).select("id");
+  if(r.error || !r.data || !r.data.length) return (r.error&&r.error.message)||"nothing was saved";
+  c.checklists=cl;
+  return null;
+}
+// The shared record took it, so the copy on the house comes off.
+async function _chkPropClear(pid){
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===pid; });
+  if(!c || !c.checklists || !c.checklists.chk) return;
+  const cl=Object.assign({}, c.checklists); delete cl.chk;
+  const r=await supabase.from("pm_properties").update({checklists:cl}).eq("id",pid).select("id");
+  if(!r.error && r.data && r.data.length) c.checklists=cl;
+}
 function _chkDone(pid,kind,itemId){ return !!(_chkTicks(pid,kind)[itemId]||{}).done; }
 function _chkCounts(pid,kind){
   const items=_chkSteps(kind);
@@ -21562,7 +21626,7 @@ async function _chkLoad(){
 }
 // Same read-merge-write as the trackers: only send what THIS browser changed, so two
 // people ticking different properties can never wipe each other out.
-async function _chkSave(which){
+async function _chkSave(which, quiet){
   if(window._chkLoadOk===false){
     alert("The checklists could not be loaded a moment ago, so saving now would overwrite them with a blank set. Nothing was saved - refresh the page and try again.");
     return false;
@@ -21582,8 +21646,9 @@ async function _chkSave(which){
     return false;
   }
   const merged=_trkApplyPatch(JSON.parse(JSON.stringify(fresh)), ops);
+  window.__pmDenied=false;
   const err=await _pmSettingsWrite(key, merged);
-  if(err){ alert("NOT SAVED - "+err); return false; }
+  if(err){ if(!quiet) alert("NOT SAVED - "+err); return false; }
   if(which==='tpl'){ window._chkTpl=merged; window._chkTplBase=JSON.parse(JSON.stringify(merged)); }
   else { window._chkProg=merged; window._chkProgBase=JSON.parse(JSON.stringify(merged)); }
   return true;
@@ -21599,7 +21664,18 @@ async function _chkToggle(pid, kind, itemId, el){
   if(now) p[pid][kind][itemId]={done:true, at:_ymd(new Date()), by:who};
   else delete p[pid][kind][itemId];
   window._chkProg=p;
-  const ok=await _chkSave('prog');
+  let ok=await _chkSave('prog', true);          // quiet: there is a fallback to try
+  if(!ok && window.__pmDenied){
+    // The shared record will not take it from this account. Put it on the house
+    // instead - she is allowed to write that, and it is the same tick either way.
+    const err2=await _chkPropSave(pid);
+    if(!err2) ok=true;
+    else alert("That tick was NOT saved.\n\nRecording it on the property itself did not work either: "+err2);
+  } else if(!ok){
+    alert("That tick was NOT saved \u2014 "+(window.__pmLastErr||"the database could not be reached. Nothing was changed; try again in a moment."));
+  } else {
+    try{ await _chkPropClear(pid); }catch(e){}   // shared record has it; no split brain
+  }
   if(!ok){ // put the screen back to the truth
     if(now) delete p[pid][kind][itemId]; else p[pid][kind][itemId]={done:true};
     window._chkProg=p;
@@ -22143,4 +22219,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-20h priority tasks -->
+<!-- build: 2026-09-20i marlo-future-proof -->
