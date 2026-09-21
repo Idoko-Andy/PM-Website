@@ -2614,9 +2614,13 @@ async function saveWorkflowSettings(cfg){
 // fixes every screen at once - and it is what lets a PDF be built "for everything this
 // person is the PM on", which needs the two spellings to be the same person.
 //
-// "andrew" is DELIBERATELY not in this list. Andrew Scrape is a Project Manager and
-// Idoko Andrew is the senior VA, and a bare "Andrew" could honestly be either. Guessing
-// would quietly post somebody else's work onto their list. Bruce decides that one.
+// Bruce, 21 Sept: "Andrew's labeled as project manager and Andy is labeled as VA Andy.
+// It's specified by job role." He is right, and the records agree: nothing is stored as
+// a bare "Andy" anywhere, the senior VA is always "Idoko Andrew" (whose first name is
+// Idoko, so a first-name match never reaches him), and every bare "Andrew" on the board
+// was Andrew Scrape. The stored records have been rewritten to match.
+// The one to watch, if it ever turns up: "Andy" on its own would be ambiguous between
+// Andy Karabinos and VA Andy, so it is deliberately not folded to either.
 const PERSON_ALIASES = {
   "tom":"Tommy", "tommy":"Tommy", "tom harr":"Tommy", "tommy harr":"Tommy", "thomas":"Tommy",
   "alex":"Alex Bacallao", "alex bacallao":"Alex Bacallao",
@@ -2626,7 +2630,7 @@ const PERSON_ALIASES = {
   "marlo":"Marlo Berry-Kinison", "marlo berry-kinison":"Marlo Berry-Kinison",
   "jen":"Jennifer Tatum", "jenn":"Jennifer Tatum", "jennifer":"Jennifer Tatum", "jennifer tatum":"Jennifer Tatum",
   "patience":"patience ochefije", "patience ochefije":"patience ochefije",
-  "andrew scrape":"Andrew Scrape",
+  "andrew":"Andrew Scrape", "andrew scrape":"Andrew Scrape",
   "idoko":"Idoko Andrew", "idoko andrew":"Idoko Andrew", "va andy":"Idoko Andrew",
   "katie":"Katie Harr", "katie harr":"Katie Harr",
   "will":"Will Harr", "will harr":"Will Harr"
@@ -23279,4 +23283,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-21c role-based-PDFs, inspections-on-the-card, budget-breakdown-honesty -->
+<!-- build: 2026-09-21d andrew-is-andrew-scrape -->
