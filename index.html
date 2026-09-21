@@ -89,6 +89,24 @@ input[type="date"]::-webkit-calendar-picker-indicator{background-image:url('data
 input[type="time"]::-webkit-calendar-picker-indicator{filter:invert(72%) sepia(40%) saturate(520%) hue-rotate(96deg) brightness(95%);cursor:pointer;opacity:1}
 .form-row select option{background:#111}
 .form-two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+/* Bruce, 21 Sept: "make that whole add task tab on the desktop version wider, fit the
+   screen more so you can see more ... so when I've entered a task, I can fully see what
+   I've typed out." The Add task window was 440px on a 1500px screen - a phone-width
+   column with a six-line notes box you had to drag bigger every single time. On a real
+   screen it now opens wide, with the short fields down the left and the two things that
+   need the room - Notes and Steps - down the right at full height. Below 1040px it drops
+   back to the one column it always was, so the phone is untouched. */
+#task-inner{max-width:440px}
+#task-inner.wide{max-width:1040px}
+.tm-cols{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0 28px;align-items:start}
+.tm-cols > div{min-width:0}
+.tm-notes{min-height:300px}
+.tm-steps #new-steps-list{max-height:none}
+@media(max-width:1040px){
+  #task-inner.wide{max-width:480px}
+  .tm-cols{grid-template-columns:1fr;gap:0}
+  .tm-notes{min-height:150px}
+}
 
 .btn-full{width:100%;padding:11px;background:#fff;color:#111;border:none;border-radius:6px;font-size:15px;font-weight:500;cursor:pointer;margin-top:8px}
 .btn-full:hover{background:#e8e8e8}
@@ -719,7 +737,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
 
 <!-- ===== TASK MODAL ===== -->
 <div class="overlay" id="task-modal">
-  <div class="modal" style="max-width:440px" id="task-inner"></div>
+  <div class="modal" id="task-inner"></div>
 </div>
 
 <!-- ===== INVITE MODAL ===== -->
@@ -4791,8 +4809,16 @@ function _pdLinked(c){
         <div style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;font-size:13px;font-weight:500;color:#111">📅 Add Construction Event</div>
         <div style="padding:12px 14px;display:flex;flex-direction:column;gap:8px">
           <input type="date" id="pc-date" style="${_qaInput}" />
-          <select id="pc-kind" style="${_qaInput}"><option value="material">📦 Material delivery</option><option value="contractor">★ Contractor start</option><option value="custom">• Custom</option></select>
-          <input type="text" id="pc-detail" placeholder="What's delivered / contractor name / description" style="${_qaInput}" />
+          <select id="pc-kind" onchange="_pcKind()" style="${_qaInput}"><option value="material">📦 Material delivery</option><option value="contractor">★ Contractor start</option><option value="custom">• Custom</option></select>
+          <input type="text" id="pc-detail" placeholder="What's being delivered" style="${_qaInput}" />
+          <div id="pc-ct-row" style="display:none">
+            ${_taField('pc-ct',{items:_taContractorItems(),placeholder:'Start typing a name, company or trade…',hint:'Pick somebody from the directory.',addNew:"_pcNewContractor()"})}
+            <div id="pc-ct-new" style="display:none;margin-top:7px">
+              <input type="text" id="pc-ct-name" placeholder="New contractor — name" style="${_qaInput}" />
+              <input type="text" id="pc-ct-trade" placeholder="Trade, e.g. Roofing" style="${_qaInput};margin-top:6px" />
+              <input type="text" id="pc-ct-phone" placeholder="Phone" style="${_qaInput};margin-top:6px" />
+            </div>
+          </div>
           <button onclick="_submit('prop-const-${c.id}',this,'Adding…',()=>savePropConstruction('${c.id}'))" style="${_qaBtn}">Add to Construction Calendar</button>
         </div>
       </div>
@@ -4800,8 +4826,7 @@ function _pdLinked(c){
         <div style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;font-size:13px;font-weight:500;color:#111">✅ Add Task</div>
         <div style="padding:12px 14px;display:flex;flex-direction:column;gap:8px">
           <input type="text" id="pt-title" placeholder="What needs to get done" style="${_qaInput}" />
-          <select id="pt-cat" onchange="_ptCatToggle()" style="${_qaInput}"><option value="">— Header / category —</option>${_qaTaskCats}<option value="__new">＋ Add new header…</option></select>
-          <input type="text" id="pt-cat-new" placeholder="New header (saved for reuse)" style="${_qaInput};display:none" />
+          ${_taField('pt-cat',{items:_taHeaderItems(),free:true,placeholder:'Header / category — start typing',hint:'Anything new is kept for next time.'})}
           <select id="pt-asg" style="${_qaInput}"><option value="">— Unassigned —</option>${_qaTeam}</select>
           <div style="display:flex;gap:8px">
             <div style="flex:1"><div style="font-size:11px;color:#566070;margin-bottom:2px">Start (optional)</div><input type="date" id="pt-start" style="${_qaInput}" /></div>
@@ -4970,6 +4995,22 @@ function _pdLinked(c){
 }
 
 // Quick-submit a construction event straight from the property card.
+// Which boxes the quick-add shows depends on what is being booked.
+function _pcKind(){
+  const k=(document.getElementById("pc-kind")||{}).value;
+  const d=document.getElementById("pc-detail"), c=document.getElementById("pc-ct-row");
+  if(d) d.style.display = (k==="contractor")?"none":"";
+  if(c) c.style.display = (k==="contractor")?"":"none";
+  if(d) d.placeholder = (k==="custom")?"Describe it":"What's being delivered";
+}
+function _pcNewContractor(){
+  _taSet('pc-ct','__new','');
+  const q=document.getElementById('pc-ct-q');
+  const box=document.getElementById('pc-ct-new'); if(box) box.style.display='';
+  const nm=document.getElementById('pc-ct-name');
+  if(nm){ if(q && q.value.trim()) nm.value=q.value.trim(); nm.focus(); }
+  if(q) q.value='';
+}
 async function savePropConstruction(propId){
   if(_blockIfReadOnly()) return;
   const date=document.getElementById("pc-date").value;
@@ -4979,27 +5020,49 @@ async function savePropConstruction(propId){
   let title=null, contractor_id=null;
   if(kind==="material"||kind==="custom"){ if(!detail){ alert("Enter a description."); return; } title=detail; }
   else if(kind==="contractor"){
-    if(!detail){ alert("Enter the contractor's name."); return; }
-    let ct=(_contractorsCache||[]).find(x=>(x.name||"").toLowerCase()===detail.toLowerCase());
-    if(!ct){ const ins=await supabase.from("pm_contractors").insert({name:detail}).select("id").single(); if(ins.error){ alert("Couldn't add contractor: "+(ins.error.message||"")); return; } contractor_id=ins.data.id; await loadContractorsFromSupabase(); }
-    else contractor_id=ct.id;
+    // Bruce, 21 Sept: "I type Roy, it just shows roofing. It doesn't show his name."
+    // You now pick a real person out of the directory, and the only way a new one gets
+    // created is if you deliberately asked for that - typing half a name can no longer
+    // quietly make a second contractor who has no trade and no phone number.
+    const pick=(document.getElementById("pc-ct")||{}).value||"";
+    if(pick==="__new"){
+      const nm=(document.getElementById("pc-ct-name").value||"").trim();
+      if(!nm){ alert("Give the new contractor a name."); return; }
+      const dup=(_contractorsCache||[]).find(x=>_taNorm(x.name)===_taNorm(nm));
+      if(dup) contractor_id=dup.id;
+      else{
+        const ins=await supabase.from("pm_contractors").insert({
+          name:nm,
+          trade:((document.getElementById("pc-ct-trade")||{}).value||"").trim()||null,
+          phone:((document.getElementById("pc-ct-phone")||{}).value||"").trim()||null
+        }).select("id").single();
+        if(ins.error){ alert("Couldn't add contractor: "+(ins.error.message||"")); return; }
+        contractor_id=ins.data.id; await loadContractorsFromSupabase();
+      }
+    } else if(pick){ contractor_id=pick; }
+    else { alert("Pick the contractor from the list, or add them to the directory first."); return; }
   }
   const { error } = await supabase.from("pm_calendar_events").insert({ property_id:propId, event_date:date, kind, title, contractor_id, notes:null });
   if(error){ _toast("That construction item was NOT added \u2014 "+(error.message||""),"bad"); return; }
-  _logAudit("created","calendar", _propAddr(propId), (kind==="contractor"?("Contractor start: "+detail):(kind==="custom"?("Custom: "+detail):("Material delivery: "+detail)))+" (from property card)");
+  const what = (kind==="contractor") ? _contractorName(contractor_id) : detail;
+  _logAudit("created","calendar", _propAddr(propId), (kind==="contractor"?("Contractor start: "+what):(kind==="custom"?("Custom: "+what):("Material delivery: "+what)))+" (from property card)");
   await loadCalendarEventsFromSupabase();
   // Clear the form so a second press cannot repeat the same booking.
-  ["pc-date","pc-detail"].forEach(id=>{const el=document.getElementById(id); if(el) el.value="";});
+  ["pc-date","pc-detail","pc-ct-name","pc-ct-trade","pc-ct-phone"].forEach(id=>{const el=document.getElementById(id); if(el) el.value="";});
+  try{ _taSet('pc-ct','',''); }catch(e){}
   openPropDetail(propId);
-  _toast("On the construction calendar for "+date+": "+detail);
+  _toast("On the construction calendar for "+date+": "+what);
 }
-function _ptCatToggle(){ const s=document.getElementById("pt-cat"); const n=document.getElementById("pt-cat-new"); if(s&&n) n.style.display = s.value==="__new"?"":"none"; }
+// Kept as a no-op: the header box is now the type-ahead, which has no "add new" mode
+// to switch into - whatever you type is the header. Old markup may still call this.
+function _ptCatToggle(){}
 // Quick-submit a task straight from the property card.
 async function savePropTask(propId){
   if(_blockIfReadOnly()) return;
   const title=(document.getElementById("pt-title").value||"").trim();
-  const catSel=document.getElementById("pt-cat").value;
-  let cat = catSel==="__new" ? (document.getElementById("pt-cat-new").value||"").trim() : (catSel||"");
+  // Same type-ahead as the full Add task window: what you type IS the header, and a
+  // header nobody has used before is simply kept.
+  let cat=((document.getElementById("pt-cat")||{}).value||"").trim();
   cat = cat || null;
   const asg=document.getElementById("pt-asg").value||null;
   const start=document.getElementById("pt-start").value||null;
@@ -5012,7 +5075,8 @@ async function savePropTask(propId){
   _logAudit("created","task", cat?(cat+": "+title):title, asg?("Assigned to "+asg):"Unassigned");
   await loadTasks();
   // Clear the form so the same task cannot be sent twice by accident.
-  ["pt-title","pt-cat-new","pt-start","pt-due"].forEach(id=>{const el=document.getElementById(id); if(el) el.value="";});
+  ["pt-title","pt-start","pt-due"].forEach(id=>{const el=document.getElementById(id); if(el) el.value="";});
+  try{ _taSet('pt-cat','',''); }catch(e){}
   openPropDetail(propId);
   _toast("Task added: "+title+(asg?(" \u2014 "+asg):" \u2014 nobody assigned yet"));
 }
@@ -7598,8 +7662,36 @@ async function _wmSetMeta(wk, kind, key, obj){
 // the old wall of 28 open cards meant scrolling past nine properties to reach the
 // tenth. Open state lives in memory so a re-render (saving a note, ticking a box)
 // does not slam the card you are working in shut.
-function _wmToggleOpen(pid, on){ (window._wmOpen=window._wmOpen||{})[pid]=!!on; }
+function _wmToggleOpen(pid, on){
+  (window._wmOpen=window._wmOpen||{})[pid]=!!on;
+  // Closing the house forgets which of its topics were open, and shuts them in the DOM
+  // as well - reopening the house does not redraw it, so a topic left open would still
+  // be sitting there. Either way you get five closed headings, the way Bruce asked for.
+  if(!on){
+    _wmTopicForget(pid);
+    try{
+      document.querySelectorAll('details[data-wm-topic^="'+pid+'::"]').forEach(function(d){ d.open=false; });
+    }catch(e){}
+  }
+}
 function _wmIsOpen(pid){ return !!((window._wmOpen||{})[pid]); }
+// Bruce, 21 Sept: "I'm on 1313 Lincoln, I'm clicking on Last week, and as I'm marking
+// things completed it just keeps closing the tab. I just need to mark it completed and
+// stay on the same screen."
+// Ticking anything redraws the whole meeting - that is what lets two people work the
+// same document at once. The redraw already puts back the scroll position, the cursor
+// and any half-typed note, but the topic drop-downs were rebuilt shut every time, so
+// one tick threw you out of the list you were working down. Which topic is open is now
+// remembered for as long as the house is open, exactly like the house itself.
+// Deliberately in memory only, not saved with the week: it is where YOU are in the
+// document right now, not something the room agreed.
+function _wmTopicKey(pid,key){ return pid+'::'+key; }
+function _wmTopicOpenSet(pid, key, on){ (window._wmTopicOpen=window._wmTopicOpen||{})[_wmTopicKey(pid,key)]=!!on; }
+function _wmTopicIsOpen(pid, key){ return !!((window._wmTopicOpen||{})[_wmTopicKey(pid,key)]); }
+function _wmTopicForget(pid){
+  const m=window._wmTopicOpen; if(!m) return;
+  Object.keys(m).forEach(function(k){ if(k.indexOf(pid+'::')===0) delete m[k]; });
+}
 function _wmExpandAll(on){
   document.querySelectorAll('details[data-wm-prop]').forEach(d=>{
     d.open=!!on; _wmToggleOpen(d.getAttribute('data-wm-prop'), !!on);
@@ -8048,7 +8140,7 @@ function _wmTopicWrap(wk, c, t, inner, roNow){
   const _hd = done?'#EDF8F2':(ready?'#EAF3FC':'#F7F8FB');
   const _hb = done?'#DCEFE5':(ready?'#D7E7F7':'#eef0f6');
   const _tx = done?'#0F7B54':(ready?'#185FA5':'#111');
-  return `<details style="border:0.5px solid ${_bd};border-radius:10px;margin-top:10px;overflow:hidden;background:${_bg}">
+  return `<details ${_wmTopicIsOpen(c.id,t.key)?'open':''} data-wm-topic="${c.id}::${t.key}" ontoggle="_wmTopicOpenSet('${c.id}','${t.key}',this.open)" style="border:0.5px solid ${_bd};border-radius:10px;margin-top:10px;overflow:hidden;background:${_bg}">
     <summary style="cursor:pointer;padding:12px 16px;background:${_hd};border-bottom:0.5px solid ${_hb};display:flex;align-items:center;gap:9px;flex-wrap:wrap">
       <span style="font-size:17px;line-height:1">${t.icon}</span>
       <span style="font-size:15.5px;font-weight:700;color:${_tx}">${t.title}</span>
@@ -10238,7 +10330,7 @@ function _taEsc(x){ return (typeof _calEsc==='function')?_calEsc(x):String(x==nu
 function _taNorm(x){ return String(x||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim(); }
 function _taField(id, opts){
   opts=opts||{};
-  window._TA[id]={ items:opts.items||[], free:!!opts.free, onPick:opts.onPick||null };
+  window._TA[id]={ items:opts.items||[], free:!!opts.free, onPick:opts.onPick||null, addNew:opts.addNew||null };
   return '<div style="position:relative">'
     + '<input type="hidden" id="'+id+'" value="'+_taEsc(opts.value||'')+'" />'
     + '<input type="text" id="'+id+'-q" autocomplete="off" placeholder="'+_taEsc(opts.placeholder||'Start typing…')+'" value="'+_taEsc(opts.label||'')+'"'
@@ -10273,13 +10365,20 @@ function _taInput(id){
   if(!ms.length){
     box.innerHTML = st.free
       ? '<div style="padding:10px 12px;font-size:12.5px;color:#566070">No header close to that yet — <b style="color:#111">'+_taEsc(q.trim())+'</b> will be saved as a new one.</div>'
-      : '<div style="padding:10px 12px;font-size:12.5px;color:#566070">Nobody in the directory matches “'+_taEsc(q)+'”.</div>';
+      : '<div style="padding:10px 12px;font-size:12.5px;color:#566070">Nobody in the directory matches <b style="color:#111">'+_taEsc(q)+'</b>.'
+        + (st.addNew?('<div style="margin-top:6px"><span onmousedown="event.preventDefault();'+st.addNew+'" style="color:#185FA5;cursor:pointer;font-weight:600">\uFF0B Add \u201C'+_taEsc(q.trim())+'\u201D to the directory</span></div>'):'')
+        + '</div>';
     box.style.display = q?'block':'none'; return;
   }
+  // Bruce, 21 Sept: "I type Roy, it just shows roofing. It doesn't show his name."
+  // The name is what he is looking for, so the name is the line - full size, on its own
+  // - and the trade and phone sit under it as a quieter second line instead of competing
+  // with it across the row.
   box.innerHTML=ms.map(function(it,i){
-    return '<div data-i="'+i+'" onmousedown="event.preventDefault();_taPick(\''+id+'\','+i+')" style="padding:8px 12px;font-size:13.5px;cursor:pointer;border-bottom:0.5px solid #f2f4f8;display:flex;justify-content:space-between;gap:10px;align-items:center">'
-      + '<span>'+(it.h||_taEsc(it.l))+'</span>'
-      + (it.r?('<span style="font-size:11.5px;color:#566070;white-space:nowrap">'+_taEsc(it.r)+'</span>'):'')
+    const sub=[it.r,it.hint].filter(Boolean).join('  \u00b7  ');
+    return '<div data-i="'+i+'" onmousedown="event.preventDefault();_taPick(\''+id+'\','+i+')" style="padding:9px 12px;cursor:pointer;border-bottom:0.5px solid #f2f4f8">'
+      + '<div style="font-size:14.5px;font-weight:600;color:#111;line-height:1.3">'+(it.h||_taEsc(it.l))+'</div>'
+      + (sub?('<div style="font-size:12px;color:#566070;margin-top:2px">'+_taEsc(sub)+'</div>'):'')
       + '</div>';
   }).join('');
   box.style.display='block';
@@ -13347,7 +13446,9 @@ function openInviteUser(){
   if(box){ box.innerHTML=html; openModal("invite-modal"); return; }
   // No dedicated modal in this build - fall back to the task modal shell.
   const t=document.getElementById("task-inner");
-  if(t){ t.innerHTML=html.replace("closeModal('invite-modal')","closeModal('task-modal')"); openModal("task-modal"); }
+  // This borrows the task window's shell for something else entirely, so it must not
+  // inherit the wide Add-task layout left behind by the last thing shown in it.
+  if(t){ t.classList.remove("wide"); t.innerHTML=html.replace("closeModal('invite-modal')","closeModal('task-modal')"); openModal("task-modal"); }
 }
 function _inviteRows(){ return ((window._pmInvites)||[]); }
 async function sendInvite(){
@@ -19497,7 +19598,7 @@ function openAddCalEvent(dateStr){
     <div class="form-row" id="cal-custom-row" style="display:none"><label>New custom type</label><input type="text" id="cal-custom" placeholder="e.g. Drawings due, inspection, dumpster pickup" /><div style="font-size:12px;color:#566070;margin-top:4px">This becomes a reusable type you can pick next time.</div></div>
     <div id="cal-contractor-row" style="display:none">
       <div class="form-row"><label>Contractor <span style="font-size:11px;color:#566070">— type a person or a company, either one finds them</span></label>
-        ${_taField('cal-contractor',{items:_taContractorItems(),placeholder:'Start typing — a name, a company, a trade…',hint:(_contractorsCache||[]).length+' contractors in the directory'})}
+        ${_taField('cal-contractor',{items:_taContractorItems(),placeholder:'Start typing — a name, a company, a trade…',hint:(_contractorsCache||[]).length+' contractors in the directory',addNew:"_calNewContractor()"})}
         <div style="margin-top:6px"><span onclick="_calNewContractor()" style="font-size:12.5px;color:#185FA5;cursor:pointer">＋ Add somebody who isn\u2019t in the directory yet</span></div>
       </div>
       <div id="cal-newc" style="display:none">
@@ -19623,7 +19724,6 @@ function openCalEventDetail(id){
   const ro=isReadOnly();
   const props=(typeof propCards!=='undefined'?propCards:[]);
   const propOpts=props.map(p=>`<option value="${p.id}" ${e.property_id===p.id?"selected":""}>${_calEsc(p.addr)}</option>`).join("");
-  const contractorOpts=_contractorsCache.map(c=>`<option value="${c.id}" ${e.contractor_id===c.id?"selected":""}>${c.red_flag?'\uD83D\uDEA9 DO NOT HIRE — ':''}${_calEsc(c.name)}${c.business_name?(' ('+_calEsc(c.business_name)+')'):''}</option>`).join("");
   // Build the Type dropdown with the current value preselected.
   const custom=_customCalTypes();
   const isCustom=(e.kind==="custom");
@@ -19653,12 +19753,15 @@ function openCalEventDetail(id){
     <div class="form-row" id="cale-material-row" style="display:${isMaterial?'':'none'}"><label>What's being delivered</label><input type="text" id="cale-title" value="${isMaterial?_calEsc(e.title||''):''}" placeholder="e.g. Cabinets, flooring, windows" ${dis} /></div>
     <div class="form-row" id="cale-custom-row" style="display:none"><label>New custom type</label><input type="text" id="cale-custom" placeholder="e.g. Drawings due, inspection" ${dis} /></div>
     <div id="cale-contractor-row" style="display:${isContractor?'':'none'}">
-      <div class="form-row"><label>Contractor</label>
-        <select id="cale-contractor" onchange="_caleContractorChange()" ${dis}>
-          <option value="">— Select saved contractor —</option>
-          ${contractorOpts}
-          <option value="__new">＋ Add new contractor…</option>
-        </select>
+      <div class="form-row"><label>Contractor <span style="font-size:11px;color:#566070">— type a person, a company or a trade</span></label>
+        ${ro
+          ? `<div style="font-size:14px;color:#111;padding:8px 0">${_calEsc(_contractorName(e.contractor_id)||'—')}</div><input type="hidden" id="cale-contractor" value="${_calEsc(e.contractor_id||'')}" />`
+          : _taField('cale-contractor',{items:_taContractorItems(), value:e.contractor_id||'',
+              label:_contractorName(e.contractor_id)||'',
+              placeholder:'Start typing — a name, a company, a trade…',
+              hint:(_contractorsCache||[]).length+' contractors in the directory',
+              addNew:"_caleNewContractor()"})}
+        ${ro?'':`<div style="margin-top:6px"><span onclick="_caleNewContractor()" style="font-size:12.5px;color:#185FA5;cursor:pointer">＋ Add somebody who isn\u2019t in the directory yet</span></div>`}
       </div>
       <div id="cale-newc" style="display:none">
         <div class="form-two">
@@ -19681,8 +19784,16 @@ function _caleToggleKind(){
   document.getElementById("cale-contractor-row").style.display = kind==="contractor"?"":"none";
 }
 function _caleContractorChange(){
-  const v=document.getElementById("cale-contractor").value;
-  document.getElementById("cale-newc").style.display = v==="__new"?"":"none";
+  const v=(document.getElementById("cale-contractor")||{}).value;
+  const n=document.getElementById("cale-newc"); if(n) n.style.display = v==="__new"?"":"none";
+}
+function _caleNewContractor(){
+  _taSet('cale-contractor','__new','');
+  const q=document.getElementById('cale-contractor-q');
+  const nm=document.getElementById('cale-newc-name');
+  const n=document.getElementById('cale-newc'); if(n) n.style.display='';
+  if(nm){ if(q && q.value.trim()) nm.value=q.value.trim(); nm.focus(); }
+  if(q){ q.value=''; q.placeholder='Adding a new contractor below\u2026'; }
 }
 // Reschedule a construction event (tracked, like tasks).
 async function rescheduleCalEvent(id){ _openRescheduleModal('event', id); }
@@ -20300,6 +20411,8 @@ function openAddTask(dateStr, pre){
     <button class="modal-close" onclick="closeModal('task-modal')">✕</button>
     <h2>Add task</h2>
     <div class="error-msg" id="task-err"></div>
+    <div class="tm-cols">
+    <div>
     <div class="form-row"><label>Task</label><input type="text" id="task-title" placeholder="What needs to get done" /></div>
     <div class="form-row"><label>Header / category <span style="font-size:11px;color:#566070">— start typing; close matches come up, anything new is kept</span></label>
       ${_taField('task-cat',{items:_taHeaderItems(),free:true,placeholder:'e.g. Build Scope of Work',hint:'This is what shows on the calendar.'})}
@@ -20327,10 +20440,15 @@ function openAddTask(dateStr, pre){
     </div>
     ${_taskPropField(null,null,"")}
     <div class="form-row"><label>Refer questions to (optional)</label><input type="text" id="task-refer" list="task-refer-list" placeholder="Type or pick a name" /><datalist id="task-refer-list">${referList}</datalist></div>
-    <div class="form-row"><label>Notes / comments (optional)</label><textarea id="task-notes" rows="6" placeholder="Everything the person needs to do this without asking a question — what, where, who to call, what done looks like." style="width:100%;min-height:130px;resize:vertical;line-height:1.5"></textarea></div>
-    ${_newStepsField()}
+    </div>
+    <div>
+    <div class="form-row"><label>Notes / comments (optional)</label><textarea id="task-notes" rows="6" oninput="_taGrow(this)" placeholder="Everything the person needs to do this without asking a question — what, where, who to call, what done looks like." class="tm-notes" style="width:100%;resize:vertical;line-height:1.5"></textarea></div>
+    <div class="tm-steps">${_newStepsField()}</div>
+    </div>
+    </div>
     <input type="hidden" id="task-edit-id" value="" />
     <button class="btn-full" onclick="saveTask(this)">Add task</button>`;
+  const _tw=document.getElementById("task-inner"); if(_tw) _tw.classList.add("wide");
   _newStepsReset(); _newStepsRender();
   openModal("task-modal");
   // Optional prefill, used by the trackers so a task raised from a row arrives
@@ -20338,6 +20456,7 @@ function openAddTask(dateStr, pre){
   if(pre){
     const set=(id,v)=>{ const e=document.getElementById(id); if(e && v) e.value=v; };
     set("task-title",pre.title); set("task-notes",pre.notes);
+    if(pre.notes) _taGrow(document.getElementById("task-notes"));
     if(pre.cat){
       if(typeof _taSet==='function') _taSet('task-cat', pre.cat, pre.cat);
     }
@@ -20346,6 +20465,17 @@ function openAddTask(dateStr, pre){
       document.querySelectorAll(".task-asg-cb").forEach(cb=>{ if(pre.assignees.indexOf(cb.value)>=0) cb.checked=true; });
     }
   }
+}
+// A notes box that keeps up with what is being typed into it. Bruce was having to drag
+// the corner every time to read back what he had written; it now grows on its own and
+// stops at two thirds of the window so the Add task button never gets pushed off screen.
+function _taGrow(el){
+  if(!el) return;
+  try{
+    const cap=Math.round(window.innerHeight*0.62);
+    el.style.height='auto';
+    el.style.height=Math.min(cap, Math.max(el.scrollHeight+2, parseInt(getComputedStyle(el).minHeight,10)||0))+'px';
+  }catch(e){}
 }
 // ---- Task comments (a running log kept on the task forever) ----
 function _fmtCommentDate(iso){ try{ return new Date(iso).toLocaleString(undefined,{month:"short",day:"numeric",hour:"numeric",minute:"2-digit"}); }catch(e){ return ""; } }
@@ -20564,6 +20694,8 @@ function openTaskDetail(id){
     <input type="hidden" id="task-edit-id" value="${t.id}" />
     <div class="error-msg" id="task-err"></div>
     ${ro?'':`<button onclick="toggleTaskDone('${t.id}');closeModal('task-modal')" style="width:100%;padding:11px;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;margin-bottom:16px;background:${done?'#fff':'#0E7460'};color:${done?'#333':'#fff'};${done?'border:1px solid #ccc;':''}">${done?'↩ Reopen task':'✓ Mark done'}</button>`}
+    <div class="tm-cols">
+    <div>
     <div class="form-row"><label>Task</label><input type="text" id="task-title" value="${_calEsc(t.title||'')}" ${dis} /></div>
     <div class="form-row"><label>Header / category</label>
       <select id="task-cat" onchange="_taskCatToggle()" ${dis}>
@@ -20584,7 +20716,9 @@ function openTaskDetail(id){
     ${ro?'':`<div style="margin:-2px 0 12px"><button type="button" onclick="rescheduleTask('${t.id}')" style="padding:7px 12px;background:#fff;color:#b8860b;border:1px solid #e0c069;border-radius:6px;font-size:13px;cursor:pointer">🔄 Reschedule…</button>${(t.reschedule_count||0)>0?`<span style="font-size:12px;color:#b8860b;margin-left:8px">Rescheduled ${t.reschedule_count}×${t.last_rescheduled_at?' · last '+_calEsc(_fmtCommentDate(t.last_rescheduled_at)):''}</span>`:''}</div>`}
     ${_taskPropField(t.property_id, t.location, dis)}
     <div class="form-row"><label>Refer questions to (optional)</label><input type="text" id="task-refer" list="task-refer-list" value="${_calEsc(t.refer_to||'')}" ${dis} /><datalist id="task-refer-list">${referList}</datalist></div>
-    <div class="form-row"><label>Notes <span style="font-weight:400;color:#566070;font-size:12px">— task description / details</span></label><textarea id="task-notes" rows="6" ${dis} style="width:100%;min-height:130px;resize:vertical;line-height:1.5">${_calEsc(t.notes||'')}</textarea></div>
+    </div>
+    <div>
+    <div class="form-row"><label>Notes <span style="font-weight:400;color:#566070;font-size:12px">— task description / details</span></label><textarea id="task-notes" rows="6" oninput="_taGrow(this)" ${dis} class="tm-notes" style="width:100%;resize:vertical;line-height:1.5">${_calEsc(t.notes||'')}</textarea></div>
     <div class="form-row"><label>☑️ Steps <span style="font-weight:400;color:#566070;font-size:12px">— a checklist inside this task; ticking a step never closes the task itself</span></label>
       <div id="sub-box-${t.id}" style="border:0.5px solid #333;border-radius:8px;padding:8px 10px;background:#161616">${_subtaskList(t,true,'desktop')}</div>
     </div>
@@ -20593,8 +20727,12 @@ function openTaskDetail(id){
       ${ro?'':`<textarea id="task-comment-input" rows="2" placeholder="Add a comment — why it wasn't done, what's next, etc." style="width:100%;margin-top:6px"></textarea>
       <button onclick="_submit('cmt-${t.id}',this,'Posting…',()=>addTaskComment('${t.id}','task-comment-input','desktop'))" style="margin-top:4px;padding:8px 14px;background:#185FA5;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer">Add comment</button>`}
     </div>
+    </div>
+    </div>
     ${ro?'':`<button class="btn-full" onclick="saveTask(this)">Save changes</button>
     <div onclick="deleteTask('${t.id}')" style="text-align:center;margin-top:12px;color:#c0392b;font-size:13px;cursor:pointer">Delete task</div>`}`;
+  const _ew=document.getElementById("task-inner"); if(_ew) _ew.classList.add("wide");
+  _taGrow(document.getElementById("task-notes"));
   openModal("task-modal");
 }
 // Reschedule a task to a new due date. Unlike a silent edit, this is tracked:
@@ -22551,7 +22689,7 @@ function _prioBody(wk, roNow, isClosed){
   const dayLbl=(d)=>{ if(!d) return 'no date'; try{ return new Date(d+"T00:00:00").toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short'}); }catch(e){ return d; } };
 
   // who the lists get made for
-  const picker=roNow?'':`<details style="margin-bottom:13px;background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:10px 14px">
+  const picker=roNow?'':`<details id="prio-picker" ${window.__prioPickerOpen?'open':''} ontoggle="window.__prioPickerOpen=this.open" style="margin-bottom:13px;background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:10px 14px">
     <summary style="cursor:pointer;font-size:13px;font-weight:600;color:#111">Who gets a list &middot; ${people.length} ${people.length===1?'person':'people'}</summary>
     <div style="font-size:12.5px;color:#566070;margin:8px 0 9px">Tick anybody who should get their own weekly list. It stays this way every week until you change it.</div>
     <div style="display:flex;flex-wrap:wrap;gap:9px 18px">
@@ -22836,4 +22974,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-20n maintenance-check, forward-box-clears -->
+<!-- build: 2026-09-21b add-task-wider, stay-put-on-tick, contractor-search-everywhere -->
