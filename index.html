@@ -15259,6 +15259,13 @@ function _nfPermitItems(today){
   });
   return out;
 }
+function _nfSideTaskMine(x, c, me){
+  if(!me) return false;
+  const owner=(typeof _sqWhoOf==='function') ? _sqWhoOf(x) : String((x&&x.who)||'').trim();
+  if(owner) return _sameAssignee(owner, me);
+  if(c && c.pm) return _sameAssignee(c.pm, me);
+  return _sameAssignee(String((x&&x.by)||''), me);   // nobody named, and no PM on the house
+}
 function _nfMineOnly(){
   // A project director sees the house-level nudges for every house; everybody else
   // sees the houses they are the PM on.
@@ -15328,12 +15335,27 @@ function _nfItems(){
     });
   }catch(e){}
   // 2 - side tasks that asked to come back up today
+  //
+  // Bruce, 21 Sept: "why is it on Marlo's task list to get approval of the SOW for
+  // 38 S Weyant from Tommy and Kam? That should only be on the Project Manager's task
+  // list or their notification box, it should not be on Marlo."
+  //
+  // It was never a task - it is a side task Bruce put on the 38 S. Weyant card himself,
+  // with his own name on it. The reason it reached Marlo is that this used to show side
+  // tasks to EVERY approver: the filter read "only my houses, unless you can approve",
+  // and Senior Administrative Assistant is an approving role. So Marlo, Tommy, Andy and
+  // Samantha were each being handed every side task on all 58 houses.
+  //
+  // A side task already records who it is for. That is the answer - it goes to that
+  // person and nobody else. If nobody was named it belongs to whoever runs the house.
+  // The comparison goes through _sameAssignee, so "Andrew" and "Andrew Scrape" are not
+  // read as two different people.
   try{
     (typeof propCards!=='undefined'?propCards:[]).forEach(function(c){
       if(c.archived) return;
-      if(_nfMineOnly() && me && c.pm && c.pm!==me) return;
       _sqList(c).forEach(function(x){
         if(!_sqDue(x)) return;
+        if(!_nfSideTaskMine(x, c, me)) return;
         push({ id:'sq:'+c.id+':'+x.id, icon:'🧩', tone:'amber',
           text:x.t||'a side task', sub:(c.addr||'a property')+' · side task, ready to look at',
           when:x.at||today, click:"openPropDetail('"+c.id+"')" });
@@ -23283,4 +23305,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-21d andrew-is-andrew-scrape -->
+<!-- build: 2026-09-21e side-tasks-go-to-their-owner -->
