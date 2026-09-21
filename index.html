@@ -2012,10 +2012,31 @@ function _dhScan(){
       cards.filter(function(c){ return /Listed on the Market/.test(c.phase||'') && !String(c.listingAgent||'').trim(); })
            .map(function(c){ return {id:c.id, addr:c.addr, detail:'listing agent not set'}; }));
 
-  add('permits','Waiting on permits that nobody is tracking',
-      'The house says it is permitted and is sitting in Waiting Permits, but the Permit Tracker has no row for it - so there is no number, no status and no date to chase.',
-      cards.filter(function(c){ return c.phase==='Waiting Permits' && !_hasPermitRows(c); })
-           .map(function(c){ return {id:c.id, addr:c.addr, detail:'no rows in the Permit Tracker'}; }));
+  add('permits','Ticked as permitted, but nothing on the Permit Tracker',
+      'Every house marked permitted needs its permit written down - number, jurisdiction, status and inspections - or there is nothing for anybody to chase. This is work for the architect.',
+      cards.filter(function(c){ return _permitGap(c) && ['Closed','Occupied / Closed','In Contract'].indexOf(c.phase)<0; })
+           .map(function(c){ return {id:c.id, addr:c.addr, detail:c.phase+' \u00b7 no rows in the Permit Tracker'}; }));
+
+  add('permitwait','Waiting on permits with nothing on the tracker',
+      'Sitting in Waiting Permits with no permit row at all, so nobody can say what is being waited on.',
+      cards.filter(function(c){ return c.phase==='Waiting Permits' && !_hasPermitRows(c) && !_isPermittedCard(c); })
+           .map(function(c){ return {id:c.id, addr:c.addr, detail:'not ticked permitted either'}; }));
+
+  add('breakdown','Budget breakdown that no longer adds up',
+      'The Budgeted figure was changed but the base and contingency underneath it were not, so the card shows a total with a breakdown that disagrees with it.',
+      cards.filter(function(c){
+        const cl=c.checklists||{};
+        const b=_dhMoney(cl.budget_base), bud=_dhMoney(c.budget);
+        return b!=null && bud!=null && Math.abs(b-bud)>1;
+      }).map(function(c){
+        const b=_dhMoney((c.checklists||{}).budget_base), bud=_dhMoney(c.budget);
+        return {id:c.id, addr:c.addr, detail:'card says $'+Math.round(bud).toLocaleString()+', breakdown still says $'+Math.round(b).toLocaleString()};
+      }));
+
+  add('insp','Inspections that never reached the property card',
+      'Jen has them on the Permit Tracker, but they are not among the steps on the house, so nobody working the card can see them. The Permit Tracker has a button to put them there.',
+      ((typeof _inspMissingOnCards==='function')?_inspMissingOnCards():[])
+        .map(function(m){ return {id:m.card.id, addr:m.card.addr, detail:_calEsc(m.label)}; }));
 
   const byId={}; cards.forEach(function(c){ byId[c.id]=c; });
   add('booked','Bookings that came and went',
@@ -2458,7 +2479,25 @@ function _cardSubPhaseNames(card){
   return names;
 }
 function _isCardOnlySub(name){ return SUB_PHASES.indexOf(name)<0; }
+// Bruce, 21 Sept: "when a property is clicked yes permitted, the sub phases that pop up
+// should be the inspections Jen adds in the permit tracker for that property, on top of
+// the mandatory subphases I put in in the settings."
+// Both halves were built - the settings list and the card's own extras are merged by
+// _cardSubPhaseNames - but the inspections were being hidden again on the way out.
+// Anything matching /inspection/ defaulted to "permitted properties only", and three
+// houses carrying real permits (2808 Powell, 427-439 Hanford, 5120 Bigelow) never had
+// the permitted tick set. So 34 inspections Jen had entered were written onto those
+// cards and then filtered straight back off them.
+// The tick is somebody's memory. A tracker row is the evidence. If the Permit Tracker
+// has written an inspection or a permit step onto THIS card, that step exists, and it
+// shows - whatever the tick says.
+function _spFromTracker(name, card){
+  if(!card || !Array.isArray(card.subPhases)) return false;
+  if(!INSPECTION_SUB_RE.test(name||'') && !PERMIT_SUB_RE.test(name||'')) return false;
+  return card.subPhases.some(function(s){ return String(s.name||'')===String(name); });
+}
 function _spApplies(name, card){
+  if(_spFromTracker(name, card)) return true;
   const mode = SUBPHASE_APPLIES[name] || (/(permit approval|inspection)/i.test(name||'') ? 'permitted' : 'all');
   if(mode==='all') return true;
   const perm = !!(card && card.checklists && card.checklists.permitted==='yes');
@@ -2568,8 +2607,29 @@ async function saveWorkflowSettings(cfg){
 // Known name variants, folded to the one name we use. Add a line here whenever a
 // person turns out to have two spellings in the wild; everything that groups people
 // reads through _canonName, so one entry fixes every screen at once.
+// Bruce, 21 Sept: run the name cleanup properly rather than leaving it as a button.
+// Property cards store the PM as a bare first name (Alex, Isaiah, Gabe) while tasks and
+// profiles carry the full name. Every screen already reads those as one person, but the
+// records disagree, so anything reading the database straight sees two. Folding them here
+// fixes every screen at once - and it is what lets a PDF be built "for everything this
+// person is the PM on", which needs the two spellings to be the same person.
+//
+// "andrew" is DELIBERATELY not in this list. Andrew Scrape is a Project Manager and
+// Idoko Andrew is the senior VA, and a bare "Andrew" could honestly be either. Guessing
+// would quietly post somebody else's work onto their list. Bruce decides that one.
 const PERSON_ALIASES = {
-  "tom":"Tommy", "tommy":"Tommy", "tom harr":"Tommy", "tommy harr":"Tommy", "thomas":"Tommy"
+  "tom":"Tommy", "tommy":"Tommy", "tom harr":"Tommy", "tommy harr":"Tommy", "thomas":"Tommy",
+  "alex":"Alex Bacallao", "alex bacallao":"Alex Bacallao",
+  "isaiah":"Isaiah Stinson", "isaiah stinson":"Isaiah Stinson",
+  "gabe":"Gabe Wasem", "gabe wasem":"Gabe Wasem",
+  "bruce":"Bruce Barlett", "bruce barlett":"Bruce Barlett", "bruce bartlett":"Bruce Barlett",
+  "marlo":"Marlo Berry-Kinison", "marlo berry-kinison":"Marlo Berry-Kinison",
+  "jen":"Jennifer Tatum", "jenn":"Jennifer Tatum", "jennifer":"Jennifer Tatum", "jennifer tatum":"Jennifer Tatum",
+  "patience":"patience ochefije", "patience ochefije":"patience ochefije",
+  "andrew scrape":"Andrew Scrape",
+  "idoko":"Idoko Andrew", "idoko andrew":"Idoko Andrew", "va andy":"Idoko Andrew",
+  "katie":"Katie Harr", "katie harr":"Katie Harr",
+  "will":"Will Harr", "will harr":"Will Harr"
 };
 function _canonName(n){
   const raw=String(n==null?'':n).trim();
@@ -7143,6 +7203,14 @@ function _wmBudNote(c){
   const base=String(cl.budget_base||'').trim();
   const cont=String(cl.budget_contingency||'').trim();
   if(!base || !cont) return '';
+  // The breakdown is only worth printing if it agrees with the number above it. On
+  // 8 Hide Away Hills the Budgeted figure was raised to $441,400 but the base was left
+  // at $185,560, so the card was showing a total with a breakdown that did not add up
+  // to it - two different answers to the same question, stacked on top of each other.
+  // Say the breakdown is out of date rather than quietly contradicting the total.
+  const n=(v)=>{ const x=parseFloat(String(v||'').replace(/[^0-9.\-]/g,'')); return isNaN(x)?null:x; };
+  const b=n(base), bud=n(c&&c.budget);
+  if(b!=null && bud!=null && Math.abs(b-bud)>1) return 'breakdown is out of date';
   const trim=(v)=>v.replace(/\.00$/,'');
   return trim(base)+' + '+trim(cont)+' contingency';
 }
@@ -10974,6 +11042,9 @@ function openWeeklyMeeting(kind, week){
           body.permits = ((!_isPermittedCard(c) && _hasPermitRows(c))
               ? `<div style="background:#FFF7E0;border:0.5px solid #EAD9A8;border-radius:9px;padding:9px 12px;font-size:13px;color:#633806;margin-bottom:10px">This house is <b>not ticked as permitted</b> on its card, but the Permit Tracker has live permits for it. The tracker is what is showing below. Worth ticking the card so every other screen agrees.</div>`
               : '')
+            + (_permitGap(c)
+              ? `<div style="background:#FDF3F2;border:0.5px solid #F0C9C4;border-radius:9px;padding:9px 12px;font-size:13px;color:#B42318;margin-bottom:10px">This house is <b>ticked as permitted</b> but has nothing on the Permit Tracker &mdash; no number, no jurisdiction, no inspections. Until ${_calEsc(String(_wmRolePerson('Architect')||'Jen').split(' ')[0])} puts it on the tracker there is nothing here to chase.${roNow?'':`<div style="margin-top:7px">${_roleBtn(_jen,'Task for '+String(_jen).split(' ')[0])}</div>`}</div>`
+              : '')
             + _wmPermitBlock(c)
             + _sub('Comments on permits')
             + ta2(c.id+'::permc','Where the permits actually stand, in your words&hellip;',44)
@@ -14303,6 +14374,17 @@ function _hasPermitRows(c){
   }catch(e){ return false; }
 }
 function _wmShowPermits(c){ return _isPermittedCard(c) || _hasPermitRows(c); }
+// Bruce, 21 Sept: "any property card marked as yes permitted, Jen needs to be filling
+// something out as well in the permit section for every property that is marked having
+// permits."
+// So a ticked card with nothing behind it on the Permit Tracker is not a quiet gap any
+// more - it is an outstanding job with a name on it. The tick says a permit exists; the
+// tracker is where it has to be written down, with its number, its jurisdiction and its
+// inspections, or nobody can chase it.
+function _permitGap(c){ return _isPermittedCard(c) && !_hasPermitRows(c); }
+function _permitGapCards(){
+  return (typeof propCards!=='undefined'?propCards:[]).filter(function(c){ return !c.archived && _permitGap(c); });
+}
 // The day the permits actually came through, for a permitted house.
 // First choice is the stamp written when it cleared Waiting Permits. Houses that
 // cleared before that stamp existed fall back to the permit tracker: the day the LAST
@@ -16484,6 +16566,46 @@ async function _permitInspSubphase(permit, ins, passed){
   c.subPhases=subs;
   return true;
 }
+// Every inspection on the tracker that never made it onto its property card. They
+// mostly pre-date the write-through, or were added while the address had not been
+// matched to a card yet. Reading it is cheap, so the card, the maintenance check and
+// the Sync button all ask the same question here.
+function _inspMissingOnCards(){
+  const out=[];
+  const rows=(typeof _permitList==='function')?_permitList():[];
+  rows.forEach(function(r){
+    const c=(typeof _permitProp==='function')?_permitProp(r):null;
+    if(!c) return;
+    const have=(Array.isArray(c.subPhases)?c.subPhases:[]).map(function(s){ return String(s.name||''); });
+    _permitInsps(r).forEach(function(ins){
+      const label=_permitInspLabel(ins);
+      if(have.indexOf(label)<0) out.push({permit:r, ins:ins, card:c, label:label});
+    });
+  });
+  return out;
+}
+// Put them there. One pass, reported plainly - nothing is removed and nothing that is
+// already on a card is touched, so running it twice changes nothing the second time.
+async function _inspSyncCards(){
+  if(_blockIfReadOnly()) return;
+  const miss=_inspMissingOnCards();
+  if(!miss.length){ alert("Every inspection on the tracker is already on its property card."); return; }
+  const by={};
+  miss.forEach(function(m){ (by[m.card.addr]=by[m.card.addr]||[]).push(m.label); });
+  const lines=Object.keys(by).sort().map(function(a){ return '\u2022 '+a+' \u2014 '+by[a].length+' inspection'+(by[a].length===1?'':'s'); });
+  if(!confirm("Add "+miss.length+" inspection"+(miss.length===1?'':'s')+" from the Permit Tracker onto the property cards?\n\n"+lines.join('\n')+"\n\nNothing is removed and nothing already on a card is changed.")) return;
+  let ok=0; const bad=[];
+  for(const m of miss){
+    let done=false;
+    try{ done=await _permitInspSubphase(m.permit, m.ins, !!m.ins.done); }catch(e){}
+    if(done){ ok++; } else { bad.push(m.card.addr+' \u2014 '+m.label); }
+  }
+  try{ await loadPropertiesFromSupabase(); }catch(e){}
+  _logAudit("updated","permit","Inspections", "Copied "+ok+" inspection"+(ok===1?'':'s')+" from the Permit Tracker onto the property cards");
+  if(bad.length) alert(ok+" added. "+bad.length+" could not be:\n\n"+bad.slice(0,12).join('\n'));
+  else alert(ok+" inspection"+(ok===1?'':'s')+" added to the property cards.");
+  try{ _permitRerender(); }catch(e){}
+}
 // ---- The permit's own two subphases ------------------------------------------
 // Bruce's rule: when a job is marked permitted we do NOT auto-stamp "MEPS Permit
 // Approval" and "Pending Permit Approval" on it any more. The Permit Tracker is
@@ -17044,6 +17166,8 @@ function _permitInspBody(){
           <input id="ins-n-${r.id}" placeholder="Framing, electrical rough-in, final occupancy…" style="padding:5px 9px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:270px"/>
           <select id="ins-w-${r.id}" style="padding:5px 7px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px">${PERMIT_INSP_WHEN.map(w=>`<option value="${w[0]}">${w[1]}</option>`).join('')}</select>
           <button onclick="_permitInspAdd('${r.id}')" style="padding:5px 13px;border:none;border-radius:6px;background:#122A4A;color:#fff;font-size:12.5px;font-weight:600;cursor:pointer">Add inspection</button>
+          ${(function(){ const n=(typeof _inspMissingOnCards==='function')?_inspMissingOnCards().length:0;
+            return n?`<button onclick="_inspSyncCards()" title="Some inspections on the tracker are not on their property cards yet" style="margin-left:7px;padding:5px 13px;border:0.5px solid #EAD9A8;border-radius:6px;background:#FFF7E0;color:#633806;font-size:12.5px;font-weight:600;cursor:pointer">Put ${n} onto the property cards</button>`:''; })()}
           <span style="font-size:11px;color:#566070">added as step ${_permitInsps(r).length+1} &mdash; reorder with the arrows</span>
         </div></td></tr>`;
     const _ih=(t,w)=>`<th style="text-align:center;padding:5px 8px;font-size:9px;font-weight:700;color:#a8b0bd;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap${w?(';width:'+w):''}">${t}</th>`;
@@ -20411,21 +20535,23 @@ function openAddTask(dateStr, pre){
     <button class="modal-close" onclick="closeModal('task-modal')">✕</button>
     <h2>Add task</h2>
     <div class="error-msg" id="task-err"></div>
+    <div class="form-row"><label>Task</label><input type="text" id="task-title" placeholder="What needs to get done" /></div>
     <div class="tm-cols">
     <div>
-    <div class="form-row"><label>Task</label><input type="text" id="task-title" placeholder="What needs to get done" /></div>
     <div class="form-row"><label>Header / category <span style="font-size:11px;color:#566070">— start typing; close matches come up, anything new is kept</span></label>
       ${_taField('task-cat',{items:_taHeaderItems(),free:true,placeholder:'e.g. Build Scope of Work',hint:'This is what shows on the calendar.'})}
     </div>
     <div class="form-row" id="task-cat-new-row" style="display:none"><input type="hidden" id="task-cat-new" /></div>
-    <div class="form-row"><label>Assign to (pick any number — leave all unchecked for Unassigned)</label>
-      <div style="border:0.5px solid #ddd;border-radius:8px;padding:4px;max-height:150px;overflow-y:auto;background:#fff">${asgChecks}</div>
-    </div>
     <div class="form-two">
       <div class="form-row"><label>Start date (optional)</label><input type="date" id="task-start" /></div>
       <div class="form-row"><label>Due date</label><input type="date" id="task-due" value="${_calEsc(dateStr||"")}" /></div>
     </div>
     <div class="form-row"><label>Time (optional)</label><input type="time" id="task-due-time" /><div style="font-size:12px;color:#566070;margin-top:4px">Leave blank for an all-day task.</div></div>
+    </div>
+    <div>
+    <div class="form-row"><label>Assign to (pick any number — leave all unchecked for Unassigned)</label>
+      <div style="border:0.5px solid #ddd;border-radius:8px;padding:4px;max-height:150px;overflow-y:auto;background:#fff">${asgChecks}</div>
+    </div>
     <div class="form-two">
       <div class="form-row"><label>Repeat</label>
         <select id="task-repeat" onchange="_taskRepeatToggle()">
@@ -20441,10 +20567,12 @@ function openAddTask(dateStr, pre){
     ${_taskPropField(null,null,"")}
     <div class="form-row"><label>Refer questions to (optional)</label><input type="text" id="task-refer" list="task-refer-list" placeholder="Type or pick a name" /><datalist id="task-refer-list">${referList}</datalist></div>
     </div>
+    </div>
+    <div class="tm-cols" style="border-top:0.5px solid #2a2a2a;padding-top:14px;margin-top:2px">
     <div>
     <div class="form-row"><label>Notes / comments (optional)</label><textarea id="task-notes" rows="6" oninput="_taGrow(this)" placeholder="Everything the person needs to do this without asking a question — what, where, who to call, what done looks like." class="tm-notes" style="width:100%;resize:vertical;line-height:1.5"></textarea></div>
-    <div class="tm-steps">${_newStepsField()}</div>
     </div>
+    <div class="tm-steps">${_newStepsField()}</div>
     </div>
     <input type="hidden" id="task-edit-id" value="" />
     <button class="btn-full" onclick="saveTask(this)">Add task</button>`;
@@ -20472,7 +20600,10 @@ function openAddTask(dateStr, pre){
 function _taGrow(el){
   if(!el) return;
   try{
-    const cap=Math.round(window.innerHeight*0.62);
+    // The notes box now sits below the fields rather than beside them, so a box that
+    // grows to two thirds of the window pushes the Add task button a long way down.
+    // Cap it tighter and let the box scroll past that - you can still drag it bigger.
+    const cap=Math.min(480, Math.round(window.innerHeight*0.45));
     el.style.height='auto';
     el.style.height=Math.min(cap, Math.max(el.scrollHeight+2, parseInt(getComputedStyle(el).minHeight,10)||0))+'px';
   }catch(e){}
@@ -22567,6 +22698,85 @@ function _chkTrackerBody(){
 // goes out once the meeting is marked finished - Bruce's rule, so a half-walked meeting
 // never lands in somebody's inbox as their week.
 const PRIO_DEFAULT = ['Jennifer Tatum','Marlo Berry-Kinison','patience ochefije','Idoko Andrew'];
+// ---- What goes in a person's PDF depends on the job they do --------------------
+// Bruce, 21 Sept: "essentially, job role by job role."
+//   task    a list of their own work - Jen, Marlo, Patience, VA Andy, and the default
+//   pm      "a recap of what the full project team meeting recap looks like, but only
+//           for their role, only for properties they're assigned to"
+//   start   "tasks from anything he's assigned to, anything for upcoming takedowns,
+//           anything he's a project manager for" - Gabe, start of project
+//   end     the same shape, pointed at the houses coming to an end instead
+//   realtor "recaps on properties two weeks out from being finished, and for the
+//           properties they are assigned to specifically"
+const PRIO_ROLE_KIND = {
+  'project manager':'pm',
+  'project director':'pm',
+  'start of project assistant':'start',
+  'end of project assistant':'end',
+  'realtor':'realtor'
+};
+const PRIO_START_PHASES = ['Upcoming Takedowns','Occupied / Closed','Vacant / On Standby','Pre Construction'];
+const PRIO_END_PHASES   = ['Finishes','Pre List / Punchout Process','Rental Handoff Process','Listed on the Market / Final Inspections'];
+// A realtor wants a house on their radar before it is ready, not after it is listed.
+const PRIO_REALTOR_DAYS = 14;
+function _prioRoleOf(person){
+  const u=((typeof getUsers==='function')?getUsers():[]).find(function(x){
+    const n=((x.firstName||'')+' '+(x.lastName||'')).trim();
+    return _sameAssignee(n, person);
+  });
+  return u ? String(u.role||'') : '';
+}
+function _prioKindOf(person){
+  return PRIO_ROLE_KIND[_prioRoleOf(person).toLowerCase()] || 'task';
+}
+function _prioKindLabel(k){
+  return k==='pm'      ? 'Meeting recap &middot; the houses they run'
+       : k==='start'   ? 'Their work, the takedowns coming up, and the houses they run'
+       : k==='end'     ? 'Their work, the houses coming to an end, and the houses they run'
+       : k==='realtor' ? 'Houses about to be ready, and the ones they are on'
+       : 'Everything on their plate this week and next';
+}
+// Houses this person runs. The PM is stored on the card as a bare first name and the
+// person is a full name, which is exactly what PERSON_ALIASES now folds together.
+function _prioMyCards(person){
+  return (typeof propCards!=='undefined'?propCards:[])
+    .filter(function(c){ return !c.archived && c.pm && _sameAssignee(c.pm, person); });
+}
+function _prioIsAgent(c, person){
+  const a=String((c&&c.listingAgent)||'').trim();
+  return !!a && _sameAssignee(a, person);
+}
+// "Two weeks out from being finished": an estimated finish inside the window, or the
+// house has already reached the phases that mean finishing.
+function _prioNearFinish(c){
+  if(!c || c.archived) return false;
+  if(/Listed on the Market$/.test(c.phase||'') || c.phase==='In Contract' || c.phase==='Closed') return false;
+  const est=((c.checklists||{}).est_finish)||'';
+  if(est){
+    const d=Math.round((_dParse(est)-_dParse(_ymd(new Date())))/86400000);
+    if(d<=PRIO_REALTOR_DAYS) return true;
+  }
+  return c.phase==='Finishes' || c.phase==='Pre List / Punchout Process'
+      || c.phase==='Listed on the Market / Final Inspections';
+}
+// The meeting recap for one house, in the words the room actually wrote. This is the
+// "full project team meeting recap, but only for their properties" Bruce asked for.
+function _prioRecapFor(wk, c){
+  const N=(((window._wmData||{})[wk]||{})['team'])||{};
+  const n=(f)=>String(N[c.id+'::'+f]||'').trim();
+  const bits=[];
+  const push=(label,txt)=>{ if(txt) bits.push({label:label, text:txt}); };
+  push('How last week went', n('lastc'));
+  push('Wins', n('wins'));
+  push('This week &amp; next', n('nextc'));
+  push('Timeline &amp; budget', n('money'));
+  push('Permits', n('permc'));
+  const carry=(typeof _wmCarryFor==='function'?_wmCarryFor(wk,c.id):[]).filter(function(x){ return !x.done; });
+  const m=(typeof _wmCalc==='function')?_wmCalc(c):null;
+  return { pid:c.id, label:c.addr||'', phase:c.phase||'', bits:bits, carry:carry,
+           money:m?{b:m.b, s:m.s, left:m.left}:null,
+           vacancy:c.vacancyDate||'', closing:c.closingDate||'', sell:c.closingDateSell||'' };
+}
 // Who gets a list is a standing choice, so it is read forward from the last week that
 // set it rather than re-picked every Monday.
 function _prioPeople(wk){
@@ -22638,7 +22848,45 @@ function _prioBuild(person, wk){
   return list;
 }
 function _prioCount(person, wk){
-  return _prioBuild(person, wk).reduce(function(n,g){ return n+g.items.length+g.extra.length; },0);
+  const p=_prioPack(person, wk);
+  return p.groups.reduce(function(n,g){ return n+g.items.length+g.extra.length; },0) + p.recaps.length;
+}
+// ---- One person's whole PDF, assembled by what they do -------------------------
+// Everybody keeps their task list - a PM still has jobs of their own. What changes by
+// role is what gets added ALONGSIDE it, and which houses get a recap.
+function _prioPack(person, wk){
+  const kind=_prioKindOf(person);
+  const groups=_prioBuild(person, wk);
+  const cards=(typeof propCards!=='undefined'?propCards:[]).filter(function(c){ return !c.archived; });
+  const mine=_prioMyCards(person);
+  const seen={}; const recaps=[]; const notes=[];
+  const addRecap=(c, why)=>{ if(!c || seen[c.id]) return; seen[c.id]=true;
+    const r=_prioRecapFor(wk,c); r.why=why; recaps.push(r); };
+
+  if(kind==='pm'){
+    mine.forEach(function(c){ addRecap(c,'you are the PM'); });
+    if(!mine.length) notes.push('No houses are assigned to them on the property cards, so there is nothing to recap. Set the PM on the card and this fills itself in.');
+  } else if(kind==='start' || kind==='end'){
+    const phases=(kind==='start')?PRIO_START_PHASES:PRIO_END_PHASES;
+    mine.forEach(function(c){ addRecap(c,'you are the PM'); });
+    cards.filter(function(c){ return phases.indexOf(c.phase)>=0; })
+         .forEach(function(c){ addRecap(c, kind==='start'?'coming up':'coming to an end'); });
+  } else if(kind==='realtor'){
+    cards.filter(function(c){ return _prioIsAgent(c,person) && _prioNearFinish(c); })
+         .forEach(function(c){ addRecap(c,'your listing'); });
+    cards.filter(function(c){ return _prioIsAgent(c,person) && !_prioNearFinish(c); })
+         .forEach(function(c){ addRecap(c,'your listing'); });
+    // Nobody has a listing agent set on the board yet, so a realtor would open an empty
+    // PDF. Show the houses that are nearly ready anyway, clearly marked as unassigned -
+    // that is the whole point of the list, and it says what needs fixing.
+    const orphan=cards.filter(function(c){ return _prioNearFinish(c) && !String(c.listingAgent||'').trim(); });
+    orphan.forEach(function(c){ addRecap(c,'no listing agent set'); });
+    if(orphan.length) notes.push(orphan.length+' of these have no listing agent on the card yet, so they are here for everyone until somebody is put on them.');
+  }
+
+  const num=(x)=>{ const m=String(x||'').match(/\d+/); return m?parseInt(m[0],10):999999; };
+  recaps.sort(function(a,b){ return num(a.label)-num(b.label)||String(a.label).localeCompare(String(b.label)); });
+  return { kind:kind, role:_prioRoleOf(person), groups:groups, recaps:recaps, notes:notes };
 }
 async function _prioSetNote(wk, person, pid, val){
   const m=Object.assign({}, _prioNotes(wk));
@@ -22680,6 +22928,29 @@ async function _prioSetPeople(wk){
 }
 
 // ---- the panel ----------------------------------------------------------------
+// The recap of one house, as it will read on the PDF. Same words the room wrote in the
+// meeting - this is a copy of the meeting for the houses that are this person's, not a
+// second document somebody has to keep up to date.
+function _prioRecapHtml(r, esc){
+  const money=r.money && (r.money.b!=null || r.money.s!=null)
+    ? `<div style="font-size:11.5px;color:#566070;margin-top:5px">Budget ${r.money.b!=null?('$'+Math.round(r.money.b).toLocaleString()):'&mdash;'} &middot; spent ${r.money.s!=null?('$'+Math.round(r.money.s).toLocaleString()):'&mdash;'}${r.money.left!=null?(' &middot; <b style="color:'+(r.money.left<0?'#B42318':'#0F7B54')+'">'+(r.money.left<0?'over by $'+Math.round(-r.money.left).toLocaleString():'$'+Math.round(r.money.left).toLocaleString()+' left')+'</b>'):''}</div>` : '';
+  const dates=[r.vacancy?('vacant '+r.vacancy):'', r.closing?('we close '+r.closing):'', r.sell?('sells '+r.sell):''].filter(Boolean).join(' &middot; ');
+  const bits=r.bits.length ? r.bits.map(function(b){
+      return `<div style="margin-top:7px"><div style="font-size:10.5px;font-weight:700;color:#566070;text-transform:uppercase;letter-spacing:.04em">${b.label}</div>
+        <div style="font-size:12.5px;color:#222;white-space:pre-wrap;line-height:1.45">${esc(b.text)}</div></div>`; }).join('')
+    : `<div style="font-size:12.5px;color:#636b7a;margin-top:6px">Nothing was written about this one in the meeting.</div>`;
+  const carry=r.carry.length ? `<div style="margin-top:8px;background:#FFFCF4;border:0.5px solid #EAD9A8;border-radius:7px;padding:7px 10px">
+      <div style="font-size:10.5px;font-weight:700;color:#8A5A10;text-transform:uppercase;letter-spacing:.04em">Still carrying</div>
+      ${r.carry.map(function(x){ return `<div style="font-size:12.5px;color:#633806;padding:2px 0">&bull; ${esc(x.text)}</div>`; }).join('')}
+    </div>` : '';
+  return `<div style="border:0.5px solid #e6e8ee;border-radius:9px;margin-top:10px;overflow:hidden">
+    <div style="background:#F1F5FB;padding:7px 12px;border-bottom:0.5px solid #e2e8f2;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">
+      <span style="font-size:12.5px;font-weight:700;color:#111">${esc(r.label)}</span>
+      <span style="font-size:11px;color:#566070">${esc(r.phase)}</span>
+      ${r.why?`<span style="margin-left:auto;font-size:10.5px;color:#185FA5;background:#E7EFF8;padding:1px 8px;border-radius:99px">${r.why}</span>`:''}
+    </div>
+    <div style="padding:8px 12px">${money}${dates?`<div style="font-size:11.5px;color:#566070;margin-top:3px">${dates}</div>`:''}${bits}${carry}</div></div>`;
+}
 function _prioBody(wk, roNow, isClosed){
   const people=_prioPeople(wk);
   const sent=_prioSent(wk);
@@ -22712,8 +22983,9 @@ function _prioBody(wk, roNow, isClosed){
   const sel=_prioTab();
   const show = (sel==='all') ? people : people.filter(function(p){ return _sameAssignee(p,sel); });
   const blocks=(show.length?show:people).map(function(person){
-    const groups=_prioBuild(person, wk);
-    const n=groups.reduce(function(a,g){ return a+g.items.length+g.extra.length; },0);
+    const pack=_prioPack(person, wk);
+    const groups=pack.groups;
+    const n=groups.reduce(function(a,g){ return a+g.items.length+g.extra.length; },0)+pack.recaps.length;
     const late=groups.reduce(function(a,g){ return a+g.items.filter(function(i){ return i.late; }).length; },0);
     const when=sent[person];
     const body=groups.length?groups.map(function(g){
@@ -22743,6 +23015,14 @@ function _prioBody(wk, roNow, isClosed){
         <div style="padding:8px 12px">${rows}${xrows}${note}${adder}</div></div>`;
     }).join(''):`<div style="font-size:12.5px;color:#636b7a;padding:10px 0">Nothing on ${esc(person.split(' ')[0])}&rsquo;s plate for this week or next.</div>`;
 
+    // What their job adds on top of their own list.
+    const recapBlock = pack.recaps.length
+      ? `<div style="margin-top:13px"><div style="font-size:11px;font-weight:700;color:#566070;text-transform:uppercase;letter-spacing:.05em">${pack.kind==='realtor'?'Coming ready':'Meeting recap'} &middot; ${pack.recaps.length} ${pack.recaps.length===1?'house':'houses'}</div>${pack.recaps.map(function(r){ return _prioRecapHtml(r, esc); }).join('')}</div>`
+      : (pack.kind==='task' ? '' : `<div style="margin-top:11px;font-size:12.5px;color:#636b7a">No houses to recap for this role yet.</div>`);
+    const roleNote = pack.notes.length
+      ? `<div style="margin-top:9px;background:#FFF7E0;border:0.5px solid #EAD9A8;border-radius:8px;padding:7px 11px;font-size:12px;color:#633806">${pack.notes.map(esc).join('<br/>')}</div>`
+      : '';
+
     // somewhere to put work that belongs to no house at all
     const loose=false;   // always offer it: this is where houseless work gets added now
     const lid='pl-'+_wmReschedId(person);
@@ -22757,12 +23037,13 @@ function _prioBody(wk, roNow, isClosed){
     return `<details style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;margin-bottom:11px;overflow:hidden" ${(sel!=='all'||n)?'open':''}>
       <summary style="cursor:pointer;padding:11px 15px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <span style="font-size:14.5px;font-weight:700;color:#111">${esc(person)}</span>
-        <span style="font-size:12px;color:#566070">${n} job${n===1?'':'s'}</span>
+        ${pack.role?`<span style="font-size:10.5px;color:#185FA5;background:#E7EFF8;padding:2px 8px;border-radius:99px">${esc(pack.role)}</span>`:''}
+        <span style="font-size:12px;color:#566070">${n} item${n===1?'':'s'}</span>
         ${late?`<span style="font-size:10.5px;font-weight:700;color:#B42318;background:#FBEAE8;padding:2px 8px;border-radius:99px">${late} late</span>`:''}
         ${when?`<span style="font-size:10.5px;font-weight:700;color:#0F7B54;background:#E6F4ED;padding:2px 8px;border-radius:99px">sent ${esc(String(when).slice(0,10))}</span>`:''}
         <span style="margin-left:auto"><span onclick="event.preventDefault();event.stopPropagation();_prioPreview('${_argEsc(person)}','${wk}')" style="cursor:pointer;font-size:12px;color:#185FA5;text-decoration:underline">Preview their PDF</span></span>
       </summary>
-      <div style="padding:0 15px 14px">${body}${looseAdd}</div>
+      <div style="padding:0 15px 14px">${roleNote}${body}${looseAdd}${recapBlock}</div>
     </details>`;
   }).join('');
 
@@ -22775,7 +23056,8 @@ function _prioBody(wk, roNow, isClosed){
 // Printing this page is how you get a paper or PDF copy by hand; the Monday mailer
 // builds its own from the same saved list.
 function _prioPreview(person, wk){
-  const groups=_prioBuild(person, wk);
+  const pack=_prioPack(person, wk);
+  const groups=pack.groups;
   const esc=_calEsc;
   const dayLbl=(d)=>{ if(!d) return ''; try{ return new Date(d+"T00:00:00").toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long'}); }catch(e){ return d; } };
   const R=_wmRange(wk,2);
@@ -22787,6 +23069,21 @@ function _prioPreview(person, wk){
     }).join('');
     return `<section><h2>${esc(g.label)}</h2><table>${items}</table>${g.note?`<p class="n">${esc(g.note)}</p>`:''}</section>`;
   }).join('');
+  // The recap half of the PDF - what their job adds on top of their own list.
+  const money=(m)=>{ if(!m) return ''; const f=(v)=>v==null?'&mdash;':('$'+Math.round(v).toLocaleString());
+    return `<p class="m">Budget ${f(m.b)} &middot; spent ${f(m.s)}${m.left!=null?(' &middot; <b'+(m.left<0?' class="over"':'')+'>'+(m.left<0?('over by '+f(-m.left)):(f(m.left)+' left'))+'</b>'):''}</p>`; };
+  const recaps=pack.recaps.map(function(r){
+    const dates=[r.vacancy?('vacant '+r.vacancy):'', r.closing?('we close '+r.closing):'', r.sell?('sells '+r.sell):''].filter(Boolean).join(' &middot; ');
+    const bits=r.bits.length?r.bits.map(function(b){
+        return `<p class="lb">${b.label}</p><p class="bd">${esc(b.text)}</p>`; }).join('')
+      : `<p class="bd" style="color:#566070">Nothing was written about this one in the meeting.</p>`;
+    const carry=r.carry.length?`<p class="lb">Still carrying</p><ul>${r.carry.map(function(x){ return '<li>'+esc(x.text)+'</li>'; }).join('')}</ul>`:'';
+    return `<section><h2>${esc(r.label)}<span class="c"> &middot; ${esc(r.phase)}${r.why?(' &middot; '+r.why):''}</span></h2>${money(r.money)}${dates?`<p class="m">${dates}</p>`:''}${bits}${carry}</section>`;
+  }).join('');
+  const recapHead=pack.recaps.length
+    ? `<h3>${pack.kind==='realtor'?'Coming ready':'Meeting recap'} &mdash; ${pack.recaps.length} ${pack.recaps.length===1?'house':'houses'}</h3>` : '';
+  const roleNote=pack.notes.length?`<p class="warn">${pack.notes.map(esc).join('<br/>')}</p>`:'';
+
   const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(person)} — week of ${esc(R.from)}</title>
   <style>
     @page{margin:18mm 16mm}
@@ -22800,11 +23097,19 @@ function _prioPreview(person, wk){
     .c{font-size:11px;color:#566070}
     p.n{margin:7px 0 0;font-size:12.5px;color:#333;background:#F7F8FB;border-left:3px solid #cdd7e6;padding:7px 10px;white-space:pre-wrap}
     .empty{font-size:13px;color:#566070}
+    h3{font-size:12px;margin:26px 0 8px;text-transform:uppercase;letter-spacing:.05em;color:#566070;border-bottom:.5px solid #d8dce6;padding-bottom:4px}
+    p.lb{margin:9px 0 1px;font-size:10.5px;font-weight:700;color:#566070;text-transform:uppercase;letter-spacing:.04em}
+    p.bd{margin:0;font-size:12.5px;line-height:1.45;white-space:pre-wrap}
+    p.m{margin:2px 0;font-size:11.5px;color:#566070} b.over{color:#B42318}
+    p.warn{font-size:12px;color:#633806;background:#FFF7E0;border-left:3px solid #EAD9A8;padding:7px 10px;margin:0 0 14px}
+    ul{margin:2px 0 0 16px;padding:0} li{font-size:12.5px;padding:1px 0}
     @media print{ .noprint{display:none} }
   </style></head><body>
-  <h1>${esc(person)} &mdash; priorities for the week</h1>
-  <div class="sub">Week of ${esc(R.from)} &middot; from the Monday project team meeting</div>
-  ${rows||'<p class="empty">Nothing on the list for this week.</p>'}
+  <h1>${esc(person)} &mdash; the week ahead</h1>
+  <div class="sub">Week of ${esc(R.from)} &middot; from the Monday project team meeting${pack.role?(' &middot; '+esc(pack.role)):''}</div>
+  ${roleNote}
+  ${rows?('<h3>On your plate</h3>'+rows):(pack.recaps.length?'':'<p class="empty">Nothing on the list for this week.</p>')}
+  ${recapHead}${recaps}
   <p class="noprint" style="margin-top:26px;font-size:12px;color:#566070">Use your browser&rsquo;s Print &rarr; Save as PDF to keep a copy.</p>
   </body></html>`;
   const w=window.open('','_blank');
@@ -22974,4 +23279,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-21b add-task-wider, stay-put-on-tick, contractor-search-everywhere -->
+<!-- build: 2026-09-21c role-based-PDFs, inspections-on-the-card, budget-breakdown-honesty -->
