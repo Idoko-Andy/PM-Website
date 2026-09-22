@@ -10592,7 +10592,43 @@ function _wmSnap(){
     try{ snap.s=a.selectionStart; snap.e=a.selectionEnd; }catch(err){}
     snap.vals[a.id]=a.value;      // whatever is in the focused box right now
   }
+  // Bruce, 21 Sept: "Alex was sitting in the meeting reading off the screen and it
+  // would just close out one of the drop downs and shoot him up to the top."
+  // Every tick anybody in the room makes redraws the whole document on everybody
+  // else's screen. Putting the scroll back to the same PIXEL only works if nothing
+  // above you changed height - and in a live meeting things above you are changing
+  // height constantly, because that is what the room is doing. So remember the house
+  // you were actually looking at and how far down the screen it sat, and put THAT
+  // back. The pixel is only the fallback for when the house has gone.
+  try{
+    const cards=document.querySelectorAll('#dash-body details[data-wm-prop]');
+    // Prefer the house whose heading is sitting at the top of the screen - that is the
+    // one being read. Fall back to the one the top of the screen is inside.
+    for(let i=0;i<cards.length;i++){
+      const r=cards[i].getBoundingClientRect();
+      if(r.top >= -24){ snap.anchor=cards[i].getAttribute('data-wm-prop'); snap.anchorTop=r.top; break; }
+    }
+    if(!snap.anchor){
+      for(let i=0;i<cards.length;i++){
+        const r=cards[i].getBoundingClientRect();
+        if(r.bottom > 0){ snap.anchor=cards[i].getAttribute('data-wm-prop'); snap.anchorTop=r.top; break; }
+      }
+    }
+  }catch(err){}
   return snap;
+}
+// Put the page back where the reader had it, by the house rather than by the pixel.
+function _wmRestoreScroll(snap){
+  if(!snap) return;
+  if(snap.anchor){
+    const el=document.querySelector('#dash-body details[data-wm-prop="'+snap.anchor+'"]');
+    if(el){
+      const drift=el.getBoundingClientRect().top-(snap.anchorTop||0);
+      if(Math.abs(drift)>0.5) window.scrollBy(0, drift);
+      return;
+    }
+  }
+  if(snap.y>0) window.scrollTo(0, snap.y);
 }
 // Put it back. Typing beats a redraw, every time.
 function _wmUnsnap(snap){
@@ -10625,9 +10661,11 @@ openWeeklyMeeting = function(kind, week){
   const snap = same ? _wmSnap() : null;
   const y = same ? snap.y : 0;
   const r = _wmOpenRaw.apply(this, arguments);
+  window.__wmLastRenderAt = Date.now();
   if(same){
-    const put=function(){ if(y>0) window.scrollTo(0,y); _wmUnsnap(snap); };
-    put(); requestAnimationFrame(put); setTimeout(put,0); setTimeout(put,70);
+    const put=function(){ _wmRestoreScroll(snap); _wmUnsnap(snap); };
+    put(); requestAnimationFrame(put); setTimeout(put,0); setTimeout(put,70); setTimeout(put,180);
+    void y;
   }
   _wmPollStart();
   if(!same){ try{ _wmRefreshFinancials(); }catch(e){} }
@@ -10700,6 +10738,17 @@ function _wmSameVal(a,b){
 // Meta keys that change on their own and that nothing on screen depends on. These must
 // never cost anybody a sentence.
 const WM_QUIET_META = ['__opened'];
+// Reading counts too. Somebody scrolling down a house is using the screen just as
+// much as somebody typing in it, and rebuilding the document mid-scroll is what makes
+// it feel broken. Two and a half seconds of stillness and the redraw goes ahead.
+document.addEventListener('scroll', function(){ window.__wmLastScrollAt=Date.now(); }, true);
+document.addEventListener('wheel',  function(){ window.__wmLastScrollAt=Date.now(); }, {capture:true, passive:true});
+function _wmReadingNow(){ return (Date.now()-(window.__wmLastScrollAt||0)) < 2500; }
+// Ticks arrive in bursts while the room works through a house. Each one used to redraw
+// every other screen within nine seconds. Hold structural redraws to one every twelve
+// seconds so a burst becomes a single redraw instead of five.
+const WM_RENDER_GAP_MS=12000;
+function _wmRenderTooSoon(){ return (Date.now()-(window.__wmLastRenderAt||0)) < WM_RENDER_GAP_MS; }
 // Is somebody's cursor in a box right now, or was it a moment ago?
 function _wmTypingNow(){
   const a=document.activeElement;
@@ -10715,7 +10764,7 @@ function _wmRenderWhenIdle(kind, week){
     if(!window.__wmPendingRender || !document.querySelector('[data-wm-prop]')){
       clearInterval(window.__wmIdleTimer); window.__wmIdleTimer=null; window.__wmPendingRender=null; return;
     }
-    if(_wmTypingNow()) return;
+    if(_wmTypingNow() || _wmReadingNow() || _wmRenderTooSoon()) return;
     const pnd=window.__wmPendingRender;
     window.__wmPendingRender=null;
     clearInterval(window.__wmIdleTimer); window.__wmIdleTimer=null;
@@ -10748,9 +10797,9 @@ async function _wmPollTick(){
     el.value=theirs[k]; _wmLiveFlash(el); changed++;
   });
   if(structural){
-    // Somebody closed or reopened the meeting - the screen genuinely has to change.
-    // It can wait a couple of seconds for the person mid-sentence.
-    if(_wmTypingNow()) _wmRenderWhenIdle(kind, window.__wmLastWeek||undefined);
+    // The screen genuinely has to change - but not out from under somebody mid-sentence,
+    // mid-scroll, or five times in a row while the room ticks its way down a house.
+    if(_wmTypingNow() || _wmReadingNow() || _wmRenderTooSoon()) _wmRenderWhenIdle(kind, window.__wmLastWeek||undefined);
     else openWeeklyMeeting(kind, window.__wmLastWeek||undefined);
     return;
   }
@@ -10783,7 +10832,7 @@ async function _wmPollCarried(kind){
   // These are whole blocks of the screen, not one box, so the screen has to be redrawn -
   // but not out from under somebody mid-sentence. Unsaved typing is carried across the
   // redraw by the draft snapshot either way.
-  if(_wmTypingNow()) _wmRenderWhenIdle(kind, window.__wmLastWeek||undefined);
+  if(_wmTypingNow() || _wmReadingNow() || _wmRenderTooSoon()) _wmRenderWhenIdle(kind, window.__wmLastWeek||undefined);
   else openWeeklyMeeting(kind, window.__wmLastWeek||undefined);
 }
 // When each meeting actually runs. Bruce, 13 Sept: "the listings meeting is every
@@ -23305,4 +23354,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-21e side-tasks-go-to-their-owner -->
+<!-- build: 2026-09-22a meeting-holds-your-place -->
