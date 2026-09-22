@@ -4602,6 +4602,161 @@ function _canOpenPropCard(u){
   if(u.isSuperAdmin) return true;
   return NO_PROP_CARD_ROLES.indexOf(u.role) < 0;
 }
+// ===================== THE PROPERTY CARD'S TABS =====================
+// Bruce, 22 Sept: "kind of how we have the project dashboard, how there's tabs across
+// the top, and then each of them show their own thing ... I think we need to have tabs
+// going across on the property cards."
+// The card had grown into one very long scroll - property info, sub phases, notes, side
+// tasks, then four more panels of "everything on this house". Everything below the money
+// header now lives on a tab, in the order he asked for: Project Info (with the notes
+// under it), Sub Phases / Tasks (with the side tasks under it), Permits - which only
+// appears when the house is ticked permitted, the same way the meeting does it - and
+// History.
+//
+// Every edit on this card re-runs openPropDetail(id) from scratch, so the chosen tab has
+// to be remembered per house or ticking a sub phase would throw you back to Project Info
+// mid-job. That is exactly the kind of thing that made Alex lose his place in the
+// meeting, and it is not going to happen here.
+function _pdTabs(c){
+  const t=[{key:'info', label:'\u{1F4CB} Project Info'},
+           {key:'work', label:'\u{1F528} Sub Phases / Tasks'}];
+  if(typeof _isPermittedCard==='function' && _isPermittedCard(c)) t.push({key:'permits', label:'\u{1F4C4} Permits'});
+  t.push({key:'history', label:'\u{1F553} History'});
+  return t;
+}
+function _pdTab(c){
+  const tabs=_pdTabs(c).map(function(x){ return x.key; });
+  const want=(window.__pdTab||{})[c.id];
+  return (want && tabs.indexOf(want)>=0) ? want : 'info';
+}
+function _pdTabTo(pid, key){
+  (window.__pdTab=window.__pdTab||{})[pid]=key;
+  if(typeof openPropDetail==='function') openPropDetail(pid);
+}
+function _pdTabBar(c){
+  const sel=_pdTab(c);
+  const btn=(t)=>{
+    const on=(t.key===sel);
+    return `<button onclick="_pdTabTo('${c.id}','${t.key}')" style="padding:7px 14px;border-radius:8px;font-size:13px;font-weight:${on?'700':'500'};cursor:pointer;border:0.5px solid ${on?'#122A4A':'#dfe4ec'};background:${on?'#122A4A':'#fff'};color:${on?'#fff':'#333'}">${t.label}</button>`;
+  };
+  return `<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:13px">${_pdTabs(c).map(btn).join('')}</div>`;
+}
+
+// ---- History ------------------------------------------------------------------
+// "everything on this house, everything from the meetings that's checked off, the
+// questions answered." Read-only on purpose: this is the record of what happened, not
+// another place to type. Newest week first, because that is the one somebody is
+// checking against.
+function _pdHistWeeks(pid){
+  const d=(window._wmData||{});
+  const weeks=Object.keys(d).filter(function(w){ return /^\d{4}-\d{2}-\d{2}$/.test(w); }).sort().reverse();
+  const NOTE=[['lastc','How last week went'],['wins','Wins'],['nextc','This week &amp; next'],
+              ['money','Timeline &amp; budget'],['permc','Permits'],['access','Access, tenants &amp; utilities'],['close','Closing &amp; vacancy']];
+  const out=[];
+  weeks.forEach(function(w){
+    const T=((d[w]||{}).team)||{};
+    const notes=[];
+    NOTE.forEach(function(pair){
+      const v=String(T[pid+'::'+pair[0]]||'').trim();
+      if(v) notes.push({label:pair[1], text:v});
+    });
+    // which topics the room actually closed out that week
+    const tm=(T.__topic && typeof T.__topic==='object')?T.__topic:{};
+    const covered=[];
+    Object.keys(tm).forEach(function(k){
+      if(k.indexOf(pid+'::')!==0) return;
+      const rec=tm[k];
+      const st=(rec && rec.state==='ready')?'ready':'done';
+      if(st!=='done') return;
+      covered.push({key:k.slice(pid.length+2), by:(rec&&rec.by)||'', auto:!!(rec&&rec.auto)});
+    });
+    // carried lines that got ticked off that week
+    const cm=(T.__carry && typeof T.__carry==='object')?T.__carry:{};
+    const carry=(Array.isArray(cm[pid])?cm[pid]:[]);
+    const closed=carry.filter(function(x){ return x && x.done; });
+    const still =carry.filter(function(x){ return x && !x.done; });
+    if(notes.length || covered.length || closed.length || still.length)
+      out.push({week:w, notes:notes, covered:covered, closed:closed, still:still});
+  });
+  return out;
+}
+function _pdHistTopicLabel(c, key){
+  const list=(typeof _wmTopicsFor==='function')?_wmTopicsFor(c):[];
+  const hit=list.filter(function(t){ return t.key===key; })[0];
+  if(hit) return hit.title;
+  if(key==='__covered') return 'The whole house, walked';
+  if(key==='__ready')   return 'Prepared before the meeting';
+  return key;
+}
+function _pdHistory(c){
+  const esc=_calEsc;
+  const weeks=_pdHistWeeks(c.id);
+  const qs=((typeof _miAll==='function')?_miAll('q'):[]).filter(function(x){ return x.pid===c.id; });
+  const lags=((typeof _miAll==='function')?_miAll('lag'):[]).filter(function(x){ return x.pid===c.id; });
+  const answered=qs.filter(function(x){ return x.answered; });
+  const openQ  =qs.filter(function(x){ return !x.answered; });
+  const closedL=lags.filter(function(x){ return x.closed; });
+  const openL  =lags.filter(function(x){ return !x.closed; });
+
+  const panel=(title, count, inner)=>`
+    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden;margin-bottom:12px">
+      <div style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;font-size:13px;font-weight:600;color:#111">${title}
+        <span style="font-size:12px;color:#566070;font-weight:400">${count}</span></div>
+      <div style="padding:10px 14px">${inner}</div></div>`;
+  const none=(t)=>`<div style="font-size:12.5px;color:#636b7a;padding:4px 0">${t}</div>`;
+  const wkLabel=(w)=>{ try{ return new Date(w+'T00:00:00').toLocaleDateString(undefined,{day:'numeric',month:'long',year:'numeric'}); }catch(e){ return w; } };
+
+  const qRow=(x, done)=>`<div style="padding:7px 0;border-bottom:0.5px solid #f4f5f7">
+      <div style="font-size:13.5px;color:#111">${done?'<span style="color:#16794C;font-weight:700">✓</span> ':''}${esc(x.text||'')}</div>
+      <div style="font-size:11px;color:#636b7a;margin-top:2px">${x.by?('raised by '+esc(x.by)):'raised'}${x.raised?(' · '+esc(x.raised)):''}${x.who?(' · for '+esc(x.who)):''}</div>
+      ${done&&x.answer?`<div style="font-size:13px;color:#14532d;background:#EAF6EF;border-left:3px solid #9DD3B4;padding:6px 10px;border-radius:0 6px 6px 0;margin-top:4px;white-space:pre-wrap">${esc(x.answer)}</div>`:''}
+    </div>`;
+
+  const qPanel = panel('Questions asked on this house', `&middot; ${answered.length} answered, ${openQ.length} still open`,
+    (qs.length ? (openQ.map(function(x){ return qRow(x,false); }).join('')+answered.map(function(x){ return qRow(x,true); }).join(''))
+               : none('Nobody has raised a question on this house in a meeting yet.')));
+
+  const lPanel = (lags.length) ? panel('Long-lead items', `&middot; ${closedL.length} closed, ${openL.length} open`,
+    openL.map(function(x){ return qRow(x,false); }).join('')+closedL.map(function(x){ return qRow(x,true); }).join('')) : '';
+
+  const wkBlock=(w)=>`
+    <div style="border-left:3px solid #CFE0F2;padding:0 0 2px 13px;margin-bottom:16px">
+      <div style="font-size:13px;font-weight:700;color:#122A4A">Week of ${esc(wkLabel(w.week))}</div>
+      ${w.covered.length?`<div style="margin-top:5px;display:flex;flex-wrap:wrap;gap:5px">${w.covered.map(function(t){
+          return `<span style="font-size:10.5px;font-weight:600;color:#0F7B54;background:#E6F4ED;padding:2px 8px;border-radius:99px">✓ ${esc(_pdHistTopicLabel(c,t.key))}</span>`; }).join('')}</div>`:''}
+      ${w.notes.map(function(n){ return `<div style="margin-top:7px">
+          <div style="font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#5B6472">${n.label}</div>
+          <div style="font-size:13.5px;color:#222;line-height:1.5;white-space:pre-wrap">${esc(n.text)}</div></div>`; }).join('')}
+      ${w.closed.length?`<div style="margin-top:7px">
+          <div style="font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#5B6472">Ticked off that week</div>
+          ${w.closed.map(function(x){ return `<div style="font-size:13px;color:#14532d;padding:2px 0">✓ ${esc(x.text||'')}</div>`; }).join('')}</div>`:''}
+      ${w.still.length?`<div style="margin-top:7px">
+          <div style="font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#8A5A10">Still carrying from that week</div>
+          ${w.still.map(function(x){ return `<div style="font-size:13px;color:#6b5310;padding:2px 0">○ ${esc(x.text||'')}</div>`; }).join('')}</div>`:''}
+    </div>`;
+
+  const mPanel = panel('From the Monday meetings', `&middot; ${weeks.length} week${weeks.length===1?'':'s'}`,
+    (weeks.length ? weeks.map(wkBlock).join('')
+                  : none('This house has not come up in a project team meeting yet, or the meetings have not loaded. Open the Monday meeting once and it fills in.')));
+
+  const loading = (window._wmData===undefined || window._wmData===null)
+    ? `<div style="background:#FFF7E0;border:1px solid #EAD9A8;border-radius:8px;padding:9px 13px;font-size:12.5px;color:#6b5310;margin-bottom:12px">The meetings have not loaded into this screen yet. Open Monday&rsquo;s Project Team Meeting once and come back &mdash; the history fills in.</div>` : '';
+
+  return `<div style="margin-top:2px">
+    <div style="font-size:12.5px;color:#566070;margin-bottom:11px">Everything this house has been through &mdash; what the room covered each week, what was written about it, what got ticked off, and every question raised on it. Read-only.</div>
+    ${loading}${mPanel}${qPanel}${lPanel}</div>`;
+}
+
+// Bruce, 21 Sept: "any property card marked as yes permitted, Jen needs to be filling
+// out something as well in the permit section for every property that is marked having
+// permits." The tab exists because the house is ticked permitted - so if there is
+// nothing on the tracker for it, the tab says so instead of showing an empty box.
+function _pdPermitNudge(c){
+  if(typeof _permitGap!=='function' || !_permitGap(c)) return '';
+  return `<div style="background:#FFF7E0;border:1px solid #EAD9A8;border-radius:8px;padding:11px 14px;margin-top:12px;font-size:13.5px;color:#6b5310">
+    <b>This house is ticked permitted, but there is nothing on the Permit Tracker for it.</b>
+    Jen fills in the permit and its inspections there; until she does, the permit sub phases cannot be scheduled and this tab stays empty.</div>`;
+}
 function openPropDetail(id) {
   if(!_canOpenPropCard()){
     if(typeof showAccessDenied==='function') showAccessDenied("Your role sees the property board, not the individual property cards. The Kickoff Meeting is where you add and fill in a property.");
@@ -4724,7 +4879,7 @@ function _pdPermits(pid){
     const pr=(typeof _permitProp==='function')?_permitProp(r):null; return pr && pr.id===pid;
   });
 }
-function _pdLinked(c){
+function _pdLinked(c, which){
   const today=_ymd(new Date());
   const wrap=(title, count, sub, inner, openWhat)=>`
     <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden;margin-top:12px">
@@ -4855,6 +5010,14 @@ function _pdLinked(c){
         <div style="padding:0 12px 4px">${_chkCardTab(c)}</div>
       </details></div>`;
   }
+  // Bruce, 22 Sept: the card is now tabbed, so these panels get handed out to the
+  // tab that owns them rather than all landing in one wall at the bottom.
+  //   'work'    the work on this house  -> the Sub Phases / Tasks tab
+  //   'permits' the permit block        -> the Permits tab (only on a permitted house)
+  //   'info'    trackers and checklists -> the Project Info tab
+  if(which==='work')    return `${taskPanel}${evPanel}`;
+  if(which==='permits') return perPanel;
+  if(which==='info')    return `${trkPanel}${chkPanel}`;
   return `<div style="margin-top:16px">
     <div style="font-size:12px;color:#566070;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">Everything on this house</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
@@ -4963,7 +5126,8 @@ function _pdLinked(c){
         <div style="background:#f4f5f7;border-radius:6px;height:6px;margin-bottom:16px;overflow:hidden">
           <div style="height:100%;width:${Math.min(pct,100)}%;background:${progColor};border-radius:6px"></div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        ${_pdTabBar(c)}
+        <div style="display:${_pdTab(c)==='info'?'grid':'none'};grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:12px;align-items:start">
           <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden">
             <div style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;font-size:13px;font-weight:500;color:#111;display:flex;align-items:center;justify-content:space-between">Property Info${(Date.now()-(window._piSaved||0)<5000)?'<span style="font-size:12px;color:#16794C;font-weight:600;margin-left:auto;margin-right:8px">Saved ✓</span>':''}${_ro_sp?'':`<button onclick="savePropInfo('${c.id}')" style="font-size:12px;padding:3px 10px;border-radius:4px;background:#111;color:#fff;border:none;cursor:pointer">Save Info</button>`}</div>
             <div style="padding:10px 14px">
@@ -5036,6 +5200,15 @@ function _pdLinked(c){
               ${_pdocBody(c)}
             </div>
           </div>
+          <div>
+            <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden">
+              <div style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;font-size:13px;font-weight:500;color:#111;display:flex;align-items:center;justify-content:space-between">Notes${_ro_sp?'':`<button onclick="openPropModal('edit','${c.id}')" style="font-size:12px;padding:3px 10px;border-radius:4px;background:#fff;color:#185FA5;border:0.5px solid #cdd7e6;cursor:pointer">Edit notes</button>`}</div>
+              <div style="padding:10px 14px;font-size:14px;color:${c.notes?'#222':'#636b7a'};line-height:1.6;white-space:pre-wrap">${c.notes||'No notes added yet.'}</div>
+            </div>
+            ${_pdLinked(c,'info')}
+          </div>
+        </div>
+        <div style="display:${_pdTab(c)==='work'?'grid':'none'};grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:12px;align-items:start">
           <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden">
             <div style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;font-size:13px;font-weight:500;color:#111;display:flex;align-items:center;justify-content:space-between">
               Sub Phases
@@ -5044,14 +5217,10 @@ function _pdLinked(c){
             <div style="padding:10px 14px">${subPhaseRows}</div>
             ${_ro_sp?'':`<div style="padding:0 14px 10px;font-size:11px;color:#566070">Set a start &amp; finish date, then Save. Each scheduled subphase becomes a task for ${c.pm?_calEsc(c.pm):'this property\'s PM'} on the Task Calendar.</div>`}
           </div>
+          <div>${_sqBody(c)}${_pdLinked(c,'work')}${quickAddForms}</div>
         </div>
-        <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden;margin-top:12px">
-          <div style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;font-size:13px;font-weight:500;color:#111">Notes</div>
-          <div style="padding:10px 14px;font-size:14px;color:#566070;line-height:1.6">${c.notes||'No notes added yet.'}</div>
-        </div>
-        ${_sqBody(c)}
-        ${_pdLinked(c)}
-        ${quickAddForms}
+        ${_pdTabs(c).some(function(t){return t.key==='permits';}) ? `<div style="display:${_pdTab(c)==='permits'?'block':'none'}">${_pdLinked(c,'permits')}${_pdPermitNudge(c)}</div>` : ''}
+        <div style="display:${_pdTab(c)==='history'?'block':'none'};max-width:900px">${_pdTab(c)==='history'?_pdHistory(c):''}</div>
         <div style="display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-top:12px">
           ${c.driveUrl ? `<a href="${c.driveUrl}" target="_blank" style="display:flex;align-items:center;gap:5px;padding:7px 14px;font-size:13px;border-radius:6px;cursor:pointer;background:#fff;color:#185FA5;border:0.5px solid #cdd7e6;text-decoration:none">📁 Open Folder ↗</a>` : ''}
           ${_ro_sp ? '' : `<button onclick="openPropModal('edit','${c.id}')" style="display:flex;align-items:center;gap:5px;padding:7px 14px;font-size:13px;border-radius:6px;cursor:pointer;background:#fff;color:#111;border:0.5px solid #ccc">✏️ Edit Property</button>`}
@@ -5071,11 +5240,15 @@ function _pcKind(){
   if(d) d.placeholder = (k==="custom")?"Describe it":"What's being delivered";
 }
 function _pcNewContractor(){
+  // Read what was typed BEFORE _taSet blanks the box - otherwise the "Add Roy Diaz
+  // to the directory" row opened a new-contractor form with an empty name and you
+  // had to type it a second time.
+  const typed=((document.getElementById('pc-ct-q')||{}).value||'').trim();
   _taSet('pc-ct','__new','');
   const q=document.getElementById('pc-ct-q');
   const box=document.getElementById('pc-ct-new'); if(box) box.style.display='';
   const nm=document.getElementById('pc-ct-name');
-  if(nm){ if(q && q.value.trim()) nm.value=q.value.trim(); nm.focus(); }
+  if(nm){ if(typed) nm.value=typed; nm.focus(); }
   if(q) q.value='';
 }
 async function savePropConstruction(propId){
@@ -5288,6 +5461,11 @@ function openPropModal(mode, id) {
       <div style="font-size:12px;color:#566070;margin-top:5px">🏠 Rental status is now set with the Yes/No toggle on the property screen.</div>
     </div>
     <div style="margin-bottom:12px">
+      <label style="display:block;font-size:12px;color:#566070;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">🏚 Vacancy Date</label>
+      <input id="pm-vacancy" type="date" value="${c?c.vacancyDate||'':''}" style="width:100%;padding:7px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:14px;color:#111;background:#fff;outline:none" />
+      <div style="font-size:12px;color:#566070;margin-top:5px">When the house comes empty. Drives the takedown list and the days-accumulated clock.</div>
+    </div>
+    <div style="margin-bottom:12px">
       <label style="display:block;font-size:12px;color:#566070;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">📁 Project Drive Folder URL</label>
       <input id="pm-drive" type="url" value="${c?c.driveUrl||'':''}" placeholder="https://drive.google.com/drive/folders/..." style="width:100%;padding:7px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:14px;color:#111;background:#fff;outline:none" />
     </div>
@@ -5310,9 +5488,12 @@ function openPropModal(mode, id) {
       driveUrl: (document.getElementById("pm-drive") ? document.getElementById("pm-drive").value.trim() : (c ? c.driveUrl || '' : '')),
       isRental: (document.getElementById("pm-rental") ? document.getElementById("pm-rental").value === "yes" : (c ? c.isRental : false)),
       closingDate: (document.getElementById("pm-closing") ? (document.getElementById("pm-closing").value || "") : (c ? c.closingDate || "" : "")),
+      // Bruce, 22 Sept: "Create the card" from an unmatched Slack address was
+      // prefilling a vacancy date into a box that did not exist, so the date the
+      // Slack check found was silently thrown away every time. There is a box now.
+      vacancyDate: (document.getElementById("pm-vacancy") ? (document.getElementById("pm-vacancy").value || "") : (c ? c.vacancyDate || "" : "")),
       // Carried through untouched - this modal has no inputs for them, and leaving
       // them out makes _propCardToRow null them out on save.
-      vacancyDate: c ? c.vacancyDate || "" : "",
       closingDateSell: c ? c.closingDateSell || "" : "",
       jvDeal: c ? !!c.jvDeal : false,
       estProfit: c ? c.estProfit || "" : "",
@@ -8280,7 +8461,15 @@ async function _wmCarryAdd(wk,pid,inputId){
   const list=(Array.isArray(m[pid])?m[pid]:[]).slice();
   list.push({ id:'k'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), text:txt, from:wk, by:_miWho() });
   m[pid]=list;
-  if(await _wmSetMeta(wk,'team','__carry',m)){ if(el) el.value=''; openWeeklyMeeting('team', window.__wmLastWeek||undefined); }
+  // Clearing el.value is not enough: what you typed is also held in __wmDirty so a
+  // re-render does not eat it mid-sentence, and _wmUnsnap was putting it straight
+  // back into the fresh empty box. It read as if Add had failed, so people pressed
+  // Add again and got the item twice. _miAdd and _sqAdd already do this.
+  if(await _wmSetMeta(wk,'team','__carry',m)){
+    if(el) el.value='';
+    if(typeof _wmDraftClear==='function') _wmDraftClear(inputId);
+    openWeeklyMeeting('team', window.__wmLastWeek||undefined);
+  }
 }
 function _wmCarryBlock(wk, c, roNow){
   const list=_wmCarryFor(wk,c.id);
@@ -10463,11 +10652,21 @@ async function _unmLoad(){
   try{ const d=await _pmSettingsRead('unmatched_addresses'); window._unmData=(d&&typeof d==='object')?d:{}; }catch(e){ window._unmData=window._unmData||{}; }
 }
 async function _unmSet(key, patch){
+  // This used to write the whole record from this browser's copy, so dismissing one
+  // address put back every address somebody else had dismissed since your page
+  // loaded - and wiped whatever the 8am Slack check had added in the meantime. Same
+  // trap the meeting notes already got caught in; same fix: merge just this one row
+  // into a freshly read record.
   const d=Object.assign({}, window._unmData||{});
   d[key]=Object.assign({}, d[key]||{}, patch);
-  const err=await _pmSettingsWrite('unmatched_addresses', d);
-  if(err){ alert("That was NOT saved"+(err.message?(" - "+err.message):"")+"."); return false; }
-  window._unmData=d; return true;
+  const r=await _pmMergeWrite('unmatched_addresses', d, [[key]]);
+  if(r && r.err){
+    const why=(r.err && r.err.message) ? r.err.message : (typeof r.err==='string' ? r.err : '');
+    alert("That was NOT saved"+(why?(" - "+why):"")+".");
+    return false;
+  }
+  window._unmData=(r && r.base) ? r.base : d;
+  return true;
 }
 async function _unmDismiss(key){
   if(_blockIfReadOnly()) return;
@@ -10576,7 +10775,7 @@ function _wmTdTopics(wk, c, roNow, ta2, kn){
 
   const body={};
   body.access = _sub('What has to be lined up before day one')
-    + ta2(c.id+'::tdnotes','Access, tenants, utilities, anything the room needs to line up before day one&hellip;',52)
+    + ta2(c.id+'::access','Access, tenants, utilities, anything the room needs to line up before day one&hellip;',52)
     + addBoth;
 
   body.last = `<div style="font-size:11.5px;color:#566070;margin-bottom:6px">${lastR.from} &rarr; ${lastR.to}</div>`
@@ -10772,7 +10971,7 @@ function _wmInMeetingEl(el){
 function _wmMarkDirty(e){
   const el=e.target;
   if(!_wmInMeetingEl(el)) return;
-  if(!document.querySelector('[data-wm-prop]')) return;   // only inside a meeting
+  if(!_wmDocOpen()) return;                               // only inside a meeting
   window.__wmLastKeyAt=Date.now();
   window.__wmDirty[el.id]=el.value;
 }
@@ -10979,12 +11178,22 @@ function _wmTypingNow(){
      && a.closest && a.closest('#dash-body')) return true;
   return (Date.now()-(window.__wmLastKeyAt||0)) < 2500;
 }
+// Bruce, 22 Sept: Alex was being thrown out of the meeting and back to a dashboard.
+// Three places asked "is a meeting open?" by looking for a [data-wm-prop] property
+// card - but only four of the meeting tabs draw one. The Job Role PDFs tab draws
+// none, the Listings and Company meetings draw none, and the construction tab draws
+// none when the list happens to be empty. On any of those the live refresher decided
+// no meeting was open and redrew the last dashboard over the top of it, and the
+// live-sync poller shut itself down so two people stopped seeing each other's work.
+// The meeting shell now stamps itself, so the test is about the meeting, not about
+// whether that particular tab happened to draw a house.
+function _wmDocOpen(){ return !!document.querySelector('[data-wm-doc]'); }
 // A redraw that has to happen, held until the room stops typing.
 function _wmRenderWhenIdle(kind, week){
   window.__wmPendingRender={kind:kind, week:week};
   if(window.__wmIdleTimer) return;
   window.__wmIdleTimer=setInterval(function(){
-    if(!window.__wmPendingRender || !document.querySelector('[data-wm-prop]')){
+    if(!window.__wmPendingRender || !_wmDocOpen()){
       clearInterval(window.__wmIdleTimer); window.__wmIdleTimer=null; window.__wmPendingRender=null; return;
     }
     if(_wmTypingNow() || _wmReadingNow() || _wmRenderTooSoon()) return;
@@ -10995,7 +11204,7 @@ function _wmRenderWhenIdle(kind, week){
   }, 900);
 }
 async function _wmPollTick(){
-  if(!document.querySelector('[data-wm-prop]')){ clearInterval(_wmPollTimer); _wmPollTimer=null; return; }
+  if(!_wmDocOpen()){ clearInterval(_wmPollTimer); _wmPollTimer=null; return; }
   const kind=window.__wmLastKind; if(!kind) return;
   const fresh=await _pmSettingsRead('meeting_notes');
   if(!fresh || typeof fresh!=='object') return;
@@ -11452,7 +11661,7 @@ function openWeeklyMeeting(kind, week){
   // document. The other meetings are still single-column write-ups, so they keep the
   // narrow measure - long lines of prose are genuinely harder to read.
   const _wmWide = (kind==='team');
-  document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div style="padding:20px ${_wmWide?'26px':'20px'};max-width:${_wmWide?'none':'1000px'};margin:0 auto">
+  document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div data-wm-doc="${kind}" data-wm-week="${wk}" style="padding:20px ${_wmWide?'26px':'20px'};max-width:${_wmWide?'none':'1000px'};margin:0 auto">
     <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:4px"><div style="font-size:18px;font-weight:700;color:#111">${titles[kind]||'Weekly Meeting'}</div><div style="font-size:13px;color:#566070">Week of ${_calEsc(_wmLabel(wk))} &middot; ${_wmWhenLabel(kind)}${isPast?' &middot; archived':''}</div></div>
     <div style="font-size:12.5px;color:#566070;margin-bottom:14px">Auto-prefilled from live data. <b style="color:#0F7B54">Everything saves itself as you type</b> — the Save buttons still work, you just don't need them. Notes are shared with everyone for this week's meeting.${isPast?' <b style="color:#8a6d1a">You are looking back at a past week.</b>':''}</div>
     ${_wmArchive(kind, wk)}
@@ -15579,9 +15788,15 @@ function _nfItems(){
   try{
     (typeof _tasksCache!=='undefined'?_tasksCache:[]).forEach(function(t){
       if(t.status==='done') return;
+      // A task shared by two people stays open until BOTH tick it, which is the point.
+      // But it kept sitting in the bell of the person who had already done their half.
+      if(me && typeof _taskStatusFor==='function' && _taskStatusFor(t,me)==='done') return;
       if(!t.due_date || t.due_date>today) return;
       const who=(typeof taskAssignees==='function')?taskAssignees(t):[];
-      if(me && who.length && who.indexOf(me)<0) return;
+      // This was the one assignee test in the app still done by exact string, so a
+      // task on "Andrew" never reached Andrew Scrape's bell and one on "Tom" never
+      // reached Tommy's. Everything else goes through _sameAssignee; now so does this.
+      if(me && who.length && !who.some(function(n){ return _sameAssignee(n,me); })) return;
       if(me && !who.length) return;
       const late=t.due_date<today;
       push({ id:'task:'+t.id+':'+t.due_date, icon: late?'⏰':'📋',
@@ -20195,11 +20410,12 @@ function _caleContractorChange(){
   const n=document.getElementById("cale-newc"); if(n) n.style.display = v==="__new"?"":"none";
 }
 function _caleNewContractor(){
+  const typed=((document.getElementById('cale-contractor-q')||{}).value||'').trim();
   _taSet('cale-contractor','__new','');
   const q=document.getElementById('cale-contractor-q');
   const nm=document.getElementById('cale-newc-name');
   const n=document.getElementById('cale-newc'); if(n) n.style.display='';
-  if(nm){ if(q && q.value.trim()) nm.value=q.value.trim(); nm.focus(); }
+  if(nm){ if(typed) nm.value=typed; nm.focus(); }
   if(q){ q.value=''; q.placeholder='Adding a new contractor below\u2026'; }
 }
 // Reschedule a construction event (tracked, like tasks).
@@ -23066,7 +23282,10 @@ function _prioPeople(wk){
   let w=wk||_wmWeekKeyFor('team');
   for(let i=0;i<12;i++){
     const m=_wmMeta(w,'team','__prio_people');
-    if(m && Array.isArray(m.list) && m.list.length) return m.list.slice();
+    // An explicitly saved empty list used to read the same as "never set", so
+    // unticking everybody and pressing Save did nothing at all - the old list came
+    // straight back from last week. Saved is saved, even when it is nobody.
+    if(m && Array.isArray(m.list) && (m.list.length || m.at)) return m.list.slice();
     w=_wmPrevWeek(w);
   }
   return PRIO_DEFAULT.slice();
@@ -23191,7 +23410,11 @@ async function _prioAdd(wk, person, pid, inputId, dueId){
   list.push({ id:'x'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
               text:text, due:due, pid:pid||'', by:_miWho(), at:new Date().toISOString() });
   m[person]=list;
-  if(await _wmSetMeta(wk,'team','__prio_extra',m)){ if(el) el.value=''; if(dEl) dEl.value=''; openWeeklyMeeting('team', window.__wmLastWeek||undefined); }
+  if(await _wmSetMeta(wk,'team','__prio_extra',m)){
+    if(el) el.value=''; if(dEl) dEl.value='';
+    if(typeof _wmDraftClear==='function'){ _wmDraftClear(inputId); if(dueId) _wmDraftClear(dueId); }
+    openWeeklyMeeting('team', window.__wmLastWeek||undefined);
+  }
 }
 async function _prioDrop(wk, person, id){
   if(_blockIfReadOnly()) return;
@@ -23661,7 +23884,7 @@ async function _liveTick(){
     if(document.hidden) return;
     if(typeof currentUser==='function' && !currentUser()) return;
     if(!document.getElementById('dash-body')) return;
-    if(document.querySelector('[data-wm-prop]')) return;   // a meeting looks after itself
+    if(_wmDocOpen()) return;                                // a meeting looks after itself
     if(!window.__liveScreen) return;                        // nothing redrawable open
     if(_liveBusy()) return;
     const before=_liveStamp();
@@ -23699,4 +23922,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-22c job-role-pdfs, day-by-day-checklist, picker-out-front -->
+<!-- build: 2026-09-22d property-cards-have-tabs, nine-bugs-fixed -->
