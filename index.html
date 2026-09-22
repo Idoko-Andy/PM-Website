@@ -999,6 +999,9 @@ async function _initInner() {
     // Populate the Supabase-backed caches before rendering the home
     await Promise.all([
       loadWorkflowSettings(),
+      // The addresses Slack found that have no property card yet. Read once at sign-in
+      // and again whenever the meeting polls, so the takedown tab can show them.
+      (typeof _unmLoad==='function'?_unmLoad():Promise.resolve()),
       loadPropertiesFromSupabase(),
       loadMonthlyReportsFromSupabase(),
       loadTasks(),
@@ -8122,7 +8125,25 @@ const WM_TOPICS = [
   {key:'lag',     icon:'\u{23F3}',  title:'Lag time & questions',             sub:'carried until somebody closes them'},
   {key:'money',   icon:'\u{1F4B0}', title:'Timeline & budget',                sub:'dates, money, vacancy, closing'}
 ];
-function _wmTopicsFor(c){ return WM_TOPICS.filter(function(t){ return !t.when || t.when(c); }); }
+// Bruce, 22 Sept: "set up the upcoming takedown properties the same way as the
+// construction tab properties, because Marlo and Patience will be the ones putting
+// the most information in."
+// Same machinery - the topics open and close the same way, carry the same Prepared
+// and Covered pills, roll up to the house the same way - but the five headings are
+// the ones a takedown actually has. A house we do not own yet has no permits and no
+// spend; it has access, utilities, tenants and a closing date.
+const WM_TD_TOPICS = [
+  {key:'access', icon:'\u{1F511}', title:'Access, tenants & utilities', sub:'what has to be lined up before day one'},
+  {key:'last',   icon:'\u{1F4C5}', title:'Last week',                   sub:'what was scheduled, and what went right'},
+  {key:'next',   icon:'\u{1F5D3}', title:'This week & next week',       sub:'what is booked'},
+  {key:'lag',    icon:'\u{23F3}',  title:'Lag time & questions',        sub:'carried until somebody closes them'},
+  {key:'close',  icon:'\u{1F4C6}', title:'Closing & vacancy',           sub:'dates, budget, kickoff'}
+];
+function _wmIsTakedown(c){ return !!(c && WM_TAKEDOWN_PHASES.indexOf(c.phase)>=0); }
+function _wmTopicsFor(c){
+  const list=_wmIsTakedown(c) ? WM_TD_TOPICS : WM_TOPICS;
+  return list.filter(function(t){ return !t.when || t.when(c); });
+}
 function _wmTopicMap(wk){ const m=_wmMeta(wk,'team','__topic'); return (m&&typeof m==='object')?m:{}; }
 function _wmTopicDone(wk,pid,key){ return _wmTopicState(wk,pid,key)==='done'; }
 // Bruce, 20 Sept: "as we are preparing for the meeting, mark each category as prepared,
@@ -10330,7 +10351,7 @@ function _wmDaysTo(ds){
 }
 function _wmTakedownBody(wk, notes, prevNotes, roNow, ta2){
   const cards=_wmTakedownCards();
-  if(!cards.length) return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:26px;text-align:center;color:#636b7a;font-size:13.5px">Nothing on the takedown list right now.</div>`;
+  if(!cards.length) return _unmPanel(roNow)+`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:26px;text-align:center;color:#636b7a;font-size:13.5px">Nothing on the takedown list right now.</div>`;
   const kick=_kickCards?null:null;
   const fact=(label,val,tone,sub)=>`<div style="min-width:112px">
       <div style="font-size:9.5px;color:#566070;text-transform:uppercase;letter-spacing:.05em">${label}</div>
@@ -10372,7 +10393,7 @@ function _wmTakedownBody(wk, notes, prevNotes, roNow, ta2){
           ${fact('Kickoff', (kn&&kn.done)?('completed '+_calEsc(kn.wk)):(kn?('started '+_calEsc(kn.wk)):'not run yet'), (kn&&kn.done)?'#0F7B54':'#8a6d1a', (kn&&kn.done)?'notes published to the card':(kn?'not finished — no PDF yet':'price and scope not agreed'))}
         </div>
         ${(kn&&kn.done)?`<div style="margin-top:9px"><button onclick="_kickOpenPDF('${c.id}')" style="padding:6px 13px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">&#128196; Kickoff notes PDF</button></div>`:''}
-        ${secWrapTd('What we need to know before we take it down', ta2(c.id+'::tdnotes','Access, tenants, utilities, anything the room needs to line up before day one&hellip;',52))}
+        ${_wmTdTopics(wk, c, roNow, ta2, kn)}
         ${_sqBody(c, true)}
       </div>
     </details>`;
@@ -10383,7 +10404,209 @@ function _wmTakedownBody(wk, notes, prevNotes, roNow, ta2){
       <div style="font-size:13px;color:#555"><b>${cards.length}</b> coming down${soonN?` &middot; <b style="color:#8a6d1a">${soonN} inside two weeks</b>`:''}${noKick?` &middot; <b style="color:#8a6d1a">${noKick} without a completed kickoff</b>`:''}</div>
       <div style="font-size:12px;color:#566070">Ordered by closing date. The price, comps and scope belong in the Kickoff meeting.</div>
     </div>`;
-  return bar+blocks;
+  return _unmPanel(roNow)+bar+blocks;
+}
+// Lag-time items and questions, drawn once and used by both the construction houses
+// and the takedowns - Bruce asked for the takedown properties to work "the same way",
+// and the surest way to keep them the same is for there to be one copy of them.
+function _miBlockRows(kind, c, roNow){
+  const list=_miFor(kind, c.id);
+  if(!list.length) return kind==='lag'
+    ? '<div style="font-size:12.5px;color:#636b7a;padding:8px 0">Nothing on a long lead right now.</div>'
+    : '<div style="font-size:12.5px;color:#636b7a;padding:8px 0">Nothing waiting on Bruce or Tommy for this one.</div>';
+  return list.map(function(x){
+    const head=`<div style="font-family:ui-monospace,Menlo,monospace;font-size:11px;font-weight:600;color:${_miAgeColor(x.raised)};width:52px;flex-shrink:0;padding-top:2px">${_miAgeLabel(x.raised)}</div>`;
+    const meta = kind==='lag'
+      ? `Raised ${_calEsc(x.raised||'')} by ${_calEsc(x.by||'')}`
+      : `Needs ${_calEsc(x.who||'an answer')} &middot; asked by ${_calEsc(x.by||'')} on ${_calEsc(x.raised||'')}`;
+    const tail = kind==='lag'
+      ? (roNow?(x.note?`<div style="font-size:12px;color:#555;margin-top:5px">${_calEsc(x.note)}</div>`:'')
+             :`<div style="display:flex;gap:10px;align-items:center;margin-top:5px;flex-wrap:wrap">
+                 <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:#566070;cursor:pointer"><input type="checkbox" onchange="_miClose('lag','${x.id}')" style="width:14px;height:14px;cursor:pointer"/>Figured out?</label></div>
+               <textarea onchange="_miNote('lag','${x.id}',this.value)" placeholder="Where did this land this week?" style="width:100%;min-height:30px;margin-top:5px;padding:5px 8px;border:0.5px solid #e6e8ee;border-radius:6px;font-size:12.5px;resize:vertical;font-family:inherit">${_calEsc(x.note||'')}</textarea>`)
+      : (roNow?'':`<div style="margin-top:5px"><button onclick="_miClose('q','${x.id}')" style="padding:3px 10px;border:0.5px solid #cdd7e6;border-radius:6px;background:#fff;font-size:11.5px;color:#185FA5;cursor:pointer">Answer it</button></div>`);
+    return `<div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:0.5px solid #f4f5f7">${head}
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;color:#111">${_calEsc(x.text)}</div>
+        <div style="font-size:11.5px;color:#566070;margin-top:1px">${meta}</div>
+        ${tail}
+      </div></div>`;
+  }).join('');
+}
+function _miBlockAdd(kind, c, roNow){
+  if(roNow) return '';
+  return kind==='lag'
+    ? `<div style="display:flex;gap:7px;margin-top:8px;flex-wrap:wrap"><input id="lag-${c.id}" placeholder="What has a long lead on it?" style="flex:1;min-width:170px;padding:6px 9px;border:0.5px solid #ddd;border-radius:6px;font-size:12.5px"/><button onclick="_miAdd('lag','${c.id}','lag-${c.id}')" style="padding:6px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">Add</button></div>`
+    : `<div style="display:flex;gap:7px;margin-top:8px;flex-wrap:wrap">
+        <input id="q-${c.id}" placeholder="What needs deciding?" style="flex:1;min-width:170px;padding:6px 9px;border:0.5px solid #ddd;border-radius:6px;font-size:12.5px"/>
+        <select id="qw-${c.id}" style="padding:6px 9px;border:0.5px solid #ddd;border-radius:6px;font-size:12.5px"><option>Either</option><option>Bruce</option><option>Tommy</option></select>
+        <button onclick="_miAdd('q','${c.id}','q-${c.id}','qw-${c.id}')" style="padding:6px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">Add</button></div>`;
+}
+function _miBlock(kind, c, roNow){ return _miBlockRows(kind,c,roNow)+_miBlockAdd(kind,c,roNow); }
+// ---- Houses Slack knows about that the board does not ------------------------
+// Bruce, 22 Sept: "can we check Slack once a day for properties that have come vacant
+// or closed and sold that we somehow did not get notified about, so we don't have a
+// property card created for them."
+// The sync that reads those channels has always been told NOT to create a card from an
+// unmatched address - that is Bruce's standing rule, and it is the right one, because a
+// mis-parsed address becomes a junk card somebody has to clean up. But it was only
+// mentioning them in a run summary nobody reads. The 8am check now writes them here and
+// raises a task for Patience, and the room sees the same list on the takedown tab.
+// Nothing on this list is a property card. It is a list of addresses to look at.
+function _unmList(){
+  const d=(typeof window._unmData!=='undefined'&&window._unmData&&typeof window._unmData==='object')?window._unmData:{};
+  return Object.keys(d).map(function(k){ return Object.assign({key:k}, d[k]||{}); })
+    .filter(function(x){ return x.addr && !x.done; })
+    .sort(function(a,b){ return String(b.last_seen||'').localeCompare(String(a.last_seen||'')); });
+}
+async function _unmLoad(){
+  try{ const d=await _pmSettingsRead('unmatched_addresses'); window._unmData=(d&&typeof d==='object')?d:{}; }catch(e){ window._unmData=window._unmData||{}; }
+}
+async function _unmSet(key, patch){
+  const d=Object.assign({}, window._unmData||{});
+  d[key]=Object.assign({}, d[key]||{}, patch);
+  const err=await _pmSettingsWrite('unmatched_addresses', d);
+  if(err){ alert("That was NOT saved"+(err.message?(" - "+err.message):"")+"."); return false; }
+  window._unmData=d; return true;
+}
+async function _unmDismiss(key){
+  if(_blockIfReadOnly()) return;
+  const x=(window._unmData||{})[key]||{};
+  if(!confirm("Take \u201C"+(x.addr||'this address')+"\u201D off the list?\n\nUse this when it is not one of ours, or the card already exists under another spelling.")) return;
+  if(await _unmSet(key,{done:true, doneBy:_miWho(), doneAt:new Date().toISOString()})){
+    _logAudit('updated','property', x.addr||key, 'Taken off the "no property card yet" list');
+    openWeeklyMeeting('team', window.__wmLastWeek||undefined);
+  }
+}
+// Open the normal Add Property form with what Slack told us already filled in. The
+// person still presses Save, so nothing reaches the board without somebody looking.
+function _unmMakeCard(key){
+  if(_blockIfReadOnly()) return;
+  const x=(window._unmData||{})[key]||{};
+  openPropModal('edit', null);
+  setTimeout(function(){
+    const put=(id,v)=>{ const e=document.getElementById(id); if(e && v) e.value=v; };
+    put('pm-addr', x.addr);
+    put('pm-closing', x.closing);
+    put('pm-vacancy', x.vacancy);
+    const ph=document.getElementById('pm-phase');
+    if(ph){ const want = x.vacancy ? 'Vacant / On Standby' : (x.closing ? 'Occupied / Closed' : 'Upcoming Takedowns');
+            const opt=[...ph.options].find(function(o){ return o.value===want; }); if(opt) ph.value=want; }
+    const a=document.getElementById('pm-addr'); if(a) a.focus();
+  }, 60);
+}
+function _unmPanel(roNow){
+  const list=_unmList();
+  if(!list.length) return '';
+  const rows=list.slice(0,25).map(function(x){
+    const bits=[x.closing?('closes '+x.closing):'', x.vacancy?('vacant '+x.vacancy):'', x.channel?('#'+x.channel):''].filter(Boolean).join(' \u00b7 ');
+    return `<div style="padding:8px 0;border-top:0.5px solid #EAD9A8">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap">
+        <span style="font-size:13.5px;font-weight:700;color:#633806">${_calEsc(x.addr)}</span>
+        ${roNow?'':`<span style="display:flex;gap:6px">
+          <button onclick="_unmMakeCard('${_argEsc(x.key)}')" style="padding:4px 11px;background:#122A4A;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600">Create the card</button>
+          <button onclick="_unmDismiss('${_argEsc(x.key)}')" title="Not one of ours, or already on the board under another spelling" style="padding:4px 10px;background:#fff;color:#8A5A10;border:0.5px solid #EAD9A8;border-radius:6px;font-size:12px;cursor:pointer">Not ours</button>
+        </span>`}
+      </div>
+      ${bits?`<div style="font-size:11.5px;color:#8A5A10;margin-top:2px">${_calEsc(bits)}</div>`:''}
+      ${x.permalink?`<div style="margin-top:2px"><a href="${_calEsc(x.permalink)}" target="_blank" rel="noopener" style="font-size:11px;color:#185FA5">the Slack message &rsaquo;</a></div>`:''}
+    </div>`;
+  }).join('');
+  return `<div style="background:#FFFCF4;border:0.5px solid #EAD9A8;border-radius:11px;padding:11px 14px;margin-bottom:12px">
+    <div style="font-size:13.5px;font-weight:700;color:#8A5A10">\u26A0 ${list.length} address${list.length===1?'':'es'} Slack knows about that the board does not</div>
+    <div style="font-size:12px;color:#8A5A10;margin:3px 0 2px;line-height:1.5">These came up in #vacancy-updates or #company-closings as vacant, closed or sold, and there is no property card for them. Nothing has been created &mdash; somebody has to look first.</div>
+    ${rows}${list.length>25?`<div style="font-size:11.5px;color:#8A5A10;padding-top:6px">+ ${list.length-25} more</div>`:''}</div>`;
+}
+// Bruce, 22 Sept: "on the upcoming takedown tab, where the construction tab has
+// 'where everything stands' on the right, I'd just like the address and the vacancy
+// date, in order from closest to vacancy to furthest out."
+// Closest first, because that is the order the room has to worry about them in. A
+// house with no vacancy date sits at the bottom and says so - that is the one somebody
+// needs to go and find out about.
+function _wmTdRail(){
+  const cards=_wmTakedownCards();
+  if(!cards.length) return '';
+  const rows=cards.slice().sort(function(a,b){
+    const av=a.vacancyDate||'', bv=b.vacancyDate||'';
+    if(!av && !bv) return String(a.addr||'').localeCompare(String(b.addr||''));
+    if(!av) return 1; if(!bv) return -1;
+    return av.localeCompare(bv);
+  }).map(function(c){
+    const d=_wmDaysTo(c.vacancyDate);
+    const col = !c.vacancyDate ? '#B42318' : (d!=null && d<0 ? '#0F7B54' : (d!=null && d<=14 ? '#8A5A10' : '#185FA5'));
+    const when = !c.vacancyDate ? 'no date yet'
+               : (d==null ? c.vacancyDate
+               : (d<0 ? ('vacant '+Math.abs(d)+'d ago') : (d===0 ? 'vacant today' : ('in '+d+' day'+(d===1?'':'s')))));
+    return `<div onclick="openPropDetail('${c.id}')" title="Open the property card" style="cursor:pointer;padding:7px 0;border-top:0.5px solid #eef0f6">
+      <div style="font-size:12.5px;font-weight:600;color:#111;line-height:1.3">${_calEsc(c.addr||'')}</div>
+      <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-top:2px">
+        <span style="font-size:11.5px;color:${col};font-weight:600">${_calEsc(c.vacancyDate||'\u2014')}</span>
+        <span style="font-size:10.5px;color:${col}">${when}</span>
+      </div></div>`;
+  }).join('');
+  const none=cards.filter(function(c){ return !c.vacancyDate; }).length;
+  return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:12px 14px">
+    <div style="font-size:12.5px;font-weight:700;color:#111;margin-bottom:2px">\u{1F4C6} Going vacant</div>
+    <div style="font-size:11px;color:#566070;margin-bottom:6px">Closest first${none?(' \u00b7 '+none+' with no date'):''}</div>
+    ${rows}</div>`;
+}
+// The five takedown topics, filled in. Deliberately the same shape as a construction
+// house: what happened, what is booked, what is stuck, and the numbers - so nobody has
+// to learn a second way of reading the document.
+function _wmTdTopics(wk, c, roNow, ta2, kn){
+  const _sub=(t)=>`<div style="font-size:11px;font-weight:600;color:#566070;text-transform:uppercase;letter-spacing:.05em;margin:15px 0 6px">${t}</div>`;
+  const _dt=(v)=>v?_calEsc(v):'&mdash;';
+  const lastR=_wmRange(_wmPrevWeek(wk),1);
+  const fwdR=_wmRange(wk,2);
+  const row=(it)=>`<div style="display:flex;gap:9px;align-items:baseline;padding:5px 0;border-bottom:0.5px solid #f4f5f7">
+      <span style="font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#566070;width:92px;flex-shrink:0">${_calEsc(it.date)}</span>
+      <span style="flex:1;min-width:0">
+        <span style="font-size:14px;color:#111">${_calEsc(it.title)}</span>
+        ${it.sub?`<span style="font-size:11.5px;color:#566070"> &middot; ${_calEsc(it.sub)}</span>`:''}
+        ${it.note?`<div style="font-size:13.5px;color:#333;margin-top:3px;line-height:1.45">${_calEsc(it.note)}</div>`:''}
+      </span></div>`;
+  const listOf=(from,to)=>{ const l=_wmItems(c.id,from,to); return l.length?l.map(row).join('')
+      :`<div style="font-size:12.5px;color:#636b7a;padding:5px 0">Nothing on the calendar for this one.</div>`; };
+  const _marlo=_wmRolePerson('Senior Administrative Assistant')||'Marlo Berry-Kinison';
+  const _pat=_wmRolePerson('Virtual Administrative Assistant')||'patience ochefije';
+  const btn=(who,label)=>roNow?'':`<button onclick="_wmAddTaskFor('${c.id}','${_argEsc(who)}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">&#65291; ${_calEsc(label)}</button>`;
+  const bar=(inner)=>inner?`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;padding-top:9px;border-top:0.5px dashed #e6e8ee">${inner}</div>`:'';
+  const addBoth=bar(btn(_marlo,'Task for '+String(_marlo).split(' ')[0])+btn(_pat,'Task for '+String(_pat).split(' ')[0])
+    +(roNow?'':`<button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #e6e8ee;border-radius:7px;font-size:12.5px;color:#566070;cursor:pointer">&#65291; Task for somebody else</button>`));
+
+  const body={};
+  body.access = _sub('What has to be lined up before day one')
+    + ta2(c.id+'::tdnotes','Access, tenants, utilities, anything the room needs to line up before day one&hellip;',52)
+    + addBoth;
+
+  body.last = `<div style="font-size:11.5px;color:#566070;margin-bottom:6px">${lastR.from} &rarr; ${lastR.to}</div>`
+    + listOf(lastR.from,lastR.to)
+    + _wmCarryBlock(wk, c, roNow)
+    + _sub('How last week actually went') + ta2(c.id+'::lastc','The recap in your words&hellip;',44)
+    + _sub('&#127942; Wins') + ta2(c.id+'::wins','What went right on this one this week?');
+
+  body.next = `<div style="font-size:11.5px;color:#566070;margin-bottom:6px">${fwdR.from} &rarr; ${fwdR.to} &middot; in date order</div>`
+    + listOf(fwdR.from,fwdR.to)
+    + _sub('Anything about what is coming up')
+    + ta2(c.id+'::nextc','One thought per line &mdash; each line carries into next Monday as its own tickable item&hellip;',44)
+    + bar(roNow?'':`<button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">&#65291; Add task</button><button onclick="_wmAddEvent('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#4A7318;cursor:pointer;font-weight:600">&#65291; Add calendar event</button>`);
+
+  body.lag = _sub('Lag-time items &middot; carried until they close')
+    + _miBlock('lag', c, roNow)
+    + _sub('Questions for Bruce / Tommy &middot; carried until answered')
+    + _miBlock('q', c, roNow);
+
+  const dTo=_wmDaysTo(c.closingDate), vTo=_wmDaysTo(c.vacancyDate);
+  body.close = `<div style="display:flex;gap:16px;flex-wrap:wrap">
+      <div><div style="font-size:9.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em">Closing &middot; us buying</div><div style="font-size:13px;font-weight:600;color:${c.closingDate?'#111':'#B42318'}">${_dt(c.closingDate)}</div><div style="font-size:10.5px;color:#566070">${dTo!=null?(dTo<0?'already ours':(dTo+' days away')):'nobody has put the date in'}</div></div>
+      <div><div style="font-size:9.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em">Goes vacant</div><div style="font-size:13px;font-weight:600;color:${c.vacancyDate?'#111':'#8A5A10'}">${_dt(c.vacancyDate)}</div><div style="font-size:10.5px;color:#566070">${vTo!=null?(vTo<0?'vacant already':(vTo+' days away')):'unknown'}</div></div>
+      <div><div style="font-size:9.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em">ACQ budget</div><div style="font-size:13px;font-weight:600;color:#111">${(c.checklists&&c.checklists.acqBudget)?_calEsc(c.checklists.acqBudget):'&mdash;'}</div></div>
+      <div><div style="font-size:9.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em">Kickoff</div><div style="font-size:13px;font-weight:600;color:${(kn&&kn.done)?'#0F7B54':'#8a6d1a'}">${(kn&&kn.done)?'completed':(kn?'in progress':'not run')}</div></div>
+    </div>`
+    + _sub('On or off plan, and why') + ta2(c.id+'::money','Price, terms, anything that moves the date&hellip;',44)
+    + addBoth;
+
+  return _wmTopicsFor(c).map(function(t){ return _wmTopicWrap(wk, c, t, body[t.key]||'', roNow); }).join('');
 }
 function secWrapTd(title, inner){
   return `<div style="margin-top:11px"><div style="font-size:11.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px">${title}</div>${inner}</div>`;
@@ -10818,6 +11041,7 @@ async function _wmPollTick(){
 // it existed, ready to write that copy back. Pull them in with everything else.
 async function _wmPollCarried(kind){
   if((window.__miTouch||[]).length) return;     // a save of our own is still in flight
+  try{ await _unmLoad(); }catch(e){}
   let mi=null, pdn=null;
   try{ mi=await _pmSettingsRead('meeting_items'); }catch(e){}
   try{ pdn=await _pmSettingsRead('pm_drill_notes'); }catch(e){}
@@ -10993,31 +11217,12 @@ function openWeeklyMeeting(kind, week){
       }).join(''):'<div style="font-size:12.5px;color:#636b7a;padding:8px 0">Nothing booked on this property for the next two weeks.</div>';
 
       // ---- lag-time items, carried until they close ----
-      const lag=_miFor('lag',c.id);
-      const lagRows=lag.length?lag.map(x=>`<div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:0.5px solid #f4f5f7">
-          <div style="font-family:ui-monospace,Menlo,monospace;font-size:11px;font-weight:600;color:${_miAgeColor(x.raised)};width:52px;flex-shrink:0;padding-top:2px">${_miAgeLabel(x.raised)}</div>
-          <div style="flex:1;min-width:0">
-            <div style="font-size:13px;color:#111">${_calEsc(x.text)}</div>
-            <div style="font-size:11.5px;color:#566070;margin-top:1px">Raised ${_calEsc(x.raised||'')} by ${_calEsc(x.by||'')}</div>
-            ${roNow?(x.note?`<div style="font-size:12px;color:#555;margin-top:5px">${_calEsc(x.note)}</div>`:''):`<div style="display:flex;gap:10px;align-items:center;margin-top:5px;flex-wrap:wrap">
-              <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:#566070;cursor:pointer"><input type="checkbox" onchange="_miClose('lag','${x.id}')" style="width:14px;height:14px;cursor:pointer"/>Figured out?</label></div>
-              <textarea onchange="_miNote('lag','${x.id}',this.value)" placeholder="Where did this land this week?" style="width:100%;min-height:30px;margin-top:5px;padding:5px 8px;border:0.5px solid #e6e8ee;border-radius:6px;font-size:12.5px;resize:vertical;font-family:inherit">${_calEsc(x.note||'')}</textarea>`}
-          </div></div>`).join(''):'<div style="font-size:12.5px;color:#636b7a;padding:8px 0">Nothing on a long lead right now.</div>';
-      const lagAdd=roNow?'':`<div style="display:flex;gap:7px;margin-top:8px;flex-wrap:wrap"><input id="lag-${c.id}" placeholder="What has a long lead on it?" style="flex:1;min-width:170px;padding:6px 9px;border:0.5px solid #ddd;border-radius:6px;font-size:12.5px"/><button onclick="_miAdd('lag','${c.id}','lag-${c.id}')" style="padding:6px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">Add</button></div>`;
+      const lagRows=_miBlockRows('lag', c, roNow);
+      const lagAdd=_miBlockAdd('lag', c, roNow);
 
       // ---- questions that need Bruce or Tommy ----
-      const qs=_miFor('q',c.id);
-      const qRows=qs.length?qs.map(x=>`<div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:0.5px solid #f4f5f7">
-          <div style="font-family:ui-monospace,Menlo,monospace;font-size:11px;font-weight:600;color:${_miAgeColor(x.raised)};width:52px;flex-shrink:0;padding-top:2px">${_miAgeLabel(x.raised)}</div>
-          <div style="flex:1;min-width:0">
-            <div style="font-size:13px;color:#111">${_calEsc(x.text)}</div>
-            <div style="font-size:11.5px;color:#566070;margin-top:1px">Needs ${_calEsc(x.who||'an answer')} &middot; asked by ${_calEsc(x.by||'')} on ${_calEsc(x.raised||'')}</div>
-            ${roNow?'':`<div style="margin-top:5px"><button onclick="_miClose('q','${x.id}')" style="padding:3px 10px;border:0.5px solid #cdd7e6;border-radius:6px;background:#fff;font-size:11.5px;color:#185FA5;cursor:pointer">Answer it</button></div>`}
-          </div></div>`).join(''):'<div style="font-size:12.5px;color:#636b7a;padding:8px 0">Nothing waiting on Bruce or Tommy for this one.</div>';
-      const qAdd=roNow?'':`<div style="display:flex;gap:7px;margin-top:8px;flex-wrap:wrap">
-        <input id="q-${c.id}" placeholder="What needs deciding?" style="flex:1;min-width:170px;padding:6px 9px;border:0.5px solid #ddd;border-radius:6px;font-size:12.5px"/>
-        <select id="qw-${c.id}" style="padding:6px 9px;border:0.5px solid #ddd;border-radius:6px;font-size:12.5px"><option>Either</option><option>Bruce</option><option>Tommy</option></select>
-        <button onclick="_miAdd('q','${c.id}','q-${c.id}','qw-${c.id}')" style="padding:6px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">Add</button></div>`;
+      const qRows=_miBlockRows('q', c, roNow);
+      const qAdd=_miBlockAdd('q', c, roNow);
 
       // ---- timeline check ----
       const trail=pushes.length?`<div style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:#566070;line-height:1.7;margin-top:7px">${pushes.slice(-4).map(p=>`<b style="color:#111">&rarr; ${_calEsc(p.to)}</b> ${_calEsc(p.at||'')}${p.why?(' &middot; "'+_calEsc(p.why)+'"'):''}`).join('<br>')}${pushes.length>4?`<div style="color:#636b7a">+ ${pushes.length-4} earlier</div>`:''}</div>`:'';
@@ -11189,9 +11394,12 @@ function openWeeklyMeeting(kind, week){
       ${_wmCloseBar(wk, closedRec, isPast, 'team')}</div>`
       : (_teamTab==='takedowns')
       ? `<div class="wm-doc">${_wmClosedBanner(wk, closedRec, 'team')}
-      ${_teamTabBar}
-      ${_wmTakedownBody(wk, notes, prevNotes, roNow, ta2)}
-      ${_wmCloseBar(wk, closedRec, isPast, 'team')}</div>`
+      ${_teamTabBar}</div>
+      <div class="wm-2col">
+        <div>${_wmTakedownBody(wk, notes, prevNotes, roNow, ta2)}
+        <div class="wm-doc">${_wmCloseBar(wk, closedRec, isPast, 'team')}</div></div>
+        <div class="wm-rail">${_wmTdRail()}</div>
+      </div>`
       : `
       <div class="wm-doc">${_wmClosedBanner(wk, closedRec, 'team')}
       ${_teamTabBar}
@@ -23354,4 +23562,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-22a meeting-holds-your-place -->
+<!-- build: 2026-09-22b takedowns-work-like-the-houses, no-card-yet-list -->
