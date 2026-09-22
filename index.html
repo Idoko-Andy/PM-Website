@@ -2027,13 +2027,12 @@ function _dhScan(){
 
   add('breakdown','Budget breakdown that no longer adds up',
       'The Budgeted figure was changed but the base and contingency underneath it were not, so the card shows a total with a breakdown that disagrees with it.',
-      cards.filter(function(c){
-        const cl=c.checklists||{};
-        const b=_dhMoney(cl.budget_base), bud=_dhMoney(c.budget);
-        return b!=null && bud!=null && Math.abs(b-bud)>1;
-      }).map(function(c){
-        const b=_dhMoney((c.checklists||{}).budget_base), bud=_dhMoney(c.budget);
-        return {id:c.id, addr:c.addr, detail:'card says $'+Math.round(bud).toLocaleString()+', breakdown still says $'+Math.round(b).toLocaleString()};
+      cards.filter(function(c){ const k=_budParts(c).kind; return k==='stale' || k==='same'; })
+      .map(function(c){
+        const P=_budParts(c);
+        return {id:c.id, addr:c.addr, detail: P.kind==='same'
+          ? ('card says '+_budMoney(P.total)+', but the breakdown under it adds to '+_budMoney(P.sum))
+          : ('card says '+_budMoney(P.total)+', breakdown still says '+_budMoney(P.base)) };
       }));
 
   add('insp','Inspections that never reached the property card',
@@ -5106,6 +5105,13 @@ function _pdLinked(c, which){
               // Bruce, 30 Aug: the Final Budget is the C30-C32 block. The card carries C32 -
               // the budget WITH contingency - and shows the two figures it is made of, so
               // nobody has to open the sheet to see where the number came from.
+              // Bruce, 22 Sept: on 35 of the 55 houses the base and the total are the SAME
+              // number with a contingency printed under them, which makes the breakdown add
+              // up to more than the headline it sits beneath. Two answers to one question is
+              // worse than one answer, so when they disagree the card says so instead.
+              const P=_budParts(c);
+              if(P.kind==='same') return `<div style="font-size:11.5px;color:#B42318;font-weight:600;margin-top:2px">These do not add up</div><div style="font-size:11px;color:#8a4038;line-height:1.4">${_budMoney(P.base)} + ${_budMoney(P.cont)} contingency is ${_budMoney(P.sum)}, not the figure above. The tracker has written the same number into both, so one of them is wrong.</div>`;
+              if(P.kind==='stale') return `<div style="font-size:11.5px;color:#B42318;font-weight:600;margin-top:2px">Breakdown is out of date</div><div style="font-size:11px;color:#8a4038;line-height:1.4">The breakdown still reads ${_budMoney(P.base)} + ${_budMoney(P.cont)}. Re-pull the tracker.</div>`;
               if(base||cont) return `<div style="font-size:11.5px;color:#566070;margin-top:2px">${_calEsc(base)||'—'} + ${_calEsc(cont)||'$0'} contingency</div><div style="font-size:11px;color:#636b7a">Total W/ Contingency, from the tracker</div>`;
               return `<div style="font-size:12px;color:#566070;margin-top:2px">From project tracker &middot; incl. contingency</div>`; })()}
           </div>
@@ -7386,6 +7392,35 @@ function _wmFmt(n){ return n==null?'—':('$'+Math.round(n).toLocaleString()); }
 // tracker sheet, where the headline total is the figure BEFORE contingency. The tracker
 // sync already stamps both parts onto the card; this says them out loud underneath, so
 // nobody in the room has to guess which of the two numbers they are looking at.
+// Bruce, 22 Sept: 1313 Lincoln's card read "Final Budget $441,198.60" and directly
+// underneath "$441,198.60 + $32,620.00 contingency - Total W/ Contingency". Those two
+// lines cannot both be true: if the base already IS the total, adding contingency on
+// top makes $473,818.60, and if the total is right then the base is not the base.
+// 35 of the 55 houses are in that state, every contingency sitting at almost exactly
+// 10% of the figure above it, which is what a tracker column looks like when the
+// pre-contingency number has been written into both fields. Until somebody says which
+// column is the truth, the card must not print a sum that disagrees with its own
+// headline - so this returns what is actually known, and says so when it does not add up.
+//   ok       base + contingency = total, print the breakdown
+//   same     base equals the total AND there is a contingency - cannot both be right
+//   stale    base and total disagree and the contingency does not close the gap
+//   none     nothing to say
+function _budParts(c){
+  const cl=(c&&c.checklists)||{};
+  const n=(v)=>{ const x=parseFloat(String(v==null?'':v).replace(/[^0-9.\-]/g,'')); return isNaN(x)?null:x; };
+  const base=n(cl.budget_base), cont=n(cl.budget_contingency), total=n(c&&c.budget);
+  const out={base:base, cont:cont, total:total, sum:(base!=null&&cont!=null)?(base+cont):null, kind:'none'};
+  if(base==null || cont==null) return out;
+  if(total==null){ out.kind='ok'; return out; }
+  if(Math.abs(base+cont-total) <= 1){ out.kind='ok'; return out; }
+  if(Math.abs(base-total) <= 1 && cont > 1){ out.kind='same'; return out; }
+  out.kind='stale'; return out;
+}
+function _budMoney(v){
+  if(v==null) return '\u2014';
+  const cents = Math.abs(v - Math.round(v)) > 0.004;   // $441,198.60 must not print as $441,198.6
+  return '$'+v.toLocaleString(undefined,{minimumFractionDigits:cents?2:0, maximumFractionDigits:cents?2:0});
+}
 function _wmBudNote(c){
   const cl=(c&&c.checklists)||{};
   const base=String(cl.budget_base||'').trim();
@@ -7396,9 +7431,9 @@ function _wmBudNote(c){
   // at $185,560, so the card was showing a total with a breakdown that did not add up
   // to it - two different answers to the same question, stacked on top of each other.
   // Say the breakdown is out of date rather than quietly contradicting the total.
-  const n=(v)=>{ const x=parseFloat(String(v||'').replace(/[^0-9.\-]/g,'')); return isNaN(x)?null:x; };
-  const b=n(base), bud=n(c&&c.budget);
-  if(b!=null && bud!=null && Math.abs(b-bud)>1) return 'breakdown is out of date';
+  const P=_budParts(c);
+  if(P.kind==='stale') return 'breakdown is out of date';
+  if(P.kind==='same')  return 'breakdown does not add up \u2014 '+_budMoney(P.base)+' + '+_budMoney(P.cont)+' is '+_budMoney(P.sum)+', not the total above';
   const trim=(v)=>v.replace(/\.00$/,'');
   return trim(base)+' + '+trim(cont)+' contingency';
 }
@@ -23922,4 +23957,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-22d property-cards-have-tabs, nine-bugs-fixed -->
+<!-- build: 2026-09-22e budget-breakdowns-that-do-not-add-up -->
