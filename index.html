@@ -1990,18 +1990,18 @@ function _dhScan(){
       'The house is past its number. Either the work grew and the budget never followed it, or the budget is the one that is wrong.',
       cards.filter(function(c){
         if(LIVE.indexOf(c.phase)<0) return false;
-        const b=_dhMoney(c.budget), sp=_dhMoney(c.spent);
-        return b!=null && sp!=null && b>0 && sp>b;
+        const v=_budVs(c);
+        return v.over!=null && v.over>0;
       }).map(function(c){
-        const b=_dhMoney(c.budget), sp=_dhMoney(c.spent);
-        return {id:c.id, addr:c.addr, detail:'$'+Math.round(sp-b).toLocaleString()+' over &middot; budget $'+Math.round(b).toLocaleString()+', spent $'+Math.round(sp).toLocaleString()};
+        const v=_budVs(c);
+        return {id:c.id, addr:c.addr, detail:_budSay(v.over)+' &middot; '+_budMoney(-v.left)+' past '+_budMoney(v.budget)+' with contingency'};
       }));
 
   add('nobudget','Money going out against no budget',
       'Nothing to measure the spend against, so every $/day and leftover figure on this house is a dash.',
       cards.filter(function(c){
         if(LIVE.indexOf(c.phase)<0) return false;
-        const b=_dhMoney(c.budget), sp=_dhMoney(c.spent);
+        const b=_budOf(c).budget, sp=_dhMoney(c.spent);
         return (b==null||b<=0) && sp!=null && sp>0;
       }).map(function(c){ return {id:c.id, addr:c.addr, detail:'$'+Math.round(_dhMoney(c.spent)).toLocaleString()+' spent, budget not set'}; }));
 
@@ -2025,14 +2025,15 @@ function _dhScan(){
       cards.filter(function(c){ return c.phase==='Waiting Permits' && !_hasPermitRows(c) && !_isPermittedCard(c); })
            .map(function(c){ return {id:c.id, addr:c.addr, detail:'not ticked permitted either'}; }));
 
-  add('breakdown','Budget breakdown that no longer adds up',
-      'The Budgeted figure was changed but the base and contingency underneath it were not, so the card shows a total with a breakdown that disagrees with it.',
-      cards.filter(function(c){ const k=_budParts(c).kind; return k==='stale' || k==='same'; })
+  add('breakdown','Budget figures that disagree with each other',
+      'The Budgeted figure and the base-plus-contingency underneath it are two different numbers, and neither is obviously the right one. The card falls back to the tracker figure until somebody re-pulls it.',
+      // Only the ones that genuinely disagree. A house whose tracker figure is the
+      // pre-contingency one is the normal case now - the card adds the contingency on
+      // and says so - so listing all 37 of those here would be noise, not a finding.
+      cards.filter(function(c){ return _budParts(c).kind==='stale'; })
       .map(function(c){
         const P=_budParts(c);
-        return {id:c.id, addr:c.addr, detail: P.kind==='same'
-          ? ('card says '+_budMoney(P.total)+', but the breakdown under it adds to '+_budMoney(P.sum))
-          : ('card says '+_budMoney(P.total)+', breakdown still says '+_budMoney(P.base)) };
+        return {id:c.id, addr:c.addr, detail:'tracker says '+_budMoney(P.total)+', breakdown says '+_budMoney(P.base)+' + '+_budMoney(P.cont)+' = '+_budMoney(P.sum)};
       }));
 
   add('insp','Inspections that never reached the property card',
@@ -4764,10 +4765,13 @@ function openPropDetail(id) {
   const c = propCards.find(x => x.id === id);
   if (!c) return;
   const p = phInfo(c.phase);
-  const bNum = parseFloat((c.budget||'0').replace(/[^0-9.]/g,''))||0;
-  const sNum = parseFloat((c.spent||'0').replace(/[^0-9.]/g,''))||0;
-  const pct  = bNum > 0 ? Math.round((sNum/bNum)*100) : 0;
-  const progColor = pct>90?'#AF2C2B':pct>70?'#93600A':'#639922';
+  // The budget here is the one WITH contingency - see _budOf. The bar fills toward it
+  // and the figure underneath says how far off it this house is, signed.
+  const _bv   = _budVs(c);
+  const bNum  = _bv.budget || 0;
+  const sNum  = (_bv.spent!=null) ? _bv.spent : (parseFloat((c.spent||'0').replace(/[^0-9.]/g,''))||0);
+  const pct   = bNum > 0 ? Math.round((sNum/bNum)*100) : 0;
+  const progColor = _budColor(_bv.over);
   const typeStyle = PROP_TYPE_STYLE[c.type] || "background:#f4f5f7;color:#555";
   const pmColor = PROP_PM_COLORS[_canonName(c.pm)] || "#636b7a";
 
@@ -5100,7 +5104,7 @@ function _pdLinked(c, which){
           </div>
           <div style="background:#f4f5f7;border-radius:8px;padding:12px 14px">
             <div style="font-size:11px;color:#566070;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Final Budget</div>
-            <div style="font-size:18px;font-weight:500;color:#111">${c.budget||'—'}</div>
+            <div style="font-size:18px;font-weight:500;color:#111">${(()=>{ const B=_budOf(c); return (B.budget!=null&&B.budget>0)?_budMoney(B.budget):(c.budget||'\u2014'); })()}</div>
             ${(()=>{ const cl=c.checklists||{}; const base=cl.budget_base, cont=cl.budget_contingency;
               // Bruce, 30 Aug: the Final Budget is the C30-C32 block. The card carries C32 -
               // the budget WITH contingency - and shows the two figures it is made of, so
@@ -5109,16 +5113,20 @@ function _pdLinked(c, which){
               // number with a contingency printed under them, which makes the breakdown add
               // up to more than the headline it sits beneath. Two answers to one question is
               // worse than one answer, so when they disagree the card says so instead.
+              // Bruce, 22 Sept: "if my budget with contingency is $100,000 and I've spent
+              // $108,000, that means I'm 8% over budget." So the headline IS the figure
+              // with contingency in it, and this says what it is made of underneath.
               const P=_budParts(c);
-              if(P.kind==='same') return `<div style="font-size:11.5px;color:#B42318;font-weight:600;margin-top:2px">These do not add up</div><div style="font-size:11px;color:#8a4038;line-height:1.4">${_budMoney(P.base)} + ${_budMoney(P.cont)} contingency is ${_budMoney(P.sum)}, not the figure above. The tracker has written the same number into both, so one of them is wrong.</div>`;
-              if(P.kind==='stale') return `<div style="font-size:11.5px;color:#B42318;font-weight:600;margin-top:2px">Breakdown is out of date</div><div style="font-size:11px;color:#8a4038;line-height:1.4">The breakdown still reads ${_budMoney(P.base)} + ${_budMoney(P.cont)}. Re-pull the tracker.</div>`;
+              if(P.kind==='same') return `<div style="font-size:11.5px;color:#566070;margin-top:2px">${_budMoney(P.base)} + ${_budMoney(P.cont)} contingency</div><div style="font-size:11px;color:#636b7a">The tracker sends the figure before contingency; this is the two added up.</div>`;
+              if(P.kind==='stale') return `<div style="font-size:11.5px;color:#B42318;font-weight:600;margin-top:2px">Breakdown is out of date</div><div style="font-size:11px;color:#8a4038;line-height:1.4">The tracker says ${_budMoney(P.total)} but the breakdown under it reads ${_budMoney(P.base)} + ${_budMoney(P.cont)} = ${_budMoney(P.sum)}. Using the tracker's figure until it is re-pulled.</div>`;
               if(base||cont) return `<div style="font-size:11.5px;color:#566070;margin-top:2px">${_calEsc(base)||'—'} + ${_calEsc(cont)||'$0'} contingency</div><div style="font-size:11px;color:#636b7a">Total W/ Contingency, from the tracker</div>`;
               return `<div style="font-size:12px;color:#566070;margin-top:2px">From project tracker &middot; incl. contingency</div>`; })()}
           </div>
           <div style="background:#f4f5f7;border-radius:8px;padding:12px 14px">
             <div style="font-size:11px;color:#566070;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Spent to Date</div>
             <div style="font-size:18px;font-weight:500;color:${progColor}">${c.spent||'—'}</div>
-            <div style="font-size:12px;color:#566070;margin-top:2px">${pct}% of budget used</div>
+            <div style="font-size:13px;font-weight:700;color:${progColor};margin-top:2px">${_budSay(_bv.over)}</div>
+            <div style="font-size:11px;color:#636b7a">${_bv.budget!=null?(_bv.left>=0?(_budMoney(_bv.left)+' still in hand'):(_budMoney(-_bv.left)+' past it'))+' &middot; against '+_budMoney(_bv.budget)+' with contingency':'no budget set'}${_bv.unsure?' &middot; <span style="color:#B42318">figures disagree</span>':''}</div>
             ${(()=>{ const n=_coList(c).length, t=_coTotal(c), pn=_coPending(c).length;
               return `<div onclick="_coOpen('${c.id}')" style="cursor:pointer;font-size:12px;color:#185FA5;font-weight:600;margin-top:6px;padding-top:6px;border-top:0.5px solid #e3e6ec">&#128209; Change orders${n?` &middot; <span style="color:#4A1D6E">${_coMoney(t)}</span>`:''} &rsaquo;${pn?`<div style="font-size:10.5px;font-weight:600;color:#8a6d1a;margin-top:1px">${pn} actual cost${pn===1?'':'s'} still to confirm</div>`:''}${n?'':`<div style="font-size:10.5px;color:#636b7a;font-weight:400;margin-top:1px">none yet &mdash; add one here</div>`}</div>`; })()}
           </div>
@@ -7359,7 +7367,10 @@ function _wmCalc(c){
   const cl=c.checklists||{};
   const today=_ymd(new Date());
   const money=(v)=>{const n=parseFloat(String(v||"").replace(/[^0-9.\-]/g,""));return isNaN(n)?null:n;};
-  const b=money(c.budget), sp=money(c.spent);
+  // The budget WITH contingency, so the meeting, the card and the PDFs all read the
+  // same number off the same house.
+  const b=(typeof _budOf==='function')?_budOf(c).budget:money(c.budget);
+  const sp=money(c.spent);
   const left=(b!=null&&sp!=null)?b-sp:null;
   // Production $/day divides everything spent by the days the job has been running.
   // construction_start is stamped the moment a card leaves Pre Construction, which can
@@ -7416,6 +7427,50 @@ function _budParts(c){
   if(Math.abs(base-total) <= 1 && cont > 1){ out.kind='same'; return out; }
   out.kind='stale'; return out;
 }
+// Bruce, 22 Sept: "if my budget with contingency is $100,000 and I've spent $108,000,
+// that means I'm 8% over budget."
+// So the budget everybody means is the one WITH the contingency in it, and the number
+// worth reading is how far off it you are - negative while there is room left, rolling
+// through zero and up as it goes past. "116% of budget used" was neither: it measured
+// against the pre-contingency figure, and it made being under budget look like an
+// achievement score rather than money still in hand.
+//
+// base + contingency IS the with-contingency budget, by definition. On 37 of the 55
+// houses the tracker has written the pre-contingency figure into BOTH the total and the
+// base, so the total on its own is short by exactly the contingency and the sum is the
+// honest number. Where the two genuinely disagree (base + contingency lands nowhere near
+// the total) nothing here can tell which is right, so it falls back to the stated total
+// and marks itself unsure rather than inventing a figure.
+function _budOf(c){
+  const P=_budParts(c);
+  if(P.base!=null && P.cont!=null && (P.kind==='ok' || P.kind==='same'))
+    return { budget:P.sum, unsure:false, cont:P.cont };
+  return { budget:(P.total!=null && P.total>0)?P.total:null, unsure:(P.kind==='stale'), cont:P.cont };
+}
+// Where this house stands against that budget.
+//   over   signed whole percent: -12 means 12% left, +8 means 8% past it
+//   left   dollars still in hand (negative once it is past)
+function _budVs(c){
+  const B=_budOf(c);
+  const sp=(typeof _spentNow==='function')?_spentNow(c):null;
+  if(B.budget==null || B.budget<=0 || sp==null)
+    return { budget:B.budget, spent:sp, over:null, left:null, unsure:B.unsure };
+  return { budget:B.budget, spent:sp,
+           over:Math.round((sp/B.budget - 1)*100),
+           left:B.budget-sp, unsure:B.unsure };
+}
+// How to say it out loud. 0% is "on budget" - neither a win nor a problem.
+function _budSay(over){
+  if(over==null) return '—';
+  if(over===0) return 'on budget';
+  return (over>0 ? (over+'% over budget') : (Math.abs(over)+'% under budget'));
+}
+function _budColor(over){
+  if(over==null) return '#566070';
+  if(over>0)   return '#B42318';   // past the number
+  if(over>=-5) return '#93600A';   // within 5% of it
+  return '#0F7B54';                // money still in hand
+}
 function _budMoney(v){
   if(v==null) return '\u2014';
   const cents = Math.abs(v - Math.round(v)) > 0.004;   // $441,198.60 must not print as $441,198.6
@@ -7433,7 +7488,7 @@ function _wmBudNote(c){
   // Say the breakdown is out of date rather than quietly contradicting the total.
   const P=_budParts(c);
   if(P.kind==='stale') return 'breakdown is out of date';
-  if(P.kind==='same')  return 'breakdown does not add up \u2014 '+_budMoney(P.base)+' + '+_budMoney(P.cont)+' is '+_budMoney(P.sum)+', not the total above';
+  if(P.kind==='same')  return _budMoney(P.base)+' + '+_budMoney(P.cont)+' contingency = '+_budMoney(P.sum);
   const trim=(v)=>v.replace(/\.00$/,'');
   return trim(base)+' + '+trim(cont)+' contingency';
 }
@@ -13237,7 +13292,7 @@ function _rhName(u){ return u?`${u.firstName||""} ${u.lastName||""}`.trim():""; 
 function _budgetSplit(cards){
   let on=0, off=0, unknown=0, coProps=0, coTotal=0, rescued=0;
   (cards||[]).forEach(function(c){
-    const b=parseFloat(String((c&&c.budget)||"").replace(/[^0-9.\-]/g,""));
+    const b=(typeof _budOf==='function')?_budOf(c).budget:parseFloat(String((c&&c.budget)||"").replace(/[^0-9.\-]/g,""));
     const raw=(typeof _spentNow==='function')?_spentNow(c):null;
     const co=(typeof _coTotal==='function')?_coTotal(c):0;
     const sp=(raw==null)?null:(raw-co);
@@ -23957,4 +24012,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-22e budget-breakdowns-that-do-not-add-up -->
+<!-- build: 2026-09-22f over-budget-as-a-signed-percent-of-the-real-budget -->
