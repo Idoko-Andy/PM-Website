@@ -11371,7 +11371,7 @@ function openWeeklyMeeting(kind, week){
     const _ttBtn=(k,label,n)=>`<span onclick="_wmTeamTabTo('${k}')" style="cursor:pointer;padding:7px 14px;border-radius:8px;font-size:13px;font-weight:${_teamTab===k?'600':'400'};background:${_teamTab===k?'#122A4A':'#fff'};color:${_teamTab===k?'#fff':'#444'};border:0.5px solid ${_teamTab===k?'#122A4A':'#d8dce6'}">${label}${n!=null?(' &middot; '+n):''}</span>`;
     // Bruce, 20 Sept: the office team's weekly priority lists live in the meeting too.
     const _prioN=_prioPeople(wk).reduce(function(n,p){ return n+_prioCount(p,wk); },0);
-    const _teamTabBar=`<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:13px">${_ttBtn('construction','\ud83d\udd28 Construction',cards.length)}${_ttBtn('takedowns','\ud83d\udce6 Upcoming Takedowns',_tdCards.length)}${_ttBtn('priority','\ud83d\udccb Priority Tasks',_prioN)}</div>`;
+    const _teamTabBar=`<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:13px">${_ttBtn('construction','\ud83d\udd28 Construction',cards.length)}${_ttBtn('takedowns','\ud83d\udce6 Upcoming Takedowns',_tdCards.length)}${_ttBtn('priority','\ud83d\udcc4 Job Role PDFs',_prioN)}</div>`;
     const covN=cards.filter(c=>coveredMap[c.id]).length;
     // Where the room stands before it starts: how many houses are still waiting on
     // their PM, how many are ready to talk about, how many are already covered.
@@ -23091,7 +23091,9 @@ function _prioTasksFor(person, wk){
     if(!names.some(function(n){ return _sameAssignee(n,person); })) return;
     const d=t.due_date||'';
     const late=!!(d && d<R.from);
-    if(!late && (!d || d>R.to)) return;
+    // A task with no date on it used to fall off the list altogether, which is how
+    // work quietly goes missing. It belongs at the bottom under "No date on it".
+    if(!late && d && d>R.to) return;
     out.push({ id:t.id, title:t.title||'Task', due:d, late:late,
                cat:t.category||'', pid:t.property_id||'',
                where:(t.property_id?(_propAddr(t.property_id)||''):(t.location||'')),
@@ -23198,12 +23200,23 @@ async function _prioDrop(wk, person, id){
   m[person]=list;
   if(await _wmSetMeta(wk,'team','__prio_extra',m)) openWeeklyMeeting('team', window.__wmLastWeek||undefined);
 }
+// The tile lights up the moment you tick it, so the picker reads like a selection
+// and not a form you have to submit before you can see what you picked.
+function _prioTilePaint(box){
+  try{
+    const lab=box.closest('label'); if(!lab) return;
+    const on=!!box.checked;
+    lab.style.border='0.5px solid '+(on?'#185FA5':'#e0e4ec');
+    lab.style.background=on?'#EAF2FB':'#fff';
+    const sp=lab.querySelector('span'); if(sp) sp.style.fontWeight=on?'600':'400';
+  }catch(e){}
+}
 async function _prioSetPeople(wk){
   if(_blockIfReadOnly()) return;
   const cur=_prioPeople(wk);
   const boxes=[].slice.call(document.querySelectorAll('input[data-prio-person]'));
   const list=boxes.filter(function(b){ return b.checked; }).map(function(b){ return b.getAttribute('data-prio-person'); });
-  if(!list.length && !confirm("Nobody is selected, so no priority lists will be prepared this week.\n\nIs that what you want?")) return;
+  if(!list.length && !confirm("Nobody is selected, so no job role PDFs will be prepared this week.\n\nIs that what you want?")) return;
   if(await _wmSetMeta(wk,'team','__prio_people',{list:list, by:_miWho(), at:new Date().toISOString()})){
     openWeeklyMeeting('team', window.__wmLastWeek||undefined);
   }
@@ -23242,25 +23255,39 @@ function _prioBody(wk, roNow, isClosed){
   const esc=_calEsc;
   const dayLbl=(d)=>{ if(!d) return 'no date'; try{ return new Date(d+"T00:00:00").toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short'}); }catch(e){ return d; } };
 
-  // who the lists get made for
-  const picker=roNow?'':`<details id="prio-picker" ${window.__prioPickerOpen?'open':''} ontoggle="window.__prioPickerOpen=this.open" style="margin-bottom:13px;background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:10px 14px">
-    <summary style="cursor:pointer;font-size:13px;font-weight:600;color:#111">Who gets a list &middot; ${people.length} ${people.length===1?'person':'people'}</summary>
-    <div style="font-size:12.5px;color:#566070;margin:8px 0 9px">Tick anybody who should get their own weekly list. It stays this way every week until you change it.</div>
-    <div style="display:flex;flex-wrap:wrap;gap:9px 18px">
-      ${all.map(function(u){ const n=nameOf(u);
-        return `<label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#222;cursor:pointer">
-          <input type="checkbox" data-prio-person="${esc(n)}" ${people.some(function(p){ return _sameAssignee(p,n); })?'checked':''} style="width:15px;height:15px;cursor:pointer"/>
-          ${esc(n)}<span style="font-size:11px;color:#566070">${esc(u.role||'')}</span></label>`; }).join('')}
+  // Who gets a PDF. This is the first thing on the tab, always open, and it is
+  // grouped by job role so it reads the way Bruce talks about the team.
+  const roleRank=(r)=>{ const k=PRIO_ROLE_KIND[String(r||'').trim().toLowerCase()];
+    return k==='pm'?0 : k==='start'?1 : k==='end'?2 : k==='realtor'?3 : 4; };
+  const byRole={};
+  all.forEach(function(u){ const r=String(u.role||'').trim()||'Other';
+    (byRole[r]=byRole[r]||[]).push(u); });
+  const roleKeys=Object.keys(byRole).sort(function(a,b){
+    const d=roleRank(a)-roleRank(b); return d||a.localeCompare(b); });
+  const tile=(u)=>{ const n=nameOf(u);
+    const on=people.some(function(p){ return _sameAssignee(p,n); });
+    return `<label style="display:flex;align-items:center;gap:8px;padding:7px 11px;border:0.5px solid ${on?'#185FA5':'#e0e4ec'};background:${on?'#EAF2FB':'#fff'};border-radius:8px;font-size:13.5px;color:#111;cursor:pointer">
+      <input type="checkbox" data-prio-person="${esc(n)}" ${on?'checked':''} onchange="_prioTilePaint(this)" style="width:16px;height:16px;cursor:pointer"/>
+      <span style="font-weight:${on?'600':'400'}">${esc(n)}</span></label>`; };
+  const picker=roNow?'':`<div id="prio-picker" style="margin-bottom:13px;background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:13px 15px">
+    <div style="display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;margin-bottom:3px">
+      <span style="font-size:14.5px;font-weight:700;color:#111">Who gets a PDF</span>
+      <span style="font-size:12px;color:#566070">${people.length} ${people.length===1?'person':'people'} right now</span>
+      <button onclick="_prioSetPeople('${wk}')" style="margin-left:auto;padding:6px 14px;background:#111;color:#fff;border:none;border-radius:7px;font-size:12.5px;cursor:pointer">Save</button>
     </div>
-    <button onclick="_prioSetPeople('${wk}')" style="margin-top:11px;padding:6px 14px;background:#111;color:#fff;border:none;border-radius:7px;font-size:12.5px;cursor:pointer">Save who gets a list</button>
-  </details>`;
+    <div style="font-size:12.5px;color:#566070;margin-bottom:10px">Tick anybody who should get their own checklist. It stays this way every week until you change it.</div>
+    ${roleKeys.map(function(r){
+      return `<div style="margin-bottom:9px">
+        <div style="font-size:10.5px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:#8A94A6;margin-bottom:5px">${esc(r)}</div>
+        <div style="display:flex;flex-wrap:wrap;gap:7px">${byRole[r].map(tile).join('')}</div></div>`; }).join('')}
+  </div>`;
 
   const head=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:11px 15px;margin-bottom:12px">
-    <div style="font-size:13px;color:#333">Each list below is built from what is already on that person's plate &mdash; anything due this week or next, and anything already late. Add the detail as you walk the meeting. ${isClosed
-      ? `<b style="color:#0F7B54">The meeting is marked finished, so the lists go out on the next run after 9:30am.</b>`
+    <div style="font-size:13px;color:#333">Each PDF below is built from what is already on that person's plate for their job role &mdash; anything due this week or next, and anything already late. It comes out as a day-by-day checklist they can screenshot and keep on their phone. Add the detail as you walk the meeting. ${isClosed
+      ? `<b style="color:#0F7B54">The meeting is marked finished, so the PDFs go out on the next run after 9:30am.</b>`
       : `Nothing is sent until you mark the meeting finished at the bottom of the Construction tab.`}</div></div>`;
 
-  if(!people.length) return picker+`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:22px;text-align:center;font-size:13.5px;color:#566070">Nobody is set to get a weekly list yet. Open &ldquo;Who gets a list&rdquo; above and tick the people who should.</div>`;
+  if(!people.length) return picker+`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:22px;text-align:center;font-size:13.5px;color:#566070">Nobody is set to get a PDF yet. Tick the people who should up above, then hit Save.</div>`;
 
   // One person at a time unless you ask for everyone.
   const sel=_prioTab();
@@ -23324,7 +23351,7 @@ function _prioBody(wk, roNow, isClosed){
         <span style="font-size:12px;color:#566070">${n} item${n===1?'':'s'}</span>
         ${late?`<span style="font-size:10.5px;font-weight:700;color:#B42318;background:#FBEAE8;padding:2px 8px;border-radius:99px">${late} late</span>`:''}
         ${when?`<span style="font-size:10.5px;font-weight:700;color:#0F7B54;background:#E6F4ED;padding:2px 8px;border-radius:99px">sent ${esc(String(when).slice(0,10))}</span>`:''}
-        <span style="margin-left:auto"><span onclick="event.preventDefault();event.stopPropagation();_prioPreview('${_argEsc(person)}','${wk}')" style="cursor:pointer;font-size:12px;color:#185FA5;text-decoration:underline">Preview their PDF</span></span>
+        <span style="margin-left:auto"><button onclick="event.preventDefault();event.stopPropagation();_prioPreview('${_argEsc(person)}','${wk}')" style="padding:5px 13px;background:#185FA5;color:#fff;border:none;border-radius:7px;font-size:12.5px;font-weight:600;cursor:pointer">\ud83d\udcc4 Preview PDF</button></span>
       </summary>
       <div style="padding:0 15px 14px">${roleNote}${body}${looseAdd}${recapBlock}</div>
     </details>`;
@@ -23338,63 +23365,173 @@ function _prioBody(wk, roNow, isClosed){
 // What the person will actually receive, on screen, so nothing goes out unseen.
 // Printing this page is how you get a paper or PDF copy by hand; the Monday mailer
 // builds its own from the same saved list.
+// Bruce, 22 Sept: "a checklist, organised per day, and labelled for the property. It
+// needs to be something they can screenshot and save on their phone for the week."
+// So the week is cut by DAY, not by house. A person works Tuesday, not 8 Hide Away
+// Hills - the house is the label on the line, not the heading above it.
+// Late work comes first and stays first: it is the part of the list that needs saying.
+function _prioDays(person, wk){
+  const R=_wmRange(wk,2);
+  const buckets={}; const late=[]; const undated=[];
+  const put=(it)=>{
+    if(it.late){ late.push(it); return; }
+    if(!it.due){ undated.push(it); return; }
+    (buckets[it.due]=buckets[it.due]||[]).push(it);
+  };
+  _prioTasksFor(person, wk).forEach(function(t){
+    put({ title:t.title, where:t.where||'', due:t.due||'', late:!!t.late, cat:t.cat||'' });
+  });
+  _prioExtra(wk, person).forEach(function(x){
+    const d=x.due||'';
+    put({ title:x.text||'', where:x.pid?(_propAddr(x.pid)||''):'', due:d,
+          late:!!(d && d<R.from), cat:'', added:true });
+  });
+  const byTitle=(a,b)=>String(a.title).localeCompare(String(b.title));
+  const out=[];
+  if(late.length) out.push({ key:'late', label:'Late', sub:'still open from before this week', items:late.sort(function(a,b){ return String(a.due||'').localeCompare(String(b.due||''))||byTitle(a,b); }) });
+  Object.keys(buckets).sort().forEach(function(d){
+    out.push({ key:d, label:_prioDayLabel(d), sub:_prioDaySub(d), items:buckets[d].sort(byTitle) });
+  });
+  if(undated.length) out.push({ key:'none', label:'No date on it', sub:'somewhere this week', items:undated.sort(byTitle) });
+  return out;
+}
+function _prioDayLabel(d){
+  try{ return new Date(d+"T00:00:00").toLocaleDateString(undefined,{weekday:'long', day:'numeric', month:'long'}); }
+  catch(e){ return d; }
+}
+function _prioDaySub(d){
+  const t=_ymd(new Date());
+  if(d===t) return 'today';
+  const n=Math.round((_dParse(d)-_dParse(t))/86400000);
+  if(n===1) return 'tomorrow';
+  if(n<0) return Math.abs(n)+' days ago';
+  return 'in '+n+' days';
+}
 function _prioPreview(person, wk){
   const pack=_prioPack(person, wk);
-  const groups=pack.groups;
+  const days=_prioDays(person, wk);
   const esc=_calEsc;
-  const dayLbl=(d)=>{ if(!d) return ''; try{ return new Date(d+"T00:00:00").toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long'}); }catch(e){ return d; } };
   const R=_wmRange(wk,2);
-  const rows=groups.map(function(g){
-    const items=g.items.map(function(t){
-      return `<tr><td class="d${t.late?' late':''}">${t.late?'LATE &middot; ':''}${esc(dayLbl(t.due))||'no date'}</td><td>${esc(t.title)}${t.cat?`<span class="c"> &middot; ${esc(t.cat)}</span>`:''}</td></tr>`;
-    }).join('')+g.extra.map(function(x){
-      return `<tr><td class="d">${esc(x.due?dayLbl(x.due):'this week')}</td><td>${esc(x.text)}</td></tr>`;
-    }).join('');
-    return `<section><h2>${esc(g.label)}</h2><table>${items}</table>${g.note?`<p class="n">${esc(g.note)}</p>`:''}</section>`;
-  }).join('');
-  // The recap half of the PDF - what their job adds on top of their own list.
-  const money=(m)=>{ if(!m) return ''; const f=(v)=>v==null?'&mdash;':('$'+Math.round(v).toLocaleString());
-    return `<p class="m">Budget ${f(m.b)} &middot; spent ${f(m.s)}${m.left!=null?(' &middot; <b'+(m.left<0?' class="over"':'')+'>'+(m.left<0?('over by '+f(-m.left)):(f(m.left)+' left'))+'</b>'):''}</p>`; };
-  const recaps=pack.recaps.map(function(r){
-    const dates=[r.vacancy?('vacant '+r.vacancy):'', r.closing?('we close '+r.closing):'', r.sell?('sells '+r.sell):''].filter(Boolean).join(' &middot; ');
-    const bits=r.bits.length?r.bits.map(function(b){
-        return `<p class="lb">${b.label}</p><p class="bd">${esc(b.text)}</p>`; }).join('')
-      : `<p class="bd" style="color:#566070">Nothing was written about this one in the meeting.</p>`;
-    const carry=r.carry.length?`<p class="lb">Still carrying</p><ul>${r.carry.map(function(x){ return '<li>'+esc(x.text)+'</li>'; }).join('')}</ul>`:'';
-    return `<section><h2>${esc(r.label)}<span class="c"> &middot; ${esc(r.phase)}${r.why?(' &middot; '+r.why):''}</span></h2>${money(r.money)}${dates?`<p class="m">${dates}</p>`:''}${bits}${carry}</section>`;
-  }).join('');
-  const recapHead=pack.recaps.length
-    ? `<h3>${pack.kind==='realtor'?'Coming ready':'Meeting recap'} &mdash; ${pack.recaps.length} ${pack.recaps.length===1?'house':'houses'}</h3>` : '';
-  const roleNote=pack.notes.length?`<p class="warn">${pack.notes.map(esc).join('<br/>')}</p>`:'';
+  const nJobs=days.reduce(function(n,d){ return n+d.items.length; },0);
+  const nLate=(days[0] && days[0].key==='late') ? days[0].items.length : 0;
+  const first=String(person||'').split(' ')[0];
+  const span=(()=>{ try{
+      const a=new Date(R.from+'T00:00:00'), b=new Date(R.to+'T00:00:00');
+      const f=(d)=>d.toLocaleDateString(undefined,{day:'numeric',month:'short'});
+      return f(a)+' – '+f(b);
+    }catch(e){ return R.from+' – '+R.to; } })();
 
-  const html=`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${esc(person)} — week of ${esc(R.from)}</title>
+  // One line of the checklist. A box you can tick, the job at a readable size, and the
+  // house it belongs to underneath - the label, not the heading.
+  const line=(it)=>`<div class="job">
+      <span class="box"></span>
+      <span class="what"><span class="t">${esc(it.title)}</span>${
+        it.where?`<span class="where">${esc(it.where)}</span>`:`<span class="where none">not tied to a house</span>`}${
+        it.cat?`<span class="cat">${esc(it.cat)}</span>`:''}</span>
+    </div>`;
+  const dayBlock=(d)=>`<section class="day${d.key==='late'?' late':''}${d.key==='none'?' undated':''}">
+      <div class="dh"><span class="dl">${esc(d.label)}</span><span class="ds">${esc(d.sub)}</span><span class="dn">${d.items.length}</span></div>
+      ${d.items.map(line).join('')}
+    </section>`;
+
+  // Whatever the room wrote about a house, kept out of the checklist so the checklist
+  // stays a checklist. It sits underneath, once, per house.
+  const notes=pack.groups.filter(function(g){ return String(g.note||'').trim(); })
+    .map(function(g){ return `<div class="note"><div class="nh">${esc(g.label)}</div><div class="nb">${esc(g.note)}</div></div>`; }).join('');
+
+  // The recap half, for the roles whose job is to know where the houses are.
+  const money=(m)=>{ if(!m) return ''; const f=(v)=>v==null?'—':('$'+Math.round(v).toLocaleString());
+    return `<p class="m">Budget ${f(m.b)} · spent ${f(m.s)}${m.left!=null?(' · <b'+(m.left<0?' class="over"':'')+'>'+(m.left<0?('over by '+f(-m.left)):(f(m.left)+' left'))+'</b>'):''}</p>`; };
+  const recaps=pack.recaps.map(function(r){
+    const dates=[r.vacancy?('vacant '+r.vacancy):'', r.closing?('we close '+r.closing):'', r.sell?('sells '+r.sell):''].filter(Boolean).join(' · ');
+    const bits=r.bits.length?r.bits.map(function(b){ return `<p class="lb">${b.label}</p><p class="bd">${esc(b.text)}</p>`; }).join('')
+      : `<p class="bd dim">Nothing was written about this one in the meeting.</p>`;
+    const carry=r.carry.length?`<p class="lb">Still carrying</p>${r.carry.map(function(x){ return '<div class="job"><span class="box"></span><span class="what"><span class="t">'+esc(x.text)+'</span></span></div>'; }).join('')}`:'';
+    return `<section class="rec"><div class="rh">${esc(r.label)}<span class="rp">${esc(r.phase)}${r.why?(' · '+r.why):''}</span></div>${money(r.money)}${dates?`<p class="m">${dates}</p>`:''}${bits}${carry}</section>`;
+  }).join('');
+
+  const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>${esc(first)} — week of ${esc(R.from)}</title>
   <style>
-    @page{margin:18mm 16mm}
-    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#14171C;margin:0;padding:26px 30px;max-width:780px}
-    h1{font-size:21px;margin:0 0 2px} .sub{font-size:12.5px;color:#566070;margin-bottom:20px}
-    section{margin-bottom:17px;break-inside:avoid}
-    h2{font-size:13px;margin:0 0 6px;padding-bottom:4px;border-bottom:1.5px solid #14171C;text-transform:uppercase;letter-spacing:.04em}
-    table{width:100%;border-collapse:collapse} td{padding:4px 0;vertical-align:top;font-size:13px;border-bottom:.5px solid #eceef2}
-    td.d{width:180px;font-size:11.5px;color:#566070;white-space:nowrap;padding-right:12px}
-    td.d.late{color:#B42318;font-weight:700}
-    .c{font-size:11px;color:#566070}
-    p.n{margin:7px 0 0;font-size:12.5px;color:#333;background:#F7F8FB;border-left:3px solid #cdd7e6;padding:7px 10px;white-space:pre-wrap}
-    .empty{font-size:13px;color:#566070}
-    h3{font-size:12px;margin:26px 0 8px;text-transform:uppercase;letter-spacing:.05em;color:#566070;border-bottom:.5px solid #d8dce6;padding-bottom:4px}
-    p.lb{margin:9px 0 1px;font-size:10.5px;font-weight:700;color:#566070;text-transform:uppercase;letter-spacing:.04em}
-    p.bd{margin:0;font-size:12.5px;line-height:1.45;white-space:pre-wrap}
-    p.m{margin:2px 0;font-size:11.5px;color:#566070} b.over{color:#B42318}
-    p.warn{font-size:12px;color:#633806;background:#FFF7E0;border-left:3px solid #EAD9A8;padding:7px 10px;margin:0 0 14px}
-    ul{margin:2px 0 0 16px;padding:0} li{font-size:12.5px;padding:1px 0}
-    @media print{ .noprint{display:none} }
-  </style></head><body>
-  <h1>${esc(person)} &mdash; the week ahead</h1>
-  <div class="sub">Week of ${esc(R.from)} &middot; from the Monday project team meeting${pack.role?(' &middot; '+esc(pack.role)):''}</div>
-  ${roleNote}
-  ${rows?('<h3>On your plate</h3>'+rows):(pack.recaps.length?'':'<p class="empty">Nothing on the list for this week.</p>')}
-  ${recapHead}${recaps}
-  <p class="noprint" style="margin-top:26px;font-size:12px;color:#566070">Use your browser&rsquo;s Print &rarr; Save as PDF to keep a copy.</p>
-  </body></html>`;
+    @page{size:A4 portrait;margin:14mm 12mm}
+    *{box-sizing:border-box}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+         color:#14171C;background:#fff;margin:0;padding:22px 20px 40px;
+         -webkit-font-smoothing:antialiased}
+    .sheet{max-width:560px;margin:0 auto}
+
+    header{border-bottom:2.5px solid #14171C;padding-bottom:11px;margin-bottom:6px}
+    h1{font-size:27px;line-height:1.1;margin:0;letter-spacing:-.4px}
+    .role{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.06em;
+          text-transform:uppercase;color:#185FA5;background:#EAF2FB;
+          padding:3px 9px;border-radius:99px;margin-top:7px}
+    .when{font-size:13px;color:#5B6472;margin-top:7px}
+    .tally{font-size:13px;color:#14171C;font-weight:600;margin-top:2px}
+    .tally .lt{color:#B42318}
+
+    .warn{font-size:12px;color:#633806;background:#FFF7E0;border:1px solid #EAD9A8;
+          border-radius:8px;padding:8px 11px;margin:12px 0 0}
+
+    section.day{margin-top:18px;break-inside:avoid;page-break-inside:avoid}
+    .dh{display:flex;align-items:baseline;gap:8px;border-left:4px solid #185FA5;
+        background:#F5F8FC;padding:6px 11px;border-radius:0 6px 6px 0}
+    .dl{font-size:13px;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
+    .ds{font-size:11px;color:#5B6472}
+    .dn{margin-left:auto;font-size:11px;font-weight:700;color:#5B6472}
+    section.day.late .dh{border-left-color:#B42318;background:#FDF2F1}
+    section.day.late .dl{color:#B42318}
+    section.day.undated .dh{border-left-color:#9AA3B2;background:#F6F7F9}
+
+    .job{display:flex;gap:11px;align-items:flex-start;padding:9px 4px 9px 11px;
+         border-bottom:1px solid #EDF0F5}
+    .box{flex:0 0 auto;width:16px;height:16px;margin-top:2px;border:1.5px solid #9AA3B2;
+         border-radius:3.5px;background:#fff}
+    .what{min-width:0}
+    .t{display:block;font-size:15px;line-height:1.35;font-weight:600}
+    .where{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.05em;
+           text-transform:uppercase;color:#185FA5;margin-top:4px}
+    .where.none{color:#9AA3B2;font-weight:600}
+    .cat{display:inline-block;font-size:10.5px;color:#5B6472;margin-top:4px;margin-left:8px}
+
+    h2.sec{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+           color:#5B6472;margin:30px 0 0;padding-bottom:5px;border-bottom:1px solid #E3E7EE}
+    .note{margin-top:11px;break-inside:avoid}
+    .nh{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#185FA5}
+    .nb{font-size:13.5px;line-height:1.5;white-space:pre-wrap;margin-top:2px;
+        background:#F5F8FC;border-left:3px solid #CFE0F2;padding:8px 11px;border-radius:0 6px 6px 0}
+
+    section.rec{margin-top:14px;break-inside:avoid}
+    .rh{font-size:14.5px;font-weight:700;border-bottom:1px solid #E3E7EE;padding-bottom:4px}
+    .rp{font-size:11px;font-weight:600;color:#5B6472;margin-left:7px;text-transform:none;letter-spacing:0}
+    p.lb{margin:9px 0 1px;font-size:10px;font-weight:700;color:#5B6472;text-transform:uppercase;letter-spacing:.05em}
+    p.bd{margin:0;font-size:13.5px;line-height:1.5;white-space:pre-wrap}
+    p.bd.dim{color:#9AA3B2}
+    p.m{margin:3px 0;font-size:12px;color:#5B6472} b.over{color:#B42318}
+
+    .empty{font-size:14px;color:#5B6472;background:#F6F7F9;border-radius:8px;
+           padding:18px;text-align:center;margin-top:18px}
+    .foot{margin-top:26px;font-size:11.5px;color:#9AA3B2;text-align:center}
+    .noprint button{font:inherit;font-size:13px;font-weight:600;color:#fff;background:#14171C;
+                    border:0;border-radius:8px;padding:9px 16px;cursor:pointer}
+    @media print{ .noprint{display:none!important} body{padding:0} }
+  </style></head><body><div class="sheet">
+  <header>
+    <h1>${esc(first)}&rsquo;s week</h1>
+    ${pack.role?`<div><span class="role">${esc(pack.role)}</span></div>`:''}
+    <div class="when">${esc(span)} &middot; from Monday&rsquo;s project team meeting</div>
+    <div class="tally">${nJobs} job${nJobs===1?'':'s'}${nLate?` &middot; <span class="lt">${nLate} late</span>`:''}</div>
+  </header>
+  ${pack.notes.length?`<div class="warn">${pack.notes.map(esc).join('<br/>')}</div>`:''}
+  ${days.length ? days.map(dayBlock).join('')
+    : (pack.recaps.length ? '' : `<div class="empty">Nothing on ${esc(first)}&rsquo;s list this week.</div>`)}
+  ${notes?`<h2 class="sec">From the meeting</h2>${notes}`:''}
+  ${pack.recaps.length?`<h2 class="sec">${pack.kind==='realtor'?'Coming ready':'Where the houses are'}</h2>${recaps}`:''}
+  <div class="foot">Legacy Homes &middot; week of ${esc(R.from)}</div>
+  <div class="noprint" style="text-align:center;margin-top:18px">
+    <button onclick="window.print()">Save as PDF</button>
+  </div>
+  </div></body></html>`;
   const w=window.open('','_blank');
   if(!w){ alert("Your browser blocked the preview window. Allow pop-ups for this site and try again."); return; }
   w.document.write(html); w.document.close();
@@ -23562,4 +23699,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-22b takedowns-work-like-the-houses, no-card-yet-list -->
+<!-- build: 2026-09-22c job-role-pdfs, day-by-day-checklist, picker-out-front -->
