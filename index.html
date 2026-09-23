@@ -4617,29 +4617,36 @@ function _canOpenPropCard(u){
 // to be remembered per house or ticking a sub phase would throw you back to Project Info
 // mid-job. That is exactly the kind of thing that made Alex lose his place in the
 // meeting, and it is not going to happen here.
-function _pdTabs(c){
+// NOTE: these are _pc* (property CARD), not _pd* (property DASHBOARD), and that is
+// deliberate. They were called _pdTab/_pdTabs/... for a day and it broke every property
+// card on the board: openProjectDashboard does `window._pdTab = activeTab` at the top,
+// so the moment anybody opened the Property Dashboard the string 'trello' replaced the
+// _pdTab function, and every card click after that died with "_pdTab is not a function"
+// - silently, because an onclick that throws just does nothing. Card helpers do not go
+// in the _pd namespace.
+function _pcTabs(c){
   const t=[{key:'info', label:'\u{1F4CB} Project Info'},
            {key:'work', label:'\u{1F528} Sub Phases / Tasks'}];
   if(typeof _isPermittedCard==='function' && _isPermittedCard(c)) t.push({key:'permits', label:'\u{1F4C4} Permits'});
   t.push({key:'history', label:'\u{1F553} History'});
   return t;
 }
-function _pdTab(c){
-  const tabs=_pdTabs(c).map(function(x){ return x.key; });
-  const want=(window.__pdTab||{})[c.id];
+function _pcTab(c){
+  const tabs=_pcTabs(c).map(function(x){ return x.key; });
+  const want=(window.__pcTab||{})[c.id];
   return (want && tabs.indexOf(want)>=0) ? want : 'info';
 }
-function _pdTabTo(pid, key){
-  (window.__pdTab=window.__pdTab||{})[pid]=key;
+function _pcTabTo(pid, key){
+  (window.__pcTab=window.__pcTab||{})[pid]=key;
   if(typeof openPropDetail==='function') openPropDetail(pid);
 }
-function _pdTabBar(c){
-  const sel=_pdTab(c);
+function _pcTabBar(c){
+  const sel=_pcTab(c);
   const btn=(t)=>{
     const on=(t.key===sel);
-    return `<button onclick="_pdTabTo('${c.id}','${t.key}')" style="padding:7px 14px;border-radius:8px;font-size:13px;font-weight:${on?'700':'500'};cursor:pointer;border:0.5px solid ${on?'#122A4A':'#dfe4ec'};background:${on?'#122A4A':'#fff'};color:${on?'#fff':'#333'}">${t.label}</button>`;
+    return `<button onclick="_pcTabTo('${c.id}','${t.key}')" style="padding:7px 14px;border-radius:8px;font-size:13px;font-weight:${on?'700':'500'};cursor:pointer;border:0.5px solid ${on?'#122A4A':'#dfe4ec'};background:${on?'#122A4A':'#fff'};color:${on?'#fff':'#333'}">${t.label}</button>`;
   };
-  return `<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:13px">${_pdTabs(c).map(btn).join('')}</div>`;
+  return `<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:13px">${_pcTabs(c).map(btn).join('')}</div>`;
 }
 
 // ---- History ------------------------------------------------------------------
@@ -5140,8 +5147,8 @@ function _pdLinked(c, which){
         <div style="background:#f4f5f7;border-radius:6px;height:6px;margin-bottom:16px;overflow:hidden">
           <div style="height:100%;width:${Math.min(pct,100)}%;background:${progColor};border-radius:6px"></div>
         </div>
-        ${_pdTabBar(c)}
-        <div style="display:${_pdTab(c)==='info'?'grid':'none'};grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:12px;align-items:start">
+        ${_pcTabBar(c)}
+        <div style="display:${_pcTab(c)==='info'?'grid':'none'};grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:12px;align-items:start">
           <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden">
             <div style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;font-size:13px;font-weight:500;color:#111;display:flex;align-items:center;justify-content:space-between">Property Info${(Date.now()-(window._piSaved||0)<5000)?'<span style="font-size:12px;color:#16794C;font-weight:600;margin-left:auto;margin-right:8px">Saved ✓</span>':''}${_ro_sp?'':`<button onclick="savePropInfo('${c.id}')" style="font-size:12px;padding:3px 10px;border-radius:4px;background:#111;color:#fff;border:none;cursor:pointer">Save Info</button>`}</div>
             <div style="padding:10px 14px">
@@ -5222,7 +5229,7 @@ function _pdLinked(c, which){
             ${_pdLinked(c,'info')}
           </div>
         </div>
-        <div style="display:${_pdTab(c)==='work'?'grid':'none'};grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:12px;align-items:start">
+        <div style="display:${_pcTab(c)==='work'?'grid':'none'};grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:12px;align-items:start">
           <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden">
             <div style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;font-size:13px;font-weight:500;color:#111;display:flex;align-items:center;justify-content:space-between">
               Sub Phases
@@ -5233,8 +5240,8 @@ function _pdLinked(c, which){
           </div>
           <div>${_sqBody(c)}${_pdLinked(c,'work')}${quickAddForms}</div>
         </div>
-        ${_pdTabs(c).some(function(t){return t.key==='permits';}) ? `<div style="display:${_pdTab(c)==='permits'?'block':'none'}">${_pdLinked(c,'permits')}${_pdPermitNudge(c)}</div>` : ''}
-        <div style="display:${_pdTab(c)==='history'?'block':'none'};max-width:900px">${_pdTab(c)==='history'?_pdHistory(c):''}</div>
+        ${_pcTabs(c).some(function(t){return t.key==='permits';}) ? `<div style="display:${_pcTab(c)==='permits'?'block':'none'}">${_pdLinked(c,'permits')}${_pdPermitNudge(c)}</div>` : ''}
+        <div style="display:${_pcTab(c)==='history'?'block':'none'};max-width:900px">${_pcTab(c)==='history'?_pdHistory(c):''}</div>
         <div style="display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-top:12px">
           ${c.driveUrl ? `<a href="${c.driveUrl}" target="_blank" style="display:flex;align-items:center;gap:5px;padding:7px 14px;font-size:13px;border-radius:6px;cursor:pointer;background:#fff;color:#185FA5;border:0.5px solid #cdd7e6;text-decoration:none">📁 Open Folder ↗</a>` : ''}
           ${_ro_sp ? '' : `<button onclick="openPropModal('edit','${c.id}')" style="display:flex;align-items:center;gap:5px;padding:7px 14px;font-size:13px;border-radius:6px;cursor:pointer;background:#fff;color:#111;border:0.5px solid #ccc">✏️ Edit Property</button>`}
@@ -24012,4 +24019,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-22f over-budget-as-a-signed-percent-of-the-real-budget -->
+<!-- build: 2026-09-23a fix-property-cards-not-opening -->
