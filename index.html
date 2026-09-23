@@ -2354,7 +2354,15 @@ function openProjectDashboard(activeTab) {
   document.querySelectorAll(".dd").forEach(x => x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x => x.classList.remove("on"));
 
-  const pmTabs = _pmTabNames().map(nm => ({ id: 'pm:'+nm, label: nm, icon: '👤' }));
+  // Bruce, 23 Sept: "instead of seeing all the project managers' names across the top,
+  // change it to a drop down where you select which project manager you want to view -
+  // that way that header bar isn't so long and I can add more headers without having to
+  // scroll left to right."
+  // The names come out of the tab strip and go into one picker that sits in it. A PM who
+  // only ever sees their own name still gets a plain tab, because a dropdown of one is
+  // just a tab that takes two clicks.
+  const pmNames = _pmPickerNames();
+  const pmTabs = (pmNames.length > 1) ? [] : pmNames.map(nm => ({ id: 'pm:'+nm, label: nm, icon: '👤' }));
   const tabs = [
     { id: 'main',   label: 'Main Dashboard',   icon: '📊' },
     ...pmTabs,
@@ -2365,17 +2373,30 @@ function openProjectDashboard(activeTab) {
     { id: 'sidetasks',    label: 'Side Tasks',                  icon: '🧩' },
   ];
 
-  const tabBar = tabs.map(t => `
+  const tabHtml = (t) => `
     <div onclick="openProjectDashboard('${t.id}')" style="padding:11px 16px;font-size:13px;color:${t.id===activeTab?'#111':'#566070'};cursor:pointer;border-bottom:2px solid ${t.id===activeTab?'#111':'transparent'};white-space:nowrap;display:inline-flex;align-items:center;gap:5px;margin-bottom:-1px;font-weight:${t.id===activeTab?'500':'400'}">
       <span>${t.icon}</span>${t.label}
-    </div>`).join('');
+    </div>`;
+
+  // The picker sits where the names used to be: first thing after Main Dashboard.
+  const pmOn  = (activeTab||'').indexOf('pm:')===0;
+  const pmWho = pmOn ? activeTab.slice(3) : '';
+  const pmPicker = (pmNames.length > 1) ? `
+    <div style="display:inline-flex;align-items:center;gap:6px;padding:7px 14px;white-space:nowrap;border-bottom:2px solid ${pmOn?'#111':'transparent'};margin-bottom:-1px">
+      <span style="font-size:13px">\u{1F464}</span>
+      <select onchange="if(this.value) openProjectDashboard('pm:'+this.value);"
+        style="font-size:13px;padding:4px 8px;border:0.5px solid ${pmOn?'#111':'#dfe4ec'};border-radius:6px;background:#fff;color:${pmOn?'#111':'#566070'};font-weight:${pmOn?'600':'400'};cursor:pointer;outline:none;max-width:200px">
+        <option value="">${pmOn?'Project Manager':'Project Managers\u2026'}</option>
+        ${pmNames.map(nm=>`<option value="${_calEsc(nm)}" ${_canonSame(nm,pmWho)?'selected':''}>${_calEsc(nm)}${_pmHasLiveWork(nm)?'':' \u00b7 no houses on'}</option>`).join('')}
+      </select>
+    </div>` : '';
 
   const content = getPDContent(activeTab);
 
   document.getElementById("dash-body").innerHTML = `
     <div style="background:#f4f5f7;min-height:500px" id="pd-root">
       <div style="background:#fff;border-bottom:1.5px solid #e0e4ec;padding:0 20px;display:flex;align-items:stretch;overflow-x:auto;gap:0">
-        ${tabBar}
+        ${tabHtml(tabs[0])}${pmPicker}${tabs.slice(1).map(tabHtml).join('')}
       </div>
       <div id="pd-content">
         ${content}
@@ -14405,6 +14426,31 @@ function _myFullName(u){
   if(u.__preview) return String((typeof _previewPerms!=='undefined'&&_previewPerms&&_previewPerms.name)||u.firstName||'').trim();
   return ((u.firstName||'')+' '+(u.lastName||'')).trim();
 }
+// The names for the picker, which is a different question from the names for a tab
+// strip. A strip has to be short, so _pmTabNames drops a PM with no live houses. A
+// dropdown costs no width at all, so dropping anybody from it just means Bruce cannot
+// select them - the opposite of why it became a dropdown. This lists every project
+// manager there is, and says which ones have nothing on right now.
+function _pmPickerNames(){
+  const out=[]; const seen={};
+  const push=(n)=>{ const nm=(typeof _canonName==='function')?_canonName(n):String(n||'').trim();
+    if(!nm) return; const k=nm.toLowerCase();
+    if(seen[k]) return; seen[k]=true; out.push(nm); };
+  if(!_seesEveryone()) return _pmTabNames();          // a PM still only sees their own
+  (typeof PM_MANAGERS!=='undefined'?PM_MANAGERS:[]).forEach(push);
+  ((typeof getUsers==='function')?getUsers():[])
+    .filter(function(u){ return u && u.status==='approved' &&
+      String(u.role||'').trim().toLowerCase()==='project manager'; })
+    .forEach(function(u){ push(((u.firstName||'')+' '+(u.lastName||'')).trim()||u.email); });
+  (typeof propCards!=='undefined'?propCards:[])
+    .filter(function(c){ return c && !c.archived && c.phase!=='Closed' && String(c.pm||'').trim(); })
+    .forEach(function(c){ push(c.pm); });
+  return out;
+}
+function _pmHasLiveWork(name){
+  return (typeof propCards!=='undefined'?propCards:[])
+    .some(function(c){ return c && !c.archived && c.phase!=='Closed' && _canonSame(c.pm, name); });
+}
 function _pmTabNames(){
   const roster=(typeof PM_MANAGERS!=='undefined'?PM_MANAGERS:[]).slice();
   const all=(typeof propCards!=='undefined'?propCards:[]);
@@ -16127,19 +16173,46 @@ function openDirectorCEODashboard(activeTab) {
   }
   _execShell('openDirectorCEODashboard', tabs, activeTab, content);
 }
-function openSeniorVADashboard() {
-  document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
-  document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
-  // This said "being built out" while the screen it should show was already finished and
-  // sitting one function away - the Senior VA's own home page. Show that.
+// Bruce, 23 Sept: "for the senior VA admin dashboard, that's VA Andy - you got main
+// dashboard and then Andy, and then you'll have the property dashboard, construction
+// calendar, task calendar, and side task calendar from left to right."
+// It used to be a single page with no tabs at all. Same shell the other role dashboards
+// use, so it behaves the way every other one does.
+function _srVAName(){
+  const u=((typeof getUsers==='function')?getUsers():[]).find(function(x){
+    return x && x.status==='approved' &&
+      String(x.role||'').trim().toLowerCase()==='senior virtual administrative assistant';
+  });
+  if(u) return ((u.firstName||'')+' '+(u.lastName||'')).trim()||u.email;
+  return 'Idoko Andrew';
+}
+function openSeniorVADashboard(activeTab) {
+  activeTab = activeTab || 'main';
+  const name=_srVAName();
+  const first=String(name).split(' ')[0] || name;
+  const tabs=[
+    {id:'main',        label:'Main Dashboard',        icon:'\u{1F4CA}'},
+    {id:'me',          label:first,                   icon:'\u{1F464}'},
+    {id:'property',    label:'Property Dashboard',    icon:'\u{1F3D7}'},
+    {id:'construction',label:'Construction Calendar', icon:'\u{1F4C5}'},
+    {id:'taskcal',     label:'Task Calendar',         icon:'\u{1F5D3}'},
+    {id:'sidetasks',   label:'Side Task Calendar',    icon:'\u{1F9E9}'}
+  ];
   const u=(typeof _effectiveUser==='function')?_effectiveUser():(typeof currentUser==='function'?currentUser():null);
+  let content;
   try{
-    document.getElementById("dash-body").innerHTML =
-      (typeof renderSrVAHome==='function') ? renderSrVAHome(u||{}) : renderSeniorVAHome(u||{});
+    switch(activeTab){
+      case 'me':           content=_personDashView(name,'Senior Virtual Administrative Assistant'); break;
+      case 'property':     content=renderPropertyBoard(); break;
+      case 'construction': content=renderConstructionCalendar(); break;
+      case 'taskcal':      content=renderTaskCalendar(); break;
+      case 'sidetasks':    content=_sqAllBody(); break;
+      default:             content=(typeof renderSrVAHome==='function') ? renderSrVAHome(u||{}) : renderSeniorVAHome(u||{});
+    }
   }catch(e){
-    document.getElementById("dash-body").innerHTML =
-      `<div class="empty-state"><div class="icon">\uD83D\uDCBC</div><p style="color:#566070;font-size:16px;font-weight:500">Senior VA Dashboard</p><p style="color:#555;font-size:14px;margin-top:6px">Could not draw this screen: ${_calEsc((e&&e.message)||'')}</p></div>`;
+    content=`<div class="empty-state"><div class="icon">\uD83D\uDCBC</div><p style="color:#566070;font-size:16px;font-weight:500">Senior VA Dashboard</p><p style="color:#555;font-size:14px;margin-top:6px">Could not draw this tab: ${_calEsc((e&&e.message)||'')}</p></div>`;
   }
+  _execShell('openSeniorVADashboard', tabs, activeTab, content);
 }
 function openVAAdminDashboard(activeTab) {
   activeTab = activeTab || 'main';
@@ -23293,7 +23366,30 @@ function _chkTrackerBody(){
 // Nothing is sent from here. The list is saved with the meeting, and the mailer only
 // goes out once the meeting is marked finished - Bruce's rule, so a half-walked meeting
 // never lands in somebody's inbox as their week.
-const PRIO_DEFAULT = ['Jennifer Tatum','Marlo Berry-Kinison','patience ochefije','Idoko Andrew'];
+// Bruce, 23 Sept: "the other people that should get PDFs is essentially all the project
+// managers, the start of project assistant, the end of project assistant. If those two
+// are playing the same role, then that should be all in one PDF."
+// So the default is no longer a hand-typed list of four office names - it is read off
+// the roster by job role, which means a new PM starts getting a list the day their role
+// is set instead of the day somebody remembers to tick them.
+const PRIO_DEFAULT_ROLES = ['pm','start','end'];
+const PRIO_DEFAULT_ALSO  = ['Jennifer Tatum','Marlo Berry-Kinison','patience ochefije','Idoko Andrew'];
+function _prioDefaultPeople(){
+  const out=[]; const seen={};
+  const push=(n)=>{ const k=(typeof _canonName==='function'?_canonName(n):String(n||'')).toLowerCase();
+    if(!k || seen[k]) return; seen[k]=true; out.push(n); };
+  ((typeof getUsers==='function')?getUsers():[])
+    .filter(function(u){ return u && u.status==='approved'; })
+    .forEach(function(u){
+      const kind=PRIO_ROLE_KIND[String(u.role||'').trim().toLowerCase()];
+      if(PRIO_DEFAULT_ROLES.indexOf(kind)<0) return;
+      push(((u.firstName||'')+' '+(u.lastName||'')).trim()||u.email);
+    });
+  PRIO_DEFAULT_ALSO.forEach(push);
+  return out.length ? out : PRIO_DEFAULT_ALSO.slice();
+}
+// Kept for anything still naming it, but the roster is what decides now.
+const PRIO_DEFAULT = PRIO_DEFAULT_ALSO;
 // ---- What goes in a person's PDF depends on the job they do --------------------
 // Bruce, 21 Sept: "essentially, job role by job role."
 //   task    a list of their own work - Jen, Marlo, Patience, VA Andy, and the default
@@ -23385,7 +23481,7 @@ function _prioPeople(wk){
     if(m && Array.isArray(m.list) && (m.list.length || m.at)) return m.list.slice();
     w=_wmPrevWeek(w);
   }
-  return PRIO_DEFAULT.slice();
+  return _prioDefaultPeople();
 }
 function _prioNotes(wk){ const m=_wmMeta(wk,'team','__prio_notes'); return (m&&typeof m==='object')?m:{}; }
 function _prioExtra(wk, person){
@@ -23455,6 +23551,27 @@ function _prioCount(person, wk){
 // ---- One person's whole PDF, assembled by what they do -------------------------
 // Everybody keeps their task list - a PM still has jobs of their own. What changes by
 // role is what gets added ALONGSIDE it, and which houses get a recap.
+// Bruce, 23 Sept: "the start of project assistant, the end of project assistant - if
+// those two are playing the same role, then that should be all in one PDF."
+// A profile only carries one role, so nobody is literally both. What happens in practice
+// is that one person covers both ends and the other seat is empty. So: if the OTHER
+// assistant seat has nobody approved in it, this person is covering both, and their PDF
+// covers both - the takedowns coming up and the houses coming to an end - instead of
+// half the pipeline arriving and the other half arriving nowhere.
+function _prioAssistBoth(person, kind){
+  const other = (kind==='start') ? 'end of project assistant' : 'start of project assistant';
+  const held = ((typeof getUsers==='function')?getUsers():[]).some(function(u){
+    if(!u || u.status!=='approved') return false;
+    if(String(u.role||'').trim().toLowerCase()!==other) return false;
+    const n=((u.firstName||'')+' '+(u.lastName||'')).trim();
+    return !_sameAssignee(n, person);      // somebody ELSE is in that seat
+  });
+  return !held;
+}
+function _prioAssistPhases(person, kind){
+  if(_prioAssistBoth(person, kind)) return PRIO_START_PHASES.concat(PRIO_END_PHASES);
+  return (kind==='start') ? PRIO_START_PHASES : PRIO_END_PHASES;
+}
 function _prioPack(person, wk){
   const kind=_prioKindOf(person);
   const groups=_prioBuild(person, wk);
@@ -23468,10 +23585,15 @@ function _prioPack(person, wk){
     mine.forEach(function(c){ addRecap(c,'you are the PM'); });
     if(!mine.length) notes.push('No houses are assigned to them on the property cards, so there is nothing to recap. Set the PM on the card and this fills itself in.');
   } else if(kind==='start' || kind==='end'){
-    const phases=(kind==='start')?PRIO_START_PHASES:PRIO_END_PHASES;
+    const phases=_prioAssistPhases(person, kind);
+    const both=_prioAssistBoth(person, kind);
     mine.forEach(function(c){ addRecap(c,'you are the PM'); });
     cards.filter(function(c){ return phases.indexOf(c.phase)>=0; })
-         .forEach(function(c){ addRecap(c, kind==='start'?'coming up':'coming to an end'); });
+         .forEach(function(c){
+           const isStart = PRIO_START_PHASES.indexOf(c.phase)>=0;
+           addRecap(c, isStart ? 'coming up' : 'coming to an end');
+         });
+    if(both) notes.push('Nobody else is set as the '+(kind==='start'?'end':'start')+'-of-project assistant, so this one list covers both ends \u2014 the takedowns coming up and the houses coming to a finish.');
   } else if(kind==='realtor'){
     cards.filter(function(c){ return _prioIsAgent(c,person) && _prioNearFinish(c); })
          .forEach(function(c){ addRecap(c,'your listing'); });
@@ -23745,7 +23867,8 @@ function _prioPreview(person, wk){
   // house it belongs to underneath - the label, not the heading.
   const line=(it)=>`<div class="job">
       <span class="box"></span>
-      <span class="what"><span class="t">${esc(it.title)}</span>${
+      <span class="what"><span class="t">${esc(it.title)}</span></span>
+      <span class="meta">${
         it.where?`<span class="where">${esc(it.where)}</span>`:`<span class="where none">not tied to a house</span>`}${
         it.cat?`<span class="cat">${esc(it.cat)}</span>`:''}</span>
     </div>`;
@@ -23766,7 +23889,7 @@ function _prioPreview(person, wk){
     const dates=[r.vacancy?('vacant '+r.vacancy):'', r.closing?('we close '+r.closing):'', r.sell?('sells '+r.sell):''].filter(Boolean).join(' · ');
     const bits=r.bits.length?r.bits.map(function(b){ return `<p class="lb">${b.label}</p><p class="bd">${esc(b.text)}</p>`; }).join('')
       : `<p class="bd dim">Nothing was written about this one in the meeting.</p>`;
-    const carry=r.carry.length?`<p class="lb">Still carrying</p>${r.carry.map(function(x){ return '<div class="job"><span class="box"></span><span class="what"><span class="t">'+esc(x.text)+'</span></span></div>'; }).join('')}`:'';
+    const carry=r.carry.length?`<p class="lb">Still carrying</p>${r.carry.map(function(x){ return '<div class="job"><span class="box"></span><span class="what"><span class="t">'+esc(x.text)+'</span></span><span class="meta"></span></div>'; }).join('')}`:'';
     return `<section class="rec"><div class="rh">${esc(r.label)}<span class="rp">${esc(r.phase)}${r.why?(' · '+r.why):''}</span></div>${money(r.money)}${dates?`<p class="m">${dates}</p>`:''}${bits}${carry}</section>`;
   }).join('');
 
@@ -23779,7 +23902,13 @@ function _prioPreview(person, wk){
     body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
          color:#14171C;background:#fff;margin:0;padding:22px 20px 40px;
          -webkit-font-smoothing:antialiased}
-    .sheet{max-width:560px;margin:0 auto}
+    /* Bruce, 23 Sept: "widen that up a bit, to where it fits like a piece of paper
+       width. Right now it's like what you would see on the mobile version." A letter
+       page inside its margins is about 6.5in of text; at 96dpi that is ~816px of
+       column including the padding, which is what this is. It still collapses to a
+       single readable column on a phone - nobody has to scroll sideways to read it. */
+    .sheet{max-width:816px;margin:0 auto}
+    @media(max-width:860px){ body{padding:16px 14px 32px} }
 
     header{border-bottom:2.5px solid #14171C;padding-bottom:11px;margin-bottom:6px}
     h1{font-size:27px;line-height:1.1;margin:0;letter-spacing:-.4px}
@@ -23803,16 +23932,24 @@ function _prioPreview(person, wk){
     section.day.late .dl{color:#B42318}
     section.day.undated .dh{border-left-color:#9AA3B2;background:#F6F7F9}
 
-    .job{display:flex;gap:11px;align-items:flex-start;padding:9px 4px 9px 11px;
+    /* On a paper-width column the job and the house it belongs to sit on one line,
+       the house hard right where the eye can run down it. Narrow screens stack them. */
+    .job{display:flex;gap:12px;align-items:baseline;padding:9px 4px 9px 11px;
          border-bottom:1px solid #EDF0F5}
-    .box{flex:0 0 auto;width:16px;height:16px;margin-top:2px;border:1.5px solid #9AA3B2;
-         border-radius:3.5px;background:#fff}
-    .what{min-width:0}
+    .box{flex:0 0 auto;width:16px;height:16px;align-self:flex-start;margin-top:3px;
+         border:1.5px solid #9AA3B2;border-radius:3.5px;background:#fff}
+    .what{flex:1 1 auto;min-width:0}
+    .meta{flex:0 0 auto;text-align:right;max-width:40%;padding-left:10px}
     .t{display:block;font-size:15px;line-height:1.35;font-weight:600}
     .where{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.05em;
-           text-transform:uppercase;color:#185FA5;margin-top:4px}
+           text-transform:uppercase;color:#185FA5}
     .where.none{color:#9AA3B2;font-weight:600}
-    .cat{display:inline-block;font-size:10.5px;color:#5B6472;margin-top:4px;margin-left:8px}
+    .cat{display:block;font-size:10.5px;color:#5B6472;margin-top:2px}
+    @media(max-width:620px){
+      .job{flex-wrap:wrap}
+      .meta{flex:1 1 100%;text-align:left;max-width:none;padding-left:28px;margin-top:3px}
+      .cat{display:inline-block;margin-top:0;margin-left:8px}
+    }
 
     h2.sec{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
            color:#5B6472;margin:30px 0 0;padding-bottom:5px;border-bottom:1px solid #E3E7EE}
@@ -24019,4 +24156,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-23a fix-property-cards-not-opening -->
+<!-- build: 2026-09-23b pm-dropdown, paper-width-pdf, roster-recipients, va-andy-dashboard -->
