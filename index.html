@@ -2347,9 +2347,22 @@ document.addEventListener("click", () => {
   document.querySelectorAll(".ni.has-dd").forEach(x => x.classList.remove("on"));
 });
 
+// Picking a name from the tab strip keeps you where you are. Bruce's words: "you can
+// officially swap tabs and keep moving." Jumping him to a different screen every time
+// he picks a name is the opposite of that. The one exception is the Main Dashboard,
+// where choosing a person has always meant "show me their overview".
+function _pdPickPM(v){
+  const t=window._pdTab||'main';
+  if(!v || v==='__all'){ _pdShowEveryone(); return; }
+  _pdSetPM(v);
+  openProjectDashboard((t==='main'||String(t).indexOf('pm:')===0) ? ('pm:'+_pdPM()) : t);
+}
 // ===================== PROJECT DASHBOARD =====================
 function openProjectDashboard(activeTab) {
   activeTab = activeTab || 'main';
+  // 'pm:Name' is still a real tab (their own overview), but the name it carries is now
+  // recorded as the standing choice rather than living only inside the tab id.
+  if(String(activeTab).indexOf('pm:')===0) _pdSetPM(activeTab.slice(3));
   window._pdTab = activeTab;
   document.querySelectorAll(".dd").forEach(x => x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x => x.classList.remove("on"));
@@ -2379,14 +2392,17 @@ function openProjectDashboard(activeTab) {
     </div>`;
 
   // The picker sits where the names used to be: first thing after Main Dashboard.
-  const pmOn  = (activeTab||'').indexOf('pm:')===0;
-  const pmWho = pmOn ? activeTab.slice(3) : '';
+  // onTab = you are standing on their own overview. pmWho = the standing choice, which
+  // holds whatever tab you are on - that is the whole point of it.
+  const pmOnTab = (activeTab||'').indexOf('pm:')===0;
+  const pmWho   = _pdPM();
+  const pmSet   = !!pmWho;
   const pmPicker = (pmNames.length > 1) ? `
-    <div style="display:inline-flex;align-items:center;gap:6px;padding:7px 14px;white-space:nowrap;border-bottom:2px solid ${pmOn?'#111':'transparent'};margin-bottom:-1px">
+    <div style="display:inline-flex;align-items:center;gap:6px;padding:7px 14px;white-space:nowrap;border-bottom:2px solid ${pmOnTab?'#111':'transparent'};margin-bottom:-1px">
       <span style="font-size:13px">\u{1F464}</span>
-      <select onchange="if(this.value) openProjectDashboard('pm:'+this.value);"
-        style="font-size:13px;padding:4px 8px;border:0.5px solid ${pmOn?'#111':'#dfe4ec'};border-radius:6px;background:#fff;color:${pmOn?'#111':'#566070'};font-weight:${pmOn?'600':'400'};cursor:pointer;outline:none;max-width:200px">
-        <option value="">${pmOn?'Project Manager':'Project Managers\u2026'}</option>
+      <select onchange="_pdPickPM(this.value)"
+        style="font-size:13px;padding:4px 8px;border:0.5px solid ${pmSet?'#111':'#dfe4ec'};border-radius:6px;background:#fff;color:${pmSet?'#111':'#566070'};font-weight:${pmSet?'600':'400'};cursor:pointer;outline:none;max-width:210px">
+        <option value="__all">${pmSet?'\u2190 Everyone':'Project Managers\u2026'}</option>
         ${pmNames.map(nm=>`<option value="${_calEsc(nm)}" ${_canonSame(nm,pmWho)?'selected':''}>${_calEsc(nm)}${_pmHasLiveWork(nm)?'':' \u00b7 no houses on'}</option>`).join('')}
       </select>
     </div>` : '';
@@ -4259,11 +4275,49 @@ function renderMainDashboard() {
 }
 
 // ===================== PROPERTY DASHBOARD BOARD =====================
+// ---- the standing "whose board am I looking at" choice ------------------------
+// Bruce, 23 Sept: "when you select a project manager and you go click on scope of work
+// center or property dashboard, it should stay on that project manager and not reset
+// back to project managers. That way you can swap tabs and keep moving and not have to
+// repetitively pick your name."
+// There were TWO of these and they never spoke. The tab strip encoded the name inside
+// the tab id ('pm:Isaiah Stinson'), so clicking any other tab threw it away, and the
+// Property Dashboard kept its own separate _propBoardPM. Picking your name at the top
+// and then opening the board gave you everybody's houses and a second picker still
+// saying "Select a PM...". One choice now, and it survives a refresh.
 let _propBoardPM = 'all';
-function setPropBoardPM(v){ _propBoardPM = v; openProjectDashboard('trello'); }
+try{ const _s=localStorage.getItem('pm_board_pm'); if(_s) _propBoardPM=_s; }catch(e){}
+function _pdPM(){ return (_propBoardPM==='all')?'':_propBoardPM; }
+function _pdSetPM(name){
+  const n=String(name==null?'':name).trim();
+  _propBoardPM = (!n || n==='all' || n==='__all') ? 'all'
+               : ((typeof _canonName==='function')?_canonName(n):n);
+  try{ localStorage.setItem('pm_board_pm', _propBoardPM); }catch(e){}
+}
+// Is this house theirs? _sameAssignee, not _canonSame: the roster holds people by first
+// name ("Andrew") while the property cards hold them by full name ("Andrew Scrape").
+function _pdPMMine(c){
+  const who=_pdPM();
+  return !who || _sameAssignee(c&&c.pm, who);
+}
+// The one-line "you are not seeing everything" strip. A silent filter is how somebody
+// reports a missing house that was never missing.
+function _pdPMBanner(what){
+  const who=_pdPM(); if(!who) return '';
+  return `<div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;background:#EEF4FB;border:0.5px solid #CFE0F2;border-radius:9px;padding:8px 13px;margin-bottom:12px">
+    <span style="font-size:12.5px;color:#185FA5">Showing only <b>${_calEsc(who)}</b>'s ${_calEsc(what)}.</span>
+    <span onclick="_pdShowEveryone()" style="cursor:pointer;font-size:12.5px;font-weight:600;color:#185FA5;text-decoration:underline">Show everyone</span>
+  </div>`;
+}
+function _pdShowEveryone(){
+  _pdSetPM('all');
+  const t=window._pdTab||'main';
+  openProjectDashboard((String(t).indexOf('pm:')===0)?'main':t);
+}
+function setPropBoardPM(v){ _pdSetPM(v); openProjectDashboard('trello'); }
 function renderPropertyBoard() {
   _propBack = 'trello';
-  const _pmMatch = c => (_propBoardPM === 'all' || _canonSame(c.pm, _propBoardPM));
+  const _pmMatch = c => _pdPMMine(c);
   const _sbClosed = propCards.filter(c=>!c.archived && _pmMatch(c) && c.phase==='Closed').length;
   const sidebar = [...propCards.filter(c=>!c.archived && _pmMatch(c) && c.phase!=='Closed')].sort((a,b)=>a.addr.localeCompare(b.addr)).map((c,i) => {
     const p = phInfo(c.phase);
@@ -4345,9 +4399,9 @@ function renderPropertyBoard() {
       <div onclick="setPropBoardPM('all')" style="padding:6px 14px;font-size:13px;cursor:pointer;border-radius:8px;${_propBoardPM==='all'?'background:#111;color:#fff':'background:#fff;color:#555;border:0.5px solid #ddd'}">All Project Managers</div>
       <select onchange="setPropBoardPM(this.value)" style="padding:6px 12px;font-size:13px;border:0.5px solid #ddd;border-radius:8px;background:#fff;color:#333;max-width:220px">
         <option value="all" ${_propBoardPM==='all'?'selected':''}>Select a PM…</option>
-        ${(typeof PM_MANAGERS!=='undefined'?PM_MANAGERS:[]).map(nm=>`<option value="${_calEsc(nm)}" ${_propBoardPM===nm?'selected':''}>👤 ${_calEsc(nm)}</option>`).join('')}
+        ${_pmPickerNames().map(nm=>`<option value="${_calEsc(nm)}" ${_canonSame(nm,_pdPM())?'selected':''}>👤 ${_calEsc(nm)}</option>`).join('')}
       </select>
-      ${_propBoardPM!=='all'?`<span style="font-size:12px;color:#185FA5">Showing ${_calEsc(_propBoardPM)}'s properties</span>`:''}
+      ${_pdPM()?`<span style="font-size:12px;color:#185FA5">Showing ${_calEsc(_pdPM())}'s properties</span>`:''}
     </div>
     <div style="display:flex;height:580px;overflow:hidden;background:#f4f5f7;border-radius:8px">
       <!-- Sidebar collapsed tab -->
@@ -4722,7 +4776,13 @@ function _scCenter(){
     return '<div style="padding:40px;text-align:center;color:#566070;font-size:14px">Loading scopes…</div>';
   }
   const ro=(typeof isReadOnly==='function') && isReadOnly();
-  const all=_scAll();
+  // Same standing choice as the Property Dashboard, so picking your name once and then
+  // moving between the two keeps you on your own houses.
+  const all=_scAll().filter(function(r){
+    if(!_pdPM()) return true;
+    const c=_scCardFor(r.sc);
+    return c ? _pdPMMine(c) : false;
+  });
   if(window._scLoadOk===false){
     return '<div style="padding:24px"><div style="background:#FDF2F1;border:1px solid #EFC2BC;border-radius:9px;padding:14px 16px;font-size:13.5px;color:#A82B1E">'
       + 'The scopes could not be loaded just now, so nothing is shown rather than showing you an empty list that looks like you have none. Refresh and try again.</div></div>';
@@ -4765,19 +4825,101 @@ function _scCenter(){
       ${ro?'':`<button onclick="_scNew()" style="margin-left:auto;padding:8px 15px;background:#111;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">+ New scope of work</button>`}
     </div>
     <div style="font-size:12.5px;color:#566070;margin-bottom:15px;max-width:760px">Every scope we have, and which phase it is in. Build it from the voice notes, review and add the links and photos, send it, take the prices back, then move it to payables on the property card.</div>
+    ${_pdPMBanner('scopes')}
     <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:13px;align-items:start">${cols}</div>
   </div>`;
 }
 
-async function _scNew(){
+// The property a scope belongs to, for the PM filter and for the picker's
+// "already has a scope" note.
+function _scCardFor(sc){
+  const cards=(typeof propCards!=='undefined'?propCards:[]);
+  if(!sc) return null;
+  return cards.find(function(c){ return c.id===sc.property_id; })
+      || cards.find(function(c){ return _scAddrSame(c.addr, sc.addr); })
+      || null;
+}
+function _scAddrSame(a,b){
+  const n=(v)=>String(v==null?'':v).toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+  return !!n(a) && n(a)===n(b);
+}
+
+// ---- starting a new scope --------------------------------------------------------
+// Bruce, 23 Sept: "when you click new scope of work, I don't like the drop down in the
+// middle of the screen... just let me select a property in a better looking format."
+// It was a browser prompt() listing fifty-one addresses and asking you to type a
+// number. This is a real panel: type a few letters of the street, see the phase, the
+// manager and whether that house already has a scope, and click it.
+function _scNew(){
   if(_blockIfReadOnly()) return;
-  const cards=(typeof propCards!=='undefined'?propCards:[]).filter(function(c){ return !c.archived; });
-  const list=cards.map(function(c,i){ return (i+1)+'. '+c.addr; }).join('\n');
-  const pick=prompt("Which property is this scope for?\n\nType the number:\n\n"+list);
-  if(!pick) return;
-  const idx=parseInt(String(pick).trim(),10)-1;
-  const c=cards[idx];
-  if(!c){ alert("That was not one of the numbers on the list."); return; }
+  window.__scPickQ='';
+  const host=document.getElementById('pd-content') || document.getElementById('dash-body');
+  if(!host) return;
+  host.innerHTML=_scPickBody();
+  const box=document.getElementById('sc-pick-q');
+  if(box) box.focus();
+}
+function _scPickCards(){
+  return (typeof propCards!=='undefined'?propCards:[])
+    .filter(function(c){ return c && !c.archived; })
+    .filter(function(c){ return _pdPMMine(c); })
+    .sort(function(a,b){ return String(a.addr||'').localeCompare(String(b.addr||'')); });
+}
+function _scPickBody(){
+  const esc=_calEsc;
+  return `<div style="padding:18px 20px 30px;max-width:1120px">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:3px">
+      <span onclick="openProjectDashboard('sow')" style="cursor:pointer;font-size:13px;color:#185FA5;font-weight:600">\u2039 Scope of Work Center</span>
+    </div>
+    <div style="font-size:19px;font-weight:700;color:#111;margin-bottom:3px">Which house is this scope for?</div>
+    <div style="font-size:12.5px;color:#566070;margin-bottom:13px">${_pdPM()?('Showing '+esc(_pdPM())+"'s houses. "):''}Start typing a street name to narrow it down.</div>
+    <input id="sc-pick-q" oninput="_scPickFilter(this.value)" placeholder="Search by address, phase or manager\u2026"
+      style="width:100%;max-width:560px;padding:10px 13px;font-size:14px;border:0.5px solid #dfe4ec;border-radius:9px;outline:none;margin-bottom:11px">
+    <div id="sc-pick-list" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:7px;align-content:start">${_scPickList()}</div>
+  </div>`;
+}
+function _scPickFilter(v){
+  window.__scPickQ=String(v||'');
+  const el=document.getElementById('sc-pick-list');
+  if(el) el.innerHTML=_scPickList();
+}
+function _scPickList(){
+  const esc=_calEsc;
+  const q=String(window.__scPickQ||'').toLowerCase().trim();
+  const has={};
+  _scAll().forEach(function(r){
+    const c=_scCardFor(r.sc);
+    if(c) has[c.id]=(has[c.id]||0)+1;
+  });
+  const rows=_scPickCards().filter(function(c){
+    if(!q) return true;
+    return [c.addr,c.phase,c.pm,c.type].map(function(x){ return String(x||'').toLowerCase(); }).join(' ').indexOf(q)>=0;
+  });
+  if(!rows.length){
+    return `<div style="grid-column:1/-1;border:1px dashed #dfe4ec;border-radius:10px;padding:26px;text-align:center;font-size:13px;color:#8A94A6">`
+      + (q ? ('Nothing matches \u201c'+esc(window.__scPickQ)+'\u201d.') :
+             (_pdPM() ? (esc(_pdPM())+' has no houses on the board right now.') : 'There are no properties on the board.'))
+      + `</div>`;
+  }
+  return rows.map(function(c){
+    const p=(typeof phInfo==='function')?phInfo(c.phase):{dot:'#9AA3B2',bg:'#f4f5f7',text:'#566070'};
+    const n=has[c.id]||0;
+    return `<div onclick="_scNewFor('${c.id}')" onmouseover="this.style.borderColor='#111'" onmouseout="this.style.borderColor='#e0e4ec'"
+      style="cursor:pointer;background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:11px 14px;display:flex;align-items:center;gap:11px;transition:border-color .12s">
+      <div style="width:10px;height:10px;border-radius:50%;background:${p.dot};box-shadow:0 0 0 3px ${p.dot}33;flex-shrink:0"></div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:14.5px;font-weight:700;color:#111;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(c.addr||'(no address)')}</div>
+        <div style="font-size:11.5px;color:#636b7a;margin-top:2px">${esc(c.phase||'\u2014')} \u00b7 ${esc(c.pm||'no manager')}${c.type?(' \u00b7 '+esc(c.type)):''}</div>
+      </div>
+      ${n?`<span title="This house already has ${n} scope${n===1?'':'s'}" style="flex-shrink:0;font-size:10.5px;font-weight:700;color:#6B5310;background:#FFF8E6;border:1px solid #E5D3A3;border-radius:99px;padding:2px 9px">${n} already</span>`:''}
+      <span style="flex-shrink:0;font-size:16px;color:#C2C8D2">\u203a</span>
+    </div>`;
+  }).join('');
+}
+async function _scNewFor(pid){
+  if(_blockIfReadOnly()) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===pid; });
+  if(!c){ alert("That property is not on the board any more."); return; }
   const cl=c.checklists||{};
   const row={ property_id:c.id, addr:c.addr, phase:'build', revision:1,
               lockbox:cl.lockbox||'', house_type:c.type||'', sqft:cl.sqft||'', finishes:cl.finishes||'',
@@ -4785,7 +4927,7 @@ async function _scNew(){
   const r=await supabase.from('pm_scopes').insert(row).select('*').single();
   if(r.error){ alert("That scope was NOT created - "+(r.error.message||'')); return; }
   // start it with the headings the house actually has, so nobody faces a blank page
-  const starter=['Exterior — General','Exterior Paint','Front Exterior','Rear Exterior','Interior — General'];
+  const starter=['Exterior \u2014 General','Exterior Paint','Front Exterior','Rear Exterior','Interior \u2014 General'];
   await supabase.from('pm_scope_lines').insert(starter.map(function(t,i){
     return { scope_id:r.data.id, kind:'section', title:t, display_order:(i+1)*100 };
   }));
@@ -5201,7 +5343,7 @@ tr.tot td{background:#E7EDF4;font-weight:800;font-size:12px;border-top:2px solid
 <div class="facts">
   <div><div class="k">Lockbox</div><div class="v">${esc(sc.lockbox||'—')}</div></div>
   <div><div class="k">Finishes</div><div class="v">${esc(sc.finishes||'—')}</div></div>
-  <div><div class="k">Issued by</div><div class="v">Legacy Home Investments</div></div>
+  <div><div class="k">Issued by</div><div class="v">Legacy Homes</div></div>
   <div><div class="k">Revision</div><div class="v">${esc(dt(sc.last_updated_at)||'—')}</div></div>
 </div>
 <div class="sign">
@@ -5228,7 +5370,7 @@ ${scopeHtml}
 <p class="lead">Each line in the scope is tagged <b>We supply</b> or <b>You supply</b> so you can see it
 while you are pricing that line. This is the same information in one place. If a material is not listed
 here and not tagged on the line, assume you are supplying it — and ask us before you price it.</p>
-<h3 style="margin-top:14px;font-size:13.5px">Legacy Home Investments supplies</h3>
+<h3 style="margin-top:14px;font-size:13.5px">Legacy Homes supplies</h3>
 ${supTable(legacy,'Nothing on this scope is marked as ours — assume you are supplying everything, and ask us if that looks wrong.')}
 <h3 style="margin-top:16px;font-size:13.5px">The contractor supplies</h3>
 ${supTable(theirs,'Nothing is marked yours yet. Ask us before you price.')}
@@ -5278,7 +5420,7 @@ before completion. Final payment follows cleanup, punch-list correction and our 
   <div><div class="k">Date</div><div class="line"></div></div>
 </div>
 </div>
-<div class="foot"><span>${esc(_scAddr(sc))} &nbsp;·&nbsp; Legacy Home Investments</span><span>${esc(dt(sc.last_updated_at))}</span></div>
+<div class="foot"><span>${esc(_scAddr(sc))} &nbsp;·&nbsp; Legacy Homes</span><span>${esc(dt(sc.last_updated_at))}</span></div>
 <div class="noprint" style="text-align:center;margin-top:18px"><button onclick="window.print()">Save as PDF / print</button></div>
 </div></body></html>`;
 
@@ -12976,11 +13118,15 @@ function _tovPicker(){
     ${st.key==='custom'?`<div style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap"><input type="date" id="tov-from" value="${st.from||''}" style="padding:5px 8px;border:1px solid #2e4070;background:#111;color:#ddd;border-radius:6px;font-size:12.5px"/><span style="color:#556;font-size:12px">to</span><input type="date" id="tov-to" value="${st.to||''}" style="padding:5px 8px;border:1px solid #2e4070;background:#111;color:#ddd;border-radius:6px;font-size:12.5px"/><button onclick="_tovCustom()" style="padding:5px 12px;background:#5dade2;color:#06182b;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer">Apply</button></div>`:''}
   </div>`;
 }
-function pmCard(name, d, liveName) {
+// The title used to come from a hard-coded map of three first names and defaulted to
+// "Project Manager" for everybody else - so Gabe (End of Project Assistant) and Tommy
+// (CEO) both had cards calling them project managers. It comes off their account now,
+// and only falls back to the map when no account was passed in.
+function pmCard(name, d, liveName, role) {
   const colors = { Bruce: "blue", Andrew: "green", Isaiah: "purple" };
   const titles = { Bruce: "Project Director", Andrew: "Project Manager", Isaiah: "Project Manager" };
   const c = colors[name] || "blue";
-  const title = titles[name] || "Project Manager";
+  const title = (role && String(role).trim()) || titles[name] || "Project Manager";
   const displayName = liveName || name;
   return `
     <div style="background:#111;border:1px solid #2a2a2a;border-radius:10px;overflow:hidden">
@@ -13045,7 +13191,7 @@ function openPMDashboard() {
   // Build a card for every approved Project Manager account (so new PMs like Alex
   // appear automatically), with Bruce (Director) kept first. Falls back to the
   // original three if no accounts have loaded yet.
-  const _mkPmCard = (u) => { const key=((u.firstName||"").trim())||(u.email||""); return pmCard(key, _computePMMetrics(key), ((u.firstName||"")+" "+(u.lastName||"")).trim()); };
+  const _mkPmCard = (u) => { const key=((u.firstName||"").trim())||(u.email||""); return pmCard(key, _computePMMetrics(key), ((u.firstName||"")+" "+(u.lastName||"")).trim(), u.role); };
   // A card shows for anyone who EITHER holds the Project Manager role OR is set as the
   // PM on at least one active property (so Tommy, Bruce, Gabe — anyone running a project —
   // appears). Bruce (Director) is kept first.
@@ -13061,7 +13207,9 @@ function openPMDashboard() {
   const _pmCards = _pmList.length
     ? _pmList.map(_mkPmCard).join("")
     : (pmCard("Bruce", _computePMMetrics("Bruce"), resolvePMName("Bruce")) + pmCard("Andrew", _computePMMetrics("Andrew"), resolvePMName("Andrew")) + pmCard("Isaiah", _computePMMetrics("Isaiah"), resolvePMName("Isaiah")));
-  body.innerHTML = `
+  // The period picker was only added on the SECOND paint, after the refresh promise
+  // came back, so the panel opened with no way to change the period and then grew one.
+  body.innerHTML = _tovPicker() + `
     <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:24px">
       ${_pmCards}
     </div>
@@ -15053,10 +15201,19 @@ function _roleCovered(cfg){ const ov=(_roleHolderOverrides||{})[cfg.key]; return
 // Overview until a property lands on them again. The roster itself is untouched,
 // so they stay pickable in every "assign a PM" dropdown - they just stop taking
 // up a column while they have nothing on.
+// Does this person have live work? This compared raw lowercase strings and so opted
+// out of the alias table that the whole rest of the app runs on. The roster holds
+// project managers by FIRST name ("Andrew"); the property cards hold them by full name
+// ("Andrew Scrape"). "andrew" !== "andrew scrape", so Andrew was judged to have no
+// houses at all - and the PM Team Overview drops anyone with no houses. He ran ten of
+// them and had no card on the board. Nobody else was caught because every other
+// manager happens to be stored under a bare first name on both sides.
+// _sameAssignee is the matcher _computePMMetrics already uses to decide WHICH houses
+// are his, so this is the same question finally getting the same answer.
 function _pmHasWork(name){
-  const k=String(name||'').trim().toLowerCase(); if(!k) return false;
-  const all=(typeof propCards!=='undefined'?propCards:[]);
-  return all.some(c=>!c.archived && c.phase!=='Closed' && String(c.pm||'').trim().toLowerCase()===k);
+  if(!String(name||'').trim()) return false;
+  return (typeof propCards!=='undefined'?propCards:[])
+    .some(c=>!c.archived && c.phase!=='Closed' && _sameAssignee(c.pm, name));
 }
 // Who is allowed to look at everybody. Same three roles the nav already trusts with
 // every dropdown - they run the whole board and have to see all of it.
@@ -15095,10 +15252,9 @@ function _pmPickerNames(){
     .forEach(function(c){ push(c.pm); });
   return out;
 }
-function _pmHasLiveWork(name){
-  return (typeof propCards!=='undefined'?propCards:[])
-    .some(function(c){ return c && !c.archived && c.phase!=='Closed' && _canonSame(c.pm, name); });
-}
+// Same question, so the same answer: these two were separate implementations that
+// disagreed about Andrew.
+function _pmHasLiveWork(name){ return _pmHasWork(name); }
 function _pmTabNames(){
   const roster=(typeof PM_MANAGERS!=='undefined'?PM_MANAGERS:[]).slice();
   const all=(typeof propCards!=='undefined'?propCards:[]);
@@ -24804,4 +24960,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-23c scope-of-work-center, five-phases, priced-line-by-line -->
+<!-- build: 2026-09-23d sticky-pm-choice, sow-property-picker, andrew-back-on-the-pm-overview, legacy-homes -->
