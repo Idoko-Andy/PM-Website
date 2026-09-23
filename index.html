@@ -2366,7 +2366,7 @@ function openProjectDashboard(activeTab) {
   const tabs = [
     { id: 'main',   label: 'Main Dashboard',   icon: '📊' },
     ...pmTabs,
-    { id: 'sow',    label: 'SOW / Budgets',     icon: '💰' },
+    { id: 'sow',    label: 'Scope of Work Center', icon: '📐' },
     { id: 'trello', label: 'Property Dashboard',icon: '🏗' },
     { id: 'construction', label: 'Construction Calendar', icon: '📅' },
     { id: 'taskcal',      label: 'Task Calendar',               icon: '🗓' },
@@ -4638,6 +4638,654 @@ function _canOpenPropCard(u){
 // to be remembered per house or ticking a sub phase would throw you back to Project Info
 // mid-job. That is exactly the kind of thing that made Alex lose his place in the
 // meeting, and it is not going to happen here.
+// ===================== SCOPE OF WORK CENTER =====================
+// Bruce, 23 Sept: "change it to scope of work center - a dashboard where it houses all of
+// our scopes of work for each property, gives us the option to create a new one, go
+// through and edit unfinished ones."
+// And the five phases he named, in his order:
+//   1 build          Patience types it up off the voice notes while the PM is in the field
+//   2 review         review, edit and revise - this is where the design links go in
+//   3 sent           it is with the contractor
+//   4 pricing        prices are coming back
+//   5 ap             the prices move to Accounts Payable on the property card
+// These are NOT pm_sows. That table is the acquisitions budget estimator - catalog-priced
+// labour lines that produce a budget. This is the document a contractor prices and works
+// from. Same nickname, different animal, separate tables on purpose.
+const SC_PHASES = [
+  {key:'build',   n:1, label:'Being built',      sub:'typed up from the field',        col:'#8A5A10', bg:'#FFF8E6', bd:'#E5D3A3'},
+  {key:'review',  n:2, label:'Review & revise',  sub:'links, photos, corrections',     col:'#4A1D6E', bg:'#F3E8FB', bd:'#D9BDEE'},
+  {key:'sent',    n:3, label:'With the contractor', sub:'sent out, waiting',           col:'#0C447C', bg:'#E6F1FB', bd:'#B7D4F0'},
+  {key:'pricing', n:4, label:'Prices coming back', sub:'filling in what they quoted',  col:'#8A5A10', bg:'#FFF8E6', bd:'#E5D3A3'},
+  {key:'ap',      n:5, label:'Moved to payables',  sub:'on the property card',         col:'#0F7B54', bg:'#E6F4ED', bd:'#B4DFC9'}
+];
+function _scPhase(k){ return SC_PHASES.filter(function(p){ return p.key===k; })[0] || SC_PHASES[0]; }
+
+let _scCache = null;        // [{scope, lines:[]}]
+window._scLoadOk = undefined;
+
+async function _scLoad(){
+  try{
+    const a = await supabase.from('pm_scopes').select('*').order('last_updated_at',{ascending:false});
+    if(a.error){ window._scLoadOk=false; _scCache=[]; return; }
+    const b = await supabase.from('pm_scope_lines').select('*').order('display_order',{ascending:true});
+    if(b.error){ window._scLoadOk=false; _scCache=[]; return; }
+    const byScope={};
+    (b.data||[]).forEach(function(l){ (byScope[l.scope_id]=byScope[l.scope_id]||[]).push(l); });
+    _scCache=(a.data||[]).map(function(sc){ return {sc:sc, lines:byScope[sc.id]||[]}; });
+    window._scLoadOk=true;
+  }catch(e){ window._scLoadOk=false; _scCache=[]; }
+}
+function _scAll(){ return Array.isArray(_scCache) ? _scCache : []; }
+function _scGet(id){ return _scAll().filter(function(x){ return x.sc.id===id; })[0] || null; }
+function _scAddr(sc){
+  if(sc.property_id && typeof _propAddr==='function'){ const a=_propAddr(sc.property_id); if(a) return a; }
+  return sc.addr || 'Untitled scope';
+}
+// Section and item numbering, worked out from the order the lines are in. Every
+// "included with" reference is stored as a line id, never as the printed number, so
+// moving or inserting a line can never leave a reference pointing at the wrong work.
+function _scNumber(lines){
+  const out={}; let sec=0, item=0;
+  (lines||[]).slice().sort(function(a,b){ return (a.display_order||0)-(b.display_order||0); })
+    .forEach(function(l){
+      if(l.kind==='section'){ sec++; item=0; out[l.id]={n:String(sec), sec:sec}; }
+      else if(l.kind==='item'){ item++; out[l.id]={n:sec+'.'+item, sec:sec, item:item}; }
+      else out[l.id]={n:'', sec:sec};
+    });
+  return out;
+}
+function _scRefLabel(lines, nums, refId){
+  if(!refId) return '';
+  const hit=(lines||[]).filter(function(x){ return x.id===refId; })[0];
+  if(!hit) return '';                 // the line it pointed at is gone
+  return (nums[refId]||{}).n || '';
+}
+function _scOrdered(lines){
+  return (lines||[]).slice().sort(function(a,b){ return (a.display_order||0)-(b.display_order||0); });
+}
+function _scItems(lines){ return _scOrdered(lines).filter(function(l){ return l.kind==='item'; }); }
+function _scCount(rec, mode){
+  return _scItems(rec.lines).filter(function(l){ return (l.price_mode||'own')===mode; }).length;
+}
+function _scPriced(rec){
+  const want=_scItems(rec.lines).filter(function(l){ return (l.price_mode||'own')==='own' || (l.price_mode||'own')==='quote'; });
+  const got =want.filter(function(l){ return l.price!=null; });
+  return {want:want.length, got:got.length};
+}
+function _scTotal(rec){
+  return _scItems(rec.lines).reduce(function(n,l){ return n + (l.price!=null?Number(l.price):0); }, 0);
+}
+// ---- the centre screen: every scope, grouped by the phase it is in ---------------
+function _scCenter(){
+  if(_scCache===null){
+    _scLoad().then(function(){ if(window._pdTab==='sow') openProjectDashboard('sow'); });
+    return '<div style="padding:40px;text-align:center;color:#566070;font-size:14px">Loading scopes…</div>';
+  }
+  const ro=(typeof isReadOnly==='function') && isReadOnly();
+  const all=_scAll();
+  if(window._scLoadOk===false){
+    return '<div style="padding:24px"><div style="background:#FDF2F1;border:1px solid #EFC2BC;border-radius:9px;padding:14px 16px;font-size:13.5px;color:#A82B1E">'
+      + 'The scopes could not be loaded just now, so nothing is shown rather than showing you an empty list that looks like you have none. Refresh and try again.</div></div>';
+  }
+  const esc=_calEsc;
+  const card=(rec)=>{
+    const sc=rec.sc, ph=_scPhase(sc.phase);
+    const n=_scItems(rec.lines).length;
+    const pr=_scPriced(rec);
+    const inc=_scCount(rec,'inc'), q=_scCount(rec,'quote');
+    const bits=[n+' line'+(n===1?'':'s')];
+    if(inc) bits.push(inc+' included');
+    if(q)   bits.push(q+' to price separately');
+    if(sc.phase==='pricing'||sc.phase==='ap') bits.push(pr.got+' of '+pr.want+' priced');
+    return `<div onclick="_scOpen('${sc.id}')" style="cursor:pointer;background:#fff;border:0.5px solid #e0e4ec;border-left:4px solid ${ph.col};border-radius:9px;padding:11px 14px;margin-bottom:8px">
+      <div style="display:flex;align-items:baseline;gap:9px;flex-wrap:wrap">
+        <span style="font-size:14.5px;font-weight:700;color:#111">${esc(_scAddr(sc))}</span>
+        ${sc.revision>1?`<span style="font-size:10.5px;color:#566070">rev ${sc.revision}</span>`:''}
+        ${sc.issued_to?`<span style="font-size:10.5px;font-weight:700;color:${ph.col};background:${ph.bg};border:1px solid ${ph.bd};border-radius:99px;padding:1px 8px">${esc(sc.issued_to)}</span>`:''}
+        <span style="margin-left:auto;font-size:11.5px;color:#566070">${esc(bits.join('  ·  '))}</span>
+      </div>
+      <div style="font-size:11.5px;color:#636b7a;margin-top:3px">last touched ${esc(String(sc.last_updated_at||'').slice(0,10))}${sc.last_updated_by?(' by '+esc(sc.last_updated_by)):''}</div>
+    </div>`;
+  };
+  const cols=SC_PHASES.map(function(ph){
+    const mine=all.filter(function(r){ return (r.sc.phase||'build')===ph.key; });
+    return `<div>
+      <div style="display:flex;align-items:baseline;gap:7px;margin-bottom:7px">
+        <span style="font-size:10px;font-weight:800;color:#fff;background:${ph.col};border-radius:4px;padding:2px 7px">${ph.n}</span>
+        <span style="font-size:13.5px;font-weight:700;color:#111">${ph.label}</span>
+        <span style="font-size:11px;color:#636b7a">${mine.length}</span>
+      </div>
+      <div style="font-size:11px;color:#8A94A6;margin-bottom:8px">${ph.sub}</div>
+      ${mine.map(card).join('') || `<div style="border:1px dashed #dfe4ec;border-radius:9px;padding:14px;text-align:center;font-size:12px;color:#9AA3B2">nothing here</div>`}
+    </div>`;
+  }).join('');
+  return `<div style="padding:18px 20px 30px">
+    <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:4px">
+      <div style="font-size:19px;font-weight:700;color:#111">\u{1F4D0} Scope of Work Center</div>
+      ${ro?'':`<button onclick="_scNew()" style="margin-left:auto;padding:8px 15px;background:#111;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">+ New scope of work</button>`}
+    </div>
+    <div style="font-size:12.5px;color:#566070;margin-bottom:15px;max-width:760px">Every scope we have, and which phase it is in. Build it from the voice notes, review and add the links and photos, send it, take the prices back, then move it to payables on the property card.</div>
+    <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:13px;align-items:start">${cols}</div>
+  </div>`;
+}
+
+async function _scNew(){
+  if(_blockIfReadOnly()) return;
+  const cards=(typeof propCards!=='undefined'?propCards:[]).filter(function(c){ return !c.archived; });
+  const list=cards.map(function(c,i){ return (i+1)+'. '+c.addr; }).join('\n');
+  const pick=prompt("Which property is this scope for?\n\nType the number:\n\n"+list);
+  if(!pick) return;
+  const idx=parseInt(String(pick).trim(),10)-1;
+  const c=cards[idx];
+  if(!c){ alert("That was not one of the numbers on the list."); return; }
+  const cl=c.checklists||{};
+  const row={ property_id:c.id, addr:c.addr, phase:'build', revision:1,
+              lockbox:cl.lockbox||'', house_type:c.type||'', sqft:cl.sqft||'', finishes:cl.finishes||'',
+              created_by:_miWho(), last_updated_by:_miWho(), last_updated_at:new Date().toISOString() };
+  const r=await supabase.from('pm_scopes').insert(row).select('*').single();
+  if(r.error){ alert("That scope was NOT created - "+(r.error.message||'')); return; }
+  // start it with the headings the house actually has, so nobody faces a blank page
+  const starter=['Exterior — General','Exterior Paint','Front Exterior','Rear Exterior','Interior — General'];
+  await supabase.from('pm_scope_lines').insert(starter.map(function(t,i){
+    return { scope_id:r.data.id, kind:'section', title:t, display_order:(i+1)*100 };
+  }));
+  _logAudit('created','scope', c.addr, 'New scope of work started');
+  await _scLoad();
+  _scOpen(r.data.id);
+}
+// ---- the builder ---------------------------------------------------------------
+function _scOpen(id){
+  window.__scOpenId=id;
+  if(_scCache===null){ _scLoad().then(function(){ _scOpen(id); }); return; }
+  const host=document.getElementById('pd-content') || document.getElementById('dash-body');
+  if(!host) return;
+  host.innerHTML=_scBody(id);
+}
+function _scRerender(){ if(window.__scOpenId) _scOpen(window.__scOpenId); }
+
+function _scBody(id){
+  const rec=_scGet(id);
+  if(!rec) return '<div style="padding:30px;color:#566070">That scope is not here any more.</div>';
+  const sc=rec.sc, esc=_calEsc, ro=(typeof isReadOnly==='function')&&isReadOnly();
+  const lines=_scOrdered(rec.lines);
+  const nums=_scNumber(lines);
+  const ph=_scPhase(sc.phase);
+  const items=_scItems(rec.lines);
+
+  const refOpts=(cur)=>items.map(function(l){
+    return `<option value="${l.id}" ${cur===l.id?'selected':''}>${esc((nums[l.id]||{}).n||'')} · ${esc(String(l.title||'').slice(0,42))}</option>`;
+  }).join('');
+  const whoOpts=(cur)=>{
+    const names=((typeof _contractorsCache!=='undefined'?_contractorsCache:[])||[]).map(function(c){ return c.name; });
+    const extra=(cur && names.indexOf(cur)<0) ? [cur] : [];
+    return `<option value="">— nobody yet —</option>`
+      + names.concat(extra).map(function(n){ return `<option ${n===cur?'selected':''}>${esc(n)}</option>`; }).join('')
+      + `<option value="TBD" ${cur==='TBD'?'selected':''}>TBD</option>`;
+  };
+
+  const lineRow=(l)=>{
+    const num=(nums[l.id]||{}).n||'';
+    if(l.kind==='section'){
+      return `<div style="display:flex;align-items:center;gap:9px;margin:18px 0 4px;padding-bottom:5px;border-bottom:2px solid #122A4A">
+        <span style="font-size:11px;font-weight:800;color:#fff;background:#122A4A;border-radius:4px;padding:2px 8px">${esc(num)}</span>
+        ${ro?`<span style="font-size:16px;font-weight:700">${esc(l.title||'')}</span>`
+            :`<input value="${esc(l.title||'')}" onchange="_scSet('${l.id}',{title:this.value})" style="flex:1;font-size:16px;font-weight:700;color:#111;border:none;border-bottom:1px dashed transparent;background:none;outline:none;padding:2px 0" onfocus="this.style.borderBottomColor='#c7cedb'" onblur="this.style.borderBottomColor='transparent'"/>`}
+        ${ro?'':`<button onclick="_scAddItem('${sc.id}',${l.display_order})" style="font-size:11.5px;padding:3px 10px;border-radius:6px;border:0.5px solid #cdd7e6;background:#fff;color:#185FA5;cursor:pointer">+ line</button>
+        <button onclick="_scDel('${l.id}','this whole section heading')" style="font-size:12px;color:#B42318;background:none;border:none;cursor:pointer">×</button>`}
+      </div>`;
+    }
+    const pm=l.price_mode||'own';
+    const refLabel=_scRefLabel(lines, nums, l.inc_ref);
+    const broken = pm==='inc' && l.inc_ref && !refLabel;
+    const slot = pm==='own'   ? `<span style="display:block;border:1px solid #8B93A0;border-radius:3px;height:24px;background:#fff"></span><span style="display:block;font-size:8px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:#5B6472;margin-top:2px">their price</span>`
+               : pm==='inc'   ? (broken ? `<span style="display:block;font-size:10px;font-weight:700;color:#B42318;background:#FDF2F1;border:1px solid #EFC2BC;border-radius:3px;padding:4px 6px">the line this pointed at is gone — pick another</span>`
+                                        : `<span style="display:block;font-size:10px;color:#3A4049;background:#EFF1F4;border:1px solid #DFE3E9;border-radius:3px;padding:4px 6px">included with <b style="color:#122A4A">${esc(refLabel)}</b></span>`)
+               : pm==='quote' ? `<span style="display:block;font-size:9.5px;font-weight:800;text-transform:uppercase;color:#6B5310;background:#FFF8E6;border:1px solid #E5D3A3;border-radius:3px;padding:5px">price separately</span>`
+               :                `<span style="display:block;font-size:9.5px;color:#9BA2AC;padding-top:5px">no price needed</span>`;
+    const controls = ro ? '' : `
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px;align-items:center">
+        <select onchange="_scSetMode('${l.id}',this.value)" style="font-size:11px;padding:3px 6px;border:0.5px solid #c7cedb;border-radius:5px;background:#fff">
+          <option value="own"   ${pm==='own'?'selected':''}>Contractor prices this line</option>
+          <option value="inc"   ${pm==='inc'?'selected':''}>Included with another line</option>
+          <option value="quote" ${pm==='quote'?'selected':''}>Price separately</option>
+          <option value="none"  ${pm==='none'?'selected':''}>No price — instruction only</option>
+        </select>
+        ${pm==='inc'?`<select onchange="_scSet('${l.id}',{inc_ref:this.value})" style="font-size:11px;padding:3px 6px;border:0.5px solid #122A4A;border-radius:5px;background:#fff;font-weight:700;color:#122A4A;max-width:230px"><option value="">— which line? —</option>${refOpts(l.inc_ref)}</select>`:''}
+        <select onchange="_scSet('${l.id}',{who:this.value})" style="font-size:11px;padding:3px 6px;border:0.5px solid #c7cedb;border-radius:5px;background:#fff">${whoOpts(l.who||'')}</select>
+        <select onchange="_scSet('${l.id}',{supplied_by:this.value})" style="font-size:11px;padding:3px 6px;border:0.5px solid #c7cedb;border-radius:5px;background:#fff">
+          <option value="" ${!l.supplied_by?'selected':''}>— who supplies? —</option>
+          <option value="legacy" ${l.supplied_by==='legacy'?'selected':''}>We supply the material</option>
+          <option value="contractor" ${l.supplied_by==='contractor'?'selected':''}>They supply the material</option>
+        </select>
+        <label style="font-size:11px;color:#566070;display:inline-flex;align-items:center;gap:4px;cursor:pointer">
+          <input type="checkbox" ${l.stop?'checked':''} onchange="_scSet('${l.id}',{stop:this.checked})"/> do-not / warning
+        </label>
+        <button onclick="_scLink('${l.id}')" style="font-size:11px;padding:3px 9px;border-radius:5px;border:0.5px solid #cdd7e6;background:#fff;color:#185FA5;cursor:pointer">\u{1F517} ${l.link_url?'edit link':'link'}</button>
+        <button onclick="_scPhoto('${l.id}')" style="font-size:11px;padding:3px 9px;border-radius:5px;border:0.5px solid #cdd7e6;background:#fff;color:#185FA5;cursor:pointer">\u{1F4F7} ${l.photo_url?'edit photo':'photo'}</button>
+        <button onclick="_scDel('${l.id}','this line')" style="font-size:12px;color:#B42318;background:none;border:none;cursor:pointer;margin-left:auto">×</button>
+      </div>`;
+    const tags=[
+      l.who?`<span style="font-size:8.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:${l.who==='TBD'?'#6B5310':'#122A4A'};background:${l.who==='TBD'?'#FFF8E6':'#fff'};border:1px solid ${l.who==='TBD'?'#E5D3A3':'#122A4A'};border-radius:3px;padding:1px 6px">${esc(l.who)}</span>`:'',
+      l.supplied_by?`<span style="font-size:8.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:${l.supplied_by==='legacy'?'#1F5C3D':'#6B5310'};background:${l.supplied_by==='legacy'?'#EAF5EF':'#FFF8E6'};border:1px solid ${l.supplied_by==='legacy'?'#BEDFCD':'#E5D3A3'};border-radius:3px;padding:1px 6px">${l.supplied_by==='legacy'?'We supply':'They supply'}</span>`:''
+    ].filter(Boolean).join(' ');
+    return `<div style="display:grid;grid-template-columns:38px 1fr 132px;gap:11px;align-items:start;padding:10px 0;border-bottom:1px solid #EDF0F5;${l.stop?'background:#FDF2F1;border-left:3px solid #A82B1E;padding-left:8px;':''}">
+      <div style="font-size:11px;font-weight:800;color:${l.stop?'#A82B1E':'#5B6472'};padding-top:4px">${esc(num)}</div>
+      <div style="min-width:0">
+        ${ro?`<div style="font-size:13px;font-weight:700;color:${l.stop?'#A82B1E':'#111'}">${esc(l.title||'')}</div>`
+            :`<input value="${esc(l.title||'')}" placeholder="What the work is…" onchange="_scSet('${l.id}',{title:this.value})" style="width:100%;font-size:13px;font-weight:700;color:${l.stop?'#A82B1E':'#111'};border:none;border-bottom:1px dashed #e4e8ef;background:none;outline:none;padding:2px 0"/>`}
+        ${ro?(l.detail?`<div style="font-size:12px;color:#33383F;margin-top:3px">${esc(l.detail)}</div>`:'')
+            :`<textarea placeholder="Detail, colours, instructions…" onchange="_scSet('${l.id}',{detail:this.value})" style="width:100%;font-size:12px;color:#33383F;border:none;background:none;outline:none;resize:vertical;min-height:20px;margin-top:2px;line-height:1.5">${esc(l.detail||'')}</textarea>`}
+        ${tags?`<div style="margin-top:4px">${tags}</div>`:''}
+        ${l.link_url?`<div style="font-size:11.5px;margin-top:3px">\u{1F517} <a href="${esc(l.link_url)}" target="_blank" style="color:#185FA5">${esc(l.link_label||l.link_url)}</a></div>`:''}
+        ${l.photo_url?`<div style="margin-top:5px"><img src="${esc(l.photo_url)}" style="max-width:190px;border-radius:5px;border:1px solid #e0e4ec;display:block"/>${l.photo_caption?`<div style="font-size:10.5px;color:#636b7a;margin-top:2px">${esc(l.photo_caption)}</div>`:''}</div>`:''}
+        ${controls}
+      </div>
+      <div style="text-align:right">${slot}${(sc.phase==='pricing'||sc.phase==='ap')&&(pm==='own'||pm==='quote')&&!ro?`<input type="number" step="0.01" placeholder="$" value="${l.price!=null?l.price:''}" onchange="_scSet('${l.id}',{price:this.value===''?null:Number(this.value), priced_at:new Date().toISOString()})" style="width:100%;margin-top:4px;font-size:12.5px;padding:4px 6px;border:1px solid #122A4A;border-radius:4px;text-align:right"/>`:''}</div>
+    </div>`;
+  };
+
+  const phaseBar = SC_PHASES.map(function(x){
+    const on=x.key===sc.phase;
+    return `<button ${ro?'':`onclick="_scMove('${sc.id}','${x.key}')"`} style="flex:1;padding:7px 6px;border:1px solid ${on?x.col:'#dfe4ec'};background:${on?x.bg:'#fff'};color:${on?x.col:'#8A94A6'};font-size:11.5px;font-weight:${on?'800':'600'};cursor:${ro?'default':'pointer'};border-radius:7px;text-align:center">
+      <div style="font-size:9.5px;opacity:.8">Phase ${x.n}</div>${esc(x.label)}</button>`;
+  }).join('');
+
+  const pr=_scPriced(rec), tot=_scTotal(rec);
+  return `<div style="padding:16px 20px 34px;max-width:1080px;margin:0 auto">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+      <button onclick="openProjectDashboard('sow')" style="font-size:13px;color:#566070;background:none;border:none;cursor:pointer;padding:4px 0">← All scopes</button>
+      <span style="margin-left:auto"></span>
+      ${ro?'':`<button onclick="_scPreview('${sc.id}')" style="padding:7px 14px;background:#185FA5;color:#fff;border:none;border-radius:7px;font-size:12.5px;font-weight:600;cursor:pointer">\u{1F4C4} Preview / print PDF</button>`}
+    </div>
+    <div style="font-size:21px;font-weight:700;color:#111">${esc(_scAddr(sc))}</div>
+    <div style="font-size:12.5px;color:#566070;margin-bottom:12px">Scope of work${sc.revision>1?(' · revision '+sc.revision):''} · last touched ${esc(String(sc.last_updated_at||'').slice(0,10))}${sc.last_updated_by?(' by '+esc(sc.last_updated_by)):''}</div>
+
+    <div style="display:flex;gap:7px;margin-bottom:14px">${phaseBar}</div>
+
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-bottom:14px">
+      ${['lockbox|Lockbox','house_type|House type','sqft|Sq ft','finishes|Finishes'].map(function(f){
+        const k=f.split('|')[0], lab=f.split('|')[1];
+        return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:7px 11px">
+          <div style="font-size:9px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:#8A94A6">${lab}</div>
+          ${ro?`<div style="font-size:13px;font-weight:600">${esc(sc[k]||'—')}</div>`
+              :`<input value="${esc(sc[k]||'')}" onchange="_scSetScope('${sc.id}',{${k}:this.value})" style="width:100%;font-size:13px;font-weight:600;border:none;outline:none;background:none;padding:1px 0"/>`}
+        </div>`; }).join('')}
+    </div>
+
+    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:4px 16px 16px">
+      ${lines.map(lineRow).join('') || '<div style="padding:26px;text-align:center;color:#636b7a;font-size:13px">Nothing in this scope yet.</div>'}
+      ${ro?'':`<div style="display:flex;gap:8px;margin-top:13px">
+        <button onclick="_scAddSection('${sc.id}')" style="padding:7px 13px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer">+ Section</button>
+        <button onclick="_scAddItem('${sc.id}')" style="padding:7px 13px;background:#111;color:#fff;border:none;border-radius:7px;font-size:12.5px;cursor:pointer">+ Line</button>
+      </div>`}
+    </div>
+
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:12px;font-size:12.5px;color:#566070">
+      <span>${_scItems(rec.lines).length} lines</span>
+      <span>${_scCount(rec,'own')} they price</span>
+      <span>${_scCount(rec,'inc')} included with another line</span>
+      <span>${_scCount(rec,'quote')} priced separately</span>
+      ${(sc.phase==='pricing'||sc.phase==='ap')?`<span style="margin-left:auto;font-weight:700;color:#111">${pr.got} of ${pr.want} priced · ${_budMoney(tot)}</span>`:''}
+    </div>
+  </div>`;
+}
+// ---- writing ---------------------------------------------------------------------
+async function _scTouch(scopeId){
+  await supabase.from('pm_scopes').update({last_updated_at:new Date().toISOString(), last_updated_by:_miWho()})
+    .eq('id', scopeId);
+}
+async function _scSet(lineId, patch){
+  if(_blockIfReadOnly()) return;
+  const r=await supabase.from('pm_scope_lines').update(patch).eq('id', lineId).select('id');
+  if(r.error || !(r.data||[]).length){
+    alert("That was NOT saved"+(r.error&&r.error.message?(" - "+r.error.message):"")+".");
+    return;
+  }
+  const rec=_scAll().filter(function(x){ return x.lines.some(function(l){ return l.id===lineId; }); })[0];
+  if(rec){
+    rec.lines.forEach(function(l){ if(l.id===lineId) Object.assign(l, patch); });
+    await _scTouch(rec.sc.id);
+    rec.sc.last_updated_at=new Date().toISOString(); rec.sc.last_updated_by=_miWho();
+  }
+  _scRerender();
+}
+// Changing the mode has to clear what the old mode left behind, or a line can end up
+// "contractor prices this" while still carrying a stale included-with reference.
+async function _scSetMode(lineId, mode){
+  const patch={price_mode:mode};
+  if(mode!=='inc') patch.inc_ref=null;
+  if(mode==='none'||mode==='inc') patch.price=null;
+  await _scSet(lineId, patch);
+}
+async function _scSetScope(scopeId, patch){
+  if(_blockIfReadOnly()) return;
+  patch.last_updated_at=new Date().toISOString(); patch.last_updated_by=_miWho();
+  const r=await supabase.from('pm_scopes').update(patch).eq('id', scopeId).select('id');
+  if(r.error || !(r.data||[]).length){ alert("That was NOT saved"+(r.error&&r.error.message?(" - "+r.error.message):"")+"."); return; }
+  const rec=_scGet(scopeId); if(rec) Object.assign(rec.sc, patch);
+  _scRerender();
+}
+function _scNextOrder(rec, after){
+  const ls=_scOrdered(rec.lines);
+  if(after==null) return ((ls.length?ls[ls.length-1].display_order:0)||0)+100;
+  // drop it straight under the row it was added from, without renumbering everything
+  const below=ls.filter(function(l){ return (l.display_order||0)>after; })[0];
+  return below ? (after + ((below.display_order-after)/2)) : after+100;
+}
+async function _scAddItem(scopeId, after){
+  if(_blockIfReadOnly()) return;
+  const rec=_scGet(scopeId); if(!rec) return;
+  const r=await supabase.from('pm_scope_lines')
+    .insert({scope_id:scopeId, kind:'item', title:'', price_mode:'own',
+             display_order:_scNextOrder(rec, after==null?null:Number(after))}).select('*').single();
+  if(r.error){ alert("That line was NOT added - "+(r.error.message||'')); return; }
+  rec.lines.push(r.data); await _scTouch(scopeId);
+  _scRerender();
+}
+async function _scAddSection(scopeId){
+  if(_blockIfReadOnly()) return;
+  const name=prompt("What is this section called?  (Exterior — General, Kitchen, Upstairs Bath…)");
+  if(!name) return;
+  const rec=_scGet(scopeId); if(!rec) return;
+  const r=await supabase.from('pm_scope_lines')
+    .insert({scope_id:scopeId, kind:'section', title:name, display_order:_scNextOrder(rec,null)}).select('*').single();
+  if(r.error){ alert("That section was NOT added - "+(r.error.message||'')); return; }
+  rec.lines.push(r.data); await _scTouch(scopeId);
+  _scRerender();
+}
+async function _scDel(lineId, what){
+  if(_blockIfReadOnly()) return;
+  if(!confirm("Delete "+what+"?\n\nThis cannot be undone.")) return;
+  // anything that was "included with" this line has to stop pointing at it
+  const rec=_scAll().filter(function(x){ return x.lines.some(function(l){ return l.id===lineId; }); })[0];
+  const orphans=rec ? rec.lines.filter(function(l){ return l.inc_ref===lineId; }) : [];
+  if(orphans.length && !confirm(orphans.length+" other line"+(orphans.length===1?" is":"s are")
+      +" priced as “included with” this one.\n\nThey will be set back to “contractor prices this line” so nothing ends up pointing at a line that is gone. Carry on?")) return;
+  const r=await supabase.from('pm_scope_lines').delete().eq('id', lineId).select('id');
+  if(r.error){ alert("That was NOT deleted - "+(r.error.message||'')); return; }
+  if(orphans.length){
+    await supabase.from('pm_scope_lines').update({price_mode:'own', inc_ref:null})
+      .in('id', orphans.map(function(o){ return o.id; }));
+  }
+  await _scLoad(); _scRerender();
+}
+async function _scLink(lineId){
+  if(_blockIfReadOnly()) return;
+  const rec=_scAll().filter(function(x){ return x.lines.some(function(l){ return l.id===lineId; }); })[0];
+  const l=rec?rec.lines.filter(function(x){ return x.id===lineId; })[0]:null; if(!l) return;
+  const url=prompt("Paste the link (design package, a product page, drawings…)\n\nLeave it empty to remove the link.", l.link_url||'');
+  if(url===null) return;
+  if(!String(url).trim()){ await _scSet(lineId,{link_url:null, link_label:null}); return; }
+  if(!/^https?:\/\//i.test(url.trim())){ alert("That does not look like a link — it needs to start with http:// or https://"); return; }
+  const label=prompt("What should the link say?", l.link_label||'Design package');
+  await _scSet(lineId,{link_url:url.trim(), link_label:(label||'Link').trim()});
+}
+async function _scPhoto(lineId){
+  if(_blockIfReadOnly()) return;
+  const rec=_scAll().filter(function(x){ return x.lines.some(function(l){ return l.id===lineId; }); })[0];
+  const l=rec?rec.lines.filter(function(x){ return x.id===lineId; })[0]:null; if(!l) return;
+  const url=prompt("Paste the photo link — CompanyCam, Drive, or any image URL.\n\nLeave it empty to remove the photo.", l.photo_url||'');
+  if(url===null) return;
+  if(!String(url).trim()){ await _scSet(lineId,{photo_url:null, photo_caption:null}); return; }
+  if(!/^https?:\/\//i.test(url.trim())){ alert("That does not look like a link — it needs to start with http:// or https://"); return; }
+  const cap=prompt("A caption for it? (optional)", l.photo_caption||'');
+  await _scSet(lineId,{photo_url:url.trim(), photo_caption:(cap||'').trim()||null});
+}
+async function _scMove(scopeId, phase){
+  if(_blockIfReadOnly()) return;
+  const rec=_scGet(scopeId); if(!rec) return;
+  const from=_scPhase(rec.sc.phase), to=_scPhase(phase);
+  if(from.key===to.key) return;
+  // The one move worth stopping on: sending it out.
+  if(to.key==='sent'){
+    const blank=_scItems(rec.lines).filter(function(l){ return !String(l.title||'').trim(); }).length;
+    const noref=_scItems(rec.lines).filter(function(l){ return (l.price_mode||'')==='inc' && !l.inc_ref; }).length;
+    const bad=[];
+    if(blank) bad.push(blank+' line'+(blank===1?'':'s')+' with nothing typed in');
+    if(noref) bad.push(noref+' line'+(noref===1?' that says':'s that say')+' “included with” but does not say which line');
+    if(bad.length && !confirm("Before this goes to a contractor:\n\n• "+bad.join("\n• ")
+        +"\n\nSend it anyway?")) return;
+  }
+  const patch={phase:phase, last_updated_at:new Date().toISOString(), last_updated_by:_miWho()};
+  if(phase==='sent'){ patch.sent_at=new Date().toISOString(); patch.sent_by=_miWho(); }
+  const r=await supabase.from('pm_scopes').update(patch).eq('id',scopeId).select('id');
+  if(r.error || !(r.data||[]).length){ alert("That did NOT move"+(r.error&&r.error.message?(" - "+r.error.message):"")+"."); return; }
+  Object.assign(rec.sc, patch);
+  _logAudit('updated','scope', _scAddr(rec.sc), 'Moved to phase '+to.n+' — '+to.label);
+  _scRerender();
+}
+// ---- the document a contractor actually gets ------------------------------------
+// Built to be printed and written on. Bruce, 23 Sept: "most of them are probably going to
+// print it off and write their prices on paper, which is fine - that's probably going to
+// be the main goal of it." So every price slot is a box sized for a pen, all the boxes sit
+// in one column down the right, and nothing depends on colour to be understood.
+function _scPreview(scopeId){
+  const rec=_scGet(scopeId); if(!rec){ alert("That scope is not loaded."); return; }
+  const sc=rec.sc, esc=_calEsc;
+  const lines=_scOrdered(rec.lines), nums=_scNumber(lines);
+  const items=_scItems(rec.lines);
+  const dt=(v)=>{ if(!v) return ''; try{ return new Date(v).toLocaleDateString(undefined,{day:'numeric',month:'long',year:'numeric'}); }catch(e){ return String(v).slice(0,10); } };
+
+  const slot=(l)=>{
+    const pm=l.price_mode||'own';
+    if(pm==='own')   return `<span class="blank"></span><span class="lab">your price</span>`;
+    if(pm==='inc'){
+      const r=_scRefLabel(lines, nums, l.inc_ref);
+      return r ? `<span class="inc">included with<b>${esc(r)}</b></span>`
+               : `<span class="quote">tell us — reference missing</span>`;
+    }
+    if(pm==='quote') return `<span class="quote">price<br>separately</span>`;
+    return `<span class="na">no price needed</span>`;
+  };
+  const tag=(t,cls)=>`<span class="tag ${cls}">${esc(t)}</span>`;
+  const row=(l)=>{
+    const n=(nums[l.id]||{}).n||'';
+    if(l.kind==='section'){
+      return `<section><div class="sh"><span class="sn">${esc(n)}</span><h2>${esc(l.title||'')}</h2></div>`;
+    }
+    let body='<b>'+esc(l.title||'')+'</b>';
+    if(l.who) body+=tag(l.who, 'who'+(l.who==='TBD'?' tbd':''));
+    if(l.supplied_by) body+=tag(l.supplied_by==='legacy'?'We supply':'You supply','sup'+(l.supplied_by==='legacy'?'':' you'));
+    const tail=[];
+    if(l.detail)   tail.push(esc(l.detail));
+    if(l.spec)     tail.push('<span class="spec">'+esc(l.spec)+'</span>');
+    if(l.when_txt) tail.push('<span class="when">'+esc(l.when_txt)+'</span>');
+    if(l.link_url) tail.push('<a href="'+esc(l.link_url)+'">'+esc(l.link_label||'Link')+'</a>');
+    if(tail.length) body+=' &mdash; '+tail.join('  ');
+    const subs=Array.isArray(l.subs)?l.subs:[];
+    if(subs.length) body+='<ul class="subs">'+subs.map(function(x){ return '<li>'+esc(x)+'</li>'; }).join('')+'</ul>';
+    if(l.photo_url) body+='<div class="ph"><img src="'+esc(l.photo_url)+'"/>'+(l.photo_caption?('<em>'+esc(l.photo_caption)+'</em>'):'')+'</div>';
+    return `<div class="it${l.stop?' stop':''}"><div class="no">${esc(n)}</div><div class="tx">${body}</div><div class="pr">${slot(l)}</div></div>`;
+  };
+  // sections open a <section>; close each one before the next opens
+  let scopeHtml='', open=false;
+  lines.forEach(function(l){
+    if(l.kind==='section'){ if(open) scopeHtml+='</section>'; scopeHtml+=row(l); open=true; }
+    else if(l.kind==='item'){ scopeHtml+=row(l); }
+  });
+  if(open) scopeHtml+='</section>';
+
+  const legacy=items.filter(function(l){ return l.supplied_by==='legacy'; });
+  const theirs=items.filter(function(l){ return l.supplied_by==='contractor'; });
+  const supTable=(rows,empty)=>rows.length
+    ? `<table><tr><th style="width:12%">Line</th><th>Material</th></tr>`
+      + rows.map(function(l){ return `<tr><td class="ln">${esc((nums[l.id]||{}).n||'')}</td><td><b>${esc(l.title||'')}</b>${l.detail?(' &mdash; '+esc(l.detail)):''}</td></tr>`; }).join('')
+      + `</table>`
+    : `<p class="bk">${empty}</p>`;
+
+  const quotes=items.filter(function(l){ return (l.price_mode||'')==='quote'; });
+  const stops =items.filter(function(l){ return l.stop; });
+  const secs  =lines.filter(function(l){ return l.kind==='section'; });
+
+  const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>${esc(_scAddr(sc))} — Scope of Work</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700;800&family=Source+Serif+4:opsz,wght@8..60,600;8..60,700&display=swap">
+<style>
+@page{size:letter;margin:14mm 14mm 16mm}
+*{box-sizing:border-box}
+html{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+body{margin:0;font-family:'Source Sans 3',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+     font-size:12px;color:#14171C;background:#fff;padding:20px 18px 34px}
+.sheet{max-width:7.5in;margin:0 auto}
+a{color:#12263F;text-decoration:underline;text-underline-offset:2px}
+h1{font-family:'Source Serif 4',Georgia,serif;margin:5px 0 2px;font-size:28px;line-height:1.08;letter-spacing:-.5px}
+h2{font-family:'Source Serif 4',Georgia,serif;margin:0;font-size:16.5px}
+h3{font-family:'Source Serif 4',Georgia,serif;font-size:15px;margin:0 0 3px}
+.eyebrow{font-size:9px;font-weight:800;letter-spacing:.16em;text-transform:uppercase;color:#12263F}
+.sub{font-size:12.5px;color:#5B6472}
+.hdr{border-bottom:3px solid #12263F;padding-bottom:10px}
+.facts{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid #DDE2E9;border-radius:5px;overflow:hidden;margin-top:11px}
+.facts>div{padding:7px 10px;border-right:1px solid #DDE2E9}
+.facts>div:last-child{border-right:0}
+.k{font-size:8px;font-weight:800;letter-spacing:.11em;text-transform:uppercase;color:#5B6472}
+.v{font-size:12.5px;font-weight:600;margin-top:1px}
+.sign{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid #DDE2E9;border-top:0;border-radius:0 0 5px 5px;overflow:hidden}
+.sign>div{padding:7px 10px;border-right:1px solid #DDE2E9}
+.sign>div:last-child{border-right:0}
+.line{border-bottom:1px solid #8B93A0;height:18px;margin-top:4px}
+.how{margin-top:12px;border:1px solid #DDE2E9;border-left:4px solid #12263F;border-radius:0 5px 5px 0;padding:9px 12px;font-size:11.5px;line-height:1.6;background:#F4F7FA}
+.how b{color:#12263F}
+.key{display:grid;grid-template-columns:repeat(2,1fr);gap:3px 16px;margin-top:6px;font-size:10.5px;color:#3A4049}
+.key i{display:inline-block;width:54px;text-align:center;font-style:normal;font-size:8.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;border-radius:3px;padding:1px 0;margin-right:6px}
+section{margin-top:19px}
+.sh{display:flex;align-items:baseline;gap:8px;border-bottom:2px solid #12263F;padding-bottom:4px}
+.sn{font-size:10.5px;font-weight:800;color:#fff;background:#12263F;border-radius:3px;padding:2px 7px}
+.it{display:grid;grid-template-columns:30px 1fr 118px;gap:11px;align-items:start;padding:9px 0;border-bottom:1px solid #EAEDF2;break-inside:avoid;page-break-inside:avoid}
+.no{font-size:10.5px;font-weight:800;color:#5B6472;padding-top:2px}
+.tx{min-width:0;font-size:12px;line-height:1.6}
+.tag{display:inline-block;font-size:8.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;border-radius:3px;padding:1px 6px;margin-left:5px;vertical-align:1px;white-space:nowrap}
+.tag.who{color:#12263F;background:#fff;border:1px solid #12263F}
+.tag.who.tbd{color:#6B5310;background:#FFF8E6;border-color:#E5D3A3}
+.tag.sup{color:#1F5C3D;background:#EAF5EF;border:1px solid #BEDFCD}
+.tag.sup.you{color:#6B5310;background:#FFF8E6;border-color:#E5D3A3}
+.spec{display:inline-block;font-size:10.5px;font-weight:700;color:#12263F;background:#F4F7FA;border:1px solid #DDE2E9;border-radius:3px;padding:0 6px}
+.when{display:inline-block;font-size:10.5px;font-weight:700;color:#6B5310;background:#FFF8E6;border:1px solid #E5D3A3;border-radius:3px;padding:0 6px}
+.subs{margin:4px 0 0;padding-left:15px}
+.subs li{font-size:11.5px;line-height:1.55;color:#33383F}
+.ph{margin-top:6px}
+.ph img{width:190px;border:1px solid #DDE2E9;border-radius:4px;display:block}
+.ph em{display:block;font-size:9.5px;color:#5B6472;margin-top:3px;font-style:normal}
+.pr{text-align:right}
+.pr .blank{display:block;border:1px solid #8B93A0;border-radius:3px;height:26px;background:#fff}
+.pr .lab{display:block;font-size:8px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;color:#5B6472;margin-top:2px}
+.pr .inc{display:block;font-size:10px;line-height:1.3;color:#3A4049;background:#EFF1F4;border:1px solid #DFE3E9;border-radius:3px;padding:4px 6px}
+.pr .inc b{color:#12263F;display:block;font-size:11px}
+.pr .quote{display:block;font-size:9.5px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:#6B5310;background:#FFF8E6;border:1px solid #E5D3A3;border-radius:3px;padding:5px}
+.pr .na{display:block;font-size:9.5px;color:#9BA2AC;padding-top:4px}
+.it.stop{background:#FDF2F1;border-left:3px solid #A82B1E;padding-left:8px;border-bottom-color:#EFC2BC}
+.it.stop .tx,.it.stop .no{color:#A82B1E}
+.subtot{display:grid;grid-template-columns:30px 1fr 118px;gap:11px;padding:8px 0 0}
+.subtot .l{grid-column:2;text-align:right;font-size:10px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:#12263F;padding-top:6px}
+.subtot .v2{border:1.5px solid #12263F;border-radius:3px;height:27px}
+.pg{break-before:page;page-break-before:always;padding-top:4px}
+.lead{font-size:11.5px;line-height:1.6;color:#3A4049;margin:2px 0 9px}
+table{width:100%;border-collapse:collapse;font-size:11px;margin-top:5px}
+th{background:#12263F;color:#fff;text-align:left;padding:6px 8px;font-size:9px;letter-spacing:.07em;text-transform:uppercase;font-weight:800}
+td{padding:6px 8px;border-bottom:1px solid #DDE2E9;vertical-align:top;line-height:1.5}
+tr:nth-child(even) td{background:#FAFBFC}
+td.ln{font-weight:800;color:#5B6472;white-space:nowrap}
+td.money{text-align:right;white-space:nowrap}
+td.box{text-align:center;white-space:nowrap;font-size:10px;color:#5B6472}
+tr.tot td{background:#E7EDF4;font-weight:800;font-size:12px;border-top:2px solid #12263F}
+.slot{display:inline-block;border:1px solid #8B93A0;border-radius:3px;width:86px;height:21px;vertical-align:middle;background:#fff}
+.bk{font-size:11.5px;line-height:1.62;color:#3A4049;margin:0 0 8px}
+.foot{margin-top:20px;padding-top:8px;border-top:1px solid #DDE2E9;font-size:9.5px;color:#9BA2AC;display:flex;justify-content:space-between}
+.noprint button{font:inherit;font-size:13px;font-weight:600;color:#fff;background:#14171C;border:0;border-radius:8px;padding:9px 16px;cursor:pointer}
+@media print{.noprint{display:none!important}body{padding:0}}
+</style></head><body><div class="sheet">
+<div class="hdr">
+  <div class="eyebrow">Contractor Scope of Work${sc.revision>1?(' · revision '+sc.revision):''}</div>
+  <h1>${esc(_scAddr(sc))}</h1>
+  <div class="sub">${[sc.house_type, sc.sqft].filter(Boolean).map(esc).join(' · ')||'&nbsp;'}</div>
+</div>
+<div class="facts">
+  <div><div class="k">Lockbox</div><div class="v">${esc(sc.lockbox||'—')}</div></div>
+  <div><div class="k">Finishes</div><div class="v">${esc(sc.finishes||'—')}</div></div>
+  <div><div class="k">Issued by</div><div class="v">Legacy Home Investments</div></div>
+  <div><div class="k">Revision</div><div class="v">${esc(dt(sc.last_updated_at)||'—')}</div></div>
+</div>
+<div class="sign">
+  <div><div class="k">Issued to (contractor)</div>${sc.issued_to?`<div class="v">${esc(sc.issued_to)}</div>`:'<div class="line"></div>'}</div>
+  <div><div class="k">Date issued</div>${sc.issued_at?`<div class="v">${esc(dt(sc.issued_at))}</div>`:'<div class="line"></div>'}</div>
+  <div><div class="k">Prices due back</div>${sc.prices_due?`<div class="v">${esc(dt(sc.prices_due))}</div>`:'<div class="line"></div>'}</div>
+</div>
+<div class="how">
+  <b>How to price this.</b> Every line is numbered. Write your price in the box on the right of any line
+  that has one. A line that says <i>included with 2.1</i> is already paid for by that line — do the work,
+  do not price it twice. Each line also says who is supplying the material.
+  <div class="key">
+    <span><i style="border:1px solid #8B93A0;background:#fff">$_____</i>write your price here</span>
+    <span><i style="background:#EFF1F4;border:1px solid #DFE3E9;color:#12263F">inc 2.1</i>covered by that line</span>
+    <span><i style="background:#FFF8E6;border:1px solid #E5D3A3;color:#6B5310">separate</i>price it on its own page</span>
+    <span><i style="background:#FDF2F1;border:1px solid #EFC2BC;color:#A82B1E">do not</i>instruction, nothing to price</span>
+    <span><i style="background:#EAF5EF;border:1px solid #BEDFCD;color:#1F5C3D">we supply</i>we deliver the material</span>
+    <span><i style="background:#FFF8E6;border:1px solid #E5D3A3;color:#6B5310">you supply</i>you bring the material</span>
+  </div>
+</div>
+${scopeHtml}
+<div class="pg">
+<h3>Who supplies what</h3>
+<p class="lead">Each line in the scope is tagged <b>We supply</b> or <b>You supply</b> so you can see it
+while you are pricing that line. This is the same information in one place. If a material is not listed
+here and not tagged on the line, assume you are supplying it — and ask us before you price it.</p>
+<h3 style="margin-top:14px;font-size:13.5px">Legacy Home Investments supplies</h3>
+${supTable(legacy,'Nothing on this scope is marked as ours — assume you are supplying everything, and ask us if that looks wrong.')}
+<h3 style="margin-top:16px;font-size:13.5px">The contractor supplies</h3>
+${supTable(theirs,'Nothing is marked yours yet. Ask us before you price.')}
+<p class="bk" style="margin-top:10px"><b>Always yours unless we have said otherwise in writing:</b> every tool,
+ladder, scaffold and lift including fuel and rental; consumables — caulk, fasteners, tape, plastic,
+sandpaper, blades, drop cloths, brushes and rollers; the dumpster and haul-off; and whatever it takes to
+protect finished surfaces.</p>
+</div>
+${stops.length?`<div class="pg">
+<h3>Pending evaluation and approval</h3>
+<p class="lead">Nothing on this page is approved to start. These are the calls we have not made yet, and the
+places where what is behind the work might change the job. <b>Price them if there is a price slot, but do
+not begin any of them without written approval.</b> If you open something up and find it worse than it
+looked, stop, photograph it, and call the project manager before you carry on.</p>
+<table><tr><th style="width:9%">Line</th><th>Item</th><th style="width:16%">Approved</th></tr>
+${stops.map(function(l){ return `<tr><td class="ln">${esc((nums[l.id]||{}).n||'')}</td><td><b>${esc(l.title||'')}</b>${l.detail?(' &mdash; '+esc(l.detail)):''}</td><td class="box">Yes ☐&nbsp;&nbsp;No ☐</td></tr>`; }).join('')}
+</table>
+<p class="bk" style="margin-top:10px"><b>Anything else you find.</b> Concealed damage, rot, water, mould,
+failed structure or anything that is not what this scope describes — stop at that item, tell us the same
+day, and do not price or proceed on it until we have agreed the added scope and the price in writing.</p>
+</div>`:''}
+<div class="pg">
+${quotes.length?`<h3>Price these separately</h3>
+<p class="lead">These are not part of the section totals. Give us a number for each one on its own, so we
+can decide it without reopening the rest of your price.</p>
+<table><tr><th style="width:10%">Line</th><th>Item</th><th style="width:22%">Your price</th></tr>
+${quotes.map(function(l){ return `<tr><td class="ln">${esc((nums[l.id]||{}).n||'')}</td><td>${esc(l.title||'')}</td><td class="money"><span class="slot"></span></td></tr>`; }).join('')}
+</table>`:''}
+<h3 style="margin-top:${quotes.length?'18px':'0'}">Your total</h3>
+<table><tr><th style="width:10%">Section</th><th>Area</th><th style="width:22%">Subtotal</th></tr>
+${secs.map(function(l){ return `<tr><td class="ln">${esc((nums[l.id]||{}).n||'')}</td><td>${esc(l.title||'')}</td><td class="money"><span class="slot"></span></td></tr>`; }).join('')}
+${quotes.length?'<tr><td></td><td>Priced separately (above)</td><td class="money"><span class="slot"></span></td></tr>':''}
+<tr class="tot"><td></td><td>TOTAL</td><td class="money"><span class="slot"></span></td></tr>
+</table>
+<h3 style="margin-top:18px">Before you price this</h3>
+<p class="bk">Field-verify every measurement, quantity and condition before you start. If something here
+does not match what is on site, tell us before you begin — not after.</p>
+<p class="bk"><b>Changes and extra work.</b> Any change, substitution, extra work or extra material has to
+be approved by us in writing before you proceed, and the approval has to name the added scope and the
+price. Unauthorised work is not approved for payment.</p>
+<p class="bk"><b>Workmanship.</b> Straight, secure, clean, properly finished. Paint uniform, no runs, no
+missed areas, no overspray. Repairs blend to the surrounding surface. Everything installed gets tested
+before completion. Final payment follows cleanup, punch-list correction and our acceptance.</p>
+<div class="sign" style="border-top:1px solid #DDE2E9;border-radius:5px;margin-top:12px">
+  <div><div class="k">Contractor signature</div><div class="line"></div></div>
+  <div><div class="k">Printed name</div><div class="line"></div></div>
+  <div><div class="k">Date</div><div class="line"></div></div>
+</div>
+</div>
+<div class="foot"><span>${esc(_scAddr(sc))} &nbsp;·&nbsp; Legacy Home Investments</span><span>${esc(dt(sc.last_updated_at))}</span></div>
+<div class="noprint" style="text-align:center;margin-top:18px"><button onclick="window.print()">Save as PDF / print</button></div>
+</div></body></html>`;
+
+  const w=window.open('','_blank');
+  if(!w){ alert("Your browser blocked the preview window. Allow pop-ups for this site and try again."); return; }
+  w.document.write(html); w.document.close();
+}
 // NOTE: these are _pc* (property CARD), not _pd* (property DASHBOARD), and that is
 // deliberate. They were called _pdTab/_pdTabs/... for a day and it broke every property
 // card on the board: openProjectDashboard does `window._pdTab = activeTab` at the top,
@@ -5650,7 +6298,7 @@ function getPDContent(tab) {
   if(tab && tab.indexOf('pm:')===0) return pmTabContent(tab.slice(3));
   switch(tab) {
     case 'main':   return renderMainDashboard();
-    case 'sow':    return placeholder('💰','SOW / Budgets — This section will link to the platform your boss is building.');
+    case 'sow':    return _scCenter();
     case 'trello': return renderPropertyBoard();
     case 'construction': return renderConstructionCalendar();
     case 'taskcal':      return renderTaskCalendar();
@@ -24156,4 +24804,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-23b pm-dropdown, paper-width-pdf, roster-recipients, va-andy-dashboard -->
+<!-- build: 2026-09-23c scope-of-work-center, five-phases, priced-line-by-line -->
