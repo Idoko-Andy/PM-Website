@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>html,body{margin:0}img{max-width:100%}</style>
+<title>Post-Close House Flow</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+:root{
+  --ground:#F1F3F0; --surface:#FFFFFF; --surface-2:#F7F8F6; --ink:#1B2B2D; --ink-2:#4E5E5C; --muted:#76837F;
+  --line:#D3D9D4; --spine:#9FB0AB; --accent:#1F5F5B; --accent-soft:#DCEBE8; --flag:#B7791F;
+  --o-sami:#2F6DB5; --o-bruce:#A2532C; --o-pm:#2E7D4F; --o-kameron:#7A4BAE; --o-agent:#B23A62; --o-tom:#34494B; --o-vendor:#7C6F2A;
+  --focus:#1F5F5B; --o-marlo:#0F7C8C; --flag-soft:#F6EBD6; --live:#2E7D4F; --live-soft:#DDEFE3;
+  --display:"Barlow Condensed","Arial Narrow",Arial,sans-serif;
+  --body:"IBM Plex Sans",-apple-system,"Segoe UI",Roboto,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --ground:#121A1B; --surface:#1A2425; --surface-2:#1F2B2C; --ink:#E6ECEA; --ink-2:#B3C0BD; --muted:#8C9A97;
+    --line:#2F3D3E; --spine:#4A5E5B; --accent:#6CC1B8; --accent-soft:#1E3533; --flag:#E0A948;
+    --o-sami:#7FAEE6; --o-bruce:#E39570; --o-pm:#6FC495; --o-kameron:#B999E3; --o-agent:#EC86A8; --o-tom:#A9BCBE; --o-vendor:#CFC079;
+    --focus:#6CC1B8; --o-marlo:#62C6D4; --flag-soft:#3A2F1A; --live:#6FC495; --live-soft:#1C3325;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --ground:#121A1B; --surface:#1A2425; --surface-2:#1F2B2C; --ink:#E6ECEA; --ink-2:#B3C0BD; --muted:#8C9A97;
+  --line:#2F3D3E; --spine:#4A5E5B; --accent:#6CC1B8; --accent-soft:#1E3533; --flag:#E0A948;
+  --o-sami:#7FAEE6; --o-bruce:#E39570; --o-pm:#6FC495; --o-kameron:#B999E3; --o-agent:#EC86A8; --o-tom:#A9BCBE; --o-vendor:#CFC079;
+  --focus:#6CC1B8; --o-marlo:#62C6D4; --flag-soft:#3A2F1A; --live:#6FC495; --live-soft:#1C3325;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{background:var(--ground);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.5;padding-inline:16px;padding-block:28px 60px}
+.wrap{max-width:980px;margin:0 auto;display:flex;flex-direction:column;gap:22px}
+header h1{font-family:var(--display);font-weight:700;font-size:clamp(30px,5vw,44px);line-height:1.05;letter-spacing:.01em;margin:0;text-wrap:balance;text-transform:uppercase}
+header p{margin:8px 0 0;color:var(--ink-2);max-width:62ch}
+.legend{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.legend .lbl{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin-right:4px}
+.who{--c:var(--o-tom);display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:999px;padding:4px 10px 4px 8px;font:500 13px var(--body);cursor:pointer}
+.who::before{content:"";width:9px;height:9px;border-radius:50%;background:var(--c)}
+.who[aria-pressed="true"]{border-color:var(--c);box-shadow:inset 0 0 0 1px var(--c)}
+.who:focus-visible,.stage-btn:focus-visible,.sub-btn:focus-visible,.tool:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.tools{display:flex;gap:8px;flex-wrap:wrap}
+.tool{background:none;border:1px solid var(--line);color:var(--ink-2);border-radius:6px;padding:5px 10px;font:500 13px var(--body);cursor:pointer}
+.tool:hover{color:var(--ink);border-color:var(--spine)}
+
+/* flow */
+.flow{display:flex;flex-direction:column;align-items:stretch}
+.link{width:2px;height:22px;background:var(--spine);margin:0 auto}
+.stage{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.stage.dim{opacity:.38}
+.stage-btn{all:unset;box-sizing:border-box;width:100%;display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center;padding:14px 16px;cursor:pointer}
+.stage-btn:hover{background:var(--surface-2)}
+.num{font-family:var(--mono);font-size:12px;color:var(--accent);border:1px solid var(--accent);border-radius:5px;padding:2px 6px;min-width:34px;text-align:center}
+.stage-title{font-family:var(--display);font-weight:600;font-size:22px;line-height:1.1;letter-spacing:.01em}
+.stage-sum{display:block;font-family:var(--body);font-size:13.5px;color:var(--ink-2);margin-top:2px}
+.dots{display:flex;gap:4px;align-items:center}
+.dots i{width:8px;height:8px;border-radius:50%;background:var(--c)}
+.chev{width:10px;height:10px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:rotate(45deg);margin-left:10px;transition:transform .2s}
+.stage[data-open="true"] .chev{transform:rotate(-135deg)}
+.subs{border-top:1px solid var(--line);padding:6px 8px 10px;display:flex;flex-direction:column;gap:2px}
+.sub{border-radius:8px}
+.sub.dim{opacity:.35}
+.sub-btn{all:unset;box-sizing:border-box;width:100%;display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:9px 10px;border-radius:8px;cursor:pointer}
+.sub-btn:hover{background:var(--surface-2)}
+.sub[data-open="true"] .sub-btn{background:var(--accent-soft)}
+.sub-code{font-family:var(--mono);font-size:11.5px;color:var(--muted);min-width:34px}
+.sub-name{font-weight:500}
+.tag{--c:var(--o-tom);font-size:12px;font-weight:600;color:var(--c);white-space:nowrap;display:inline-flex;align-items:center;gap:5px}
+.tag::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--c)}
+.detail{margin:4px 10px 12px 54px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 22px;padding:12px 0 4px}
+.detail div{min-width:0}
+.detail dt{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);margin-bottom:3px}
+.detail dd{margin:0;font-size:14px}
+.detail .full{grid-column:1/-1}
+.detail .how{background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+.detail .how dd{font-weight:500}
+
+.note{font-size:13px;color:var(--muted);max-width:70ch}
+.note b{color:var(--ink-2)}
+@media (max-width:720px){
+  .detail{grid-template-columns:1fr;margin-left:10px}
+  .stage-btn{grid-template-columns:auto 1fr;}
+  .stage-btn .dots{display:none}
+  .sub-btn{grid-template-columns:auto 1fr}
+  .sub-btn .tag{grid-column:2}
+}
+@media (prefers-reduced-motion:reduce){.chev{transition:none}}
+
+.kpi{align-self:center;display:flex;flex-direction:column;align-items:center}
+.kpi-btn{all:unset;box-sizing:border-box;cursor:pointer;display:inline-flex;align-items:center;gap:8px;background:var(--flag-soft);color:var(--ink);border:1px dashed var(--flag);border-radius:999px;padding:5px 14px;font:600 13px var(--body)}
+.kpi-btn:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.kpi-btn b{font-family:var(--mono);font-size:11px;color:var(--flag);letter-spacing:.04em}
+.kpi-body{margin-top:8px;background:var(--surface);border:1px solid var(--flag);border-radius:10px;padding:12px 14px;max-width:560px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 20px}
+.kpi-body dt{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);margin-bottom:2px}
+.kpi-body dd{margin:0;font-size:14px}
+.kpi-body .full{grid-column:1/-1}
+.built{display:inline-block;font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;border-radius:4px;padding:1px 6px;margin-right:6px}
+.built.live{background:var(--live-soft);color:var(--live)}
+.built.build{background:var(--flag-soft);color:var(--flag)}
+.built.part{background:var(--accent-soft);color:var(--accent)}
+.findings{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.findings h2{font-family:var(--display);font-size:20px;text-transform:uppercase;letter-spacing:.03em;margin:0 0 6px}
+.findings ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px;color:var(--ink-2);font-size:14px}
+@media (max-width:720px){.kpi-body{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <h1>After we buy a flip</h1>
+    <p>Every step from closing day to the post-mortem, for flips only. Click a stage to see its steps, then click a step to see who owns it, where the conversation happens, and how we know it's done. The dashed pills between stages are the KPIs that go on your report and the PM's report.</p>
+  </header>
+
+  <div class="legend" id="legend"><span class="lbl">Show steps owned by</span></div>
+  <div class="tools">
+    <button class="tool" id="openAll" type="button">Open all stages</button>
+    <button class="tool" id="closeAll" type="button">Close all</button>
+  </div>
+
+  <div class="flow" id="flow"></div>
+
+  <section class="findings">
+    <h2>What the backend has today</h2>
+    <ul>
+      <li><span class="built live">Live</span>CompanyCam folder linked on 53 of 54 active houses (the property card's CompanyCam field). The API key works.</li>
+      <li><span class="built build">To build</span>No CompanyCam webhooks are registered, and the site's CompanyCam function only logs incoming events. No photos, timestamps, GPS or tags reach the site yet. Registering a photo webhook and saving each photo to a table is the first build.</li>
+      <li><span class="built part">Partial</span>Vacancy date field exists but is filled on only 19 of 54 houses. It has to be required for the KPI clock to start.</li>
+      <li><span class="built part">Partial</span>Start-of-project owner field exists but is blank on all 54 houses.</li>
+      <li><span class="built part">Partial</span>"First Time Access Checklist" is already the first sub-phase on cards. It becomes the site visit.</li>
+      <li><span class="built build">To build</span>The Slack message table exists but is empty, so listing-channel scanning isn't running yet.</li>
+    </ul>
+  </section>
+
+  <p class="note"><b>Proposed targets.</b> Time limits marked "proposed" are placeholders until you set them. Slack is where people talk; the property card on the PM website is where the answer gets recorded.</p>
+</div>
+
+<script>
+const OWNERS = {
+  marlo:{name:"Marlo", role:"Dispatch: assigns the PM", c:"--o-marlo"},
+  pm:{name:"Gabe (PM)", role:"Assigned by Marlo; owns the house start to finish", c:"--o-pm"},
+  bruce:{name:"Bruce", role:"Project director", c:"--o-bruce"},
+  sami:{name:"Sami", role:"Operations & transactions", c:"--o-sami"},
+  agent:{name:"Listing agent", role:"Named at vacancy", c:"--o-agent"},
+  vendor:{name:"Vendor", role:"Cleanout / contractor", c:"--o-vendor"},
+  site:{name:"PM website (auto)", role:"Happens automatically", c:"--o-tom"}
+};
+
+// built: live | part | build
+const S = (code,name,owner,approver,talk,status,proof,clock,built,builtNote)=>({code,name,owner,approver,talk,status,proof,clock,built,builtNote});
+
+const KPI = (code,name,start,end,startSrc,endSrc,target,reports)=>({kpi:true,code,name,start,end,startSrc,endSrc,target,reports});
+
+const FLOW = [
+ {num:"01", title:"Closed", sum:"We own it. Paperwork, insurance and utilities are in place.", steps:[
+  S("1.1","Deed and settlement statement uploaded","sami",null,"Title company by email","Card → Docs","Recorded deed and settlement statement; copy to BEC","Closing day","part","Closed date field exists; document upload is manual"),
+  S("1.2","Insurance and utilities in our name","sami",null,"Insurance agent and utility companies","Card → Docs / Utilities","Binder dated closing day; utility confirmation numbers","Closing day","build","No insurance or utilities fields on the card yet"),
+  S("1.3","Vacancy date entered","sami",null,"Seller by text or call","Card → Vacancy date","Date the house is actually empty. This starts KPI 1 and KPI 2","Closing day","part","Field exists; filled on 19 of 54 houses. Make it required")
+ ]},
+ {kpi:KPI("KPI 1","Vacant → first on site","Vacancy date","First CompanyCam photo at the house after that date","Card → Vacancy date","CompanyCam photo timestamp + GPS (via webhook)","1 day (proposed)","Tom's daily report and the PM's report (Gabe)")},
+ {num:"02", title:"First site visit", sum:"Assigned automatically. Marlo dispatches, the PM goes.", steps:[
+  S("2.1","Site-visit task auto-created for Marlo","site",null,"Automatic Slack message to Marlo","PM website task with due date","Task appears the moment the vacancy date is reached","Vacancy date","build","Trigger to build off the vacancy date"),
+  S("2.2","Marlo assigns the PM","marlo",null,"PM website task; Slack notice to the PM","Card → PM + Start owner","PM named on the card. That person owns the house to the end","Same day","part","PM and Start owner fields exist; Start owner is blank everywhere"),
+  S("2.3","PM on site (First Time Access)","pm",null,"On site, in CompanyCam","CompanyCam → card check-ins","Photos taken in CompanyCam at the house; GPS and time come from the photo","Target: KPI 1","build","Needs the CompanyCam photo webhook")
+ ]},
+ {num:"03", title:"Secure the house", sum:"Everything proven by CompanyCam photos, read onto the card automatically.", steps:[
+  S("3.1","Lockbox installed and code logged","pm",null,"Code goes on the card, never asked for in Slack","CompanyCam photo tagged Lockbox → Card → Access","Photo of the box on the door; code, type, date and who set it","First visit","build","Needs the webhook plus a Lockbox tag in CompanyCam and an Access field"),
+  S("3.2","Locks changed","pm",null,"None","CompanyCam photo tagged Locks","Photo of new hardware","First visit","build","Tag-based; needs the webhook"),
+  S("3.3","Meters and heat checked","pm",null,"Sami by Slack if a utility is off","CompanyCam photos tagged Meters / Thermostat","Meter readings and thermostat or winterization tag","First visit","build","Tag-based; needs the webhook"),
+  S("3.4","Every room photographed, issues flagged","pm","bruce","Slack house thread for anything urgent","CompanyCam → card Issues found","Room photos; photos tagged Issue with a note","First visit","build","Tag-based; needs the webhook")
+ ]},
+ {num:"04", title:"Owners set for the whole project", sum:"The PM assigned at the first visit stays on the house to the end.", steps:[
+  S("4.1","PM locked as owner","marlo",null,"Slack ownership post","Card → PM + Start owner","Same person from first visit to closeout; any change needs a reason","Same day as 2.2","part","Fields exist; change-with-reason rule to build"),
+  S("4.2","Listing agent named","agent",null,"Slack ownership post","Card → Listing agent","Listing agent field filled","Same day as 2.2","part","Field exists; blank on 26 of 45 houses (9/23)")
+ ]},
+ {num:"F1", title:"Cleanout", sum:"Scheduled on the calendar; completion reported automatically.", steps:[
+  S("F1.1","Cleanout scheduled","pm",null,"Vendor by text","Card → Timeline + PM's Google Calendar","Calendar event with vendor and date","Within 2 days of first visit (proposed)","part","Calendar feed exists; cleanout step to add to the timeline"),
+  S("F1.2","Cleanout complete (auto)","pm",null,"None; it reports itself","CompanyCam photos tagged Cleanout Done → Card → Cleanout = Done","After photos of every room tagged Cleanout Done. The card marks it done with the date. This ends KPI 2","Target: KPI 2","build","Needs the webhook and a Cleanout field")
+ ]},
+ {kpi:KPI("KPI 2","Vacant → cleanout complete","Vacancy date","First photo tagged Cleanout Done","Card → Vacancy date","CompanyCam tag timestamp","7 days (proposed)","Tom's daily report and the PM's report")},
+ {num:"F2", title:"Scope confirmed or changed", sum:"One meeting, Bruce and the PM, then no more drawings or meetings.", steps:[
+  S("F2.1","Walk invite auto-sent to Bruce + PM","site",null,"Google Calendar invite, sent when cleanout is done","Card → Timeline","Invite on both calendars","Within 2 days of cleanout (proposed)","part","Auto-booking exists for Pre Construction; retrigger it off Cleanout Done"),
+  S("F2.2","Scope confirmed or changed","bruce","pm","At the house, together","Card → Scope (pm_scopes)","Scope marked Confirmed, or changes listed. Date stamped. This starts KPI 3","At the walk","part","Scope tool exists (1 scope so far); needs a Confirmed date")
+ ]},
+ {kpi:KPI("KPI 3","Scope confirmed → bids in","Scope confirmed date","Last bid received","Card → Scope","Card → Budget (bid received dates)","5 days (proposed)","Tom's daily report and the PM's report")},
+ {num:"F3", title:"Bids", sum:"A short bid window. No permits on these houses.", steps:[
+  S("F3.1","Bids collected","pm",null,"Contractors by text/email","Card → Budget","Each bid attached with the date it came in","Bid window: 5 days (proposed)","build","No bid-received date on the card yet"),
+  S("F3.2","Contractor picked and approved","pm","bruce","Slack house thread","Card → Budget","Approved bid; budget vs. what we bought it on","1 day after bids in (proposed)","part","Budget fields exist")
+ ]},
+ {kpi:KPI("KPI 4","Bids in → work started","Last bid received","First day of work","Card → Budget","Card → Timeline 'Work started' (or first CompanyCam photo tagged Work)","3 days (proposed)","Tom's daily report and the PM's report")},
+ {num:"F4", title:"Rehab", sum:"Light construction. The PM is on site every other day.", steps:[
+  S("F4.1","Work started","pm",null,"Contractor by text","Card → Timeline","Date stamped; ends KPI 4","Target: KPI 4","part","Timeline exists; needs a Work started step"),
+  S("F4.2","Site visit every other day","pm",null,"On site, in CompanyCam","CompanyCam photos → card check-ins","A dated photo set at least every 2 days. A gap over 2 days is a miss on the PM's report","Every other day","build","Needs the webhook"),
+  S("F4.3","Draws requested and received","pm","sami","Lender portal and email","Card → Draws","Asked vs. approved, lien waivers, money in the bank","Per milestone","part","Draw tracking exists separately"),
+  S("F4.4","Change orders","pm","bruce","Slack house thread","Card → Budget","Written change order with cost and reason","Before the work","part","")
+ ]},
+ {num:"F5", title:"Punch and list-ready", sum:"Heads-up to the realtor 14 days out. Punch only if needed.", steps:[
+  S("F5.1","14-day heads-up to realtor","site",null,"Auto Slack post in the listing channel tagging the agent and PM","Card → Target list date","Post goes out 14 days before the target list date","Target list date − 14 days","part","Target list date field exists; post to build"),
+  S("F5.2","Punch walk (if needed)","bruce","pm","In person","Card → Punch list","Punch list with photos; usually skipped","7 days before list date","part",""),
+  S("F5.3","List-ready flagged","site",null,"Auto Slack flag to the PM and agent","Card status = List Ready","Final-clean photos tagged List Ready in CompanyCam","Target list date − 2 days","build","Needs the webhook and a List Ready status")
+ ]},
+ {num:"F6", title:"Photos and live on MLS", sum:"Read from the Slack listing channel, not asked for.", steps:[
+  S("F6.1","Photo day","agent",null,"Slack listing channel","Card → Listing (read from Slack)","Photo date pulled from the agent's message in the listing channel","Before list date","build","Slack scanning isn't running yet"),
+  S("F6.2","Live on MLS","agent",null,"Slack listing channel","Card status = Listed (read from Slack)","MLS link or 'live' message in the listing channel sets the date","Target list date","build","Slack scanning isn't running yet"),
+  S("F6.3","Realtor questions answered","pm",null,"Slack listing channel; 2 work hours to reply or ✅","Card → Slack timeline","Reply or ✅; unanswered questions get an auto-nudge","2 work hours","build","Planned; Slack table empty")
+ ]},
+ {num:"F7", title:"Sell and close", sum:"Offers, inspections, closing.", steps:[
+  S("F7.1","Offer, inspection, repairs","agent","pm","Slack listing channel","Card status = Pending","Signed contract; repair tasks with due dates","Per contract","part",""),
+  S("F7.2","Close","sami",null,"Title company by email","Card status = Sold; BEC","Settlement statement; lender payoff confirmed","Closing day","part","")
+ ]},
+ {num:"05", title:"Close out and grade the deal", sum:"Shut everything off and compare actual to what we bought it on.", steps:[
+  S("5.1","Insurance, utilities, lockbox off","sami",null,"Vendors by phone/email","Card","Cancellation confirmations","3 days after sale","build",""),
+  S("5.2","Final P&L and scorecard","sami",null,"BEC by email","Card → Financials + Mini Plecto","Sale vs. ARV %, rehab vs. budget %, and all four KPIs for this house","30 days","part","Flip grading table exists (5 rows)")
+ ]}
+];
+
+let filter=null;
+const flow=document.getElementById('flow');
+function el(tag,attrs={},...kids){const e=document.createElement(tag);for(const[k,v]of Object.entries(attrs)){if(k==='class')e.className=v;else if(k==='style')e.setAttribute('style',v);else e.setAttribute(k,v);}for(const k of kids){if(k==null)continue;e.append(k.nodeType?k:document.createTextNode(k));}return e;}
+const BUILT={live:['live','Live'],part:['part','Partly built'],build:['build','To build']};
+function tag(o){return el('span',{class:'tag',style:`--c:var(${OWNERS[o].c})`},OWNERS[o].name);}
+function detail(s){
+  const own=OWNERS[s.owner]; const b=BUILT[s.built];
+  return el('dl',{class:'detail'},
+    el('div',{},el('dt',{},'Owner'),el('dd',{},`${own.name} · ${own.role}`)),
+    el('div',{},el('dt',{},'Signs off'),el('dd',{},s.approver?OWNERS[s.approver].name:'—')),
+    el('div',{},el('dt',{},'Where the conversation happens'),el('dd',{},s.talk)),
+    el('div',{},el('dt',{},'Where the status lives'),el('dd',{},s.status)),
+    el('div',{class:'full how'},el('dt',{},"How we know it's done"),el('dd',{},s.proof)),
+    el('div',{},el('dt',{},'Time limit'),el('dd',{},s.clock)),
+    el('div',{},el('dt',{},'On the site today'),el('dd',{},el('span',{class:'built '+b[0]},b[1]),s.builtNote||''))
+  );
+}
+function stepRow(s){
+  const wrap=el('div',{class:'sub','data-owner':s.owner,'data-open':'false'});
+  const btn=el('button',{class:'sub-btn',type:'button','aria-expanded':'false'},el('span',{class:'sub-code'},s.code),el('span',{class:'sub-name'},s.name),tag(s.owner));
+  let d=null;
+  btn.addEventListener('click',()=>{const open=wrap.dataset.open!=='true';wrap.dataset.open=open;btn.setAttribute('aria-expanded',open);if(open){d=detail(s);wrap.append(d);}else if(d){d.remove();d=null;}});
+  wrap.append(btn);return wrap;
+}
+function stageCard(st){
+  const owners=[...new Set(st.steps.map(s=>s.owner))];
+  const card=el('section',{class:'stage','data-open':'false','data-owners':owners.join(' ')});
+  const subs=el('div',{class:'subs',hidden:''},...st.steps.map(stepRow));
+  const dots=el('span',{class:'dots','aria-hidden':'true'},...owners.map(o=>el('i',{style:`--c:var(${OWNERS[o].c})`})),el('span',{class:'chev'}));
+  const btn=el('button',{class:'stage-btn',type:'button','aria-expanded':'false'},el('span',{class:'num'},st.num),el('span',{},el('span',{class:'stage-title'},st.title),el('span',{class:'stage-sum'},st.sum)),dots);
+  btn.addEventListener('click',()=>setStage(card,card.dataset.open!=='true'));
+  card.append(btn,subs);card._subs=subs;card._btn=btn;return card;
+}
+function setStage(card,open){card.dataset.open=open;card._btn.setAttribute('aria-expanded',open);card._subs.hidden=!open;}
+function kpiNode(k){
+  const box=el('div',{class:'kpi'});
+  const body=el('dl',{class:'kpi-body',hidden:''},
+    el('div',{},el('dt',{},'Clock starts'),el('dd',{},k.start)),
+    el('div',{},el('dt',{},'Clock stops'),el('dd',{},k.end)),
+    el('div',{},el('dt',{},'Start date comes from'),el('dd',{},k.startSrc)),
+    el('div',{},el('dt',{},'Stop date comes from'),el('dd',{},k.endSrc)),
+    el('div',{},el('dt',{},'Target'),el('dd',{},k.target)),
+    el('div',{},el('dt',{},'Shows on'),el('dd',{},k.reports)));
+  const btn=el('button',{class:'kpi-btn',type:'button','aria-expanded':'false'},el('b',{},k.code),`${k.name} (days)`);
+  btn.addEventListener('click',()=>{body.hidden=!body.hidden;btn.setAttribute('aria-expanded',!body.hidden);});
+  box.append(btn,body);return box;
+}
+function build(){
+  FLOW.forEach((st,i)=>{ if(i) flow.append(el('div',{class:'link'})); flow.append(st.kpi?kpiNode(st.kpi):stageCard(st)); });
+}
+function legend(){
+  const lg=document.getElementById('legend');
+  Object.entries(OWNERS).forEach(([k,o])=>{
+    const b=el('button',{class:'who',type:'button','aria-pressed':'false',style:`--c:var(${o.c})`},o.name);
+    b.addEventListener('click',()=>{filter=filter===k?null:k;lg.querySelectorAll('.who').forEach(x=>x.setAttribute('aria-pressed','false'));if(filter)b.setAttribute('aria-pressed','true');applyFilter();});
+    lg.append(b);
+  });
+}
+function applyFilter(){
+  document.querySelectorAll('.stage').forEach(card=>{
+    const has=!filter||card.dataset.owners.split(' ').includes(filter);
+    card.classList.toggle('dim',!has); if(filter&&has)setStage(card,true);
+    card.querySelectorAll('.sub').forEach(s=>s.classList.toggle('dim',!!filter&&s.dataset.owner!==filter));
+  });
+}
+build();legend();
+setStage(document.querySelectorAll('.stage')[1],true);
+document.getElementById('openAll').addEventListener('click',()=>document.querySelectorAll('.stage').forEach(c=>setStage(c,true)));
+document.getElementById('closeAll').addEventListener('click',()=>document.querySelectorAll('.stage').forEach(c=>setStage(c,false)));
+</script>
+
+</body>
+</html>
