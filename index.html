@@ -282,6 +282,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
     <div class="dd" id="pd-d">
       <div class="ddl">Project Director / CEO</div>
       <div class="ddi" onclick="openDirectorCEODashboard()">🏛 Director / CEO Dashboard</div>
+      <div class="ddi" onclick="openDirectorCEODashboard('daily')">📰 Tommy’s Daily Report</div>
       <div class="ddi" onclick="openPermitDashboard()">📄 Permit Dashboard</div>
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
       <div class="ddi" onclick="openProjectDashboard('trello')">🏗 Property Dashboard</div>
@@ -2774,7 +2775,10 @@ function _propRowToCard(r) {
     jvDeal:      !!r.jv_deal,
     estProfit:   r.est_profit || "",
     goalArv:     r.goal_arv || "",
-    listingAgent:r.listing_agent || ""
+    listingAgent:r.listing_agent || "",
+    startOwner:  r.start_owner || "",
+    targetListDate: r.target_list_date || "",
+    nicknames:   Array.isArray(r.nicknames) ? r.nicknames : []
   };
 }
 
@@ -2803,7 +2807,7 @@ function _propCardToRow(p) {
   };
 }
 
-const PROP_SELECT_COLS = "id,addr,phase,type,pm,budget,spent,start_date,end_date,company_cam,drive_url,notes,sub_phases,checklist_market_last,checklists,is_rental,closing_date,vacancy_date,closing_date_sell,closed_date,archived,close_approved,purchase_confirmed,jv_deal,est_profit,goal_arv,listing_agent";
+const PROP_SELECT_COLS = "id,addr,phase,type,pm,budget,spent,start_date,end_date,company_cam,drive_url,notes,sub_phases,checklist_market_last,checklists,is_rental,closing_date,vacancy_date,closing_date_sell,closed_date,archived,close_approved,purchase_confirmed,jv_deal,est_profit,goal_arv,listing_agent,start_owner,target_list_date,nicknames";
 async function loadPropertiesFromSupabase() {
   const { data, error } = await supabase
     .from("pm_properties")
@@ -16954,10 +16958,328 @@ function _dirDrill(kind,arg){
   else if(kind==='pm'){ title=arg+" — properties"; const m=(typeof _computePMMetrics==='function')?_computePMMetrics(arg):{}; const cells=[['Flips',m.flipsCompleted],['Rental handoffs',m.rentalHandoffs],['On timeline',(m.timelinePct&&m.timelinePct.on!=null?m.timelinePct.on+'%':'—')],['Task completion',(m.taskCompletionPct!=null&&m.taskCompletionPct!=='--'?m.taskCompletionPct+'%':'—')],['Rescheduled',(m.reschedulePct!=null&&m.reschedulePct!=='--'?m.reschedulePct+'%':'—')]]; const stat=`<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">${cells.map(s=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:8px 12px;min-width:96px"><div style="font-size:11px;color:#566070;text-transform:uppercase">${s[0]}</div><div style="font-size:19px;font-weight:600;color:#111">${s[1]==null?'—':s[1]}</div></div>`).join('')}</div>`; rows=stat+_dirList(d.cards.filter(c=>_sameAssignee(c.pm,arg)).map(_dirPropRow).join("")); }
   el.innerHTML=_dirDrillHead(title)+rows;
 }
+// ===================== TOM'S DAILY REPORT =====================
+// Tom, 23 Sept: "a high-level daily report from all departments and every house, so I
+// don't have to check in with people." One page, redrawn from live data every time it
+// opens. The heavy lifting (who touched what, on-time %, quiet houses) is one call to
+// pm_daily_report() in the database, which only counts updates people made by hand -
+// the nightly syncs touch every card and would make everybody look busy. Everything
+// about the houses themselves comes from the cards and tasks already loaded.
+let _drData=null, _drLoadedAt=0, _drBusy=false, _drError=null;
+const DR_STALE_MS=2*60*1000;
+const DR_PRE_LIST=['Vacant / On Standby','Pre Construction','Waiting Permits'];
+const DR_TIMELINE_PHASES=['Vacant / On Standby','Pre Construction','Waiting Permits','Framing, MEPS, Insulation','Drywall / Exterior Work','Finishes','Pre List / Punchout Process'];
+
+async function _drLoad(force){
+  if(_drBusy) return;
+  if(!force && _drData && (Date.now()-_drLoadedAt)<DR_STALE_MS) return;
+  _drBusy=true; _drError=null;
+  try{
+    const jobs=[];
+    if(typeof loadTasks==='function' && (!_tasksCache||!_tasksCache.length)) jobs.push(loadTasks());
+    if(typeof loadPropertiesFromSupabase==='function' && (!propCards||!propCards.length)) jobs.push(loadPropertiesFromSupabase());
+    if(typeof loadCalendarEventsFromSupabase==='function' && (!_calEventsCache||!_calEventsCache.length)) jobs.push(loadCalendarEventsFromSupabase());
+    if(force){
+      jobs.length=0;
+      if(typeof loadTasks==='function') jobs.push(loadTasks());
+      if(typeof loadPropertiesFromSupabase==='function') jobs.push(loadPropertiesFromSupabase());
+      if(typeof loadCalendarEventsFromSupabase==='function') jobs.push(loadCalendarEventsFromSupabase());
+    }
+    const rpc=supabase.rpc('pm_daily_report');
+    await Promise.all(jobs);
+    const { data, error } = await rpc;
+    if(error) throw error;
+    _drData=data||{}; _drLoadedAt=Date.now();
+  }catch(e){
+    _drError=(e&&e.message)||String(e);
+    console.error('Daily report failed to load:', e);
+  }finally{
+    _drBusy=false;
+    const el=document.getElementById('pd-content');
+    if(el && window._pdTab==='daily') el.innerHTML=renderDailyReport();
+  }
+}
+function _drRefresh(){ _drLoad(true); const el=document.getElementById('pd-content'); if(el) el.innerHTML=renderDailyReport(); }
+
+// ---- small helpers -----------------------------------------------------------
+function _drToday(){ return (_drData&&_drData.today)||_ymd(new Date()); }
+function _drDays(from,to){ if(!from) return null; const a=new Date(from+'T12:00:00'), b=new Date((to||_drToday())+'T12:00:00'); if(isNaN(a)||isNaN(b)) return null; return Math.round((b-a)/86400000); }
+function _drMD(ds){ if(!ds) return ''; const m=String(ds).match(/^(\d{4})-(\d{2})-(\d{2})/); if(!m) return String(ds); return parseInt(m[2],10)+'/'+parseInt(m[3],10); }
+function _drAgo(ts){
+  if(!ts) return 'never';
+  const d=new Date(ts); if(isNaN(d)) return '';
+  const mins=Math.round((Date.now()-d)/60000);
+  if(mins<60) return mins+' min ago';
+  const h=Math.round(mins/60); if(h<24) return h+' hr ago';
+  const days=Math.round(h/24); if(days<14) return days+' day'+(days===1?'':'s')+' ago';
+  return 'since '+_drMD(d.toISOString().slice(0,10));
+}
+function _drIsDate(s){ return /^\d{4}-\d{2}-\d{2}$/.test(String(s||'')); }
+function _drPill(text,tone){
+  const T={red:['#FBEAE8','#B42318'],amber:['#FBF3E2','#8A5A10'],green:['#E1F5EE','#0E7460'],grey:['#EEF0F3','#566070'],blue:['#E6F1FB','#185FA5']}[tone||'grey'];
+  return '<span style="display:inline-block;font-size:11px;font-weight:600;letter-spacing:.03em;text-transform:uppercase;border-radius:4px;padding:2px 7px;background:'+T[0]+';color:'+T[1]+';white-space:nowrap">'+_calEsc(text)+'</span>';
+}
+function _drDot(kind,text){
+  const C={done:'#0E7460',late:'#B42318',open:'#93600A',none:null}[kind];
+  const dot=C?('<i style="display:inline-block;width:9px;height:9px;border-radius:50%;background:'+C+';flex:none"></i>')
+             :'<i style="display:inline-block;width:9px;height:9px;border-radius:50%;border:1.5px dashed #8b95a3;flex:none;box-sizing:border-box"></i>';
+  return '<span style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap;color:'+(kind==='late'?'#B42318':(kind==='none'?'#8b95a3':'#1f2530'))+'">'+dot+_calEsc(text)+'</span>';
+}
+function _drSection(title,sub,body,id){
+  return '<section id="'+(id||'')+'" style="margin-bottom:30px">'
+    +'<div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:10px">'
+    +'<div style="font-size:17px;font-weight:700;color:#111">'+title+'</div>'
+    +(sub?('<div style="font-size:12.5px;color:#566070">'+sub+'</div>'):'')+'</div>'+body+'</section>';
+}
+function _drCard(inner,extra){ return '<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;'+(extra||'')+'">'+inner+'</div>'; }
+function _drTable(head,rows,minw){
+  return '<div style="overflow-x:auto;background:#fff;border:0.5px solid #e0e4ec;border-radius:8px"><table style="border-collapse:collapse;width:100%;min-width:'+(minw||760)+'px;font-size:13.5px">'
+    +'<thead><tr>'+head.map(function(h){ return '<th style="text-align:left;font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:#566070;background:#f7f8fa;padding:9px 12px;border-bottom:0.5px solid #e0e4ec;white-space:nowrap">'+h+'</th>'; }).join('')+'</tr></thead>'
+    +'<tbody>'+(rows.length?rows.join(''):'<tr><td colspan="'+head.length+'" style="padding:16px 12px;color:#636b7a">Nothing here right now.</td></tr>')+'</tbody></table></div>';
+}
+function _drTd(inner,style){ return '<td style="padding:9px 12px;border-bottom:0.5px solid #eef0f3;vertical-align:top;'+(style||'')+'">'+inner+'</td>'; }
+function _drHouse(c){ return '<a href="javascript:void(0)" onclick="openPropDetail(\''+c.id+'\')" style="color:#111;font-weight:600;text-decoration:none">'+_calEsc(c.addr||'')+'</a>'; }
+function _drEmpty(t){ return '<div style="background:#fff;border:0.5px dashed #d5dae2;border-radius:8px;padding:14px 16px;color:#636b7a;font-size:13.5px">'+t+'</div>'; }
+
+// Step lookups on a card's sub_phases. Names vary by workflow version, so match loosely.
+function _drStep(c, re){
+  const subs=(c.subPhases||[]).filter(function(s){ return re.test(s.name||''); });
+  if(!subs.length) return {kind:'none', text:'No step'};
+  const done=subs.find(function(s){ return s.completed; });
+  if(done && subs.every(function(s){ return s.completed; })) return {kind:'done', text:'Done'+(done.due?(' '+_drMD(done.due)):'')};
+  const open=subs.find(function(s){ return !s.completed; });
+  if(open && open.due && open.due<_drToday()) return {kind:'late', text:'Due '+_drMD(open.due)};
+  if(open && open.due) return {kind:'open', text:'Due '+_drMD(open.due)};
+  return {kind:'open', text:'No date'};
+}
+function _drTasksFor(c){ return (_tasksCache||[]).filter(function(t){ return t.property_id===c.id; }); }
+function _drOverdueTasks(c){ const td=_drToday(); return _drTasksFor(c).filter(function(t){ return t.status!=='done' && t.due_date && t.due_date<td; }); }
+function _drLiveCards(){ return (propCards||[]).filter(function(c){ return !c.archived && c.phase!=='Closed'; }); }
+
+// ---- timeline check ---------------------------------------------------------
+// Tom, 23 Sept: a house with no clear start-to-finish timeline on the calendar is a huge
+// problem. Every house from Vacant through Finishes is checked; any of these lists it.
+function _drTimelineFlags(c){
+  const td=_drToday(), flags=[];
+  const subs=c.subPhases||[];
+  const dated=subs.filter(function(s){ return _drIsDate(s.due)||_drIsDate(s.start); });
+  if(!subs.length) flags.push({tone:'red', text:'No steps at all'});
+  else if(!dated.length) flags.push({tone:'red', text:'Steps but no dates'});
+  else if(dated.length<subs.length) flags.push({tone:'amber', text:(subs.length-dated.length)+' of '+subs.length+' steps undated'});
+  if(!_drIsDate(c.start)||!_drIsDate(c.end)) flags.push({tone:'red', text:'No start or finish date'});
+  else if(c.end<td && !/Listed|In Contract|RTR/.test(c.phase)) flags.push({tone:'red', text:'Finish date passed '+_drMD(c.end)});
+  else if(dated.length){
+    const last=dated.map(function(s){ return s.due||s.start; }).sort().pop();
+    if(last && last<c.end && _drDays(last,c.end)>14) flags.push({tone:'amber', text:'Steps stop '+_drDays(last,c.end)+' days before finish'});
+  }
+  const horizon=_ymd(new Date(Date.now()+14*86400000));
+  const onCal=(_calEventsCache||[]).some(function(e){ return e.property_id===c.id && e.event_date>=td && e.event_date<=horizon; })
+           || (_tasksCache||[]).some(function(t){ return t.property_id===c.id && t.status!=='done' && t.due_date>=td && t.due_date<=horizon; })
+           || subs.some(function(s){ return !s.completed && _drIsDate(s.due) && s.due>=td && s.due<=horizon; });
+  if(!onCal) flags.push({tone:'amber', text:'Nothing on the calendar next 14 days'});
+  return flags;
+}
+
+// ---- needs you today ----------------------------------------------------------
+function _drFlags(){
+  const D=_drData||{}, td=_drToday(), out=[];
+  const cards=_drLiveCards();
+  const byId={}; cards.forEach(function(c){ byId[c.id]=c; });
+  // Reasons people owe for missed tasks (only once the accountability start date is set)
+  const owed={};
+  (D.misses_open||[]).forEach(function(m){ owed[m.person]=(owed[m.person]||0)+1; });
+  Object.keys(owed).forEach(function(p){ out.push({sev:2, pill:['Reason owed','amber'], title:p+' owes '+owed[p]+' reason'+(owed[p]===1?'':'s')+' for missed tasks', note:'Asked for the next time they open the site and in their end-of-day report.', who:p}); });
+  // Stuck before construction: vacant a while, still not scheduled or cleaned out
+  cards.filter(function(c){ return DR_PRE_LIST.indexOf(c.phase)>=0 && _drIsDate(c.vacancyDate); }).forEach(function(c){
+    const days=_drDays(c.vacancyDate,td), late=_drOverdueTasks(c);
+    const clean=_drStep(c,/clean ?out|demo/i);
+    if(days>=14 && (late.length>=2 || clean.kind==='late' || clean.kind==='none')){
+      out.push({sev:late.length>=3?4:3, pill:late.length>=3?['Stuck','red']:['Behind','red'], title:c.addr+': vacant '+days+' days, '+(late.length?((clean.kind==='done'?'cleaned out but ':'')+late.length+' task'+(late.length===1?'':'s')+' past due'):(clean.kind==='none'?'no cleanout step recorded':'cleanout past due')),
+                note:late.slice(0,3).map(function(t){ return _calEsc(t.title)+' (due '+_drMD(t.due_date)+')'; }).join(' · '), who:c.pm||'No PM', id:c.id});
+    }
+  });
+  // Finish date passed
+  cards.filter(function(c){ return DR_TIMELINE_PHASES.indexOf(c.phase)>=0 && _drIsDate(c.end) && c.end<td; }).forEach(function(c){
+    out.push({sev:3, pill:['Reset finish','red'], title:c.addr+': finish date was '+_drMD(c.end)+', '+_drDays(c.end,td)+' day'+(_drDays(c.end,td)===1?'':'s')+' ago', note:'Still in '+_phLabel(c.phase)+'. The finish date has to be reset, with a reason.', who:c.pm||'No PM', id:c.id});
+  });
+  // Board maintenance findings the site already computes (over budget, no budget, no closing date, no listing agent, bookings that came and went...)
+  try{
+    (typeof _dhScan==='function'?_dhScan():[]).forEach(function(g){
+      const tone={over:'amber',nobudget:'amber',takedown:'grey',agent:'amber',permits:'grey',permitwait:'grey',breakdown:'grey',insp:'grey',booked:'amber',nobody:'amber'}[g.key]||'grey';
+      const label={over:'Over budget',nobudget:'No budget',takedown:'No close date',agent:'No agent',permits:'Permit gap',permitwait:'Permit gap',breakdown:'Budget mismatch',insp:'Inspections',booked:'Missed booking',nobody:'Unassigned'}[g.key]||g.label;
+      const rows=g.rows||[];
+      if(!rows.length) return;
+      if(rows.length<=2 || g.key==='over'){
+        rows.forEach(function(r){ out.push({sev:g.key==='over'?2:1, pill:[label,tone], title:(r.addr||'')+': '+g.label.toLowerCase(), note:r.detail||'', who:(byId[r.id]||{}).pm||'', id:byId[r.id]?r.id:null}); });
+      } else {
+        out.push({sev:1, pill:[label,tone], title:rows.length+' × '+g.label.toLowerCase(), note:rows.slice(0,4).map(function(r){ return _calEsc(r.addr||''); }).join(' · ')+(rows.length>4?(' · +'+(rows.length-4)+' more'):''), who:''});
+      }
+    });
+  }catch(e){ console.warn('daily report: maintenance scan skipped', e); }
+  // Realtor questions nobody answered
+  (D.realtor_open||[]).forEach(function(q){
+    const hrs=Math.round((Date.now()-new Date(q.at))/3600000);
+    out.push({sev:hrs>=24?3:2, pill:[q.repeat?'Asked again':'Realtor waiting', hrs>=24?'red':'amber'], title:(q.addr||'Unmatched house')+': '+(q.who||'realtor')+' has waited '+(hrs<48?hrs+' hrs':Math.round(hrs/24)+' days'), note:_calEsc(q.text||'')+(q.link?(' <a href="'+_calEsc(q.link)+'" target="_blank" style="color:#185FA5">open in Slack</a>'):''), who:q.pm||''});
+  });
+  out.sort(function(a,b){ return b.sev-a.sev; });
+  return out;
+}
+
+// ---- the page ------------------------------------------------------------------
+function renderDailyReport(){
+  window._pdTab='daily';
+  if(!_drData || (Date.now()-_drLoadedAt)>DR_STALE_MS) _drLoad(false);
+  const head=function(sub){
+    const now=new Date();
+    return '<div style="display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;border-bottom:2px solid #111;padding-bottom:12px;margin-bottom:24px">'
+      +'<div><div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#566070">Tommy · Daily Report</div>'
+      +'<div style="font-size:28px;font-weight:700;color:#111;line-height:1.1">'+now.toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'})+'</div>'
+      +'<div style="font-size:13px;color:#566070;margin-top:3px">'+sub+'</div></div>'
+      +'<div style="display:flex;gap:8px;align-items:center"><span style="font-size:12px;color:#566070">'+(_drLoadedAt?('Pulled '+_drAgo(new Date(_drLoadedAt).toISOString())):'')+'</span>'
+      +'<button onclick="_drRefresh()" '+(_drBusy?'disabled':'')+' style="font-size:13px;padding:6px 12px;border:0.5px solid #cdd7e6;border-radius:6px;background:#fff;color:#185FA5;cursor:pointer">'+(_drBusy?'Refreshing…':'Refresh')+'</button></div></div>';
+  };
+  if(!_drData){
+    return '<div style="padding:20px 24px;max-width:1120px;color:#1f2530">'+head(_drError?'The report could not be loaded.':'Reading every house, task and update…')
+      +(_drError?('<div style="color:#B42318;font-size:13.5px">'+_calEsc(_drError)+' <a href="javascript:void(0)" onclick="_drRefresh()" style="color:#185FA5">Try again</a></div>')
+                :'<div style="display:flex;align-items:center;gap:10px;color:#566070;font-size:14px"><div style="width:18px;height:18px;border:3px solid #e0e4ec;border-top-color:#566070;border-radius:50%;animation:bootspin .9s linear infinite"></div>Loading…</div>')+'</div>';
+  }
+  const D=_drData, td=_drToday();
+  const cards=_drLiveCards();
+  const byId={}; cards.forEach(function(c){ byId[c.id]=c; });
+
+  // 1. Where every house sits
+  const phaseOrder=PROP_PHASES.map(function(p){ return p.name; }).filter(function(n){ return n!=='Closed'; });
+  const counts={}; cards.forEach(function(c){ counts[c.phase]=(counts[c.phase]||0)+1; });
+  const strip='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:0;background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden">'
+    +phaseOrder.filter(function(n){ return counts[n]; }).map(function(n){ const p=phInfo(n);
+      return '<div onclick="_dirDrill(\'phase\',\''+_argEsc(n)+'\')" style="padding:10px 12px;border-right:0.5px solid #e0e4ec;border-bottom:0.5px solid #e0e4ec;cursor:pointer;border-top:3px solid '+p.dot+'"><div style="font-size:26px;font-weight:700;line-height:1;color:#111">'+counts[n]+'</div><div style="font-size:11.5px;color:#566070;line-height:1.25;margin-top:4px">'+_calEsc(_phLabel(n))+'</div></div>'; }).join('')+'</div>';
+
+  // 2. Needs you today
+  const flags=_drFlags();
+  const flagsHtml=flags.length?_drCard(flags.slice(0,14).map(function(f){
+    return '<div style="display:grid;grid-template-columns:118px 1fr auto;gap:12px;padding:11px 14px;border-bottom:0.5px solid #eef0f3;align-items:start">'
+      +'<div>'+_drPill(f.pill[0],f.pill[1])+'</div>'
+      +'<div><div style="font-size:14px;font-weight:600;color:#111">'+(f.id?('<a href="javascript:void(0)" onclick="openPropDetail(\''+f.id+'\')" style="color:#111;text-decoration:none">'+_calEsc(f.title)+'</a>'):_calEsc(f.title))+'</div>'
+      +(f.note?('<div style="font-size:12.5px;color:#566070;margin-top:2px">'+f.note+'</div>'):'')+'</div>'
+      +'<div style="font-size:12.5px;color:#566070;white-space:nowrap">'+_calEsc(f.who||'')+'</div></div>'; }).join('')
+    +(flags.length>14?('<div style="padding:8px 14px;font-size:12.5px;color:#566070">'+(flags.length-14)+' more, lower priority.</div>'):''))
+    :_drEmpty('Nothing is waiting on you. Every flag the site checks is clear.');
+
+  // 3. Vacant to listed
+  const pre=cards.filter(function(c){ return DR_PRE_LIST.indexOf(c.phase)>=0; })
+    .sort(function(a,b){ return String(a.vacancyDate||'9999').localeCompare(String(b.vacancyDate||'9999')); });
+  const preRows=pre.map(function(c){
+    const days=_drIsDate(c.vacancyDate)?_drDays(c.vacancyDate,td):null;
+    const fta=_drStep(c,/first[\s\-]*time[\s\-]*access|1st[\s\-]*time/i), clean=_drStep(c,/clean ?out|demo/i), sow=_drStep(c,/\bsow\b|scope/i), bud=_drStep(c,/budget/i);
+    const touch=(D.house_touch||{})[c.id];
+    const tl=c.targetListDate?_drDot(c.targetListDate<td?'late':'open',_drMD(c.targetListDate)):_drDot('none','Not set');
+    return '<tr>'+_drTd(_drHouse(c)+'<div style="font-size:12px;color:#566070">'+_calEsc([c.type,c.pm||'No PM',c.listingAgent?('Agent '+c.listingAgent):'No agent'].filter(Boolean).join(' · '))+'</div>')
+      +_drTd(days==null?'<span style="color:#8b95a3">Not set</span>':('<b>'+_drMD(c.vacancyDate)+'</b><div style="font-size:12px;color:'+(days>21?'#B42318':'#566070')+'">'+days+' days</div>'))
+      +_drTd(_phLabel(c.phase))+_drTd(_drDot(fta.kind,fta.text))+_drTd(_drDot(clean.kind,clean.text))+_drTd(_drDot(sow.kind,sow.text))+_drTd(_drDot(bud.kind,bud.text))+_drTd(tl)
+      +_drTd('<span style="color:'+(touch?'#566070':'#B42318')+'">'+(touch?_drAgo(touch):'Never')+'</span>')+'</tr>';
+  });
+  const preTable=_drTable(['House','Vacant','Phase','First access','Cleaned out','SOW','Budget','Target list','Last human update'],preRows,980)
+    +'<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:#566070;margin-top:8px">'+_drDot('done','Done')+_drDot('open','In progress')+_drDot('late','Past due')+_drDot('none','No step or not recorded')+'</div>';
+
+  // 4. Houses without a timeline
+  const tlRows=cards.filter(function(c){ return DR_TIMELINE_PHASES.indexOf(c.phase)>=0; })
+    .map(function(c){ return {c:c, flags:_drTimelineFlags(c)}; }).filter(function(x){ return x.flags.length; })
+    .sort(function(a,b){ const ra=a.flags.filter(function(f){ return f.tone==='red'; }).length, rb=b.flags.filter(function(f){ return f.tone==='red'; }).length; return rb-ra || b.flags.length-a.flags.length; });
+  const tlTable=tlRows.length?_drTable(['House','Phase','PM','Start → finish','What is wrong'],tlRows.map(function(x){ const c=x.c;
+      return '<tr>'+_drTd(_drHouse(c))+_drTd(_phLabel(c.phase))+_drTd(_calEsc(c.pm||'—'))
+        +_drTd((_drIsDate(c.start)?_drMD(c.start):'—')+' → '+(_drIsDate(c.end)?('<span style="color:'+(c.end<td?'#B42318':'#1f2530')+'">'+_drMD(c.end)+'</span>'):'—'))
+        +_drTd('<div style="display:flex;gap:6px;flex-wrap:wrap">'+x.flags.map(function(f){ return _drPill(f.text,f.tone); }).join('')+'</div>')+'</tr>'; }),820)
+    :_drEmpty('Every house from Vacant through Finishes has dated steps, a finish date ahead, and something on the calendar.');
+  const tlSub=tlRows.length+' of '+cards.filter(function(c){ return DR_TIMELINE_PHASES.indexOf(c.phase)>=0; }).length+' houses between Vacant and Finishes · no timeline is not acceptable; a passed finish date must be reset with a reason';
+
+  // 5. Realtor communication
+  const rq=D.realtor_open||[], rs=D.realtor_stats7||[];
+  let realtor;
+  if(!rq.length && !rs.length){
+    realtor=_drEmpty('The hourly Slack scan of the listing channels is not switched on yet. Once it is, open realtor questions, response times per PM and repeat asks show here.');
+  } else {
+    realtor=(rs.length?_drTable(['PM','Asked this week','Answered','Avg response'],rs.map(function(s){ return '<tr>'+_drTd(_calEsc(s.pm||'No PM'))+_drTd(s.asked)+_drTd(s.answered+' of '+s.asked)+_drTd(s.avg_min==null?'—':(s.avg_min<90?(s.avg_min+' min'):(Math.round(s.avg_min/60)+' hrs')))+'</tr>'; }),520):'')
+      +(rq.length?('<div style="margin-top:10px">'+_drCard(rq.map(function(q){ return '<div style="padding:10px 14px;border-bottom:0.5px solid #eef0f3;font-size:13.5px"><b>'+_calEsc(q.addr||'Unmatched')+'</b> · '+_calEsc(q.who||'')+' · '+_drAgo(q.at)+(q.repeat?' '+_drPill('asked again','red'):'')+'<div style="color:#566070;font-size:12.5px">'+_calEsc(q.text||'')+'</div></div>'; }).join(''))+'</div>'):'');
+  }
+
+  // 6. Team scorecard
+  const sc=(D.scorecard||[]).filter(function(s){ return !/^idoko/i.test(s.person||''); });
+  const scRows=sc.map(function(s){
+    const pct=s.due30>0?Math.round(100*s.ontime30/s.due30):null;
+    const prev=s.due_prev>=5?Math.round(100*s.ontime_prev/s.due_prev):null;
+    const trend=(pct==null||prev==null)?'<span style="color:#8b95a3">—</span>':(pct-prev>=3?'<span style="color:#0E7460">▲ '+(pct-prev)+'</span>':(prev-pct>=3?'<span style="color:#B42318">▼ '+(prev-pct)+'</span>':'<span style="color:#566070">→ even</span>'));
+    const tone=pct==null?'grey':(pct>=80?'green':(pct>=60?'amber':'red'));
+    const bar=pct==null?'<span style="color:#8b95a3;font-size:12px">no dated tasks</span>':('<span style="display:inline-block;width:70px;height:7px;border-radius:4px;background:#eef0f3;vertical-align:middle;margin-right:8px;overflow:hidden"><i style="display:block;height:100%;width:'+pct+'%;background:'+({green:'#0E7460',amber:'#BA7517',red:'#B42318'}[tone])+'"></i></span><b>'+pct+'%</b><span style="color:#566070;font-size:12px"> ('+s.ontime30+' of '+s.due30+')</span>');
+    const status=s.reasons_owed>0?_drPill(s.reasons_owed+' reason'+(s.reasons_owed===1?'':'s')+' owed','red'):(s.past_due>=10?_drPill('Behind','red'):(s.past_due>0?_drPill('Past due','amber'):(s.updates7===0?_drPill('Quiet','grey'):_drPill('Current','green'))));
+    return '<tr>'+_drTd('<b>'+_calEsc(s.person)+'</b>'+(s.last_seen?('<div style="font-size:11.5px;color:#566070">last on the site '+_drAgo(s.last_seen)+'</div>'):''))
+      +_drTd(status)+_drTd(bar)+_drTd(trend)
+      +_drTd(s.past_due>0?('<span style="color:#B42318;font-weight:600">'+s.past_due+'</span>'+(s.oldest_due?('<div style="font-size:11.5px;color:#566070">oldest '+_drMD(s.oldest_due)+'</div>'):'')):'0')
+      +_drTd(s.houses_total>0?(s.houses_touched7+' of '+s.houses_total):'<span style="color:#8b95a3">—</span>')
+      +_drTd(s.days7+' of 7 <div style="font-size:11.5px;color:#566070">'+s.updates7+' updates · '+s.done7+' tasks closed</div>')+'</tr>';
+  });
+  const scTable=_drTable(['Person','Status','On time, last 30 days','vs prior 30','Past due now','Their houses updated this week','Days on the site'],scRows,900)
+    +'<div style="font-size:12px;color:#566070;margin-top:8px">A task is on time when it is checked off on or before the date that was due when the day came. Team meetings and tasks shared by four or more people are left out. '
+    +(D.accountability_start?('Misses have been recorded since '+_drMD(D.accountability_start)+'.'):'Missed-task reasons start being collected once the accountability start date is set in Settings.')+'</div>';
+
+  // 7. What each department did (last 24 hours)
+  const act=D.activity24||[];
+  const humans=act.filter(function(a){ return !a.bot; }), bots=act.filter(function(a){ return a.bot; });
+  const grp={construction:[],permits:[],tasks:[],listings:[],acq:[]};
+  humans.forEach(function(a){
+    if(a.area==='permit') grp.permits.push(a);
+    else if(a.area==='task') grp.tasks.push(a);
+    else grp.construction.push(a);
+  });
+  bots.forEach(function(a){
+    if(a.area==='settings') return;
+    if(/Slack sync|Contract timelines|Listings check/.test(a.who||'') && !/vacancy/i.test(a.detail||'')) grp.listings.push(a);
+    else if(/No-card|Unmatched|Slack sync/.test(a.who||'')) grp.acq.push(a);
+  });
+  const line=function(a){ return '<li style="margin:0 0 5px"><span style="color:#111">'+_calEsc(a.label||'')+'</span>'+(a.detail?(' <span style="color:#566070">— '+_calEsc(String(a.detail).slice(0,140))+'</span>'):'')+' <span style="font-size:11.5px;color:#8b95a3;white-space:nowrap">'+_calEsc(a.who||'')+' · '+_drAgo(a.at)+'</span></li>'; };
+  const dept=function(title,rows,src){
+    const shown=rows.slice(0,7);
+    return '<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:6px"><div style="font-size:14.5px;font-weight:700;color:#111">'+title+' <span style="font-size:12px;font-weight:400;color:#566070">'+rows.length+'</span></div>'
+      +(rows.length?('<ul style="margin:0;padding-left:16px;font-size:13px">'+shown.map(line).join('')+'</ul>'+(rows.length>shown.length?('<div style="font-size:12px;color:#566070">+'+(rows.length-shown.length)+' more in Edit History</div>'):'')):'<div style="font-size:13px;color:#8b95a3">Nothing logged.</div>')
+      +'<div style="font-size:11.5px;color:#8b95a3;border-top:0.5px solid #eef0f3;padding-top:6px;margin-top:auto">'+src+'</div></div>';
+  };
+  const depts='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px">'
+    +dept('Construction and property cards',grp.construction,'Property Dashboard, calendar, scopes and meetings')
+    +dept('Tasks',grp.tasks,'Task Calendar - created, completed, rescheduled')
+    +dept('Permits and inspections',grp.permits,'Permit Tracker')
+    +dept('Listings and closings',grp.listings,'#listings-closings via the Slack sync and contract timelines')
+    +dept('Acquisitions and takedowns',grp.acq,'#vacancy-updates via the Slack sync and the no-card check')+'</div>';
+
+  // 8. Dates that moved
+  const dc=D.date_changes7||[];
+  const moved=dc.length?_drCard(dc.slice(0,10).map(function(m){ return '<div style="padding:8px 14px;border-bottom:0.5px solid #eef0f3;font-size:13px;display:flex;gap:10px;flex-wrap:wrap;align-items:baseline">'+(m.late?_drPill('late move','red'):_drPill('moved','grey'))+'<b>'+_calEsc(m.title||'')+'</b><span style="color:#566070">'+_drMD(m.from)+' → '+(m.to?_drMD(m.to):'no date')+'</span><span style="color:'+(m.reason?'#566070':'#B42318')+'">'+(m.reason?_calEsc(m.reason):'no reason given')+'</span><span style="font-size:11.5px;color:#8b95a3">'+_drAgo(m.at)+'</span></div>'; }).join('')+(dc.length>10?('<div style="padding:8px 14px;font-size:12px;color:#566070">+'+(dc.length-10)+' more</div>'):''))
+    :_drEmpty('No due dates were moved this week.');
+
+  // 9. Gone quiet
+  const quiet=D.quiet||[];
+  const quietHtml=quiet.length?('<div style="display:flex;flex-wrap:wrap;gap:8px">'+quiet.map(function(q){ return '<span onclick="openPropDetail(\''+q.id+'\')" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:6px;padding:7px 10px;font-size:13.5px;display:inline-flex;gap:8px;align-items:baseline;cursor:pointer"><b>'+_calEsc(q.addr)+'</b><span style="font-size:12px;color:#566070">'+_calEsc(q.pm||'no PM')+' · '+(q.last?('since '+_drMD(String(q.last).slice(0,10))):'never updated')+'</span></span>'; }).join('')+'</div>')
+    :_drEmpty('Every active house has had a human update in the last two weeks.');
+
+  return '<div style="padding:20px 24px;max-width:1120px;color:#1f2530">'
+    +head(cards.length+' active houses · '+flags.length+' thing'+(flags.length===1?'':'s')+' need'+(flags.length===1?'s':'')+' you · '+humans.length+' updates by people in the last 24 hours')
+    +_drSection('Where every house sits','Click a phase to open its list',strip,'dr-phases')
+    +_drSection('Needs you today',flags.length+' item'+(flags.length===1?'':'s')+' · worst first',flagsHtml,'dr-flags')
+    +_drSection('Vacant to listed','Every house we own that is not under construction yet',preTable,'dr-vacant')
+    +_drSection('Houses without a clear timeline',tlSub,tlTable,'dr-timeline')
+    +_drSection('Realtor communication','Questions from the listing channels and how fast the PMs answer',realtor,'dr-realtor')
+    +_drSection('Who is getting things done','Last 30 days of dated tasks · only updates people made by hand count, not the automatic syncs',scTable,'dr-team')
+    +_drSection('What each department did','Last 24 hours, from the site’s Edit History',depts,'dr-depts')
+    +_drSection('Dates that moved','Last 7 days · a move on or after the day before it was due is a late move and counts as a miss',moved,'dr-moved')
+    +_drSection('Gone quiet','Active houses with no human update on the card in 14+ days',quietHtml,'dr-quiet')
+    +'<div style="font-size:12px;color:#8b95a3;border-top:0.5px solid #e0e4ec;padding-top:10px">Redrawn from live data each time this tab opens. Cleaned-out, issues-found and target-list-date fields fill in as PMs record them on each card.</div>'
+    +'</div>';
+}
+
 function openDirectorCEODashboard(activeTab) {
   activeTab = activeTab || 'main';
+  window._pdTab = activeTab;
   const tabs=[
     {id:'main',label:'Main Dashboard',icon:'📊'},
+    {id:'daily',label:'Daily Report',icon:'📰'},
     {id:'tommy',label:'Tommy',icon:'👤'},
     {id:'bruce',label:'Bruce',icon:'👤'},
     {id:'andyk',label:'Andy Karabinos',icon:'👤'},
@@ -16967,6 +17289,7 @@ function openDirectorCEODashboard(activeTab) {
   ];
   let content;
   switch(activeTab){
+    case 'daily':        content=renderDailyReport(); break;
     case 'tommy':        content=_personDashView('Tommy','Chief Executive Officer'); break;
     case 'bruce':        content=_personDashView('Bruce','Project Director'); break;
     case 'andyk':        content=_personDashView('Andy','Principal / Owner'); break;
