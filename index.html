@@ -8663,9 +8663,26 @@ function _wmRolePerson(role){
   const u=(typeof getUsers==='function'?getUsers():[]).find(function(x){ return x.status==='approved' && x.role===role; });
   return u ? ((((u.firstName||'')+' '+(u.lastName||'')).trim())||'') : '';
 }
+// Bruce, 26 Sept, prepping Monday's meeting on the Friday: "I'm on 994-996 East
+// Livingston and I clicked Add Task for Jennifer. It showed up on her PDF, which is
+// good, but we also need it to show up under what is booked for this and next week."
+// It did not, and here is why: the button dated the task TODAY. The meeting he was
+// filling in is next Monday's, and "this week and next week" starts at that Monday -
+// so a task dated Friday fell in front of the window and vanished from the recap.
+// A task raised inside a meeting belongs to that meeting's week. If the meeting is
+// still ahead of us, the task lands on its Monday; if we are inside the week already,
+// today is right.
+function _wmTaskDayFor(wk){
+  const today=_ymd(new Date());
+  if(!wk) return today;
+  return (today < wk) ? wk : today;
+}
 function _wmAddTaskFor(pid, person){
   if(typeof openAddTask!=='function') return;
-  openAddTask(_ymd(new Date()));
+  const wk=(typeof window.__wmLastWeek!=='undefined' && window.__wmLastWeek)
+    ? window.__wmLastWeek
+    : ((typeof _wmWeekKeyFor==='function') ? _wmWeekKeyFor('team') : '');
+  openAddTask(_wmTaskDayFor(wk));
   _wmMarkReturn();
   setTimeout(function(){
     const el=document.getElementById('task-prop');
@@ -12729,8 +12746,10 @@ function openWeeklyMeeting(kind, week){
               ? `<div style="background:#FDF3F2;border:0.5px solid #F0C9C4;border-radius:9px;padding:9px 12px;font-size:13px;color:#B42318;margin-bottom:10px">This house is <b>ticked as permitted</b> but has nothing on the Permit Tracker &mdash; no number, no jurisdiction, no inspections. Until ${_calEsc(String(_wmRolePerson('Architect')||'Jen').split(' ')[0])} puts it on the tracker there is nothing here to chase.${roNow?'':`<div style="margin-top:7px">${_roleBtn(_jen,'Task for '+String(_jen).split(' ')[0])}</div>`}</div>`
               : '')
             + _wmPermitBlock(c)
-            + _sub('Comments on permits')
-            + ta2(c.id+'::permc','Where the permits actually stand, in your words&hellip;',44)
+            + _sub('Comments on permits <span style="text-transform:none;letter-spacing:0;font-weight:400;color:#8A94A6">&mdash; anybody</span>')
+            + ta2(c.id+'::permc','Anything the room needs to know about the permits on this one&hellip;',44)
+            + _sub((_jen?(_calEsc(String(_jen).split(' ')[0])+'&rsquo;s comments'):'Architect&rsquo;s comments')+' <span style="text-transform:none;letter-spacing:0;font-weight:400;color:#8A94A6">&mdash; her section</span>')
+            + ta2(c.id+'::permjen','Jen: where it stands with the city, the examiner, the drawings&hellip;',44)
             + _bar(_roleBtn(_jen,'Task for '+String(_jen).split(' ')[0])+_anyBtn);
 
           body.last = `<div style="font-size:11.5px;color:#566070;margin-bottom:6px">${lastItems.length?(lastItems.filter(x=>x.done).length+' of '+lastItems.length+' done &middot; '):''}${_wmLabel(lastWk).replace(/^\w+, /,'')} &rarr; Sun</div>`
@@ -25297,6 +25316,9 @@ function _prioRecapFor(wk, c){
   push('This week &amp; next', n('nextc'));
   push('Timeline &amp; budget', n('money'));
   push('Permits', n('permc'));
+  // Bruce, 26 Sept: Jen's permit comments are a section of their own, so they travel
+  // as their own line rather than being blended into everybody else's.
+  push('Permits \u2014 from the architect', n('permjen'));
   const carry=(typeof _wmCarryFor==='function'?_wmCarryFor(wk,c.id):[]).filter(function(x){ return !x.done; });
   const m=(typeof _wmCalc==='function')?_wmCalc(c):null;
   return { pid:c.id, label:c.addr||'', phase:c.phase||'', bits:bits, carry:carry,
@@ -25327,8 +25349,14 @@ function _prioSent(wk){ const m=_wmMeta(wk,'team','__prio_sent'); return (m&&typ
 function _prioKey(person, pid){ return person+'||'+(pid||'_none'); }
 // Everything on this person's plate for the fortnight, plus anything already late.
 // Late first: it is the part of the list that needs saying.
+// Bruce, 26 Sept: "the only info we want on the PDF is stuff for that Monday through
+// Sunday and notes/comments. The only thing we do not want on that PDF is last week
+// stuff and stuff more than 7 days out from that Monday meeting."
+// It used to reach a fortnight forward, so a person opened their week and read a wall
+// of work half of which was not theirs to worry about yet. One week, and only one.
+const PRIO_WEEKS = 1;
 function _prioTasksFor(person, wk){
-  const R=_wmRange(wk,2);
+  const R=_wmRange(wk,PRIO_WEEKS);
   const out=[];
   (typeof _tasksCache!=='undefined'?_tasksCache:[]).forEach(function(t){
     if(t.status==='done') return;
@@ -25349,6 +25377,85 @@ function _prioTasksFor(person, wk){
     if(a.late!==b.late) return a.late?-1:1;
     return (a.due||'9999').localeCompare(b.due||'9999') || String(a.title).localeCompare(String(b.title));
   });
+}
+// ---- how a list is carved up -------------------------------------------------
+// Bruce, 26 Sept: "for example the end of project assistant's PDF, Gabe, it should be
+// organized a little better - like just a section on market checklist due, and then
+// below that is each property with a checkbox in order from the oldest due to the
+// newest due at the bottom. And then like other punch out tasks ... the categories need
+// to be by property. But if it's for a type of task, it could be by type of task ...
+// I'd say just for the on market checklist, just make it one section so it's cleaner."
+// So: a recognised checklist run collapses into ONE section that lists the houses -
+// that is the job, done house by house. Everything else groups by the house it belongs
+// to. Work tied to no house groups by the kind of work instead.
+const PRIO_RUNS = [
+  { k:'onmarket', label:'On Market Checklist due',   rx:/on[\s-]*(the[\s-]*)?market/i },
+  { k:'punch',    label:'Punch Out',                 rx:/punch[\s-]*out/i },
+  { k:'access',   label:'First Time Access',         rx:/(first[\s-]*time|1st[\s-]*time)[\s-]*access/i },
+  { k:'checkin',  label:'Weekly Property Check-In',  rx:/property[\s-]*check[\s-]*in|weekly[\s-]*check/i },
+  { k:'remedy',   label:'Request To Remedy',         rx:/request[\s-]*to[\s-]*remedy|remedy[\s-]*item/i }
+];
+function _prioRunOf(t){
+  const hay=String((t&&t.cat)||'')+' '+String((t&&t.title)||'');
+  return PRIO_RUNS.find(function(r){ return r.rx.test(hay); }) || null;
+}
+// Oldest first, undated at the bottom - Bruce: "in order from the oldest due to the
+// newest due at the bottom."
+function _prioByDue(a,b){
+  const x=a.due||'9999-99-99', y=b.due||'9999-99-99';
+  return x.localeCompare(y) || String(a.title||'').localeCompare(String(b.title||''));
+}
+function _prioGroup(items){
+  const runs={}, props={}, kinds={}, order=[];
+  const bucket=(store,key,label,isRun)=>{
+    const k=(isRun?'run:':'')+key;
+    if(!store[k]){ store[k]={key:k, label:label, items:[], run:!!isRun}; order.push(store[k]); }
+    return store[k];
+  };
+  items.forEach(function(t){
+    const run=_prioRunOf(t);
+    if(run){ bucket(runs, run.k, run.label, true).items.push(t); return; }
+    if(t.pid){ bucket(props, t.pid, t.where||'A property', false).items.push(t); return; }
+    bucket(kinds, (t.cat||'other').toLowerCase(), t.cat||'Not tied to a property', false).items.push(t);
+  });
+  order.forEach(function(g){ g.items.sort(_prioByDue); });
+  // checklist runs lead - they are the same job repeated, so they read fastest
+  return order.sort(function(a,b){
+    if(a.run!==b.run) return a.run?-1:1;
+    const ad=(a.items[0]&&a.items[0].due)||'9999-99-99';
+    const bd=(b.items[0]&&b.items[0].due)||'9999-99-99';
+    return ad.localeCompare(bd) || String(a.label).localeCompare(String(b.label));
+  });
+}
+// Past due gets a section of its own at the top. Bruce: "everything that's past due and
+// not marked completed in Monday's meeting needs to be in its own section on everybody's
+// job role PDF, so they see a whole section of what's past due organized by property."
+// Everything on this person's plate: the real tasks AND the jobs somebody typed
+// straight into the meeting. Caught 26 Sept by tprio - rebuilding the sections off
+// _prioTasksFor alone silently dropped every job added in the room, which is the exact
+// "work goes missing" the whole list exists to prevent.
+function _prioAllItems(person, wk){
+  const R=_wmRange(wk,PRIO_WEEKS);
+  const out=_prioTasksFor(person, wk).slice();
+  (typeof _prioExtra==='function'?_prioExtra(wk, person):[]).forEach(function(x){
+    const d=String((x&&x.due)||'');
+    if(d && d>R.to) return;                       // past the Sunday: not this week's
+    out.push({ id:'x:'+(x.id||''), title:String((x&&x.text)||''), due:d,
+               late:!!(d && d<R.from), cat:'', pid:(x&&x.pid)||'',
+               where:(x&&x.pid)?(_propAddr(x.pid)||''):'', notes:'', added:true });
+  });
+  return out;
+}
+function _prioSections(person, wk){
+  const all=_prioAllItems(person, wk);
+  const late=all.filter(function(t){ return t.late; });
+  const now =all.filter(function(t){ return !t.late; });
+  const out=[];
+  if(late.length) out.push({ key:'late', label:'Past due',
+    sub:'the date has gone and it is still open', groups:_prioGroup(late), n:late.length });
+  out.push({ key:'week', label:'This week', sub:'Monday to Sunday',
+    groups:_prioGroup(now), n:now.length });
+  return out;
 }
 // The list as it will be read: by house, with the houseless work last, because that is
 // how the meeting walks it and how the person will work it.
@@ -25691,11 +25798,12 @@ function _prioDaySub(d){
 }
 function _prioPreview(person, wk){
   const pack=_prioPack(person, wk);
-  const days=_prioDays(person, wk);
+  const secs=_prioSections(person, wk);
   const esc=_calEsc;
-  const R=_wmRange(wk,2);
-  const nJobs=days.reduce(function(n,d){ return n+d.items.length; },0);
-  const nLate=(days[0] && days[0].key==='late') ? days[0].items.length : 0;
+  const R=_wmRange(wk,PRIO_WEEKS);
+  const nJobs=secs.reduce(function(n,S){ return n+S.n; },0);
+  const lateSec=secs.find(function(S){ return S.key==='late'; });
+  const nLate=lateSec?lateSec.n:0;
   const first=String(person||'').split(' ')[0];
   const span=(()=>{ try{
       const a=new Date(R.from+'T00:00:00'), b=new Date(R.to+'T00:00:00');
@@ -25703,18 +25811,42 @@ function _prioPreview(person, wk){
       return f(a)+' – '+f(b);
     }catch(e){ return R.from+' – '+R.to; } })();
 
-  // One line of the checklist. A box you can tick, the job at a readable size, and the
-  // house it belongs to underneath - the label, not the heading.
-  const line=(it)=>`<div class="job">
+  // Bruce, 26 Sept: "checklist form, letters big enough, double spacing like on a
+  // Google Doc or something so they don't read over it. Make sure it's clean, readable,
+  // clear, can be easily viewed from a mobile version when looking at it from the
+  // field app."
+  // One line: a real box to tick, the job big enough to read at arm's length on a
+  // phone, and the date underneath in words rather than a bare number.
+  const dayWord=(d)=>{
+    if(!d) return 'no date on it';
+    try{
+      const t=_ymd(new Date());
+      if(d===t) return 'today';
+      const n=Math.round((_dParse(d)-_dParse(t))/86400000);
+      const lbl=new Date(d+'T00:00:00').toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long'});
+      if(n===1) return 'tomorrow \u00b7 '+lbl;
+      if(n===-1) return 'yesterday \u00b7 '+lbl;
+      if(n<0) return Math.abs(n)+' days ago \u00b7 '+lbl;
+      return lbl;
+    }catch(e){ return d; }
+  };
+  const line=(it, showWhere)=>`<div class="job${it.late?' late':''}">
       <span class="box"></span>
-      <span class="what"><span class="t">${esc(it.title)}</span></span>
-      <span class="meta">${
-        it.where?`<span class="where">${esc(it.where)}</span>`:`<span class="where none">not tied to a house</span>`}${
-        it.cat?`<span class="cat">${esc(it.cat)}</span>`:''}</span>
+      <span class="what">
+        <span class="t">${esc(it.title)}</span>
+        <span class="sub">${esc(dayWord(it.due))}${showWhere&&it.where?(' \u00b7 '+esc(it.where)):''}${it.cat&&!showWhere?(' \u00b7 '+esc(it.cat)):''}</span>
+      </span>
     </div>`;
-  const dayBlock=(d)=>`<section class="day${d.key==='late'?' late':''}${d.key==='none'?' undated':''}">
-      <div class="dh"><span class="dl">${esc(d.label)}</span><span class="ds">${esc(d.sub)}</span><span class="dn">${d.items.length}</span></div>
-      ${d.items.map(line).join('')}
+  // A group is either a house, or one run of the same checklist across houses. When it
+  // is the run, every line names its house - that IS the list.
+  const groupBlock=(g)=>`<div class="grp">
+      <div class="gh">${esc(g.label)}<span class="gn">${g.items.length}</span></div>
+      ${g.items.map(function(it){ return line(it, g.run); }).join('')}
+    </div>`;
+  const secBlock=(S)=>`<section class="sec${S.key==='late'?' late':''}">
+      <div class="sh"><span class="sl">${esc(S.label)}</span><span class="ss">${esc(S.sub)}</span><span class="sn">${S.n}</span></div>
+      ${S.groups.length?S.groups.map(groupBlock).join('')
+        :`<div class="none">Nothing ${S.key==='late'?'past due \u2014 all caught up':'on the list for this week'}.</div>`}
     </section>`;
 
   // Whatever the room wrote about a house, kept out of the checklist so the checklist
@@ -25762,33 +25894,43 @@ function _prioPreview(person, wk){
     .warn{font-size:12px;color:#633806;background:#FFF7E0;border:1px solid #EAD9A8;
           border-radius:8px;padding:8px 11px;margin:12px 0 0}
 
-    section.day{margin-top:18px;break-inside:avoid;page-break-inside:avoid}
-    .dh{display:flex;align-items:baseline;gap:8px;border-left:4px solid #185FA5;
-        background:#F5F8FC;padding:6px 11px;border-radius:0 6px 6px 0}
-    .dl{font-size:13px;font-weight:700;letter-spacing:.05em;text-transform:uppercase}
-    .ds{font-size:11px;color:#5B6472}
-    .dn{margin-left:auto;font-size:11px;font-weight:700;color:#5B6472}
-    section.day.late .dh{border-left-color:#B42318;background:#FDF2F1}
-    section.day.late .dl{color:#B42318}
-    section.day.undated .dh{border-left-color:#9AA3B2;background:#F6F7F9}
+    /* Bruce, 26 Sept: "letters big enough, double spacing like on a Google Doc so they
+       don't read over it ... easily viewed from a mobile version when looking at it
+       from the field app." So: 17px jobs, a real 20px box, and a full line of air
+       between rows. It is read one-handed, standing on a job site. */
+    section.sec{margin-top:26px;break-inside:avoid;page-break-inside:avoid}
+    .sh{display:flex;align-items:baseline;gap:10px;border-left:5px solid #185FA5;
+        background:#F5F8FC;padding:10px 14px;border-radius:0 8px 8px 0}
+    .sl{font-size:17px;font-weight:800;letter-spacing:-.2px}
+    .ss{font-size:12.5px;color:#5B6472}
+    .sn{margin-left:auto;font-size:14px;font-weight:800;color:#5B6472}
+    section.sec.late .sh{border-left-color:#B42318;background:#FDF2F1}
+    section.sec.late .sl{color:#B42318}
 
-    /* On a paper-width column the job and the house it belongs to sit on one line,
-       the house hard right where the eye can run down it. Narrow screens stack them. */
-    .job{display:flex;gap:12px;align-items:baseline;padding:9px 4px 9px 11px;
-         border-bottom:1px solid #EDF0F5}
-    .box{flex:0 0 auto;width:16px;height:16px;align-self:flex-start;margin-top:3px;
-         border:1.5px solid #9AA3B2;border-radius:3.5px;background:#fff}
+    .grp{margin-top:14px;break-inside:avoid;page-break-inside:avoid}
+    .gh{display:flex;align-items:baseline;gap:9px;font-size:13px;font-weight:800;
+        letter-spacing:.06em;text-transform:uppercase;color:#185FA5;
+        padding:0 0 5px 2px;border-bottom:1.5px solid #E3E7EE}
+    section.sec.late .gh{color:#B42318}
+    .gn{margin-left:auto;font-size:12px;font-weight:700;color:#9AA3B2;
+        letter-spacing:0;text-transform:none}
+
+    /* One job, one tick box, one full line of space after it. */
+    .job{display:flex;gap:14px;align-items:flex-start;
+         padding:14px 4px 14px 2px;border-bottom:1px solid #EDF0F5}
+    .box{flex:0 0 auto;width:20px;height:20px;margin-top:1px;
+         border:2px solid #8A94A6;border-radius:4px;background:#fff}
     .what{flex:1 1 auto;min-width:0}
-    .meta{flex:0 0 auto;text-align:right;max-width:40%;padding-left:10px}
-    .t{display:block;font-size:15px;line-height:1.35;font-weight:600}
-    .where{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.05em;
-           text-transform:uppercase;color:#185FA5}
-    .where.none{color:#9AA3B2;font-weight:600}
-    .cat{display:block;font-size:10.5px;color:#5B6472;margin-top:2px}
+    .t{display:block;font-size:17px;line-height:1.55;font-weight:600}
+    .sub{display:block;font-size:13px;line-height:1.55;color:#5B6472;margin-top:3px}
+    .job.late .t{color:#14171C}
+    .job.late .sub{color:#B42318;font-weight:700}
+    .none{font-size:14px;color:#5B6472;padding:14px 4px}
+
     @media(max-width:620px){
-      .job{flex-wrap:wrap}
-      .meta{flex:1 1 100%;text-align:left;max-width:none;padding-left:28px;margin-top:3px}
-      .cat{display:inline-block;margin-top:0;margin-left:8px}
+      .t{font-size:17px}
+      .sh{padding:9px 12px}
+      .job{padding:13px 2px}
     }
 
     h2.sec{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
@@ -25816,11 +25958,11 @@ function _prioPreview(person, wk){
   <header>
     <h1>${esc(first)}&rsquo;s week</h1>
     ${pack.role?`<div><span class="role">${esc(pack.role)}</span></div>`:''}
-    <div class="when">${esc(span)} &middot; from Monday&rsquo;s project team meeting</div>
+    <div class="when">${esc(span)} &middot; from Monday&rsquo;s project team meeting &middot; this week only</div>
     <div class="tally">${nJobs} job${nJobs===1?'':'s'}${nLate?` &middot; <span class="lt">${nLate} late</span>`:''}</div>
   </header>
   ${pack.notes.length?`<div class="warn">${pack.notes.map(esc).join('<br/>')}</div>`:''}
-  ${days.length ? days.map(dayBlock).join('')
+  ${nJobs ? secs.map(secBlock).join('')
     : (pack.recaps.length ? '' : `<div class="empty">Nothing on ${esc(first)}&rsquo;s list this week.</div>`)}
   ${notes?`<h2 class="sec">From the meeting</h2>${notes}`:''}
   ${pack.recaps.length?`<h2 class="sec">${pack.kind==='realtor'?'Coming ready':'Where the houses are'}</h2>${recaps}`:''}
@@ -25996,4 +26138,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-26e side-tasks-tick-everywhere + in-the-monday-meeting -->
+<!-- build: 2026-09-26f pdfs-one-week + meeting-task-lands-in-the-week + jen-permit-section -->
