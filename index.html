@@ -425,6 +425,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="window.open('https://signin.eagleview.com/','_blank')">🦅 Eagleview ↗</div>
       <div class="ddi" onclick="window.open('https://www.lowes.com','_blank')">🔨 Lowes ↗</div>
       <div class="ddi" onclick="window.open('https://zombie-tv-dashboard.vercel.app/','_blank')">📺 Legacy TV ↗</div>
+      <div class="ddi" onclick="window.open('https://conventus-draw-desk.vercel.app/','_blank')">🏦 Draw Desk ↗</div>
       <div class="ddi" onclick="window.open('https://renovation-pricing.vercel.app/','_blank')">💲 Renovation Pricing ↗</div>
       <div class="ddl">Process</div>
       <a class="ddi" href="/process.html" style="text-decoration:none">🗺 Flip Process</a>
@@ -2356,7 +2357,10 @@ document.addEventListener("click", () => {
 // where choosing a person has always meant "show me their overview".
 function _pdPickPM(v){
   const t=window._pdTab||'main';
-  if(!v || v==='__all'){ _pdShowEveryone(); return; }
+  // The blank placeholder is a label, not a choice. Treating it as "clear" meant
+  // brushing the dropdown open and shut dumped you back to everybody's board.
+  if(!v){ openProjectDashboard(t); return; }
+  if(v==='__all'){ _pdShowEveryone(); return; }
   _pdSetPM(v);
   openProjectDashboard((t==='main'||String(t).indexOf('pm:')===0) ? ('pm:'+_pdPM()) : t);
 }
@@ -2400,13 +2404,26 @@ function openProjectDashboard(activeTab) {
   const pmOnTab = (activeTab||'').indexOf('pm:')===0;
   const pmWho   = _pdPM();
   const pmSet   = !!pmWho;
+  // Bruce, 25 Sept: "I click on Bruce's project dashboard, then Property Dashboard, and I
+  // can't click back over to Bruce's dashboard without going to Main, picking somebody
+  // else and then my name again."
+  // My bug, from making the choice sticky. The dropdown already READ "Bruce Barlett" on
+  // every tab, so re-picking the selected name fired no change event and there was no
+  // way back to their overview. The picker changes WHO; getting to their dashboard needs
+  // its own thing to click, so the chosen person now gets a real tab of their own.
+  const pmTab = pmSet ? `
+    <div onclick="openProjectDashboard('pm:${_calEsc(pmWho).replace(/'/g,"\\'")}')" title="${_calEsc(pmWho)}'s dashboard"
+      style="padding:11px 14px 11px 12px;font-size:13px;color:${pmOnTab?'#111':'#566070'};cursor:pointer;border-bottom:2px solid ${pmOnTab?'#111':'transparent'};white-space:nowrap;display:inline-flex;align-items:center;gap:5px;margin-bottom:-1px;font-weight:${pmOnTab?'600':'400'}">
+      <span>\u{1F464}</span>${_calEsc(pmWho)}
+    </div>` : '';
   const pmPicker = (pmNames.length > 1) ? `
-    <div style="display:inline-flex;align-items:center;gap:6px;padding:7px 14px;white-space:nowrap;border-bottom:2px solid ${pmOnTab?'#111':'transparent'};margin-bottom:-1px">
-      <span style="font-size:13px">\u{1F464}</span>
-      <select onchange="_pdPickPM(this.value)"
-        style="font-size:13px;padding:4px 8px;border:0.5px solid ${pmSet?'#111':'#dfe4ec'};border-radius:6px;background:#fff;color:${pmSet?'#111':'#566070'};font-weight:${pmSet?'600':'400'};cursor:pointer;outline:none;max-width:210px">
-        <option value="__all">${pmSet?'\u2190 Everyone':'Project Managers\u2026'}</option>
+    <div style="display:inline-flex;align-items:center;gap:6px;padding:7px 10px 7px ${pmSet?'2px':'14px'};white-space:nowrap;margin-bottom:-1px">
+      ${pmSet?'':'<span style="font-size:13px">\u{1F464}</span>'}
+      <select onchange="_pdPickPM(this.value)" title="Change which manager you are looking at"
+        style="font-size:13px;padding:4px 8px;border:0.5px solid ${pmSet?'#dfe4ec':'#dfe4ec'};border-radius:6px;background:#fff;color:#566070;cursor:pointer;outline:none;max-width:${pmSet?'150':'210'}px">
+        <option value="">${pmSet?'Switch\u2026':'Project Managers\u2026'}</option>
         ${pmNames.map(nm=>`<option value="${_calEsc(nm)}" ${_canonSame(nm,pmWho)?'selected':''}>${_calEsc(nm)}${_pmHasLiveWork(nm)?'':' \u00b7 no houses on'}</option>`).join('')}
+        ${pmSet?'<option value="__all">\u2190 Everyone</option>':''}
       </select>
     </div>` : '';
 
@@ -2415,7 +2432,7 @@ function openProjectDashboard(activeTab) {
   document.getElementById("dash-body").innerHTML = `
     <div style="background:#f4f5f7;min-height:500px" id="pd-root">
       <div style="background:#fff;border-bottom:1.5px solid #e0e4ec;padding:0 20px;display:flex;align-items:stretch;overflow-x:auto;gap:0">
-        ${tabHtml(tabs[0])}${pmPicker}${tabs.slice(1).map(tabHtml).join('')}
+        ${tabHtml(tabs[0])}${pmTab}${pmPicker}${tabs.slice(1).map(tabHtml).join('')}
       </div>
       <div id="pd-content">
         ${content}
@@ -9137,16 +9154,21 @@ function _wmMovedToast(msg){
 // so you don't have to scroll through and see somebody else's."
 // Same shape as the realtor and admin boards: an Everyone view for the walk-through,
 // then one tab per person that shows only their week.
-function _prioTab(){ return window._prioSel || 'all'; }
+function _prioTab(){
+  const people=(typeof _prioPeople==='function')?_prioPeople(window.__wmLastWeek||_wmWeekKeyFor('team')):[];
+  const want=window._prioSel;
+  if(want && want!=='all' && people.indexOf(want)>=0) return want;
+  return people.length ? people[0] : 'all';
+}
 function _prioTabTo(k){ window._prioSel=k; openWeeklyMeeting('team', window.__wmLastWeek||undefined); }
 function _prioTabBar(wk){
   const people=_prioPeople(wk);
   const sel=_prioTab();
   const btn=(k,label,n)=>`<span onclick="_prioTabTo('${_argEsc(k)}')" style="cursor:pointer;padding:7px 14px;border-radius:8px;font-size:13px;font-weight:${sel===k?'700':'400'};background:${sel===k?'#122A4A':'#fff'};color:${sel===k?'#fff':'#444'};border:0.5px solid ${sel===k?'#122A4A':'#d8dce6'};white-space:nowrap">${label}${n!=null?(' &middot; '+n):''}</span>`;
   const total=people.reduce(function(a,p){ return a+_prioCount(p,wk); },0);
-  return `<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:13px">
-    ${btn('all','\u{1F465} Everyone',total)}
+  return `<div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-bottom:13px">
     ${people.map(function(p){ return btn(p, _calEsc(String(p).split(' ')[0]), _prioCount(p,wk)); }).join('')}
+    ${people.length?`<span style="font-size:11.5px;color:#8A94A6;margin-left:4px">${total} job${total===1?'':'s'} across ${people.length} list${people.length===1?'':'s'}</span>`:''}
   </div>`;
 }
 function _wmPrioRail(wk, roNow){
@@ -17661,12 +17683,49 @@ function _trkSearchBox(ph){
   // The old "Saved ✓" flash lived here and was gone in 1.2 seconds. The real status now sits
   // pinned at the top of the tab instead; this just restores it after a redraw.
   setTimeout(()=>{ const st=window.__trkState; if(st) _trkStatus(st.state, st.detail); },0);
-  return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><input id="trk-search" placeholder="${ph}" oninput="_trkFilter()" style="flex:1;max-width:340px;padding:8px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:13.5px;outline:none"/></div>`;
+  return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap"><input id="trk-search" placeholder="${ph}" oninput="_trkFilter()" style="flex:1;max-width:340px;padding:8px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:13.5px;outline:none"/><span id="trk-search-note" style="font-size:12.5px;color:#566070"></span></div>`;
 }
+// Marlo, 25 Sept: went to add window information for 3339 Daglow and the house was not
+// there. It WAS there - all four boxes were ticked back in September, so it had moved
+// into the collapsed "Window work completed" folder, and it is left out of the "add a
+// property" dropdown because it is already on the list. Searching for it found nothing
+// either, because this only ever set display on rows and a row inside a SHUT <details>
+// stays invisible however you style it. So the house existed in three places and showed
+// in none of them.
+// Searching now opens whatever folder the match is sitting in, and says where it found
+// it. Clearing the box puts the folders back the way you had them.
 function _trkFilter(){
   const q=(document.getElementById('trk-search')||{}).value||'';
   const t=q.trim().toLowerCase();
-  document.querySelectorAll('[data-trk]').forEach(r=>{ r.style.display = (!t || (r.getAttribute('data-trk')||'').toLowerCase().includes(t)) ? '' : 'none'; });
+  let shown=0, inFolders=0;
+  const hitFolders=new Set();
+  document.querySelectorAll('[data-trk]').forEach(r=>{
+    const hit = !t || (r.getAttribute('data-trk')||'').toLowerCase().includes(t);
+    r.style.display = hit ? '' : 'none';
+    if(!hit || !t) return;
+    shown++;
+    let d=r.closest('details');
+    while(d){
+      hitFolders.add(d);
+      if(!d.open){
+        if(!d.hasAttribute('data-trk-was-shut')) d.setAttribute('data-trk-was-shut','1');
+        d.open=true;
+        inFolders++;
+      }
+      d=d.parentElement ? d.parentElement.closest('details') : null;
+    }
+  });
+  // Put back any folder we opened that no longer holds a match.
+  document.querySelectorAll('details[data-trk-was-shut]').forEach(d=>{
+    if(!t || !hitFolders.has(d)){ d.open=false; d.removeAttribute('data-trk-was-shut'); }
+  });
+  const note=document.getElementById('trk-search-note');
+  if(note){
+    note.textContent = !t ? ''
+      : (shown ? (shown+' match'+(shown===1?'':'es')+(inFolders?' \u2014 opened a folder to show '+(shown===1?'it':'some of them'):''))
+               : 'Nothing on this tracker matches \u201c'+q.trim()+'\u201d.');
+    note.style.color = (t && !shown) ? '#B42318' : '#566070';
+  }
 }
 // ===================== UTILITY TRACKER =====================
 // Mirrors the company's Utility Tracker workbook: one sheet per utility
@@ -17725,21 +17784,95 @@ async function _utilPayAdd(pid,sub){
 // finish." And Patience, same day: payments belong under the utility's own Payment
 // Record, not in the general notes. This is the adder that sits INSIDE each utility
 // square, so a payment is logged where you are already looking.
-async function _utilPayQuick(pid,sub){
-  if(_blockIfReadOnly()) return;
+// Patience, 25 Sept: typing the date and amount of a payment and finding nothing in the
+// property history afterwards. The mechanism worked - but it only ran when you pressed
+// the "+ Payment" BUTTON, and every other box on these trackers saves the moment you
+// leave it ("Every box saves the moment you leave it" is printed on the sheet). So she
+// typed, clicked away, the panel redrew, and her typing was thrown out. Five days of
+// entries and the audit log has not a single "payment logged" line in it.
+// Now leaving either box records it, exactly like the rest of the app. The button stays
+// so it is still obvious what the boxes are for.
+// Typing the date and THEN the amount must not make two records, so a second edit on the
+// same date and utility updates the record already there.
+async function _utilPayCommit(pid, sub, opts){
+  if(_blockIfReadOnly()) return false;
   const g=(k)=>{ const el=document.getElementById(k); return el?(el.value||'').trim():''; };
   const key='upq-'+pid+'-'+sub;
-  const d=g(key+'-d');
-  if(!d){ alert("Pick the date the payment was made \u2014 that is what puts it in the right month."); return; }
-  const rec={ d:d, amt:g(key+'-a'), chg:'', conf:g(key+'-c'), method:'', note:g(key+'-n'), by:_utilWho() };
-  const arr=_utilArr('upay',pid,sub).concat([rec]).sort((a,b)=>(a.d<b.d?1:-1));
-  if(!(await _utilArrWrite('upay',pid,sub,arr))) return;
-  const kind=(UTILS.find(u=>u.key===sub)||{}).k;
-  if(kind){ const dd=window._trkData; dd[kind]=dd[kind]||{}; dd[kind][pid]=Object.assign({},dd[kind][pid]||{},{last:rec.d,amt:rec.amt,conf:rec.conf}); window._trkData=dd; await _trkSave(); }
-  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===_utilBaseId(pid));
-  _logAudit('created','property',(c&&c.addr)||'', (UTILS.find(u=>u.key===sub)||{}).label+' payment logged: '+d+(rec.amt?(' \u2014 '+rec.amt):''));
-  (window._trkRerender||function(){openVAAdminDashboard('trackers');})();
+  const d=g(key+'-d'), amt=g(key+'-a'), conf=g(key+'-c'), note=g(key+'-n');
+  const pressed=!!(opts&&opts.pressed);
+  if(!d){
+    // On blur, say nothing - she may not have got to the date yet. On the button, say why.
+    if(pressed) alert("Pick the date the payment was made \u2014 that is what puts it in the right month.");
+    return false;
+  }
+  if(!pressed && !amt && !conf && !note) return false;   // a date alone, mid-typing
+  const guard='upqbusy-'+pid+'-'+sub;
+  if(window[guard]) return false;
+  window[guard]=true;
+  try{
+    const arr=_utilArr('upay',pid,sub).slice();
+    const at=arr.findIndex(function(r){ return r && r.d===d; });
+    if(at>=0){
+      arr[at]=Object.assign({}, arr[at], {
+        amt: amt||arr[at].amt||'', conf: conf||arr[at].conf||'',
+        note: note||arr[at].note||'', by: arr[at].by||_utilWho() });
+    } else {
+      arr.push({ d:d, amt:amt, chg:'', conf:conf, method:'', note:note, by:_utilWho() });
+    }
+    arr.sort((a,b)=>(a.d<b.d?1:-1));
+    if(!(await _utilArrWrite('upay',pid,sub,arr))){
+      // Never fail quietly on somebody's bookkeeping.
+      alert("That payment was NOT saved. Nothing was lost on screen \u2014 check your connection and press + Payment again.");
+      return false;
+    }
+    const kind=(UTILS.find(u=>u.key===sub)||{}).k;
+    if(kind){ const dd=window._trkData; dd[kind]=dd[kind]||{}; dd[kind][pid]=Object.assign({},dd[kind][pid]||{},{last:d,amt:amt,conf:conf}); window._trkData=dd; await _trkSave(); }
+    const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===_utilBaseId(pid));
+    _logAudit(at>=0?'updated':'created','property',(c&&c.addr)||'',
+      (UTILS.find(u=>u.key===sub)||{}).label+' payment logged: '+d+(amt?(' \u2014 '+amt):' \u2014 amount still to add'));
+    (window._trkRerender||function(){openVAAdminDashboard('trackers');})();
+    return true;
+  } finally { window[guard]=false; }
 }
+async function _utilPayQuick(pid,sub){ return await _utilPayCommit(pid,sub,{pressed:true}); }
+async function _utilPayBlur(pid,sub){ return await _utilPayCommit(pid,sub,{pressed:false}); }
+// The property-history page has the fuller adder (method, charge, notes) and its own
+// box ids. Same rule: leaving a box records it.
+async function _utilPayHistCommit(pid, sub, pressed){
+  if(_blockIfReadOnly()) return false;
+  const g=(k)=>{ const el=document.getElementById(k); return el?(el.value||'').trim():''; };
+  const d=g('up-d-'+sub), amt=g('up-a-'+sub), chg=g('up-c-'+sub),
+        method=g('up-m-'+sub), conf=g('up-n-'+sub), note=g('up-t-'+sub);
+  if(!d){ if(pressed) alert("Pick the date the payment was made."); return false; }
+  if(!pressed && !amt && !chg && !method && !conf && !note) return false;
+  const guard='uphbusy-'+pid+'-'+sub;
+  if(window[guard]) return false;
+  window[guard]=true;
+  try{
+    const arr=_utilArr('upay',pid,sub).slice();
+    const at=arr.findIndex(function(r){ return r && r.d===d; });
+    if(at>=0){
+      arr[at]=Object.assign({}, arr[at], { amt:amt||arr[at].amt||'', chg:chg||arr[at].chg||'',
+        method:method||arr[at].method||'', conf:conf||arr[at].conf||'', note:note||arr[at].note||'',
+        by:arr[at].by||_utilWho() });
+    } else {
+      arr.push({ d:d, amt:amt, chg:chg, conf:conf, method:method, note:note, by:_utilWho() });
+    }
+    arr.sort((a,b)=>(a.d<b.d?1:-1));
+    if(!(await _utilArrWrite('upay',pid,sub,arr))){
+      alert("That payment was NOT saved. Check your connection and press + Add payment again.");
+      return false;
+    }
+    const kind=(UTILS.find(u=>u.key===sub)||{}).k;
+    if(kind){ const dd=window._trkData; dd[kind]=dd[kind]||{}; dd[kind][pid]=Object.assign({},dd[kind][pid]||{},{last:d,amt:amt,conf:conf}); window._trkData=dd; await _trkSave(); }
+    const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===_utilBaseId(pid));
+    _logAudit(at>=0?'updated':'created','property',(c&&c.addr)||'',
+      (UTILS.find(u=>u.key===sub)||{}).label+' payment logged: '+d+(amt?(' \u2014 '+amt):' \u2014 amount still to add'));
+    (window._trkRerender||function(){openVAAdminDashboard('trackers');})();
+    return true;
+  } finally { window[guard]=false; }
+}
+async function _utilPayHistBlur(pid,sub){ return await _utilPayHistCommit(pid,sub,false); }
 // Payments grouped by month, newest month first - the month-on-month history Patience
 // asked for. Each utility keeps its own; nothing is shared between them.
 function _utilPayMonths(pid,sub){
@@ -19439,13 +19572,25 @@ function _vaTrackers(){
         <div style="font-size:11px;color:${on?'rgba(255,255,255,.85)':'#566070'};line-height:1.3">${st.icon} ${st.label}</div>
         <div style="font-size:22px;font-weight:700;color:${on?'#fff':(n?st.color:'#636b7a')};line-height:1.2">${n}</div></div>`;
     }).join('')}</div>`;
+  // Marlo, 25 Sept: "3339 Daglow is not popping up as an option." It was not, because it
+  // is already on the window list - finished, in fact, back in September - and this
+  // dropdown only ever offered houses that were NOT on it. From where she was sitting the
+  // house had vanished. Every active house is listed now; the ones already on the list
+  // are shown greyed out saying where they are, so the answer is on screen instead of
+  // being an empty space.
   const winAdd=ro?'':(()=>{
-    const opts=active.filter(c=>!_winInQueue(c)).sort((a,b)=>String(a.addr||'').localeCompare(String(b.addr||'')));
+    const sorted=active.slice().sort((a,b)=>String(a.addr||'').localeCompare(String(b.addr||'')));
+    const free=sorted.filter(c=>!_winInQueue(c));
+    const opt=(c)=>{
+      if(!_winInQueue(c)) return `<option value="${c.id}">${_calEsc(c.addr||'')}</option>`;
+      const where=_winComplete(c) ? 'windows finished \u2014 in the completed folder' : 'already on the list';
+      return `<option value="" disabled style="color:#9AA3B2">${_calEsc(c.addr||'')} \u2014 ${where}</option>`;
+    };
     return `<div style="background:#fff;border:0.5px dashed #cdd7e6;border-radius:9px;padding:9px 13px;margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <span style="font-size:12.5px;color:#666">Doing glass or windows on a house that is not on this list?</span>
-      <select id="win-add" style="padding:6px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12.5px;max-width:280px"><option value="">\u2014 Pick a property \u2014</option>${opts.map(c=>`<option value="${c.id}">${_calEsc(c.addr||'')}</option>`).join('')}</select>
+      <select id="win-add" style="padding:6px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12.5px;max-width:340px"><option value="">\u2014 Pick a property \u2014</option>${sorted.map(opt).join('')}</select>
       <button onclick="_winAdd()" style="padding:6px 13px;border:none;border-radius:7px;background:#122A4A;color:#fff;font-size:12.5px;font-weight:600;cursor:pointer">&#65291; Add to the window list</button>
-      <span style="font-size:11.5px;color:#566070">${opts.length} propert${opts.length===1?'y':'ies'} not on the list</span>
+      <span style="font-size:11.5px;color:#566070">${free.length} of ${sorted.length} not on the list yet \u2014 search above to find one that is</span>
     </div>`;
   })();
   const winFinished=winFin.length?`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden;margin-top:14px">
@@ -19481,7 +19626,11 @@ function _vaTrackers(){
   const permitout=_permitWarehouseDue().length;
   const view=window._trkView||'summary';
   const tile=(key,icon,title,n,color)=>`<div onclick="window._trkView='${key}';(window._trkRerender||function(){openVAAdminDashboard('trackers');})()" style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${color};border-radius:10px;padding:13px 15px;cursor:pointer"><div style="display:flex;justify-content:space-between"><div style="font-size:13.5px;font-weight:600;color:#111">${icon} ${title}</div><span style="color:#636b7a">›</span></div><div style="font-size:25px;font-weight:600;color:${color};margin-top:5px">${n}</div><div style="font-size:11px;color:#566070">outstanding</div></div>`;
-  const tiles=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:16px">${tile('w9','🧾','W-9 Tracker',w9out,'#7A3FA8')}${tile('window','🪟','Window Tracker',winout,'#185FA5')}${tile('mow','🌱','Mowing Tracker',mowout,'#3B6D11')}${tile('checklist','✅','Checklist Tracker',clout,'#0B7285')}${tile('util','⚡','Utility Tracker',utilout,'#8A5A10')}${tile('permit','📄','Permit Tracker',permitout,'#B03A8B')}</div>`;
+  // Bruce, 25 Sept: Tommy's draw schedule site belongs with the trackers. It is a
+  // separate site, so this tile opens it in a new tab instead of switching the view -
+  // hence the arrow, so nobody expects it to load in place.
+  const drawTile=`<div onclick="window.open('https://conventus-draw-desk.vercel.app/','_blank')" title="Opens Tommy's Draw Desk in a new tab" style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid #0B6E4F;border-radius:10px;padding:13px 15px;cursor:pointer"><div style="display:flex;justify-content:space-between"><div style="font-size:13.5px;font-weight:600;color:#111">\u{1F3E6} Draw Desk</div><span style="color:#636b7a">\u2197</span></div><div style="font-size:15px;font-weight:600;color:#0B6E4F;margin-top:9px">Draw schedules</div><div style="font-size:11px;color:#566070">opens in a new tab</div></div>`;
+  const tiles=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:16px">${tile('w9','🧾','W-9 Tracker',w9out,'#7A3FA8')}${tile('window','🪟','Window Tracker',winout,'#185FA5')}${tile('mow','🌱','Mowing Tracker',mowout,'#3B6D11')}${tile('checklist','✅','Checklist Tracker',clout,'#0B7285')}${tile('util','⚡','Utility Tracker',utilout,'#8A5A10')}${tile('permit','📄','Permit Tracker',permitout,'#B03A8B')}${drawTile}</div>`;
   const back=`<div onclick="window._trkView='summary';(window._trkRerender||function(){openVAAdminDashboard('trackers');})()" style="display:inline-flex;align-items:center;gap:5px;font-size:13px;color:#185FA5;cursor:pointer;margin-bottom:10px">‹ Back to Trackers</div>`;
   const shell=(inner)=>`<div style="padding:20px;max-width:1120px;margin:0 auto">
       <div style="position:sticky;top:0;z-index:20;background:#f4f5f7;padding:2px 0 8px;margin:-2px 0 2px;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
@@ -19527,10 +19676,10 @@ function _vaTrackers(){
         </div>`;
       }).join(''):'<div style="font-size:11.5px;color:#636b7a;padding:7px 0;border-top:0.5px solid #eef0f6">No payments recorded on this utility yet.</div>';
       const quick=ro?'':`<div style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;margin-top:7px;padding-top:7px;border-top:0.5px dashed #e6e8ee">
-        <input type="date" id="upq-${pid}-${u.key}-d" title="Date paid" style="padding:3px 5px;border:0.5px solid #d8dce6;border-radius:5px;font-size:11.5px;color:#555"/>
-        <input id="upq-${pid}-${u.key}-a" placeholder="$0.00" title="Amount" style="width:68px;padding:3px 6px;border:0.5px solid #d8dce6;border-radius:5px;font-size:11.5px"/>
-        <input id="upq-${pid}-${u.key}-c" placeholder="Conf #" title="Confirmation number" style="width:76px;padding:3px 6px;border:0.5px solid #d8dce6;border-radius:5px;font-size:11.5px"/>
-        <input id="upq-${pid}-${u.key}-n" placeholder="Note" title="Anything worth remembering" style="flex:1;min-width:70px;padding:3px 6px;border:0.5px solid #d8dce6;border-radius:5px;font-size:11.5px"/>
+        <input type="date" id="upq-${pid}-${u.key}-d" title="Date paid \u2014 saves when you leave the box" onchange="_utilPayBlur('${pid}','${u.key}')" style="padding:3px 5px;border:0.5px solid #d8dce6;border-radius:5px;font-size:11.5px;color:#555"/>
+        <input id="upq-${pid}-${u.key}-a" placeholder="$0.00" onchange="_utilPayBlur('${pid}','${u.key}')" title="Amount" style="width:68px;padding:3px 6px;border:0.5px solid #d8dce6;border-radius:5px;font-size:11.5px"/>
+        <input id="upq-${pid}-${u.key}-c" placeholder="Conf #" onchange="_utilPayBlur('${pid}','${u.key}')" title="Confirmation number" style="width:76px;padding:3px 6px;border:0.5px solid #d8dce6;border-radius:5px;font-size:11.5px"/>
+        <input id="upq-${pid}-${u.key}-n" placeholder="Note" onchange="_utilPayBlur('${pid}','${u.key}')" title="Anything worth remembering" style="flex:1;min-width:70px;padding:3px 6px;border:0.5px solid #d8dce6;border-radius:5px;font-size:11.5px"/>
         <button onclick="_utilPayQuick('${pid}','${u.key}')" style="padding:4px 10px;background:${u.color};color:#fff;border:none;border-radius:5px;font-size:11.5px;font-weight:600;cursor:pointer;white-space:nowrap">+ Payment</button>
       </div>`;
       return `<div style="border:0.5px solid #e6e8ee;border-top:3px solid ${u.color};border-radius:9px;padding:10px 12px;background:#fff;display:flex;flex-direction:column">
@@ -19606,7 +19755,7 @@ function _vaTrackers(){
         const rows=_utilArr('upay',pid,u.key);
         const total=rows.reduce((a,r)=>a+(parseFloat(String(r.amt||'').replace(/[^0-9.\-]/g,''))||0),0);
         const body=rows.length?rows.map((r,i)=>`<tr style="border-top:0.5px solid #eef0f6"><td style="padding:7px 10px;white-space:nowrap">${_calEsc(r.d||'')}</td><td style="padding:7px;text-align:right">${money(r.amt)}</td><td style="padding:7px;text-align:right">${money(r.chg)}</td><td style="padding:7px">${_calEsc(r.method||'')}</td><td style="padding:7px">${_calEsc(r.conf||'')}</td><td style="padding:7px">${_calEsc(r.note||'')}</td><td style="padding:7px;font-size:11.5px;color:#566070">${_calEsc(r.by||'')}${_utilPayNeedsDetail(r)?'<div style="color:#8A5A10;font-weight:600;font-size:11px;margin-top:2px">needs the amount</div>':''}</td><td style="padding:7px;text-align:center">${ro?'':`<span onclick="_utilPayDel('${pid}','${u.key}',${i})" style="cursor:pointer;color:#B42318">✕</span>`}</td></tr>`).join(''):'<tr><td colspan="8" style="padding:14px;color:#636b7a;text-align:center">No payments recorded yet.</td></tr>';
-        const adder=ro?'':`<tr style="background:#F7F8FB;border-top:0.5px solid #e0e4ec"><td style="padding:7px 10px"><input type="date" id="up-d-${u.key}" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td style="padding:7px"><input id="up-a-${u.key}" placeholder="$0.00" style="width:80px;padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td style="padding:7px"><input id="up-c-${u.key}" placeholder="$0.00" style="width:70px;padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td style="padding:7px"><input id="up-m-${u.key}" placeholder="Card / ACH" style="width:100px;padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td style="padding:7px"><input id="up-n-${u.key}" placeholder="Confirmation #" style="width:140px;padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td style="padding:7px"><input id="up-t-${u.key}" placeholder="Notes" style="width:160px;padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td colspan="2" style="padding:7px;text-align:center"><button onclick="_utilPayAdd('${pid}','${u.key}')" style="padding:5px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">+ Add payment</button></td></tr>`;
+        const adder=ro?'':`<tr style="background:#F7F8FB;border-top:0.5px solid #e0e4ec"><td style="padding:7px 10px"><input type="date" id="up-d-${u.key}" onchange="_utilPayHistBlur('${pid}','${u.key}')" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td style="padding:7px"><input id="up-a-${u.key}" onchange="_utilPayHistBlur('${pid}','${u.key}')" placeholder="$0.00" style="width:80px;padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td style="padding:7px"><input id="up-c-${u.key}" onchange="_utilPayHistBlur('${pid}','${u.key}')" placeholder="$0.00" style="width:70px;padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td style="padding:7px"><input id="up-m-${u.key}" onchange="_utilPayHistBlur('${pid}','${u.key}')" placeholder="Card / ACH" style="width:100px;padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td style="padding:7px"><input id="up-n-${u.key}" onchange="_utilPayHistBlur('${pid}','${u.key}')" placeholder="Confirmation #" style="width:140px;padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td style="padding:7px"><input id="up-t-${u.key}" onchange="_utilPayHistBlur('${pid}','${u.key}')" placeholder="Notes" style="width:160px;padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/></td><td colspan="2" style="padding:7px;text-align:center"><button onclick="_utilPayHistCommit('${pid}','${u.key}',true)" style="padding:5px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">+ Add payment</button></td></tr>`;
         return _trkTable(`${u.icon} ${u.label} — payment records${rows.length?` &nbsp;<span style="font-weight:400;color:#566070">${rows.length} payment${rows.length===1?'':'s'}${total?`, $${Math.round(total).toLocaleString()} total`:''}${rows.some(_utilPayNeedsDetail)?` &middot; <span style="color:#8A5A10;font-weight:600">${rows.filter(_utilPayNeedsDetail).length} still need${rows.filter(_utilPayNeedsDetail).length===1?'s':''} an amount</span>`:''}</span>`:''}`,u.color,'<th style="padding:9px 10px;text-align:left">Date paid</th><th style="padding:9px;text-align:right">Amount</th><th style="padding:9px;text-align:right">Charge</th><th style="padding:9px;text-align:left">Method</th><th style="padding:9px;text-align:left">Confirmation #</th><th style="padding:9px;text-align:left">Notes</th><th style="padding:9px;text-align:left">Logged by</th><th style="padding:9px"></th>',body+adder);
       };
       const logs=_utilArr('ulog',pid);
@@ -19636,7 +19785,14 @@ function _vaTrackers(){
   // Bruce, 5 Sept: permits moved out of Trackers and into their own dashboard.
   // This route stays alive and forwards, so an old link or a restored nav state
   // lands in the right place instead of on a dead page.
+  // Bruce, 25 Sept: "when I click the trackers tab it just takes me to the permit
+  // tracker." Permits moved to their own dashboard and this route forwards there - but
+  // the chosen view is remembered in window._trkView, so once anybody landed on 'permit'
+  // EVERY later click on Trackers bounced straight back out to the permit dashboard and
+  // the trackers page became unreachable. Forward once, then forget it, so the next
+  // click opens the trackers summary like it should.
   if(view==='permit'){
+    window._trkView='summary';
     if(typeof openPermitDashboard==='function'){ setTimeout(()=>openPermitDashboard('tracker'),0);
       return shell(`<div style="padding:26px;text-align:center;color:#566070;font-size:13px">Permits have their own dashboard now &mdash; opening it&hellip;</div>`); }
     return shell(back+_permitTrackerBody());
@@ -24931,7 +25087,13 @@ function _prioBody(wk, roNow, isClosed){
   // On somebody's own tab, show their week and nothing else - the picker lists every
   // name in the company, which is exactly the noise Bruce wanted gone from a person's
   // own view. It stays on Everyone, where choosing who gets a list belongs.
-  return _prioTabBar(wk) + (sel==='all' ? (picker+head) : '') + blocks;
+  // The picker used to live only on the Everyone tab. That tab is gone, so it folds up
+  // here instead - out of the way on a person's own page, but never unreachable.
+  const pickerFold=`<details style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;margin-bottom:12px"${window.__prioPickOpen?' open':''} ontoggle="window.__prioPickOpen=this.open">
+      <summary style="cursor:pointer;padding:10px 14px;outline:none;font-size:13px;font-weight:600;color:#122A4A">\u{1F465} Who gets a list</summary>
+      <div style="padding:0 14px 12px">${picker}</div>
+    </details>`;
+  return _prioTabBar(wk) + pickerFold + blocks;
 }
 // What the person will actually receive, on screen, so nothing goes out unseen.
 // Printing this page is how you get a paper or PDF copy by hand; the Monday mailer
@@ -25285,4 +25447,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-23d sticky-pm-choice, sow-property-picker, andrew-back-on-the-pm-overview, legacy-homes -->
+<!-- build: 2026-09-25a utility-payments-save-on-blur, pm-tab-back, window-tracker-findable, trackers-route, draw-desk -->
