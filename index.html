@@ -19832,11 +19832,36 @@ function _vaTrackers(){
   // The ones we are still missing come first - that is the whole point of the list.
   // Email and phone come from the Contractor Directory so there is one place to fix
   // a wrong number, not two.
+  // Bruce, 25 Sept: "on the W-9 tracker, we need to make sure that it's a name or a
+  // personal name or a business name ... on the W-9 tracker, we don't need to see how
+  // many jobs we've done with a contractor."
+  // A contractor fills a W-9 in as EITHER himself or his company, so the tracker leads
+  // with whichever one the W-9 was actually filled out as and shows the other underneath
+  // as the cross-reference. The Jobs column is gone - it belongs on the directory.
   const _w9on=(c)=>!!(d.w9||{})[c.id];
+  // What name is this W-9 under? The typed "Name on W-9" wins, then the business, then
+  // the person - because that is the order of what the paperwork will actually say.
+  const _w9Title=(c)=>{
+    const typed=String(_trkVal('w9info',c.id,'w9name')||'').trim();
+    if(typed) return {main:typed, sub:_w9Alt(c,typed), how:'as filled in on the W-9'};
+    const biz=String(c.business_name||'').trim();
+    const per=String(c.name||'').trim();
+    if(biz) return {main:biz, sub:per, how:'business name'};
+    return {main:per, sub:'', how:'personal name'};
+  };
+  const _w9Alt=(c,typed)=>{
+    const t=String(typed||'').toLowerCase();
+    const biz=String(c.business_name||'').trim();
+    const per=String(c.name||'').trim();
+    if(biz && biz.toLowerCase()!==t) return per?(biz+' \u00b7 '+per):biz;
+    if(per && per.toLowerCase()!==t) return per;
+    return '';
+  };
   const w9sorted=cons.slice().sort((a,b)=> (_w9on(a)-_w9on(b)) || ((!!a.red_flag)-(!!b.red_flag)) || String(a.name||'').localeCompare(String(b.name||'')));
-  const w9rows=cons.length?w9sorted.map(c=>`<tr data-trk="${nm(c)+' '+_calEsc(c.name||'')+' '+_calEsc(c.business_name||'')}" style="border-top:0.5px solid #eef0f6;${_w9on(c)?'':'background:#FFFBF7'}">
-    <td style="padding:7px 10px;font-weight:600;color:${c.red_flag?'#B42318':'#111'}">${c.red_flag?'🚩 ':''}${_calEsc(c.name||'')}
-      ${c.business_name?`<div style="font-size:11px;color:#566070;font-weight:400">${_calEsc(c.business_name)}</div>`:''}
+  const w9rows=cons.length?w9sorted.map(c=>{ const T=_w9Title(c); return `<tr data-trk="${_calEsc((c.name||'')+' '+(c.business_name||'')+' '+T.main+' '+(c.trade||'')+' '+(c.phone||'')+' '+(c.email||''))}" style="border-top:0.5px solid #eef0f6;${_w9on(c)?'':'background:#FFFBF7'}">
+    <td style="padding:7px 10px;font-weight:600;color:${c.red_flag?'#B42318':'#111'}">${c.red_flag?'🚩 ':''}${_calEsc(T.main)}
+      <div style="font-size:10px;color:#8A5A10;font-weight:400">${_calEsc(T.how)}</div>
+      ${T.sub?`<div style="font-size:11px;color:#566070;font-weight:400">${_calEsc(T.sub)}</div>`:''}
       ${c.trade?`<div style="font-size:11px;color:#636b7a;font-weight:400">${_calEsc(c.trade)}</div>`:''}</td>
     <td style="padding:7px">${txt('w9info',c.id,'w9name','Name on W-9',150)}</td>
     <td style="text-align:center;padding:7px">${chk('w9',c.id,(d.w9||{})[c.id])}${_w9on(c)?'':'<div style="font-size:10.5px;color:#8A5A10;margin-top:2px">still needed</div>'}</td>
@@ -19844,8 +19869,7 @@ function _vaTrackers(){
     <td style="padding:7px">${ro?(_calEsc(c.email)||'—'):`<input value="${_calEsc(c.email||'')}" placeholder="Email" onchange="setContractorField('${c.id}','email',this.value)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:150px"/>`}
       <div style="font-size:10px;color:#636b7a;margin-top:2px">from the directory</div></td>
     <td style="padding:7px">${ro?(_calEsc(c.phone)||'—'):`<input value="${_calEsc(c.phone||'')}" placeholder="Phone" onchange="setContractorField('${c.id}','phone',this.value)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:120px"/>`}</td>
-    ${ro?'':`<td style="padding:7px;text-align:right;color:${_contractorUses(c.id)?'#111':'#636b7a'};font-weight:${_contractorUses(c.id)?'600':'400'}">${_contractorUses(c.id)}</td>
-    <td style="padding:7px;text-align:right;white-space:nowrap"><span onclick="deleteContractor('${c.id}','trackers')" title="Delete this contractor everywhere" style="cursor:pointer;color:#c0392b;font-size:12.5px">Remove</span></td>`}</tr>`).join(""):'<tr><td colspan="8" style="padding:16px;color:#636b7a;text-align:center">No contractors in the directory yet. Add them under Tools → Contractor Directory.</td></tr>';
+    ${ro?'':`<td style="padding:7px;text-align:right;white-space:nowrap"><span onclick="deleteContractor('${c.id}','trackers')" title="Delete this contractor everywhere" style="cursor:pointer;color:#c0392b;font-size:12.5px">Remove</span></td>`}</tr>`; }).join(""):'<tr><td colspan="7" style="padding:16px;color:#636b7a;text-align:center">No contractors in the directory yet. Add them under Tools → Contractor Directory.</td></tr>';
 
   // ---------- Mowing tracker (mirrors the Active Mowing Tracker sheet) ----------
   const mowWhoSel=(c)=>{
@@ -20011,7 +20035,7 @@ function _vaTrackers(){
         <div id="trk-status" style="font-size:12.5px;line-height:1.2">${ro?'<span style="color:#636b7a">Read only</span>':'<span style="color:#636b7a">Every box saves itself as you go</span>'}</div>
       </div>${tiles}${inner}</div>`;
 
-  if(view==='w9') return shell(back+_trkSearchBox('Search a contractor…')+_trkTable('🧾 W-9 Tracker','#7A3FA8','<th style="padding:9px 10px;text-align:left">Contractor</th><th style="padding:9px;text-align:left">Name on W-9</th><th style="padding:9px">On file</th><th style="padding:9px;text-align:left">Notes</th><th style="padding:9px;text-align:left">Email</th><th style="padding:9px;text-align:left">Phone</th>'+(ro?'':'<th style="padding:9px;text-align:right">Jobs</th><th></th>'),w9rows)+`<div style="font-size:12px;color:#566070">Ticking "On file" here also marks the contractor in the Contractor Directory.${ro?'':' <b>Remove</b> deletes the whole contractor record — use it on duplicates, and remove the copy with 0 jobs against it.'}</div>`);
+  if(view==='w9') return shell(back+_trkSearchBox('Search a person, a business name or a trade…')+_trkTable('🧾 W-9 Tracker','#7A3FA8','<th style="padding:9px 10px;text-align:left">Who the W-9 is under</th><th style="padding:9px;text-align:left">Name on W-9</th><th style="padding:9px">On file</th><th style="padding:9px;text-align:left">Notes</th><th style="padding:9px;text-align:left">Email</th><th style="padding:9px;text-align:left">Phone</th>'+(ro?'':'<th></th>'),w9rows)+`<div style="font-size:12px;color:#566070">A contractor fills a W-9 in as <b>either himself or his company</b> — whichever it was, that is the name shown first, with the other underneath so you can still find him. Type it in "Name on W-9" if it differs from both. Ticking "On file" here also marks them in the Contractor Directory.${ro?'':' <b>Remove</b> deletes the whole contractor record — use it on duplicates.'}</div>`);
   if(view==='mow') return shell(back+_trkSearchBox('Search a property…')+_trkTable('🌱 Mowing Tracker','#3B6D11','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px;text-align:left">Who is mowing</th><th style="padding:9px;text-align:left">How often</th><th style="padding:9px;text-align:left">Cost/mow</th><th style="padding:9px;text-align:left">Contact #</th><th style="padding:9px;text-align:left">PM</th><th style="padding:9px;text-align:left">Payment</th><th style="padding:9px">On route</th><th style="padding:9px">Removed after</th>',mowrows)+_trkClosedSimple(closed,'mowing history'));
   if(view==='window') return shell(back+winStageBar+winAdd+_trkSearchBox('Search a property…')+_trkTable('🪟 Window Tracker'+(_wf?' — '+_winStageMeta(_wf).label:''),'#185FA5','<th style="padding:9px 10px;text-align:left">Property / what’s being replaced</th><th style="padding:9px">Needed</th><th style="padding:9px">Measure</th><th style="padding:9px">Ordered</th><th style="padding:9px">Arrival</th><th style="padding:9px">Install &amp; confirm</th><th style="padding:9px;text-align:left">Notes &amp; comments</th>',winrows)+`<div style="font-size:12px;color:#566070;margin-top:-8px">This list is the window <b>queue</b> &mdash; only houses somebody has actually asked for windows or glass on. Use <b>Add to the window list</b> above for a one-off job. Each square is one stage: the number is how many houses are waiting on <i>that</i> step, and clicking a square filters the list to it. A house moves on when you tick the box, not when you set the date &mdash; a booked install is still an install to chase. Dates you set here land on that property’s construction calendar automatically, and Slack posts 48 hours before the measure and install dates — in <b>#Window-Tracker</b>, the same channel the scheduled alerts go to. Post there when you have asked for a measure and the request shows up on this list.${winFin.length?` <b>${winFin.length}</b> finished propert${winFin.length===1?'y is':'ies are'} in the completed folder below.`:''}</div>`+winFinished+winClosed);
   // ---------- Utility tracker, one rectangle per property ----------
@@ -21344,6 +21368,30 @@ function _confirmDelete(what, consequence){
   m += '\n\nThis cannot be undone.';
   return confirm(m);
 }
+// Bruce, 25 Sept: "we also need to be able to add a contractor to the contractor
+// directory directly from the contractor directory ... and those would just save as a
+// zero times used." Adding already worked and "times used" already counts real calendar
+// bookings, so a brand new contractor is born at 0 on its own. What was missing was
+// being able to FIND anybody in a directory of 75 - and searching by the business name,
+// which is how half of them are known.
+function _ctFilter(){
+  const box=document.getElementById('ct-search');
+  const t=((box&&box.value)||'').trim().toLowerCase();
+  let shown=0, total=0;
+  document.querySelectorAll('tr[data-ct]').forEach(function(r){
+    total++;
+    const hit = !t || (r.getAttribute('data-ct')||'').toLowerCase().indexOf(t)>=0;
+    r.style.display = hit ? '' : 'none';
+    if(hit) shown++;
+  });
+  const note=document.getElementById('ct-search-note');
+  if(note){
+    note.textContent = !t ? ''
+      : (shown ? (shown+' of '+total+' contractor'+(total===1?'':'s'))
+               : ('Nobody matches \u201C'+((box&&box.value)||'').trim()+'\u201D \u2014 try their business name, or add them above.'));
+    note.style.color = (!t || shown) ? '#566070' : '#8A5A10';
+  }
+}
 function _contractorUses(id){
   return (typeof _calEventsCache!=='undefined'?_calEventsCache:[]).filter(e=>e.contractor_id===id).length;
 }
@@ -21776,7 +21824,10 @@ function renderContractorDirectory(){
   const rows = list.map(c=>{
     const uses=_contractorUses(c.id);
     const last=_contractorLastUsed(c.id);
-    return `<tr style="${c.red_flag?'background:#FDF3F2;':''}">
+    // Bruce, 25 Sept: he goes looking for "A Solis framing" as often as "Antonio".
+    // Searching only the person's name meant half the directory was unfindable.
+    const hay=[c.name,c.business_name,c.trade,c.phone,c.email].filter(Boolean).join(' ');
+    return `<tr data-ct="${_calEsc(hay)}" style="${c.red_flag?'background:#FDF3F2;':''}">
       <td style="padding:9px 12px;border-bottom:0.5px solid #eee;font-weight:600;color:${c.red_flag?'#B42318':'#111'}">${c.red_flag?'🚩 ':''}${inp(c,'name','Person','100%')}</td>
       <td style="padding:9px 12px;border-bottom:0.5px solid #eee">${inp(c,'business_name','Business')}</td>
       <td style="padding:9px 12px;border-bottom:0.5px solid #eee">${inp(c,'phone','Phone')}${c.phone?`<div style="margin-top:2px"><a href="tel:${_calEsc(String(c.phone).replace(/[^0-9+]/g,''))}" style="font-size:11px;color:#185FA5;text-decoration:none">📞 call</a></div>`:''}</td>
@@ -21814,6 +21865,10 @@ function renderContractorDirectory(){
         </div>
         ${_ctImportPanel()}
         ${_ctDupPanel()}
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+          <input id="ct-search" placeholder="Search a person, a business name, a trade or a number\u2026" oninput="_ctFilter()" style="flex:1;max-width:380px;padding:8px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:13.5px;outline:none"/>
+          <span id="ct-search-note" style="font-size:12.5px;color:#566070"></span>
+        </div>
         ${addForm}
         <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:auto">
           <table style="width:100%;border-collapse:collapse;font-size:14px;color:#111">
@@ -25824,4 +25879,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-26c outstanding-means-actionable + wholesale-off-the-takedown-nag -->
+<!-- build: 2026-09-26d contractor-directory-cleanup + w9-name-or-business -->
