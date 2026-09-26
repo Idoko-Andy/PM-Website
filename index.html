@@ -11677,10 +11677,70 @@ function _miBlock(kind, c, roNow){ return _miBlockRows(kind,c,roNow)+_miBlockAdd
 // mentioning them in a run summary nobody reads. The 8am check now writes them here and
 // raises a task for Patience, and the room sees the same list on the takedown tab.
 // Nothing on this list is a property card. It is a list of addresses to look at.
+// ---- one address, however it was typed -----------------------------------------
+// Bruce's rule number one: "wherever you input information on one page, it should auto
+// populate to every page that shows or that should have that information ... that way
+// the guys are not working twice."
+// On 26 Sept the takedown tab was nagging the whole room that "623 E Mulberry St,
+// Lancaster, OH 43130" had no property card. It had one - created two days earlier as
+// "623 East Mulberry St". Nothing in the app knew "E" and "East" were the same street,
+// or that a city, state and zip on the end do not make it a different house. So the
+// room was being asked to create a card that already existed.
+const _ADDR_WORDS = {
+  e:'east', w:'west', n:'north', s:'south',
+  ne:'northeast', nw:'northwest', se:'southeast', sw:'southwest',
+  st:'street', str:'street', rd:'road', ave:'avenue', av:'avenue', dr:'drive',
+  ln:'lane', blvd:'boulevard', ct:'court', pl:'place', cir:'circle',
+  ter:'terrace', trl:'trail', pkwy:'parkway', pky:'parkway', hwy:'highway',
+  sq:'square', loop:'loop', way:'way', apt:'', unit:'', ste:'', '#':''
+};
+function _addrCanon(a){
+  let t=String(a==null?'':a);
+  const comma=t.indexOf(',');            // drop the city / state / zip tail
+  if(comma>0) t=t.slice(0,comma);
+  t=t.toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+  if(!t) return '';
+  return t.split(' ')
+          .map(function(w){ return Object.prototype.hasOwnProperty.call(_ADDR_WORDS,w) ? _ADDR_WORDS[w] : w; })
+          .filter(Boolean)
+          .join(' ');
+}
+function _addrSame(a,b){
+  const x=_addrCanon(a), y=_addrCanon(b);
+  if(!x || !y) return false;
+  if(x===y) return true;
+  // "3612 Grove City Rd" vs "3610-3612 Grove City Rd" and the like: one is the other
+  // plus a bit, and they start with the same house number.
+  const hx=x.split(' ')[0], hy=y.split(' ')[0];
+  if(hx!==hy) return false;
+  return x.indexOf(y)===0 || y.indexOf(x)===0;
+}
+// Is this address already on the board under some other spelling? Returns the card.
+function _unmOnBoard(addr){
+  const cards=(typeof propCards!=='undefined'&&propCards)?propCards:[];
+  return cards.find(function(c){
+    if(!c || c.archived) return false;
+    if(_addrSame(c.addr, addr)) return true;
+    const nk=Array.isArray(c.nicknames)?c.nicknames:[];
+    return nk.some(function(n){ return _addrSame(n, addr); });
+  }) || null;
+}
+// Wholesale and double-close deals belong to the other company inside the business -
+// Bruce, 25 Sept: "wholesale means we're selling, that's a different company within
+// our company ... takedown means us buying it, and also means the project team is
+// responsible for it." They are not missing cards and the room must not be asked to
+// create one. Verified against #company-closings on 26 Sept, where seven of the eight
+// addresses on this list read Wholesale or Double Close in the closing message itself.
+const _UNM_NOT_OURS = /wholesale|double\s*close/i;
+function _unmNotOurs(x){
+  return _UNM_NOT_OURS.test(String((x&&x.deal)||'')) ||
+         _UNM_NOT_OURS.test(String((x&&x.kind)||''));
+}
 function _unmList(){
   const d=(typeof window._unmData!=='undefined'&&window._unmData&&typeof window._unmData==='object')?window._unmData:{};
   return Object.keys(d).map(function(k){ return Object.assign({key:k}, d[k]||{}); })
     .filter(function(x){ return x.addr && !x.done; })
+    .filter(function(x){ return !_unmNotOurs(x); })
     .sort(function(a,b){ return String(b.last_seen||'').localeCompare(String(a.last_seen||'')); });
 }
 async function _unmLoad(){
@@ -11734,21 +11794,28 @@ function _unmPanel(roNow){
   if(!list.length) return '';
   const rows=list.slice(0,25).map(function(x){
     const bits=[x.closing?('closes '+x.closing):'', x.vacancy?('vacant '+x.vacancy):'', x.channel?('#'+x.channel):''].filter(Boolean).join(' \u00b7 ');
+    // If the house IS on the board under another spelling, say so and offer to open it,
+    // instead of asking somebody to make a second card for the same house.
+    const dup=(typeof _unmOnBoard==='function')?_unmOnBoard(x.addr):null;
     return `<div style="padding:8px 0;border-top:0.5px solid #EAD9A8">
       <div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap">
         <span style="font-size:13.5px;font-weight:700;color:#633806">${_calEsc(x.addr)}</span>
-        ${roNow?'':`<span style="display:flex;gap:6px">
+        ${roNow?'':(dup?`<span style="display:flex;gap:6px">
+          <button onclick="openPropDetail('${_argEsc(dup.id)}')" style="padding:4px 11px;background:#122A4A;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600">Open the card</button>
+          <button onclick="_unmDismiss('${_argEsc(x.key)}')" title="Same house, different spelling \u2014 take it off this list" style="padding:4px 10px;background:#fff;color:#8A5A10;border:0.5px solid #EAD9A8;border-radius:6px;font-size:12px;cursor:pointer">Same house</button>
+        </span>`:`<span style="display:flex;gap:6px">
           <button onclick="_unmMakeCard('${_argEsc(x.key)}')" style="padding:4px 11px;background:#122A4A;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600">Create the card</button>
           <button onclick="_unmDismiss('${_argEsc(x.key)}')" title="Not one of ours, or already on the board under another spelling" style="padding:4px 10px;background:#fff;color:#8A5A10;border:0.5px solid #EAD9A8;border-radius:6px;font-size:12px;cursor:pointer">Not ours</button>
-        </span>`}
+        </span>`)}
       </div>
+      ${dup?`<div style="font-size:11.5px;color:#0F7B54;margin-top:2px">Already on the board as <b>${_calEsc(dup.addr||'')}</b>${dup.phase?(' \u2014 '+_calEsc(_phLabel(dup.phase))):''}. Same house, typed differently.</div>`:''}
       ${bits?`<div style="font-size:11.5px;color:#8A5A10;margin-top:2px">${_calEsc(bits)}</div>`:''}
       ${x.permalink?`<div style="margin-top:2px"><a href="${_calEsc(x.permalink)}" target="_blank" rel="noopener" style="font-size:11px;color:#185FA5">the Slack message &rsaquo;</a></div>`:''}
     </div>`;
   }).join('');
   return `<div style="background:#FFFCF4;border:0.5px solid #EAD9A8;border-radius:11px;padding:11px 14px;margin-bottom:12px">
     <div style="font-size:13.5px;font-weight:700;color:#8A5A10">\u26A0 ${list.length} address${list.length===1?'':'es'} Slack knows about that the board does not</div>
-    <div style="font-size:12px;color:#8A5A10;margin:3px 0 2px;line-height:1.5">These came up in #vacancy-updates or #company-closings as vacant, closed or sold, and there is no property card for them. Nothing has been created &mdash; somebody has to look first.</div>
+    <div style="font-size:12px;color:#8A5A10;margin:3px 0 2px;line-height:1.5">These came up in #vacancy-updates or #company-closings as vacant, closed or sold, and there is no property card for them. Nothing has been created &mdash; somebody has to look first. <b>Wholesale and double-close deals are left off this list on purpose</b> &mdash; they belong to the other side of the business, not the project team.</div>
     ${rows}${list.length>25?`<div style="font-size:11.5px;color:#8A5A10;padding-top:6px">+ ${list.length-25} more</div>`:''}</div>`;
 }
 // Bruce, 22 Sept: "on the upcoming takedown tab, where the construction tab has
@@ -18396,6 +18463,41 @@ function _winNextAction(c){
   if(!on('installed')) return 'install booked '+dt('install_date')+' — confirm it happened';
   return null;
 }
+// ---- what can actually be DONE about the windows today? ------------------------
+// Bruce, 25 Sept: "the window tracker should only show outstanding when the windows
+// have arrived and they're not installed yet, or the windows have been measured and
+// they're not ordered yet ... I don't want it to populate as something needs done
+// until something actually can be taken action on."
+// So a job waiting on somebody else - a measure booked for next Tuesday, a delivery
+// due Friday - is NOT outstanding. It turns into outstanding the day it can be acted
+// on, and not before.
+// Found while building this, 26 Sept: _winNextAction asked for an arrival date BEFORE
+// it asked whether the job was finished, so THIRTEEN houses that had been measured,
+// ordered, delivered and installed were sitting on the outstanding list for ever
+// saying "measured - needs an arrival date". Finished is checked first now.
+function _winActionable(c){
+  if(!c) return null;
+  const on=(k)=>_trkOn('win',c.id,k), dt=(k)=>_trkVal('win',c.id,k);
+  if(on('installed')) return null;   // done. The only open question left is "did they
+                                     // really go in", and _winInstallDue asks that.
+  const today=_ymd(new Date());
+  const passed=(k)=>{ const v=dt(k); return !!v && v<=today; };
+  // arrived, not installed - Bruce's second case
+  if(on('arrived')){
+    if(!dt('install_date')) return 'windows are here \u2014 book the install';
+    return passed('install_date') ? ('install was '+dt('install_date')+' \u2014 tick it off if they went in') : null;
+  }
+  // ordered - waiting on the truck is not work
+  if(on('ordered')){
+    if(!dt('arrival_date')) return 'ordered \u2014 chase Steve for a delivery date';
+    return passed('arrival_date') ? ('delivery was due '+dt('arrival_date')+' \u2014 confirm it landed') : null;
+  }
+  // measured, not ordered - Bruce's first case
+  if(on('measured')) return 'measured \u2014 put the order in';
+  // a measure booked for a day still to come is not work either
+  if(dt('measure_date')) return passed('measure_date') ? ('measure was '+dt('measure_date')+' \u2014 tick it off if it happened') : null;
+  return 'needs a measure booked with Steve';
+}
 // Utilities belong to the VA admin. Marlo only sees the list when a utility task is
 // genuinely hers; otherwise she gets a pointer to the tracker she can still open.
 function _utilTasksForViewer(){
@@ -19583,6 +19685,32 @@ function _mowers(){
            .sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
 }
 function _mowerById(id){ return (typeof _contractorsCache!=='undefined'?_contractorsCache:[]).find(c=>c.id===id)||null; }
+// ---- whose grass is it? --------------------------------------------------------
+// Bruce, 25 Sept: "on the mowing tracker, why does it say there is eight outstanding?
+// I don't want it to show eight outstanding until the property has closed and it's
+// vacant ... I don't want it to populate as something needs done until something
+// actually can be taken action on."
+// Checked on the live board the day he said it: of those eight, FIVE were Upcoming
+// Takedowns - houses we had not bought yet, so nobody could put them on a mowing
+// route even if they wanted to. A house somebody still lives in is not ours to mow
+// either. It becomes ours the day we close on it AND it is empty.
+// The tracker table still lists every property, so Marlo can set a mower up early if
+// she likes - these two just stop being counted as work that is not done.
+const MOW_NOT_OURS_YET  = ['Upcoming Takedowns'];
+const MOW_SOMEONE_LIVES_THERE = ['Occupied / Closed'];
+function _mowNeedsRoute(c){
+  if(!c) return false;
+  if(MOW_NOT_OURS_YET.indexOf(c.phase)>=0) return false;
+  if(MOW_SOMEONE_LIVES_THERE.indexOf(c.phase)>=0) return false;
+  return true;
+}
+// Why a property is sitting out, in words, for the row that explains itself.
+function _mowWhyNotOnRoute(c){
+  if(!c) return '';
+  if(MOW_NOT_OURS_YET.indexOf(c.phase)>=0) return 'not ours yet \u2014 we have not closed on it';
+  if(MOW_SOMEONE_LIVES_THERE.indexOf(c.phase)>=0) return 'somebody still lives here \u2014 they mow it';
+  return '';
+}
 // The phone is derived from the directory. Rows saved before this change kept a
 // typed number, so fall back to that rather than blanking somebody's contact.
 function _mowPhone(pid){
@@ -19738,16 +19866,18 @@ function _vaTrackers(){
     const m=_mowerById(_trkVal('mowinfo',c.id,'who'));
     return `<input value="${_calEsc(ph)}" placeholder="${m?'Add their number':'Pick a mower first'}" onchange="_mowPhoneSet('${c.id}',this.value)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:118px"/>${m?`<div style="font-size:10px;color:#636b7a;margin-top:2px">from the directory</div>`:''}`;
   };
-  const mowRow=(c)=>`<tr data-trk="${nm(c)}" style="border-top:0.5px solid #eef0f6">
-    <td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${nm(c)}</span><div style="font-size:11px;color:#566070">${_calEsc(_phLabel(c.phase))}</div></td>
+  // A row for a house that is not ours to mow yet says so in its own words, so nobody
+  // has to wonder why it is on the sheet but not in the outstanding count.
+  const mowRow=(c)=>{ const why=_mowWhyNotOnRoute(c); return `<tr data-trk="${nm(c)}" style="border-top:0.5px solid #eef0f6${why?';background:#FBFBFC':''}">
+    <td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${nm(c)}</span><div style="font-size:11px;color:#566070">${_calEsc(_phLabel(c.phase))}</div>${why?`<div style="font-size:10.5px;color:#8a6d1a;margin-top:2px">${why}</div>`:''}</td>
     <td style="padding:7px">${mowWhoSel(c)}</td>
     <td style="padding:7px">${usel('mowinfo',c.id,'freq',MOW_FREQ,112)}</td>
     <td style="padding:7px">${txt('mowinfo',c.id,'cost','$ per mow',70)}</td>
     <td style="padding:7px">${mowPhoneCell(c)}</td>
     <td style="padding:7px;font-size:12.5px;color:#555">${_calEsc(c.pm||'—')}</td>
     <td style="padding:7px">${usel('mowinfo',c.id,'pay',MOW_PAY,118)}</td>
-    <td style="text-align:center;padding:7px">${chk('mow',c.id,(d.mow||{})[c.id])}</td>
-    <td style="text-align:center;padding:7px">${fchk('mowinfo',c.id,'removed')}</td></tr>`;
+    <td style="text-align:center;padding:7px">${chk('mow',c.id,(d.mow||{})[c.id])}${why?'<div style="font-size:10px;color:#636b7a;margin-top:2px">not counted yet</div>':''}</td>
+    <td style="text-align:center;padding:7px">${fchk('mowinfo',c.id,'removed')}</td></tr>`; };
   // A property that just closed is no longer ours — Marlo has to text the mower to take it
   // off the route. It stays flagged here until she ticks "removed after".
   const offRoute=closed.filter(c=>!_trkOn('mowinfo',c.id,'removed'));
@@ -19858,8 +19988,8 @@ function _vaTrackers(){
   // ---------- Outstanding counts ----------
   const winDone=(c)=>_trkOn('win',c.id,'measured')&&_trkOn('win',c.id,'ordered')&&_trkOn('win',c.id,'arrived')&&_trkOn('win',c.id,'installed');
   const w9out=cons.filter(c=>!(d.w9||{})[c.id]).length;
-  const mowout=active.filter(c=>!(d.mow||{})[c.id]).length + closed.filter(c=>!_trkOn('mowinfo',c.id,'removed')).length;
-  const winout=active.filter(c=>_winInQueue(c) && _winNextAction(c)).length;
+  const mowout=active.filter(c=>_mowNeedsRoute(c) && !(d.mow||{})[c.id]).length + closed.filter(c=>!_trkOn('mowinfo',c.id,'removed')).length;
+  const winout=_winAwaitingConfirm().length + active.filter(c=>_winInQueue(c) && _winActionable(c)).length;
   // Only a vacant, ready house can have first-time access done. Counting every
   // active property made this disagree with the "First Time Access open" tile.
   const clout=active.filter(c=>c.phase==="Vacant / On Standby").filter(c=>{const subs=c.subPhases||[];const f=subs.find(s=>s.name==="First Time Access Checklist");return !(f&&f.completed);}).length;
@@ -20046,12 +20176,12 @@ function _vaTrackers(){
   const sum=(title,color,items)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 14px"><div style="font-size:13.5px;font-weight:700;color:${color};margin-bottom:4px">${title}</div>${items.length?items.slice(0,6).map(li).join('')+(items.length>6?`<div style="font-size:11.5px;color:#566070;padding-top:4px">+ ${items.length-6} more — click the tile</div>`:''):'<div style="font-size:12px;color:#16794C;padding:4px 0">All caught up ✅</div>'}</div>`;
   const w9i=cons.filter(c=>!(d.w9||{})[c.id]).map(c=>_calEsc(c.name||''));
   const mi=closed.filter(c=>!_trkOn('mowinfo',c.id,'removed')).map(c=>'<b style="color:#8a6d1a">REMOVE from the route:</b> '+nm(c))
-    .concat(active.filter(c=>!(d.mow||{})[c.id]).map(c=>'<b style="color:#3B6D11">ADD to the route:</b> '+nm(c)));
+    .concat(active.filter(c=>_mowNeedsRoute(c) && !(d.mow||{})[c.id]).map(c=>'<b style="color:#3B6D11">ADD to the route:</b> '+nm(c)));
   // Unconfirmed installs come FIRST and in red - 48 hours past the date with nobody
   // saying whether the windows actually went in is the thing worth chasing, not a
   // booking that is still in the future.
   const wUnconf=_winAwaitingConfirm().map(x=>'<b style="color:#B42318">'+nm(x.c)+'</b> — install was '+_calEsc(x.due.date)+', '+x.due.days+' day'+(x.due.days===1?'':'s')+' ago, nobody has confirmed the windows went in'+(x.due.pm?(' — ask '+_calEsc(String(x.due.pm).split(' ')[0])):''));
-  const wi=wUnconf.concat(active.filter(_winInQueue).map(c=>{const a=_winNextAction(c); return a?(nm(c)+' — '+a):null;}).filter(Boolean));
+  const wi=wUnconf.concat(active.filter(_winInQueue).map(c=>{const a=_winActionable(c); return a?(nm(c)+' — '+a):null;}).filter(Boolean));
   const ci=active.filter(c=>c.phase==="Vacant / On Standby").filter(c=>{const subs=c.subPhases||[];const f=subs.find(s=>s.name==="First Time Access Checklist");return !(f&&f.completed);}).map(c=>nm(c)+' — First Time Access still to fill in')
     .concat(active.filter(c=>{const subs=c.subPhases||[];const po=subs.find(x=>/punch/i.test(x.name||'')); return !!(po && !po.completed && (po.start||po.due));}).map(c=>nm(c)+' — Punch Out scheduled, still to fill in'));
   return shell(`<div style="font-size:12.5px;color:#566070;margin:-6px 0 10px">What's outstanding right now — click a tile to open the full tracker.</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">${sum('🧾 W-9s needed','#7A3FA8',w9i)}${sum('🪟 Windows','#185FA5',wi)}${sum('🌱 Mowing','#3B6D11',mi)}${sum('✅ Checklists','#0B7285',ci)}${_utilSummaryCard(sum,utilOutList,nm)}${sum('📄 Permits — paperwork for the warehouse','#B03A8B',_permitWarehouseDue().map(r=>_calEsc(r.addr||'')+' — approved, print it and take it over'))}${sum('🎨 Design forms — needing completed','#8a6d1a',_dpTrackerItems())}</div>
@@ -25694,4 +25824,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-26b window-install-answerable-from-either-side -->
+<!-- build: 2026-09-26c outstanding-means-actionable + wholesale-off-the-takedown-nag -->
