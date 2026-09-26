@@ -1024,6 +1024,9 @@ async function _initInner() {
       // "Select from saved contractors" showed an empty list to anybody who had not
       // been to that screen first. 120 rows: load it with everything else.
       loadContractorsFromSupabase(),
+      // What is owed, per property. Read at sign-in so the Accounts Payable tab on a
+      // property card can say what is outstanding without waiting for a round trip.
+      (typeof loadPayables==='function'?loadPayables():Promise.resolve()),
       _tkDoneLoad(),
       _nfLoad()
     ]);
@@ -5559,10 +5562,208 @@ before completion. Final payment follows cleanup, punch-list correction and our 
 // _pdTab function, and every card click after that died with "_pdTab is not a function"
 // - silently, because an onclick that throws just does nothing. Card helpers do not go
 // in the _pd namespace.
+// ===================== ACCOUNTS PAYABLE =====================
+// Bruce, 26 Sept: "there's going to be a thing on the field app where you can add in a
+// quote or agreed price from a contractor ... or Patience will input the prices from the
+// scope of work that we built ... or if we send somebody a form to fill out their prices
+// then it sends back a link ... it'll auto populate into the accounts payable per
+// property for that project."
+// Checked the data before building: pm_sow_line_items has 3,015 rows and exactly ONE
+// carries a contractor, and only 3 of 22 scopes of work match a property card by
+// address. So the scope of work cannot yet say who is owed what - it prices work, it
+// does not name who is doing it. This is the record of what is OWED, and it carries the
+// contractor with every figure. A scope of work, the field app and a price form can all
+// feed it; the money lives here.
+const AP_STATES = [
+  { k:'agreed',   label:'Agreed',   sub:'a price is agreed, no invoice yet', col:'#185FA5', bg:'#EAF2FB' },
+  { k:'invoiced', label:'Invoiced', sub:'they have billed us',               col:'#8A5A10', bg:'#FBF3E2' },
+  { k:'approved', label:'Approved', sub:'cleared to pay',                    col:'#7A3FA8', bg:'#F3E8FB' },
+  { k:'paid',     label:'Paid',     sub:'money has gone out',                col:'#0F7B54', bg:'#E6F4ED' },
+  { k:'void',     label:'Void',     sub:'cancelled, kept for the record',    col:'#8A94A6', bg:'#F1F2F6' }
+];
+function _apState(k){ return AP_STATES.find(function(x){ return x.k===String(k||'agreed'); }) || AP_STATES[0]; }
+let _apCache = [];
+async function loadPayables(){
+  const { data, error } = await supabase.from('pm_payables')
+    .select('id,property_id,contractor_id,contractor_name,label,category,agreed_amount,invoiced_amount,paid_amount,status,due_date,invoice_ref,source,sow_line_id,notes,created_at,created_by,updated_at,updated_by')
+    .order('created_at',{ascending:true});
+  _apCache = error ? [] : (data||[]);
+  return !error;
+}
+function _apFor(pid){ return (_apCache||[]).filter(function(r){ return r.property_id===pid; }); }
+// What is still owed on this house: anything not paid and not voided.
+function _apOpen(pid){ return _apFor(pid).filter(function(r){ return r.status!=='paid' && r.status!=='void'; }); }
+function _apOpenCount(pid){ return _apOpen(pid).length; }
+function _apNum(v){ const n=parseFloat(String(v==null?'':v).replace(/[^0-9.\-]/g,'')); return isNaN(n)?null:n; }
+function _apMoney(v){ const n=_apNum(v); return n==null?'\u2014':('$'+n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})); }
+// The figure that counts right now: what they have been paid, else billed, else agreed.
+function _apLive(r){
+  const p=_apNum(r&&r.paid_amount), i=_apNum(r&&r.invoiced_amount), a=_apNum(r&&r.agreed_amount);
+  return (p!=null)?p:((i!=null)?i:a);
+}
+function _apTotals(pid){
+  const rows=_apFor(pid).filter(function(r){ return r.status!=='void'; });
+  const sum=(f)=>rows.reduce(function(n,r){ const v=_apNum(r[f]); return n+(v||0); },0);
+  const agreed=sum('agreed_amount'), invoiced=sum('invoiced_amount'), paid=sum('paid_amount');
+  return { rows:rows.length, agreed:agreed, invoiced:invoiced, paid:paid,
+           outstanding:(invoiced||0)-(paid||0),
+           leftToBill:(agreed||0)-(invoiced||0) };
+}
+function _apWho(r){
+  if(r && r.contractor_id){
+    const c=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).find(function(x){ return x.id===r.contractor_id; });
+    if(c) return c.business_name||c.name||'';
+  }
+  return String((r&&r.contractor_name)||'');
+}
+function _apMe(){ return (typeof _miWho==='function')?_miWho():''; }
+async function _apAdd(pid){
+  if(_blockIfReadOnly()) return;
+  const g=(id)=>{ const e=document.getElementById(id); return e?String(e.value||'').trim():''; };
+  const label=g('ap-label-'+pid);
+  if(!label){ alert("Say what the money is for \u2014 \u201cframing labour\u201d, \u201croof, materials and labour\u201d\u2026"); return; }
+  const cid=g('ap-who-'+pid);
+  const con=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).find(function(x){ return x.id===cid; });
+  const row={ property_id:pid, label:label, category:g('ap-cat-'+pid)||null,
+              contractor_id:cid||null, contractor_name:con?(con.name||con.business_name||''):null,
+              agreed_amount:_apNum(g('ap-amt-'+pid)), status:'agreed', source:'manual',
+              due_date:g('ap-due-'+pid)||null, created_by:_apMe(), updated_by:_apMe() };
+  const { error } = await supabase.from('pm_payables').insert(row);
+  if(error){ alert("That was NOT saved: "+(error.message||'')); return; }
+  if(typeof _logAudit==='function'){
+    const c=(typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===pid; });
+    _logAudit('created','property',(c&&c.addr)||'','Accounts payable: '+label+(row.agreed_amount!=null?(' \u2014 '+_apMoney(row.agreed_amount)):'')+(con?(' \u2014 '+(con.name||'')):''));
+  }
+  ['ap-label-','ap-amt-','ap-due-','ap-cat-'].forEach(function(k){ const e=document.getElementById(k+pid); if(e) e.value=''; });
+  await loadPayables(); openPropDetail(pid);
+}
+async function _apSet(id, patch, pid){
+  if(_blockIfReadOnly()) return;
+  patch=Object.assign({}, patch, { updated_by:_apMe(), updated_at:new Date().toISOString() });
+  const { error } = await supabase.from('pm_payables').update(patch).eq('id', id);
+  if(error){ alert("That was NOT saved: "+(error.message||'')); return; }
+  await loadPayables();
+  if(pid) openPropDetail(pid);
+}
+async function _apField(id, field, value, pid){
+  const money=['agreed_amount','invoiced_amount','paid_amount'].indexOf(field)>=0;
+  const p={}; p[field]= money ? _apNum(value) : (String(value||'').trim()||null);
+  await _apSet(id, p, pid);
+}
+async function _apStatus(id, k, pid){
+  const row=(_apCache||[]).find(function(r){ return r.id===id; });
+  const patch={ status:k };
+  // Marking it paid with nothing in the paid box is the commonest way a figure goes
+  // missing, so carry the invoiced or agreed figure across rather than leaving a blank.
+  if(k==='paid' && row && _apNum(row.paid_amount)==null){
+    const v=_apNum(row.invoiced_amount); const a=_apNum(row.agreed_amount);
+    patch.paid_amount = (v!=null)?v:a;
+  }
+  if(k==='invoiced' && row && _apNum(row.invoiced_amount)==null){
+    patch.invoiced_amount = _apNum(row.agreed_amount);
+  }
+  await _apSet(id, patch, pid);
+}
+async function _apDel(id, pid){
+  if(_blockIfReadOnly()) return;
+  const row=(_apCache||[]).find(function(r){ return r.id===id; });
+  if(!confirm('Delete "'+((row&&row.label)||'this line')+'" from accounts payable?\n\nIf it was cancelled rather than a mistake, mark it Void instead \u2014 that keeps the record.')) return;
+  const { error } = await supabase.from('pm_payables').delete().eq('id', id);
+  if(error){ alert("It was NOT deleted: "+(error.message||'')); return; }
+  await loadPayables(); openPropDetail(pid);
+}
+// What the tab actually shows.
+function _apBody(c){
+  const pid=c.id;
+  const ro=(typeof isReadOnly==='function') && isReadOnly();
+  const rows=_apFor(pid);
+  const T=_apTotals(pid);
+  const esc=_calEsc;
+  const cons=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).slice()
+    .sort(function(a,b){ return String(a.name||'').localeCompare(String(b.name||'')); });
+  const conOpts=(cur)=>['<option value="">\u2014 who gets paid \u2014</option>']
+    .concat(cons.map(function(x){
+      const nm=x.business_name?((x.name||'')+' \u00b7 '+x.business_name):(x.name||'');
+      return '<option value="'+esc(x.id)+'"'+(cur===x.id?' selected':'')+'>'+esc(nm)+'</option>';
+    })).join('');
+
+  const tile=(label,val,col,sub)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${col};border-radius:10px;padding:11px 14px;min-width:150px;flex:1">
+      <div style="font-size:11.5px;color:#566070">${label}</div>
+      <div style="font-size:21px;font-weight:700;color:${col};margin-top:3px">${val}</div>
+      ${sub?`<div style="font-size:10.5px;color:#8A94A6;margin-top:2px">${sub}</div>`:''}
+    </div>`;
+
+  const head=`<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+      ${tile('Agreed', _apMoney(T.agreed), '#185FA5', T.rows+' line'+(T.rows===1?'':'s'))}
+      ${tile('Invoiced', _apMoney(T.invoiced), '#8A5A10', T.leftToBill>0?(_apMoney(T.leftToBill)+' still to bill'):'')}
+      ${tile('Paid', _apMoney(T.paid), '#0F7B54', '')}
+      ${tile('Outstanding', _apMoney(T.outstanding), T.outstanding>0?'#B42318':'#0F7B54', 'billed and not yet paid')}
+    </div>`;
+
+  const money=(r,f,ph)=>ro
+    ? `<span style="font-size:13px">${_apMoney(r[f])}</span>`
+    : `<input value="${r[f]==null?'':esc(String(r[f]))}" placeholder="${ph}" onchange="_apField('${r.id}','${f}',this.value,'${pid}')" style="width:96px;padding:5px 7px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px;text-align:right"/>`;
+
+  const stateChips=(r)=>ro
+    ? `<span style="font-size:11px;font-weight:700;color:${_apState(r.status).col};background:${_apState(r.status).bg};padding:2px 9px;border-radius:99px">${_apState(r.status).label}</span>`
+    : AP_STATES.map(function(x){
+        const on=(String(r.status||'agreed')===x.k);
+        return `<span onclick="_apStatus('${r.id}','${x.k}','${pid}')" title="${esc(x.sub)}" style="cursor:pointer;font-size:10.5px;font-weight:${on?'700':'500'};color:${on?'#fff':x.col};background:${on?x.col:'#fff'};border:0.5px solid ${on?x.col:'#dfe4ec'};padding:2px 8px;border-radius:99px;white-space:nowrap">${x.label}</span>`;
+      }).join('');
+
+  const row=(r)=>{
+    const st=_apState(r.status);
+    return `<tr style="border-top:0.5px solid #eef0f6;${r.status==='void'?'opacity:.55;':''}">
+      <td style="padding:8px 10px;min-width:180px">
+        ${ro?`<span style="font-size:13.5px;font-weight:600">${esc(r.label||'')}</span>`
+            :`<input value="${esc(r.label||'')}" onchange="_apField('${r.id}','label',this.value,'${pid}')" style="width:100%;min-width:160px;padding:5px 7px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13.5px;font-weight:600"/>`}
+        ${r.category?`<div style="font-size:10.5px;color:#636b7a;margin-top:2px">${esc(r.category)}</div>`:''}
+        <div style="font-size:10px;color:#9AA3B2;margin-top:2px">${esc(r.source==='sow'?'from the scope of work':(r.source==='field'?'from the field app':(r.source==='form'?'from a price form':'typed in here')))}</div>
+      </td>
+      <td style="padding:8px">
+        ${ro?`<span style="font-size:13px">${esc(_apWho(r))||'\u2014'}</span>`
+            :`<select onchange="_apField('${r.id}','contractor_id',this.value,'${pid}')" style="padding:5px 7px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px;max-width:210px">${conOpts(r.contractor_id)}</select>
+              ${(!r.contractor_id && r.contractor_name)?`<div style="font-size:10.5px;color:#8A5A10;margin-top:2px">was &ldquo;${esc(r.contractor_name)}&rdquo;</div>`:''}`}
+      </td>
+      <td style="padding:8px;text-align:right">${money(r,'agreed_amount','agreed')}</td>
+      <td style="padding:8px;text-align:right">${money(r,'invoiced_amount','invoiced')}</td>
+      <td style="padding:8px;text-align:right">${money(r,'paid_amount','paid')}</td>
+      <td style="padding:8px"><div style="display:flex;gap:4px;flex-wrap:wrap;max-width:230px">${stateChips(r)}</div></td>
+      <td style="padding:8px;text-align:right;white-space:nowrap">
+        ${ro?'':`<span onclick="_apDel('${r.id}','${pid}')" title="Delete this line" style="cursor:pointer;color:#c0392b;font-size:12.5px">Remove</span>`}
+      </td></tr>`;
+  };
+
+  const body=rows.length?rows.map(row).join('')
+    :`<tr><td colspan="7" style="padding:22px;text-align:center;color:#636b7a;font-size:13.5px">Nothing owed on this property yet.${ro?'':' Add the first agreed price below.'}</td></tr>`;
+
+  const adder=ro?'':`<tr style="background:#F7F8FB;border-top:0.5px solid #e0e4ec">
+      <td style="padding:8px 10px"><input id="ap-label-${pid}" placeholder="What the money is for" style="width:100%;min-width:160px;padding:6px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px"/>
+        <input id="ap-cat-${pid}" placeholder="Trade / category (optional)" style="width:100%;margin-top:4px;padding:5px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12px"/></td>
+      <td style="padding:8px"><select id="ap-who-${pid}" style="padding:6px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px;max-width:210px">${conOpts('')}</select></td>
+      <td style="padding:8px;text-align:right"><input id="ap-amt-${pid}" placeholder="$0.00" style="width:96px;padding:6px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px;text-align:right"/></td>
+      <td style="padding:8px;text-align:right" colspan="2"><input type="date" id="ap-due-${pid}" title="Due date (optional)" style="padding:6px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px"/></td>
+      <td colspan="2" style="padding:8px;text-align:right"><button onclick="_apAdd('${pid}')" style="padding:7px 15px;background:#111;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer">+ Add</button></td>
+    </tr>`;
+
+  const th=(t,a)=>`<th style="text-align:${a||'left'};padding:9px 10px;font-size:11.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap">${t}</th>`;
+
+  return head
+    + `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:13px;color:#111">
+          <thead><tr style="background:#fafbfc">
+            ${th('What for')}${th('Who gets paid')}${th('Agreed','right')}${th('Invoiced','right')}${th('Paid','right')}${th('Where it stands')}${th('')}
+          </tr></thead><tbody>${body}${adder}</tbody></table></div>`
+    + `<div style="font-size:12px;color:#566070;margin-top:9px">Every figure here names the contractor it belongs to, so it feeds the W-9 tracker and the contractor directory rather than sitting on its own. <b>Void</b> keeps a cancelled line on the record; <b>Remove</b> deletes it for good.</div>`;
+}
 function _pcTabs(c){
   const t=[{key:'info', label:'\u{1F4CB} Project Info'},
            {key:'work', label:'\u{1F528} Sub Phases / Tasks'}];
   if(typeof _isPermittedCard==='function' && _isPermittedCard(c)) t.push({key:'permits', label:'\u{1F4C4} Permits'});
+  // Bruce, 26 Sept: "I know for a fact there will be an accounts payable tab under each
+  // property card." The count on the tab is what is still owed on this house.
+  const owed=(typeof _apOpenCount==='function')?_apOpenCount(c.id):0;
+  t.push({key:'ap', label:'\u{1F4B0} Accounts Payable'+(owed?(' \u00b7 '+owed):'')});
   t.push({key:'history', label:'\u{1F553} History'});
   return t;
 }
@@ -6189,6 +6390,7 @@ function _pdLinked(c, which){
           <div>${_sqBody(c)}${_pdLinked(c,'work')}${quickAddForms}</div>
         </div>
         ${_pcTabs(c).some(function(t){return t.key==='permits';}) ? `<div style="display:${_pcTab(c)==='permits'?'block':'none'}">${_pdLinked(c,'permits')}${_pdPermitNudge(c)}</div>` : ''}
+        <div style="display:${_pcTab(c)==='ap'?'block':'none'};max-width:1000px">${_pcTab(c)==='ap'?_apBody(c):''}</div>
         <div style="display:${_pcTab(c)==='history'?'block':'none'};max-width:900px">${_pcTab(c)==='history'?_pdHistory(c):''}</div>
         <div style="display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-top:12px">
           ${c.driveUrl ? `<a href="${c.driveUrl}" target="_blank" style="display:flex;align-items:center;gap:5px;padding:7px 14px;font-size:13px;border-radius:6px;cursor:pointer;background:#fff;color:#185FA5;border:0.5px solid #cdd7e6;text-decoration:none">📁 Open Folder ↗</a>` : ''}
@@ -26138,4 +26340,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-26f pdfs-one-week + meeting-task-lands-in-the-week + jen-permit-section -->
+<!-- build: 2026-09-26g accounts-payable-per-property -->
