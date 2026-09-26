@@ -8375,13 +8375,37 @@ function _budMoney(v){
 // It is shown ABOVE the box rather than typed into it. Writing into somebody's textarea
 // while they may be mid-sentence in it is how you lose what they were typing, and a
 // sentence that appears by itself in a box reads as though a person wrote it.
+// Bruce, 26 Sept: "if they're marked completed in the project team meeting or marked
+// completed in the window tracker, it updates both as soon as one of them is marked."
+// There is one answer to "did the windows go in", kept in one place
+// (_trkData.win[pid].install_confirmed) and written by one function
+// (_winConfirmInstall). The meeting and the tracker are two windows onto that same
+// answer, not two copies of it - so there is nothing to keep in step.
 function _wmAutoWins(c, wk){
+  return `<div id="wmwin-${c.id}">${_wmAutoWinsInner(c, wk)}</div>`;
+}
+function _wmAutoWinsInner(c, wk){
+  const ro=(typeof isReadOnly==='function')&&isReadOnly();
+  // Still waiting on an answer: ask it here, in the meeting, where the room is.
+  let due=null;
+  try{ due=(typeof _winInstallDue==='function')?_winInstallDue(c):null; }catch(e){}
+  if(due){
+    return `<div style="background:#FCEBEB;border:0.5px solid #F0C6C1;border-radius:8px;padding:8px 11px;margin-bottom:6px">
+      <div style="font-size:12.5px;font-weight:700;color:#B42318;line-height:1.4">\u{1F6A9} Windows: did they go in?</div>
+      <div style="font-size:11.5px;color:#8a4038;line-height:1.4">Install was ${_calEsc(due.date)}, ${due.days} day${due.days===1?'':'s'} ago${due.pm?(' \u00b7 '+_calEsc(String(due.pm).split(' ')[0])+' should know'):''}. Nobody has confirmed it.</div>
+      ${ro?'':`<div style="display:flex;gap:6px;margin-top:5px">
+        <span onclick="_winConfirmInstall('${c.id}',true)" style="cursor:pointer;font-size:12px;font-weight:700;color:#fff;background:#0F7B54;border-radius:6px;padding:3px 12px">Yes, they went in</span>
+        <span onclick="_winConfirmInstall('${c.id}',false)" style="cursor:pointer;font-size:12px;color:#8a4038;border:1px solid #E5B4AE;border-radius:6px;padding:3px 10px">Not yet</span>
+      </div>`}
+      <div style="font-size:10.5px;color:#a2635c;margin-top:3px">Answering here ticks it on the window tracker too.</div>
+    </div>`;
+  }
   const bits=[];
   try{ const w=(typeof _winWinLine==='function')?_winWinLine(c, wk):''; if(w) bits.push({icon:'\u{1FA9F}', t:w}); }catch(e){}
   if(!bits.length) return '';
   return `<div style="background:#EAF5EF;border:0.5px solid #BEDFCD;border-radius:8px;padding:7px 11px;margin-bottom:6px">
     ${bits.map(function(b){ return `<div style="font-size:12.5px;color:#14563D;line-height:1.45">${b.icon} ${_calEsc(b.t)}</div>`; }).join('')}
-    <div style="font-size:10.5px;color:#4b7d66;margin-top:2px">Filled in from the window tracker \u2014 no need to type it again.</div>
+    <div style="font-size:10.5px;color:#4b7d66;margin-top:2px">Ticked on the window tracker \u2014 no need to type it again.${ro?'':` <span onclick="_winConfirmInstall('${c.id}',false)" style="cursor:pointer;text-decoration:underline">undo</span>`}</div>
   </div>`;
 }
 function _wmBudNote(c){
@@ -18286,7 +18310,28 @@ async function _winConfirmInstall(pid, yes){
   }
   if(typeof _logAudit==='function') _logAudit('updated','property',(c&&c.addr)||'',
     yes ? 'Window install CONFIRMED on site' : 'Window install confirmation withdrawn');
+  // Redraw where the person actually is. In a meeting, swap just this property's block -
+  // a full re-render would wipe whatever somebody is halfway through typing in a notes
+  // box, which is the whole reason the meeting refreshes in place everywhere else.
+  const inMeeting=(typeof _wmDocOpen==='function') && _wmDocOpen();
+  if(inMeeting){
+    const host=document.getElementById('wmwin-'+pid);
+    if(host && typeof _wmAutoWinsInner==='function'){
+      const wk=(typeof _wmWeekKeyFor==='function')?_wmWeekKeyFor('team'):null;
+      host.innerHTML=_wmAutoWinsInner(c||{id:pid}, wk);
+    }
+    _winBell();
+    return;
+  }
+  _winBell();
   (window._trkRerender||function(){ openVAAdminDashboard('trackers'); })();
+}
+// The red flag in the bell has to clear the moment it is answered, from either side.
+function _winBell(){
+  try{
+    if(typeof _nfBadge==='function') _nfBadge();
+    if(typeof _nfRender==='function') _nfRender();
+  }catch(e){}
 }
 // The one line telling Marlo what this property is waiting on, with its date if it
 // has one.
@@ -25649,4 +25694,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-26a final-budget-lock, window-install-confirm-48h, auto-wins -->
+<!-- build: 2026-09-26b window-install-answerable-from-either-side -->
