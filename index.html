@@ -4604,9 +4604,71 @@ async function _sqAdd(pid){
   if(typeof _wmDraftClear==='function'){ ['sq-t-','sq-d-','sq-w-','sq-c-'].forEach(function(k){ _wmDraftClear(k+pid); }); }
   _sqRerender(pid);
 }
+// ---- one side task, one answer, wherever you tick it --------------------------
+// Bruce, 26 Sept: he ticked "Meet Jesus to go over framing" and "Reach out to Seamless
+// Metal roof companies for trade agreement / Assign to Ron" off the Hide Away Hills
+// card and asked whether it reaches the Monday meeting.
+// It did not. Ticking a side task only ever flipped `done` inside the property card's
+// own checklist JSON - the pm_tasks row it was created from was never touched. The
+// Jesus one looked right only by coincidence: somebody had marked the task done on the
+// 25th and the card item on the 26th, by hand, twice. Tick only the card and the task
+// sat open on the calendar for ever.
+// That is Bruce's rule number one: "wherever you input information on one page, it
+// should auto populate to every page that shows or that should have that information
+// ... that way the guys are not working twice."
+// So there is ONE answer now. The card, the Side Tasks page and the task calendar are
+// three views of it, not three copies.
+async function _sqSyncTask(tid, done){
+  if(!tid) return false;
+  const stamp = done ? new Date().toISOString() : null;
+  let { error } = await supabase.from("pm_tasks")
+    .update({ status: done?'done':'open', completed_at: stamp }).eq("id", tid);
+  if(error && /completed_at/.test(error.message||'')){
+    // older database without the column - still record the status so nobody is stuck
+    ({ error } = await supabase.from("pm_tasks").update({ status: done?'done':'open' }).eq("id", tid));
+  }
+  if(error) return false;
+  if(typeof loadTasks==='function'){ try{ await loadTasks(); }catch(e){} }
+  return true;
+}
 async function _sqToggle(pid, id){
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
+  const before=(typeof _sqList==='function'?_sqList(c):[]).find(y=>y.id===id);
+  const tid=before?before.tid:null;
+  const willBeDone=!(before&&before.done);
   const ok=await _sqWrite(pid, arr=>{ const x=arr.find(y=>y.id===id); if(x){ x.done=!x.done; x.doneAt=x.done?_ymd(new Date()):''; } });
-  if(ok) _sqRerender(pid);
+  if(!ok) return;
+  // The calendar task follows the tick. If that write fails, say so rather than
+  // leaving the two quietly disagreeing - a silent split is the bug we are fixing.
+  if(tid){
+    const synced=await _sqSyncTask(tid, willBeDone);
+    if(!synced){
+      alert("Ticked it here, but the matching task on the calendar did NOT change.\n\nCheck your connection and tick it again, or mark that task on the calendar yourself \u2014 otherwise the two will disagree.");
+    }
+  }
+  if(typeof _logAudit==='function'){
+    _logAudit(willBeDone?'completed':'reopened','property',(c&&c.addr)||'',
+      'Side task'+(willBeDone?' marked handled':' put back on the list')+': '+((before&&before.t)||'')
+      +(tid?' (the task on the calendar moved with it)':' (no task on the calendar \u2014 this one lives on the card only)'));
+  }
+  _sqRerender(pid);
+  if(typeof _taskRerender==='function'){ try{ _taskRerender(); }catch(e){} }
+}
+// ...and the other direction: finishing the task on the calendar ticks the side task
+// on the property card. Called from toggleTaskDone.
+async function _sqFromTask(tid, done){
+  if(!tid) return 0;
+  const cards=(typeof propCards!=='undefined'?propCards:[]);
+  let n=0;
+  for(const c of cards){
+    const list=(typeof _sqList==='function')?_sqList(c):[];
+    const hit=list.find(function(x){ return x && x.tid===tid; });
+    if(!hit || !!hit.done===!!done) continue;
+    const okw=await _sqWrite(c.id, arr=>{ const x=arr.find(y=>y.tid===tid);
+      if(x){ x.done=!!done; x.doneAt=done?_ymd(new Date()):''; } });
+    if(okw) n++;
+  }
+  return n;
 }
 async function _sqWhen(pid, id, val){
   await _sqWrite(pid, arr=>{ const x=arr.find(y=>y.id===id); if(x) x.at=val||''; });
@@ -8381,6 +8443,58 @@ function _budMoney(v){
 // (_trkData.win[pid].install_confirmed) and written by one function
 // (_winConfirmInstall). The meeting and the tracker are two windows onto that same
 // answer, not two copies of it - so there is nothing to keep in step.
+// ---- side tasks, in the meeting, where the room can see them ------------------
+// Bruce, 26 Sept: "on the property card for Hide Away Hills, I marked meet Jesus to go
+// over framing completed. Reach out to seamless metal roofing companies for trade
+// agreement, assigned to Ron. That's marked completed too. Let's make sure that the
+// communication from that translates and updates in real time in the Monday project
+// meeting."
+// The roofing one had no date and was never put on the task calendar, so it existed
+// ONLY inside the property card's own checklist - the meeting could not see it and
+// neither could Ron. A side task with nobody watching it is how a job goes missing.
+// The meeting now reads them straight off the card, so it cannot happen again whether
+// the item has a date, a task behind it, or neither.
+function _wmSideTasks(c, wk, roNow){
+  if(!c) return '';
+  const list=(typeof _sqList==='function')?_sqList(c):[];
+  if(!list.length) return '';
+  const wkStart=wk||'';
+  const wkEnd=wkStart?_ymd(new Date(new Date(wkStart+'T00:00:00').getTime()+6*86400000)):'';
+  // Everything still open, plus anything finished during the week being recapped.
+  const show=list.filter(function(x){
+    if(!x) return false;
+    if(!x.done) return true;
+    if(!wkStart) return true;
+    const on=String(x.doneAt||'');
+    return !on || (on>=_ymd(new Date(new Date(wkStart+'T00:00:00').getTime()-7*86400000)) && on<=wkEnd);
+  });
+  if(!show.length) return '';
+  const today=_ymd(new Date());
+  const row=(x)=>{
+    const late=!x.done && x.at && x.at<today;
+    const who=String(x.who||'').trim();
+    return `<div style="display:flex;gap:9px;align-items:flex-start;padding:5px 0;border-bottom:0.5px solid #f4f5f7">
+      ${roNow?`<span style="font-size:14px;flex-shrink:0">${x.done?'\u2705':'\u2B1C'}</span>`
+             :`<span onclick="_sqToggle('${c.id}','${x.id}')" title="${x.done?'Put it back on the list':'Mark it handled'}" style="cursor:pointer;font-size:14px;flex-shrink:0">${x.done?'\u2705':'\u2B1C'}</span>`}
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;color:${x.done?'#9aa3b2':'#111'};${x.done?'text-decoration:line-through':''};white-space:pre-wrap">${_calEsc(x.t||'')}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:2px">
+          ${who?`<span style="font-size:10.5px;font-weight:600;color:#185FA5;background:#EAF1FA;padding:1px 7px;border-radius:99px">\uD83D\uDC64 ${_calEsc(who)}</span>`:''}
+          ${x.at?`<span style="font-size:10.5px;color:${late?'#B42318':'#566070'};font-weight:${late?'700':'400'}">${late?'overdue \u00b7 ':''}${_calEsc(x.at)}</span>`
+                :`<span style="font-size:10.5px;color:#636b7a">no date</span>`}
+          ${x.done&&x.doneAt?`<span style="font-size:10.5px;color:#0F7B54">done ${_calEsc(x.doneAt)}</span>`:''}
+          ${x.tid?'<span style="font-size:10.5px;color:#185FA5">on the task calendar</span>'
+                 :'<span style="font-size:10.5px;color:#8A5A10" title="It has no task behind it, so it only lives on this card and here.">card only</span>'}
+        </div>
+      </div></div>`;
+  };
+  const open=show.filter(x=>!x.done).length;
+  return `<div id="wmsq-${c.id}" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:9px;padding:9px 12px;margin-top:8px">
+    <div style="font-size:12px;font-weight:700;color:#122A4A;margin-bottom:4px">\uD83D\uDCCC Side tasks on this property${open?` \u00b7 <span style="color:#8A5A10">${open} still open</span>`:' \u00b7 <span style="color:#0F7B54">all handled</span>'}</div>
+    ${show.map(row).join('')}
+    <div style="font-size:10.5px;color:#636b7a;margin-top:5px">Tick one here and it ticks on the property card, the Side Tasks page and the task calendar \u2014 same job, one answer.</div>
+  </div>`;
+}
 function _wmAutoWins(c, wk){
   return `<div id="wmwin-${c.id}">${_wmAutoWinsInner(c, wk)}</div>`;
 }
@@ -12624,6 +12738,7 @@ function openWeeklyMeeting(kind, week){
             + _wmCarryBlock(wk, c, roNow)
             + _sub('How last week actually went')
             + ta2(c.id+'::lastc','The recap in your words&hellip;',44)
+            + _wmSideTasks(c, wk, roNow)
             + _sub('&#127942; Wins')
             + _wmAutoWins(c, wk) + ta2(c.id+'::wins','What went right on this property this week?');
 
@@ -22899,6 +23014,8 @@ async function toggleTaskDone(id){
   }
   if(error){ alert("Failed to update task: "+(error.message||"")); return; }
   _logAudit(newStatus==="done"?"completed":"reopened","task", t.title, taskAssignees(t).length?("Assignee: "+taskAssignees(t).join(", ")):"");
+  // If this task came from a side task on a property card, tick that too.
+  try{ if(typeof _sqFromTask==='function') await _sqFromTask(id, newStatus==="done"); }catch(e){}
   await loadTasks(); _taskRerender();
 }
 
@@ -25879,4 +25996,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-26d contractor-directory-cleanup + w9-name-or-business -->
+<!-- build: 2026-09-26e side-tasks-tick-everywhere + in-the-monday-meeting -->
