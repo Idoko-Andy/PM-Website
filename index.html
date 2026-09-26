@@ -3839,7 +3839,22 @@ async function toggleSubPhaseComplete(propId, name){
   await loadPropertiesFromSupabase();
   await _syncSubphaseTasks(propId);
   const advanced = s.completed ? await _maybeAutoAdvance(propId) : false;
-  openPropDetail(propId); // stay on the property card after checking a box (don't kick back to the board)
+  _afterSubPhase(propId);
+}
+// Bruce, 26 Sept, prepping Monday's meeting: "when I'm marking subtasks completed from
+// the full project meeting doc, it kicks me out of the meeting doc."
+// It did: ticking a subphase always ended by opening the property card. That is right
+// when you ARE on the property card, and wrong when you are halfway down a meeting with
+// a room waiting - you lose your place and whatever you were part way through typing.
+// Stay where you are: redraw the meeting when a meeting is open, the card otherwise.
+function _afterSubPhase(propId){
+  if(typeof _wmDocOpen==='function' && _wmDocOpen()){
+    const kind=window.__wmLastKind||'team';
+    const week=window.__wmLastWeek||undefined;
+    if(typeof _wmRenderWhenIdle==='function'){ _wmRenderWhenIdle(kind, week); return; }
+    if(typeof openWeeklyMeeting==='function'){ openWeeklyMeeting(kind, week); return; }
+  }
+  if(typeof openPropDetail==='function') openPropDetail(propId);
 }
 // Bruce / Marlo / Tommy (or an admin) approve a completed subphase.
 async function approveSubPhase(propId, name){
@@ -3857,7 +3872,7 @@ async function approveSubPhase(propId, name){
   await loadPropertiesFromSupabase();
   await _syncSubphaseTasks(propId);
   const advanced = await _maybeAutoAdvance(propId);
-  openPropDetail(propId); // stay on the property card after checking a box (don't kick back to the board)
+  _afterSubPhase(propId);
 }
 
 function phInfo(name){ return PROP_PHASES.find(p=>p.name===name)||{bg:"#f4f5f7",text:"#555",cnt:"#566070",dot:"#566070"}; }
@@ -5671,6 +5686,87 @@ async function _apDel(id, pid){
   const { error } = await supabase.from('pm_payables').delete().eq('id', id);
   if(error){ alert("It was NOT deleted: "+(error.message||'')); return; }
   await loadPayables(); openPropDetail(pid);
+}
+// ---- accounts payable across every house ---------------------------------------
+// Bruce, 26 Sept: "for the accounts payable, next to side tasks, I would like to see the
+// accounts payable tab. Also side tasks needs to be on the admin dashboard ... the
+// senior VA dashboard, a tab for that at the top. The VA admin dashboard, because that
+// one's missing the side task calendar as well."
+// Outstanding first and biggest first, because this page exists to answer "who are we
+// behind on paying".
+function _apAllGo(v){ window._apAllView=v; _apRerender(); }
+function _apRerender(){
+  const f=window._apReturn;
+  if(typeof f==='function'){ f(); return; }
+  if(typeof openAdminDashboard==='function') openAdminDashboard('payables');
+}
+function _apAllBody(){
+  const esc=_calEsc;
+  const view=window._apAllView||'open';
+  const cards=(typeof propCards!=='undefined'?propCards:[]);
+  const addrOf=(pid)=>{ const c=cards.find(function(x){ return x.id===pid; }); return c?(c.addr||''):'(property removed)'; };
+  const all=(_apCache||[]).filter(function(r){ return r.status!=='void'; });
+  const open=all.filter(function(r){ return r.status!=='paid'; });
+  const rows=(view==='all')?all:open;
+
+  const sum=(list,f)=>list.reduce(function(n,r){ const v=_apNum(r[f]); return n+(v||0); },0);
+  const outstanding=sum(all,'invoiced_amount')-sum(all,'paid_amount');
+  const tile=(label,val,col,sub)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${col};border-radius:10px;padding:12px 15px;min-width:160px;flex:1">
+      <div style="font-size:11.5px;color:#566070">${label}</div>
+      <div style="font-size:22px;font-weight:700;color:${col};margin-top:3px">${val}</div>
+      ${sub?`<div style="font-size:10.5px;color:#8A94A6;margin-top:2px">${sub}</div>`:''}</div>`;
+
+  // grouped by who we owe, because that is who gets chased or paid
+  const byWho={};
+  rows.forEach(function(r){
+    const k=_apWho(r)||'\u2014 nobody set \u2014';
+    (byWho[k]=byWho[k]||[]).push(r);
+  });
+  const groups=Object.keys(byWho).map(function(k){
+    const list=byWho[k];
+    const owed=sum(list,'invoiced_amount')-sum(list,'paid_amount');
+    return {who:k, list:list, owed:owed, agreed:sum(list,'agreed_amount')};
+  }).sort(function(a,b){ return (b.owed-a.owed) || String(a.who).localeCompare(String(b.who)); });
+
+  const chip=(v,label,n)=>`<span onclick="_apAllGo('${v}')" style="cursor:pointer;padding:6px 13px;border-radius:8px;font-size:12.5px;font-weight:600;${view===v?'background:#122A4A;color:#fff':'background:#fff;color:#555;border:0.5px solid #d8dce6'}">${label} <span style="opacity:.7;font-weight:400">${n}</span></span>`;
+
+  const line=(r)=>{
+    const st=_apState(r.status);
+    const owed=(_apNum(r.invoiced_amount)||0)-(_apNum(r.paid_amount)||0);
+    return `<div style="display:flex;gap:10px;align-items:baseline;padding:7px 0;border-top:0.5px solid #f4f5f7;flex-wrap:wrap">
+      <span onclick="openPropDetail('${r.property_id}')" style="cursor:pointer;font-size:12.5px;color:#185FA5;font-weight:600;min-width:150px">${esc(addrOf(r.property_id))}</span>
+      <span style="flex:1;min-width:140px;font-size:13px;color:#111">${esc(r.label||'')}</span>
+      <span style="font-size:11px;font-weight:700;color:${st.col};background:${st.bg};padding:2px 9px;border-radius:99px;white-space:nowrap">${st.label}</span>
+      <span style="font-size:13px;font-weight:600;color:${owed>0?'#B42318':'#566070'};min-width:96px;text-align:right">${owed>0?_apMoney(owed):_apMoney(_apLive(r))}</span>
+    </div>`;
+  };
+
+  const body=groups.length?groups.map(function(g){
+    return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:11px 14px;margin-bottom:10px">
+      <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
+        <span style="font-size:14.5px;font-weight:700;color:#111">${esc(g.who)}</span>
+        <span style="font-size:12px;color:#566070">${g.list.length} line${g.list.length===1?'':'s'}</span>
+        ${g.owed>0?`<span style="margin-left:auto;font-size:13.5px;font-weight:700;color:#B42318">${_apMoney(g.owed)} owed</span>`
+                  :`<span style="margin-left:auto;font-size:12.5px;color:#0F7B54">nothing outstanding</span>`}
+      </div>
+      ${g.list.map(line).join('')}
+    </div>`;
+  }).join('')
+  :`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:26px;text-align:center;color:#636b7a;font-size:13.5px">Nothing on accounts payable yet. Add what has been agreed on a property card &mdash; each card has its own Accounts Payable tab.</div>`;
+
+  return `<div style="padding:20px;max-width:1120px;margin:0 auto">
+    <div style="font-size:19px;font-weight:500;color:#111;margin-bottom:3px">\u{1F4B0} Accounts Payable</div>
+    <div style="font-size:13px;color:#566070;margin-bottom:13px">Everything we owe, grouped by who we owe it to. Click a house to open its own accounts payable tab.</div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:13px">
+      ${tile('Outstanding', _apMoney(outstanding), outstanding>0?'#B42318':'#0F7B54','billed and not yet paid')}
+      ${tile('Agreed', _apMoney(sum(all,'agreed_amount')), '#185FA5', all.length+' line'+(all.length===1?'':'s'))}
+      ${tile('Paid', _apMoney(sum(all,'paid_amount')), '#0F7B54','')}
+      ${tile('People owed', String(groups.filter(function(g){ return g.owed>0; }).length), '#7A3FA8','')}
+    </div>
+    <div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px">
+      ${chip('open','Still open',open.length)}${chip('all','Everything',all.length)}
+    </div>
+    ${body}</div>`;
 }
 // What the tab actually shows.
 function _apBody(c){
@@ -10640,8 +10736,18 @@ async function _mktPrefillWeek(wk){
 // write-up, and the forward box opens empty for whatever is next. Before this, the
 // forward box carried its own text into the new week and quietly went stale.
 // Read as { the field it was written in : the field it lands in next week }.
+// Bruce, 26 Sept: "how last week actually went in the full project meeting, it's still
+// leaving the comments that were typed in the previous meeting's box - like, for the box
+// we type in."
+// It was doing exactly what he asked for on 20 Sept: what the room said was coming up
+// rotated across into "how last week went". Checked the data before changing anything -
+// every one of the 24 filled boxes for the week of 28 Sept was a clean rotation, not a
+// bug. But a box that opens already full reads as something somebody typed, and it got
+// left alone instead of written.
+// So the rotation stays - it is genuinely useful - but it no longer fills the box. Last
+// week's plan now sits ABOVE the box as a quiet reminder of what was meant to happen,
+// and the box you type in opens empty.
 const WM_TEAM_CARRY = {
-  nextc: 'lastc',   // "Comments on the weeks ahead" becomes "Comments on last week"
   money: 'money'    // "on or off budget, and why" - a standing position, not a weekly event
 };
 // Deliberately NOT carried: 'wins' (explicitly "wins this week"), and 'lastc' does not
@@ -12622,6 +12728,22 @@ function _wmTypingNow(){
 // live-sync poller shut itself down so two people stopped seeing each other's work.
 // The meeting shell now stamps itself, so the test is about the meeting, not about
 // whether that particular tab happened to draw a house.
+// What the room said was coming up on this house last Monday. It used to be dropped
+// straight into the recap box, which made the box look already written; now it sits
+// above it, quietly, as the thing the recap is answering.
+function _wmPlanWas(wk, c){
+  if(!c) return '';
+  try{
+    const prev=_wmPrevWeek(wk);
+    const notes=(((window._wmData||{})[prev]||{})['team'])||{};
+    const said=String(notes[c.id+'::nextc']||'').trim();
+    if(!said) return '';
+    return `<div style="background:#F5F8FC;border-left:3px solid #CFE0F2;border-radius:0 7px 7px 0;padding:7px 11px;margin:0 0 7px">
+      <div style="font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#185FA5">What was meant to happen</div>
+      <div style="font-size:12.5px;color:#444;white-space:pre-wrap;line-height:1.45;margin-top:2px">${_calEsc(said)}</div>
+    </div>`;
+  }catch(e){ return ''; }
+}
 function _wmDocOpen(){ return !!document.querySelector('[data-wm-doc]'); }
 // A redraw that has to happen, held until the room stops typing.
 function _wmRenderWhenIdle(kind, week){
@@ -12958,6 +13080,7 @@ function openWeeklyMeeting(kind, week){
             + lastRows
             + _wmCarryBlock(wk, c, roNow)
             + _sub('How last week actually went')
+            + _wmPlanWas(wk, c)
             + ta2(c.id+'::lastc','The recap in your words&hellip;',44)
             + _wmSideTasks(c, wk, roNow)
             + _sub('&#127942; Wins')
@@ -16998,9 +17121,16 @@ function openAdminDashboard(activeTab) {
     {id:'property',label:'Property Dashboard',icon:'🏗'},
     {id:'construction',label:'Construction Calendar',icon:'📅'},
     {id:'taskcal',label:'Task Calendar',icon:'🗓'},
+    // Bruce, 26 Sept: "the accounts payable and side tasks needs to be on the admin
+    // dashboard, a tab for that up at the top."
+    {id:'sidetasks',label:'Side Task Calendar',icon:'🧩'},
+    {id:'payables',label:'Accounts Payable',icon:'💰'},
   ];
   let content;
+  window._apReturn=function(){ openAdminDashboard('payables'); };
   switch(activeTab){
+    case 'sidetasks':    content=_sqAllBody(); break;
+    case 'payables':     content=_apAllBody(); break;
     case 'marlo':        content=_marloTab(); break;
     case 'trackers':
       if(!(_viewUser()&&(_viewUser().isSuperAdmin||hasPerm(_viewUser(),'trk_all')))){ content='<div class="empty-state"><div class="icon">&#128274;</div><p style="color:#566070;font-size:16px;font-weight:500">Trackers</p><p style="color:#555;font-size:14px;margin-top:6px">Ask Bruce to turn Trackers on for your account in Settings &rarr; Permissions.</p></div>'; break; }
@@ -17156,8 +17286,8 @@ function _nfPermitItems(today){
     }
     // 4, 5, 6 - the inspections on an issued permit
     const insps=(typeof _permitInsps==='function')?_permitInsps(r):[];
-    const issued=(typeof _permitIsApproved==='function')?_permitIsApproved(r):false;
-    if(issued && !insps.length){
+    const needsOrder=(typeof _permitNeedsInspOrder==='function')?_permitNeedsInspOrder(r):false;
+    if(needsOrder){
       out.push({ id:'perm-order:'+r.id, icon:'\ud83d\udcd0', tone:'amber',
         text:addr+' is issued with no inspection order set',
         sub:where+' \u00b7 list the inspections in the order the city wants them',
@@ -17874,8 +18004,10 @@ function openSeniorVADashboard(activeTab) {
     {id:'property',    label:'Property Dashboard',    icon:'\u{1F3D7}'},
     {id:'construction',label:'Construction Calendar', icon:'\u{1F4C5}'},
     {id:'taskcal',     label:'Task Calendar',         icon:'\u{1F5D3}'},
-    {id:'sidetasks',   label:'Side Task Calendar',    icon:'\u{1F9E9}'}
+    {id:'sidetasks',   label:'Side Task Calendar',    icon:'\u{1F9E9}'},
+    {id:'payables',    label:'Accounts Payable',      icon:'\u{1F4B0}'}
   ];
+  window._apReturn=function(){ openSeniorVADashboard('payables'); };
   const u=(typeof _effectiveUser==='function')?_effectiveUser():(typeof currentUser==='function'?currentUser():null);
   let content;
   try{
@@ -17885,6 +18017,7 @@ function openSeniorVADashboard(activeTab) {
       case 'construction': content=renderConstructionCalendar(); break;
       case 'taskcal':      content=renderTaskCalendar(); break;
       case 'sidetasks':    content=_sqAllBody(); break;
+      case 'payables':     content=_apAllBody(); break;
       default:             content=(typeof renderSrVAHome==='function') ? renderSrVAHome(u||{}) : renderSeniorVAHome(u||{});
     }
   }catch(e){
@@ -17906,9 +18039,16 @@ function openVAAdminDashboard(activeTab) {
     {id:'property',label:'Property Dashboard',icon:'🏗'},
     {id:'construction',label:'Construction Calendar',icon:'📅'},
     {id:'taskcal',label:'Task Calendar',icon:'🗓'},
+    // Bruce, 26 Sept: "the VA admin dashboard, because that one's missing the side task
+    // calendar as well."
+    {id:'sidetasks',label:'Side Task Calendar',icon:'🧩'},
+    {id:'payables',label:'Accounts Payable',icon:'💰'},
   ];
   let content;
+  window._apReturn=function(){ openVAAdminDashboard('payables'); };
   switch(activeTab){
+    case 'sidetasks':    content=_sqAllBody(); break;
+    case 'payables':     content=_apAllBody(); break;
     case 'va':           content=_vaPersonView(vaName); break;
     case 'utilities':    content=_utilitiesDashboard(); break;
     case 'trackers':     window._trkRerender=()=>_trkKeepScroll(()=>openVAAdminDashboard('trackers')); window._trkCtx='va'; content=_vaTrackers(); break;
@@ -19506,11 +19646,24 @@ function _permitInspOutOfOrder(list, idx){
 // itself the moment the first inspection is added.
 const PERMIT_INSP_SETUP_DAYS = 2;
 function _permitIsApproved(r){ return /^(issued|closed)$/i.test(String((r&&r.status)||"")); }
+// Bruce, 26 Sept: "for 1313 Lincoln Rd, under this week and next week on the project
+// meeting tab, it's showing 1313 Lincoln Rd (Garage), set the inspection order. That's
+// incorrect. The permit was approved as in we passed our final inspection on the
+// garage. So that's done, it's closed out."
+// He was right. The garage permit R-26-17 / E-26-41 is CLOSED with no inspections ever
+// typed into the tracker, and the rule counted "closed" as "approved" - so it kept
+// asking somebody to plan inspections for a permit that had already finished. Listing
+// the inspection order only makes sense while work is still ahead of you, which means
+// ISSUED. A closed permit is history.
+function _permitNeedsInspOrder(r){
+  if(!r) return false;
+  if(!/^issued$/i.test(String(r.status||''))) return false;
+  return !((typeof _permitInsps==='function'?_permitInsps(r):(r.insps||[])).length);
+}
 async function _permitInspSetupTask(id){
   const d=window._trkData||{}; d.permits=d.permits||{};
   const r=d.permits[id]; if(!r) return false;
-  if(!_permitIsApproved(r)) return false;
-  if(_permitInsps(r).length) return false;              // she has already set it
+  if(!_permitNeedsInspOrder(r)) return false;           // issued only, and not already set
   if(r.insp_task){
     try{
       const ex=await supabase.from("pm_tasks").select("id,status").eq("id",r.insp_task).maybeSingle();
@@ -26340,4 +26493,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-26g accounts-payable-per-property -->
+<!-- build: 2026-09-26h dashboards-tabs + meeting-fixes + permit-order-only-when-issued -->
