@@ -3276,6 +3276,45 @@ async function setPropertyPermitted(id, val) {
   await loadPropertiesFromSupabase();
   openPropDetail(id);
 }
+// ---- Final budget lock ---------------------------------------------------------
+// Bruce, 26 Sept: "we need a final budget completed checkbox on the property cards
+// that also shows in the meetings. Once the final budget box is checked, it's locked,
+// and then the final budget is locked on the property card."
+// The point is the nightly tracker sync: it re-reads every project tracker sheet and
+// writes budget, base and contingency back onto the card. Once a budget is agreed, that
+// has to stop, or a stray edit in the spreadsheet quietly rewrites an agreed number.
+// The flag lives at checklists.budget_final = {locked, by, at, amount}. `amount` is the
+// figure as it stood when it was locked, so if anything does overwrite it we can see.
+function _budLock(c){
+  const f=((c&&c.checklists)||{}).budget_final;
+  return (f && typeof f==='object' && f.locked) ? f : null;
+}
+function _budLocked(c){ return !!_budLock(c); }
+async function setBudgetFinal(id, on){
+  if(_blockIfReadOnly()) return;
+  const card=propCards.find(x=>x.id===id); if(!card) return;
+  const B=(typeof _budOf==='function')?_budOf(card):{budget:null};
+  if(on && (B.budget==null || B.budget<=0)){
+    alert("There is no final budget on this card yet, so there is nothing to lock.\n\nPull the tracker or set the figure first.");
+    return;
+  }
+  if(!on && !confirm("Unlock the final budget for "+(card.addr||"this property")+"?\n\nThe nightly tracker sync will be free to overwrite it again from the spreadsheet."))
+    return;
+  const cl=Object.assign({}, card.checklists||{});
+  if(on){
+    cl.budget_final={ locked:true, by:(typeof _miWho==='function'?_miWho():''), at:_ymd(new Date()),
+                      amount:(typeof _budMoney==='function'&&B.budget!=null)?_budMoney(B.budget):(card.budget||'') };
+  } else {
+    delete cl.budget_final;
+  }
+  const { error }=await supabase.from("pm_properties").update({ checklists:cl }).eq("id", id);
+  if(error){ alert("That did NOT save - "+(error.message||"")); return; }
+  _logAudit("updated","property", card.addr||"",
+    on ? ("Final budget marked complete and LOCKED at "+(cl.budget_final.amount||'—')+" - the tracker sync must not overwrite it")
+       : "Final budget UNLOCKED - the tracker sync may overwrite it again");
+  await loadPropertiesFromSupabase();
+  openPropDetail(id);
+}
 async function setPropertyRental(id, val) {
   if (_blockIfReadOnly()) return;
   const card = propCards.find(x => x.id === id); if (!card) return;
@@ -5962,6 +6001,19 @@ function _pdLinked(c, which){
               if(P.kind==='stale') return `<div style="font-size:11.5px;color:#B42318;font-weight:600;margin-top:2px">Breakdown is out of date</div><div style="font-size:11px;color:#8a4038;line-height:1.4">The tracker says ${_budMoney(P.total)} but the breakdown under it reads ${_budMoney(P.base)} + ${_budMoney(P.cont)} = ${_budMoney(P.sum)}. Using the tracker's figure until it is re-pulled.</div>`;
               if(base||cont) return `<div style="font-size:11.5px;color:#566070;margin-top:2px">${_calEsc(base)||'—'} + ${_calEsc(cont)||'$0'} contingency</div><div style="font-size:11px;color:#636b7a">Total W/ Contingency, from the tracker</div>`;
               return `<div style="font-size:12px;color:#566070;margin-top:2px">From project tracker &middot; incl. contingency</div>`; })()}
+            ${(()=>{
+              // Bruce, 26 Sept: tick this and the final budget is settled - the nightly
+              // tracker sync leaves it alone from then on.
+              const L=_budLock(c), ro=(typeof isReadOnly==='function')&&isReadOnly();
+              const box=L?'\u2611':'\u2610';
+              const line=L
+                ? `<div style="font-size:11px;color:#0F7B54;line-height:1.35;margin-top:1px">Locked${L.at?(' '+_calEsc(L.at)):''}${L.by?(' by '+_calEsc(String(L.by).split(' ')[0])):''}${L.amount?(' at '+_calEsc(L.amount)):''} &middot; the tracker sync will not change it</div>`
+                : `<div style="font-size:11px;color:#8A94A6;line-height:1.35;margin-top:1px">Until this is ticked the nightly tracker sync can still rewrite this figure.</div>`;
+              return `<div ${ro?'':`onclick="setBudgetFinal('${c.id}', ${L?'false':'true'})" `}style="${ro?'':'cursor:pointer;'}margin-top:7px;padding-top:7px;border-top:0.5px solid #e3e6ec">
+                <div style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:${L?'#0F7B54':'#566070'}"><span style="font-size:14px">${box}</span>Final budget complete${L?' \u{1F512}':''}</div>
+                ${line}
+              </div>`;
+            })()}
           </div>
           <div style="background:#f4f5f7;border-radius:8px;padding:12px 14px">
             <div style="font-size:11px;color:#566070;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Spent to Date</div>
@@ -8317,21 +8369,44 @@ function _budMoney(v){
   const cents = Math.abs(v - Math.round(v)) > 0.004;   // $441,198.60 must not print as $441,198.6
   return '$'+v.toLocaleString(undefined,{minimumFractionDigits:cents?2:0, maximumFractionDigits:cents?2:0});
 }
+// Bruce, 26 Sept: "once the windows were installed it needs to go on wins from last
+// week for that week's Monday full project team meeting for that property, that way they
+// don't have to input it themselves."
+// It is shown ABOVE the box rather than typed into it. Writing into somebody's textarea
+// while they may be mid-sentence in it is how you lose what they were typing, and a
+// sentence that appears by itself in a box reads as though a person wrote it.
+function _wmAutoWins(c, wk){
+  const bits=[];
+  try{ const w=(typeof _winWinLine==='function')?_winWinLine(c, wk):''; if(w) bits.push({icon:'\u{1FA9F}', t:w}); }catch(e){}
+  if(!bits.length) return '';
+  return `<div style="background:#EAF5EF;border:0.5px solid #BEDFCD;border-radius:8px;padding:7px 11px;margin-bottom:6px">
+    ${bits.map(function(b){ return `<div style="font-size:12.5px;color:#14563D;line-height:1.45">${b.icon} ${_calEsc(b.t)}</div>`; }).join('')}
+    <div style="font-size:10.5px;color:#4b7d66;margin-top:2px">Filled in from the window tracker \u2014 no need to type it again.</div>
+  </div>`;
+}
 function _wmBudNote(c){
   const cl=(c&&c.checklists)||{};
   const base=String(cl.budget_base||'').trim();
   const cont=String(cl.budget_contingency||'').trim();
-  if(!base || !cont) return '';
+  if(!base || !cont){
+    const L0=(typeof _budLock==='function')?_budLock(c):null;
+    return L0 ? ('final \u2014 locked'+(L0.at?(' '+L0.at):'')) : '';
+  }
   // The breakdown is only worth printing if it agrees with the number above it. On
   // 8 Hide Away Hills the Budgeted figure was raised to $441,400 but the base was left
   // at $185,560, so the card was showing a total with a breakdown that did not add up
   // to it - two different answers to the same question, stacked on top of each other.
   // Say the breakdown is out of date rather than quietly contradicting the total.
   const P=_budParts(c);
-  if(P.kind==='stale') return 'breakdown is out of date';
-  if(P.kind==='same')  return _budMoney(P.base)+' + '+_budMoney(P.cont)+' contingency = '+_budMoney(P.sum);
+  // Bruce, 26 Sept: the meeting has to show whether a final budget is SETTLED, not just
+  // what it is. A locked figure is one the room has agreed and the tracker cannot move.
+  const L=(typeof _budLock==='function')?_budLock(c):null;
+  const lockNote=L?('final \u2014 locked'+(L.at?(' '+L.at):'')):'';
+  const join=(a,b)=>[a,b].filter(Boolean).join(' \u00b7 ');
+  if(P.kind==='stale') return join('breakdown is out of date', lockNote);
+  if(P.kind==='same')  return join(_budMoney(P.base)+' + '+_budMoney(P.cont)+' contingency = '+_budMoney(P.sum), lockNote);
   const trim=(v)=>v.replace(/\.00$/,'');
-  return trim(base)+' + '+trim(cont)+' contingency';
+  return join(trim(base)+' + '+trim(cont)+' contingency', lockNote);
 }
 // Redraw just the numbers on one card. Never re-renders the page: somebody is
 // usually mid-sentence in a notes box while this fires.
@@ -11718,7 +11793,7 @@ function _wmTdTopics(wk, c, roNow, ta2, kn){
     + listOf(lastR.from,lastR.to)
     + _wmCarryBlock(wk, c, roNow)
     + _sub('How last week actually went') + ta2(c.id+'::lastc','The recap in your words&hellip;',44)
-    + _sub('&#127942; Wins') + ta2(c.id+'::wins','What went right on this one this week?');
+    + _sub('&#127942; Wins') + _wmAutoWins(c, wk) + ta2(c.id+'::wins','What went right on this one this week?');
 
   body.next = `<div style="font-size:11.5px;color:#566070;margin-bottom:6px">${fwdR.from} &rarr; ${fwdR.to} &middot; in date order</div>`
     + listOf(fwdR.from,fwdR.to)
@@ -12412,7 +12487,7 @@ function openWeeklyMeeting(kind, week){
           <span style="font-size:12px;color:#666">${_calEsc(_phLabel(c.phase))} &middot; PM: ${_calEsc(c.pm)||'&mdash;'}${perm?' &middot; &#127963; Permitted':''}</span>
         </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:6px">
-          ${cell('Budgeted',fmt(b),null,_wmBudNote(c),'wm-bud-'+c.id)}
+          ${cell('Budgeted'+(_budLocked(c)?' \u{1F512}':''),fmt(b),_budLocked(c)?'#0F7B54':null,_wmBudNote(c),'wm-bud-'+c.id)}
           ${cell('Spent',fmt(s),null,'','wm-spent-'+c.id)}
           ${cell('Leftover',fmt(left),left!=null&&left<0?'#B42318':'#0F7B54','','wm-left-'+c.id)}
           ${cell('Production $ / day',rate!=null?('$'+rate.toLocaleString()):'&mdash;',_m.prodThin?'#566070':'#4A1D6E',prodDays!=null?(_m.prodThin?(prodDays+' day'+(prodDays===1?'':'s')+' &mdash; too early to mean much'):(prodDays+' days'+(prodLive?' &middot; LIVE':''))):'set a start date','wm-prod-'+c.id)}
@@ -12459,7 +12534,7 @@ function openWeeklyMeeting(kind, week){
             + _sub('How last week actually went')
             + ta2(c.id+'::lastc','The recap in your words&hellip;',44)
             + _sub('&#127942; Wins')
-            + ta2(c.id+'::wins','What went right on this property this week?');
+            + _wmAutoWins(c, wk) + ta2(c.id+'::wins','What went right on this property this week?');
 
           body.next = `<div style="font-size:11.5px;color:#566070;margin-bottom:6px">${fwdItems.length?(fwdItems.filter(x=>x.done).length+' of '+fwdItems.length+' done &middot; '):''}${fwdR.from} &rarr; ${fwdR.to} &middot; in date order</div>`
             + fwdRows
@@ -16781,6 +16856,31 @@ function _nfItems(){
         when:t.due_date, click:"openTaskDetail('"+t.id+"')" });
     });
   }catch(e){}
+  // 1b - windows booked in, nobody has said whether they actually went in
+  //
+  // Bruce, 26 Sept: "once the install date happens, 48 hours after that it should pop up
+  // in Marlo's red flag on her screen and Patience's, to follow up with the project
+  // manager and confirm that the windows did get installed."
+  // It goes to whoever runs the window list - Marlo and Patience - and to the property's
+  // own project manager, because they are the one who can actually answer it.
+  try{
+    if(typeof _winAwaitingConfirm==='function'){
+      const forWindows=(nm)=>['Marlo Berry-Kinison','patience ochefije'].some(function(x){ return _sameAssignee(x,nm); });
+      const seesAll=(typeof _seesEveryone==='function') ? _seesEveryone() : false;
+      _winAwaitingConfirm().forEach(function(x){
+        const c=x.c, d=x.due;
+        const mine = !me || seesAll || forWindows(me) || _sameAssignee(c.pm, me);
+        if(!mine) return;
+        push({ id:'wininstall:'+c.id+':'+d.date, icon:'\u{1F6A9}', tone:'red',
+          text:'Windows — did they go in at '+(c.addr||'this house')+'?',
+          sub:'install was '+d.date+', '+d.days+' day'+(d.days===1?'':'s')+' ago'
+              +(c.pm?(' \u00b7 ask '+String(c.pm).split(' ')[0]+' in Slack'):'')
+              +' \u00b7 nobody has confirmed it yet',
+          when:d.date,
+          click:"openVAAdminDashboard('trackers');window._trkView='window';(window._trkRerender||function(){})()" });
+      });
+    }
+  }catch(e){}
   // 2 - side tasks that asked to come back up today
   //
   // Bruce, 21 Sept: "why is it on Marlo's task list to get approval of the SOW for
@@ -18113,6 +18213,81 @@ function _winStage(c){
   return 'measure';
 }
 function _winStageMeta(k){ return WIN_STAGES.find(x=>x.k===k)||WIN_STAGES[0]; }
+// ---- did the windows actually go in? -------------------------------------------
+// Bruce, 26 Sept: "the way Marlo's been doing it is she types in the install date and
+// then checks it off because she inputted the install date." So the tick means "I have
+// booked this", not "this happened" - and a booked install that never happened looks
+// finished on the board. `install_confirmed` is the separate question, answered by the
+// project manager AFTER the date, not by the person who typed it in.
+// 48 hours after the install date it becomes a red flag until somebody answers it.
+const WIN_CONFIRM_GRACE_H = 48;
+function _winInstallDue(c){
+  if(!c) return null;
+  const d=_trkVal('win',c.id,'install_date');
+  if(!d) return null;
+  if(_trkOn('win',c.id,'install_confirmed')) return null;
+  const due=new Date(d+'T00:00:00');
+  if(isNaN(due)) return null;
+  due.setHours(due.getHours()+WIN_CONFIRM_GRACE_H);
+  if(Date.now() < due.getTime()) return null;          // still inside the grace window
+  const days=Math.floor((Date.now()-new Date(d+'T00:00:00').getTime())/86400000);
+  return { date:d, days:days, pm:(c.pm||'') };
+}
+// Every house waiting on somebody to say yes or no. This is what the red flag counts.
+function _winAwaitingConfirm(){
+  return (typeof propCards!=='undefined'?propCards:[])
+    .filter(c=>c && !c.archived)
+    .map(c=>({ c:c, due:_winInstallDue(c) }))
+    .filter(x=>x.due);
+}
+function _winConfirmedOn(c){
+  const v=_trkVal('win',c.id,'install_confirmed_at');
+  return v||_trkVal('win',c.id,'install_date')||'';
+}
+// Once the windows are confirmed in, that is a win for the week it happened - it should
+// land in Monday's meeting without anybody typing it. Returns the sentence, or ''.
+function _winWinLine(c, wk){
+  if(!c || !_trkOn('win',c.id,'install_confirmed')) return '';
+  const on=_winConfirmedOn(c);
+  if(!on) return '';
+  if(wk){
+    // The Wins box recaps the week that has just gone, and the meeting week key is the
+    // COMING Monday - it rolls forward mid-week. So the window is the seven days BEFORE
+    // the meeting, not after it. Getting this backwards silently showed nothing, which
+    // is exactly how this sort of thing goes unnoticed.
+    const mon=new Date(wk+'T00:00:00');
+    if(!isNaN(mon)){
+      const start=_ymd(new Date(mon.getTime()-7*86400000));
+      const end=_ymd(new Date(mon.getTime()-86400000));
+      if(on<start || on>end) return '';
+    }
+  }
+  const what=_trkOn('win',c.id,'glass') ? 'Glass' : (_trkOn('win',c.id,'both') ? 'Windows and glass' : 'Windows');
+  return what+' installed and confirmed on site '+on+'.';
+}
+async function _winConfirmInstall(pid, yes){
+  if(_blockIfReadOnly()) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
+  const d=window._trkData||{}; d.win=d.win||{}; d.win[pid]=Object.assign({}, d.win[pid]||{});
+  if(yes){
+    d.win[pid].install_confirmed=true;
+    d.win[pid].install_confirmed_at=_ymd(new Date());
+    d.win[pid].install_confirmed_by=(typeof _miWho==='function')?_miWho():'';
+    d.win[pid].installed=true;                     // confirmed in means the stage is done
+  } else {
+    delete d.win[pid].install_confirmed;
+    delete d.win[pid].install_confirmed_at;
+    delete d.win[pid].install_confirmed_by;
+  }
+  window._trkData=d;
+  if(!(await _trkSave())){
+    alert("That did NOT save. Check your connection and try again.");
+    return;
+  }
+  if(typeof _logAudit==='function') _logAudit('updated','property',(c&&c.addr)||'',
+    yes ? 'Window install CONFIRMED on site' : 'Window install confirmation withdrawn');
+  (window._trkRerender||function(){ openVAAdminDashboard('trackers'); })();
+}
 // The one line telling Marlo what this property is waiting on, with its date if it
 // has one.
 function _winStageNote(c){
@@ -19553,7 +19728,30 @@ function _vaTrackers(){
     <td style="padding:7px;text-align:center">${dt('win',c.id,'measure_date',`_trkWinDate('${c.id}','measure_date',this.value)`)}<div style="margin-top:3px">${fchk('win',c.id,'measured')}</div></td>
     <td style="padding:7px;text-align:center">${dt('win',c.id,'order_date',`_trkWinDate('${c.id}','order_date',this.value)`)}<div style="margin-top:3px">${fchk('win',c.id,'ordered')}</div></td>
     <td style="padding:7px;text-align:center">${dt('win',c.id,'arrival_date',`_trkWinDate('${c.id}','arrival_date',this.value)`)}<div style="margin-top:3px">${fchk('win',c.id,'arrived')}</div></td>
-    <td style="padding:7px;text-align:center">${dt('win',c.id,'install_date',`_trkWinDate('${c.id}','install_date',this.value)`)}<div style="margin-top:3px">${fchk('win',c.id,'installed')}</div></td>
+    <td style="padding:7px;text-align:center">${dt('win',c.id,'install_date',`_trkWinDate('${c.id}','install_date',this.value)`)}<div style="margin-top:3px">${fchk('win',c.id,'installed')}<span style="font-size:10px;color:#636b7a"> booked</span></div>
+      ${(()=>{
+        // Bruce, 26 Sept: typing the date is not the same as the windows being in.
+        const done=_trkOn('win',c.id,'install_confirmed');
+        const late=_winInstallDue(c);
+        if(done){
+          const on=_trkVal('win',c.id,'install_confirmed_at'), by=_trkVal('win',c.id,'install_confirmed_by');
+          return `<div style="margin-top:4px;font-size:10.5px;font-weight:700;color:#0F7B54;line-height:1.3">\u2705 confirmed in${on?('<div style="font-weight:400;color:#566070">'+_calEsc(on)+(by?(' \u00b7 '+_calEsc(String(by).split(' ')[0])):'')+'</div>'):''}</div>`
+               + (ro?'':`<div onclick="_winConfirmInstall('${c.id}',false)" style="cursor:pointer;font-size:10px;color:#9AA3B2;margin-top:1px">undo</div>`);
+        }
+        if(late){
+          return `<div style="margin-top:4px;background:#FCEBEB;border:1px solid #F0C6C1;border-radius:7px;padding:4px 6px">
+            <div style="font-size:10.5px;font-weight:700;color:#B42318;line-height:1.25">\u{1F6A9} Did they go in?</div>
+            <div style="font-size:10px;color:#8a4038;line-height:1.3">${late.days} day${late.days===1?'':'s'} since the date${late.pm?(' \u00b7 ask '+_calEsc(String(late.pm).split(' ')[0])):''}</div>
+            ${ro?'':`<div style="display:flex;gap:4px;justify-content:center;margin-top:3px">
+              <span onclick="_winConfirmInstall('${c.id}',true)" style="cursor:pointer;font-size:10.5px;font-weight:700;color:#fff;background:#0F7B54;border-radius:5px;padding:2px 8px">Yes</span>
+              <span onclick="_winConfirmInstall('${c.id}',false)" title="Leave it open and chase the project manager" style="cursor:pointer;font-size:10.5px;color:#8a4038;border:1px solid #E5B4AE;border-radius:5px;padding:2px 7px">Not yet</span>
+            </div>`}
+          </div>`;
+        }
+        const d=_trkVal('win',c.id,'install_date');
+        if(d) return `<div style="margin-top:4px;font-size:10px;color:#8A94A6;line-height:1.25">confirm 48h after the date</div>`;
+        return '';
+      })()}</td>
     <td style="padding:7px;min-width:300px">${nta('win',c.id,'notes','Notes & comments \u2014 type as much as you need',290)}</td></tr>`;
   // The front page is the window QUEUE - only houses somebody has actually asked for
   // windows or glass on. Everything else is off it until someone adds it.
@@ -19640,7 +19838,7 @@ function _vaTrackers(){
 
   if(view==='w9') return shell(back+_trkSearchBox('Search a contractor…')+_trkTable('🧾 W-9 Tracker','#7A3FA8','<th style="padding:9px 10px;text-align:left">Contractor</th><th style="padding:9px;text-align:left">Name on W-9</th><th style="padding:9px">On file</th><th style="padding:9px;text-align:left">Notes</th><th style="padding:9px;text-align:left">Email</th><th style="padding:9px;text-align:left">Phone</th>'+(ro?'':'<th style="padding:9px;text-align:right">Jobs</th><th></th>'),w9rows)+`<div style="font-size:12px;color:#566070">Ticking "On file" here also marks the contractor in the Contractor Directory.${ro?'':' <b>Remove</b> deletes the whole contractor record — use it on duplicates, and remove the copy with 0 jobs against it.'}</div>`);
   if(view==='mow') return shell(back+_trkSearchBox('Search a property…')+_trkTable('🌱 Mowing Tracker','#3B6D11','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px;text-align:left">Who is mowing</th><th style="padding:9px;text-align:left">How often</th><th style="padding:9px;text-align:left">Cost/mow</th><th style="padding:9px;text-align:left">Contact #</th><th style="padding:9px;text-align:left">PM</th><th style="padding:9px;text-align:left">Payment</th><th style="padding:9px">On route</th><th style="padding:9px">Removed after</th>',mowrows)+_trkClosedSimple(closed,'mowing history'));
-  if(view==='window') return shell(back+winStageBar+winAdd+_trkSearchBox('Search a property…')+_trkTable('🪟 Window Tracker'+(_wf?' — '+_winStageMeta(_wf).label:''),'#185FA5','<th style="padding:9px 10px;text-align:left">Property / what’s being replaced</th><th style="padding:9px">Needed</th><th style="padding:9px">Measure</th><th style="padding:9px">Ordered</th><th style="padding:9px">Arrival</th><th style="padding:9px">Install</th><th style="padding:9px;text-align:left">Notes &amp; comments</th>',winrows)+`<div style="font-size:12px;color:#566070;margin-top:-8px">This list is the window <b>queue</b> &mdash; only houses somebody has actually asked for windows or glass on. Use <b>Add to the window list</b> above for a one-off job. Each square is one stage: the number is how many houses are waiting on <i>that</i> step, and clicking a square filters the list to it. A house moves on when you tick the box, not when you set the date &mdash; a booked install is still an install to chase. Dates you set here land on that property’s construction calendar automatically, and Slack posts 48 hours before the measure and install dates — in <b>#Window-Tracker</b>, the same channel the scheduled alerts go to. Post there when you have asked for a measure and the request shows up on this list.${winFin.length?` <b>${winFin.length}</b> finished propert${winFin.length===1?'y is':'ies are'} in the completed folder below.`:''}</div>`+winFinished+winClosed);
+  if(view==='window') return shell(back+winStageBar+winAdd+_trkSearchBox('Search a property…')+_trkTable('🪟 Window Tracker'+(_wf?' — '+_winStageMeta(_wf).label:''),'#185FA5','<th style="padding:9px 10px;text-align:left">Property / what’s being replaced</th><th style="padding:9px">Needed</th><th style="padding:9px">Measure</th><th style="padding:9px">Ordered</th><th style="padding:9px">Arrival</th><th style="padding:9px">Install &amp; confirm</th><th style="padding:9px;text-align:left">Notes &amp; comments</th>',winrows)+`<div style="font-size:12px;color:#566070;margin-top:-8px">This list is the window <b>queue</b> &mdash; only houses somebody has actually asked for windows or glass on. Use <b>Add to the window list</b> above for a one-off job. Each square is one stage: the number is how many houses are waiting on <i>that</i> step, and clicking a square filters the list to it. A house moves on when you tick the box, not when you set the date &mdash; a booked install is still an install to chase. Dates you set here land on that property’s construction calendar automatically, and Slack posts 48 hours before the measure and install dates — in <b>#Window-Tracker</b>, the same channel the scheduled alerts go to. Post there when you have asked for a measure and the request shows up on this list.${winFin.length?` <b>${winFin.length}</b> finished propert${winFin.length===1?'y is':'ies are'} in the completed folder below.`:''}</div>`+winFinished+winClosed);
   // ---------- Utility tracker, one rectangle per property ----------
   // Bruce, 13 Sept: "build the utility tracker out where it's squares instead of
   // horizontal across just to make sure everything is in order from start to finish."
@@ -19804,7 +20002,11 @@ function _vaTrackers(){
   const w9i=cons.filter(c=>!(d.w9||{})[c.id]).map(c=>_calEsc(c.name||''));
   const mi=closed.filter(c=>!_trkOn('mowinfo',c.id,'removed')).map(c=>'<b style="color:#8a6d1a">REMOVE from the route:</b> '+nm(c))
     .concat(active.filter(c=>!(d.mow||{})[c.id]).map(c=>'<b style="color:#3B6D11">ADD to the route:</b> '+nm(c)));
-  const wi=active.filter(_winInQueue).map(c=>{const a=_winNextAction(c); return a?(nm(c)+' — '+a):null;}).filter(Boolean);
+  // Unconfirmed installs come FIRST and in red - 48 hours past the date with nobody
+  // saying whether the windows actually went in is the thing worth chasing, not a
+  // booking that is still in the future.
+  const wUnconf=_winAwaitingConfirm().map(x=>'<b style="color:#B42318">'+nm(x.c)+'</b> — install was '+_calEsc(x.due.date)+', '+x.due.days+' day'+(x.due.days===1?'':'s')+' ago, nobody has confirmed the windows went in'+(x.due.pm?(' — ask '+_calEsc(String(x.due.pm).split(' ')[0])):''));
+  const wi=wUnconf.concat(active.filter(_winInQueue).map(c=>{const a=_winNextAction(c); return a?(nm(c)+' — '+a):null;}).filter(Boolean));
   const ci=active.filter(c=>c.phase==="Vacant / On Standby").filter(c=>{const subs=c.subPhases||[];const f=subs.find(s=>s.name==="First Time Access Checklist");return !(f&&f.completed);}).map(c=>nm(c)+' — First Time Access still to fill in')
     .concat(active.filter(c=>{const subs=c.subPhases||[];const po=subs.find(x=>/punch/i.test(x.name||'')); return !!(po && !po.completed && (po.start||po.due));}).map(c=>nm(c)+' — Punch Out scheduled, still to fill in'));
   return shell(`<div style="font-size:12.5px;color:#566070;margin:-6px 0 10px">What's outstanding right now — click a tile to open the full tracker.</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">${sum('🧾 W-9s needed','#7A3FA8',w9i)}${sum('🪟 Windows','#185FA5',wi)}${sum('🌱 Mowing','#3B6D11',mi)}${sum('✅ Checklists','#0B7285',ci)}${_utilSummaryCard(sum,utilOutList,nm)}${sum('📄 Permits — paperwork for the warehouse','#B03A8B',_permitWarehouseDue().map(r=>_calEsc(r.addr||'')+' — approved, print it and take it over'))}${sum('🎨 Design forms — needing completed','#8a6d1a',_dpTrackerItems())}</div>
@@ -25447,4 +25649,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-25a utility-payments-save-on-blur, pm-tab-back, window-tracker-findable, trackers-route, draw-desk -->
+<!-- build: 2026-09-26a final-budget-lock, window-install-confirm-48h, auto-wins -->
