@@ -292,12 +292,17 @@ body.mobile-on .overlay{z-index:6000 !important;}
   <div class="ni has-dd" id="pm-t">🏗 Proj. Manager ▾
     <div class="dd" id="pm-d">
       <div class="ddl">Project Manager</div>
+      <!-- Bruce, 28 Sept: "for some reason there's a quick link to property dashboard
+           under his project manager drop down. It doesn't need that." The Property
+           Dashboard is already a tab inside the Project Dashboard, so the quick link was
+           a second door to the same room. "It does have the permit dashboard, which can
+           be under trackers, so go ahead and put that under that one. And also make sure
+           they can see the realtor dashboard under their drop down as well." -->
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
-      <div class="ddi" onclick="openProjectDashboard('trello')">🏗 Property Dashboard</div>
-      <div class="ddi" onclick="openPermitDashboard()">📄 Permit Dashboard</div>
       <div class="ddi" onclick="openPMAssistantDashboard()">🗂 PM Assistant Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
-      <div class="ddi" onclick="openAdminDashboard('trackers')">📋 Trackers</div>
+      <div class="ddi" onclick="openRealtorDashboard()">🔑 Realtor Dashboard</div>
+      <div class="ddi" onclick="openAdminDashboard('trackers')">📋 Trackers · permits, windows, utilities</div>
     </div>
   </div>
   <div class="ni has-dd" id="am-t">👤 Asst. Manager ▾
@@ -399,9 +404,10 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddl">SOPs</div>
       <div class="ddi sop-flyout" style="justify-content:space-between">
         <span>📋 Job Role SOPs</span><span style="opacity:0.45;font-size:14px">‹</span>
-        <div class="sop-sub">
+        <div class="sop-sub" id="sop-role-sub">
           <div class="ddl">Job Role SOPs</div>
           <div style="font-size:11px;color:#b4bcc8;padding:2px 14px 6px">Each one opens with three tabs: the listing ad, the description, and the breakdown.</div>
+          <div id="sop-role-note" style="display:none;font-size:11px;color:#b4bcc8;padding:0 14px 6px"></div>
           <div class="ddi" onclick="openSOP('role','CEO')">👔 CEO</div>
           <div class="ddi" onclick="openSOP('role','Project Director')">⬡ Project Director</div>
           <div class="ddi" onclick="openSOP('role','Administrative Manager')">🏢 Administrative Manager</div>
@@ -418,7 +424,17 @@ body.mobile-on .overlay{z-index:6000 !important;}
           <div class="ddi" onclick="openSOP('role','Assistant / Intern')">🎓 Assistant / Intern</div>
         </div>
       </div>
-      <div class="ddi" onclick="openSOP('systems','')">⚙️ Systems &amp; Processes SOPs</div>
+      <!-- Bruce, 28 Sept: "the flip process, that one needs moved into systems and
+           processes SOP tab." It is a process document, so it sits with the processes
+           rather than on its own at the bottom of the menu. -->
+      <div class="ddi sop-flyout" style="justify-content:space-between">
+        <span>⚙️ Systems &amp; Processes SOPs</span><span style="opacity:0.45;font-size:14px">‹</span>
+        <div class="sop-sub">
+          <div class="ddl">Systems &amp; Processes</div>
+          <div class="ddi" onclick="openSOP('systems','')">⚙️ Systems &amp; Processes SOPs</div>
+          <a class="ddi" href="/process.html" style="text-decoration:none">🗺 Flip Process</a>
+        </div>
+      </div>
       <div class="ddl" style="margin-top:4px">Directory</div>
       <div class="ddi" onclick="openContractorDirectory()">📇 Contractor Directory</div>
       <div class="ddl">External Tools</div>
@@ -427,8 +443,6 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="window.open('https://zombie-tv-dashboard.vercel.app/','_blank')">📺 Legacy TV ↗</div>
       <div class="ddi" onclick="window.open('https://conventus-draw-desk.vercel.app/','_blank')">🏦 Draw Desk ↗</div>
       <div class="ddi" onclick="window.open('https://renovation-pricing.vercel.app/','_blank')">💲 Renovation Pricing ↗</div>
-      <div class="ddl">Process</div>
-      <a class="ddi" href="/process.html" style="text-decoration:none">🗺 Flip Process</a>
     </div>
   </div>
 </div>
@@ -893,7 +907,7 @@ function countClosedThisYear(){
 }
 function countActiveForPM(pmName) {
   if (typeof propCards==='undefined') return 0;
-  return propCards.filter(c=>ACTIVE_PHASES.includes(c.phase) && c.pm===pmName).length;
+  return propCards.filter(c=>ACTIVE_PHASES.includes(c.phase) && _sameAssignee(c.pm,pmName)).length;
 }
 
 // ===================== INIT =====================
@@ -1595,6 +1609,37 @@ function applyPermissionsUI() {
   // or hidden by role, it just happened to survive because nothing touched it.
   const _roleTabs = ["pd-t","pm-t","am-t","adm-t","va-t","dsn-t","arch-t","rlt-t"];
   const _superSees = u.isSuperAdmin || isBruce(u) || NAV_SUPER_ROLES.indexOf(u.role) >= 0;
+  // Bruce, 28 Sept: "job role SOPs, he only needs to see his job role SOP that he's
+  // assigned to." Fifteen job descriptions in one menu is fifteen ways to read somebody
+  // else's job instead of your own. Whoever runs the place still sees all of them,
+  // because writing and comparing them IS their job.
+  (function(){
+    // by id, not by position - there is a second flyout now (Systems & Processes)
+    const sub=document.getElementById('sop-role-sub');
+    if(!sub) return;
+    const items=Array.from(sub.querySelectorAll('.ddi'));
+    const note=document.getElementById('sop-role-note');
+    if(_superSees){
+      items.forEach(function(i){ i.style.display=''; });
+      if(note) note.style.display='none';
+      return;
+    }
+    const mine=String(u.role||'').trim().toLowerCase();
+    let shown=0;
+    items.forEach(function(i){
+      const oc=i.getAttribute('onclick')||'';
+      const m=oc.match(/openSOP\('role','([^']*)'\)/);
+      const hit = m && String(m[1]).trim().toLowerCase()===mine;
+      i.style.display = hit ? '' : 'none';
+      if(hit) shown++;
+    });
+    if(note){
+      // Never leave an empty flyout with no explanation - a menu that opens onto
+      // nothing reads as broken.
+      note.textContent = shown ? 'Your role.' : 'No SOP is written for your role yet \u2014 ask Bruce.';
+      note.style.display='';
+    }
+  })();
   if (_superSees) {
     _roleTabs.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = ""; });
   } else {
@@ -2420,7 +2465,8 @@ function openProjectDashboard(activeTab) {
   // every tab, so re-picking the selected name fired no change event and there was no
   // way back to their overview. The picker changes WHO; getting to their dashboard needs
   // its own thing to click, so the chosen person now gets a real tab of their own.
-  const pmTab = pmSet ? `
+  const alreadyTabbed = pmTabs.some(function(t){ return _canonSame(t.label, pmWho); });
+  const pmTab = (pmSet && !alreadyTabbed) ? `
     <div onclick="openProjectDashboard('pm:${_calEsc(pmWho).replace(/'/g,"\\'")}')" title="${_calEsc(pmWho)}'s dashboard"
       style="padding:11px 14px 11px 12px;font-size:13px;color:${pmOnTab?'#111':'#566070'};cursor:pointer;border-bottom:2px solid ${pmOnTab?'#111':'transparent'};white-space:nowrap;display:inline-flex;align-items:center;gap:5px;margin-bottom:-1px;font-weight:${pmOnTab?'600':'400'}">
       <span>\u{1F464}</span>${_calEsc(pmWho)}
@@ -2431,7 +2477,12 @@ function openProjectDashboard(activeTab) {
       <select onchange="_pdPickPM(this.value)" title="Change which manager you are looking at"
         style="font-size:13px;padding:4px 8px;border:0.5px solid ${pmSet?'#dfe4ec':'#dfe4ec'};border-radius:6px;background:#fff;color:#566070;cursor:pointer;outline:none;max-width:${pmSet?'150':'210'}px">
         <option value="">${pmSet?'Switch\u2026':'Project Managers\u2026'}</option>
-        ${pmNames.map(nm=>`<option value="${_calEsc(nm)}" ${_canonSame(nm,pmWho)?'selected':''}>${_calEsc(nm)}${_pmHasLiveWork(nm)?'':' \u00b7 no houses on'}</option>`).join('')}
+        <!-- Deliberately NOT marking the chosen person's option selected. Their name is
+             already on the tab immediately to the left of this box; selecting it here put
+             the same name on screen twice, side by side, which is the "two Alex
+             Bacallaos" Bruce saw on 28 Sept. The box says what it DOES - Switch - and the
+             tab says who you are looking at. -->
+        ${pmNames.map(nm=>`<option value="${_calEsc(nm)}">${_calEsc(nm)}${_pmHasLiveWork(nm)?'':' \u00b7 no houses on'}</option>`).join('')}
         ${pmSet?'<option value="__all">\u2190 Everyone</option>':''}
       </select>
     </div>` : '';
@@ -7203,7 +7254,9 @@ function pmTabContent(name) {
   const isApprovalStep = (nm)=>_isPureApproval(nm);
 
   // Build boards from THIS PM's properties only
-  const myProps = propCards.filter(c => c.pm === name);
+  // NOT c.pm === name. The cards say "Alex", the profile says "Alex Bacallao", and an
+  // exact compare gives a project manager an empty board and a count of zero.
+  const myProps = propCards.filter(c => _sameAssignee(c.pm, name));
 
   const boards = {
     "SOW & Budgets":               [],
@@ -7378,7 +7431,7 @@ const _PM_BOARD_GROUPS = {
 };
 function _pmGroupCards(pmName,key){
   const g=_PM_BOARD_GROUPS[key]; if(!g) return [];
-  return (typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && c.pm===pmName && g.phases.includes(c.phase) && (!g.permittedOnly || (c.checklists&&c.checklists.permitted)==='yes'));
+  return (typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && _sameAssignee(c.pm,pmName) && g.phases.includes(c.phase) && (!g.permittedOnly || (c.checklists&&c.checklists.permitted)==='yes'));
 }
 function _pmBoardTile(pmName,key,title,color){
   const n=_pmGroupCards(pmName,key).length;
@@ -7657,7 +7710,7 @@ function pmStatRow(label, val, color) {
 
   // Get this PM's properties sorted by end date (soonest first, no date at bottom)
   const myProps = propCards
-    .filter(c => c.pm === name)
+    .filter(c => _sameAssignee(c.pm, name))
     .sort((a, b) => {
       if (!a.end && !b.end) return 0;
       if (!a.end) return 1;
@@ -8758,7 +8811,7 @@ function openDollarsDayHousing(){
     if(rate==null) return null;
     return { id:c.id, addr:c.addr||'', pm:c.pm||'—', permitted, type, start:vs||'—', days, spent, rate, basis };
   }).filter(Boolean)
-    .filter(r=>!st.pm || r.pm===st.pm)
+    .filter(r=>!st.pm || _sameAssignee(r.pm,st.pm))
     .filter(r=>!st.type || r.type===st.type)
     .filter(r=>!selIds.length || selIds.indexOf(r.id)>=0);
 
@@ -10134,12 +10187,22 @@ const WM_TOPICS = [
 // and Covered pills, roll up to the house the same way - but the five headings are
 // the ones a takedown actually has. A house we do not own yet has no permits and no
 // spend; it has access, utilities, tenants and a closing date.
+// Bruce, 28 Sept: "the first section should be closing, the second section should be
+// vacancy, the third section should be last week, the fourth section should be this and
+// next week, and the fifth section should be closing, vacancy and any questions - just a
+// full recap of it."
+//
+// The KEYS are deliberately unchanged. Every note the room has already typed is stored
+// against pid::key, and every tick in __topic is too, so renaming a key would quietly
+// orphan weeks of work. So 'close' keeps its key and is now first, 'access' keeps its key
+// and becomes Vacancy (tenants and utilities are what a vacancy actually turns on), and
+// 'lag' keeps its key and becomes the recap at the end.
 const WM_TD_TOPICS = [
-  {key:'access', icon:'\u{1F511}', title:'Access, tenants & utilities', sub:'what has to be lined up before day one'},
+  {key:'close',  icon:'\u{1F4C6}', title:'Closing',                     sub:'the date we buy it, the money, and whether it is on plan'},
+  {key:'access', icon:'\u{1F511}', title:'Vacancy',                     sub:'when it empties, and the access, tenants and utilities behind that'},
   {key:'last',   icon:'\u{1F4C5}', title:'Last week',                   sub:'what was scheduled, and what went right'},
   {key:'next',   icon:'\u{1F5D3}', title:'This week & next week',       sub:'what is booked'},
-  {key:'lag',    icon:'\u{23F3}',  title:'Lag time & questions',        sub:'carried until somebody closes them'},
-  {key:'close',  icon:'\u{1F4C6}', title:'Closing & vacancy',           sub:'dates, budget, kickoff'}
+  {key:'lag',    icon:'\u{23F3}',  title:'Recap',                       sub:'closing, vacancy and anything still unanswered'}
 ];
 function _wmIsTakedown(c){ return !!(c && WM_TAKEDOWN_PHASES.indexOf(c.phase)>=0); }
 function _wmTopicsFor(c){
@@ -12711,8 +12774,16 @@ function _wmTdTopics(wk, c, roNow, ta2, kn){
   const addBoth=bar(btn(_marlo,'Task for '+String(_marlo).split(' ')[0])+btn(_pat,'Task for '+String(_pat).split(' ')[0])
     +(roNow?'':`<button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #e6e8ee;border-radius:7px;font-size:12.5px;color:#566070;cursor:pointer">&#65291; Task for somebody else</button>`));
 
+  // Declared before the sections that use them - two of the five show these tiles.
+  const dTo=_wmDaysTo(c.closingDate), vTo=_wmDaysTo(c.vacancyDate);
+  const _tile=(label,val,col,note)=>`<div><div style="font-size:9.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em">${label}</div><div style="font-size:13px;font-weight:600;color:${col}">${val}</div>${note?`<div style="font-size:10.5px;color:#566070">${note}</div>`:''}</div>`;
+  const _closeTile=_tile('Closing &middot; us buying', _dt(c.closingDate), c.closingDate?'#111':'#B42318',
+      dTo!=null?(dTo<0?'already ours':(dTo+' days away')):'nobody has put the date in');
+  const _vacTile=_tile('Goes vacant', _dt(c.vacancyDate), c.vacancyDate?'#111':'#8A5A10',
+      vTo!=null?(vTo<0?'vacant already':(vTo+' days away')):'unknown');
   const body={};
-  body.access = _sub('What has to be lined up before day one')
+  body.access = '<div style="display:flex;gap:16px;flex-wrap:wrap">'+_vacTile+'</div>'
+    + _sub('What has to be lined up before day one')
     + ta2(c.id+'::access','Access, tenants, utilities, anything the room needs to line up before day one&hellip;',52)
     + addBoth;
 
@@ -12728,20 +12799,35 @@ function _wmTdTopics(wk, c, roNow, ta2, kn){
     + ta2(c.id+'::nextc','One thought per line &mdash; each line carries into next Monday as its own tickable item&hellip;',44)
     + bar(roNow?'':`<button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">&#65291; Add task</button><button onclick="_wmAddEvent('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#4A7318;cursor:pointer;font-weight:600">&#65291; Add calendar event</button>`);
 
-  body.lag = _sub('Lag-time items &middot; carried until they close')
-    + _miBlock('lag', c, roNow)
-    + _sub('Questions for Bruce / Tommy &middot; carried until answered')
-    + _miBlock('q', c, roNow);
+  // Bruce, 28 Sept: "the fifth section should be closing, vacancy and any questions -
+  // just a full recap of it." So this reads the two dates BACK at the room at the end,
+  // rather than asking for them again. Read-only on purpose: it is a recap, not a
+  // second place to type the same thing and have the two disagree.
+  body.lag = '';
 
-  const dTo=_wmDaysTo(c.closingDate), vTo=_wmDaysTo(c.vacancyDate);
   body.close = `<div style="display:flex;gap:16px;flex-wrap:wrap">
-      <div><div style="font-size:9.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em">Closing &middot; us buying</div><div style="font-size:13px;font-weight:600;color:${c.closingDate?'#111':'#B42318'}">${_dt(c.closingDate)}</div><div style="font-size:10.5px;color:#566070">${dTo!=null?(dTo<0?'already ours':(dTo+' days away')):'nobody has put the date in'}</div></div>
-      <div><div style="font-size:9.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em">Goes vacant</div><div style="font-size:13px;font-weight:600;color:${c.vacancyDate?'#111':'#8A5A10'}">${_dt(c.vacancyDate)}</div><div style="font-size:10.5px;color:#566070">${vTo!=null?(vTo<0?'vacant already':(vTo+' days away')):'unknown'}</div></div>
-      <div><div style="font-size:9.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em">ACQ budget</div><div style="font-size:13px;font-weight:600;color:#111">${(c.checklists&&c.checklists.acqBudget)?_calEsc(c.checklists.acqBudget):'&mdash;'}</div></div>
-      <div><div style="font-size:9.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em">Kickoff</div><div style="font-size:13px;font-weight:600;color:${(kn&&kn.done)?'#0F7B54':'#8a6d1a'}">${(kn&&kn.done)?'completed':(kn?'in progress':'not run')}</div></div>
+      ${_closeTile}
+      ${_tile('ACQ budget', (c.checklists&&c.checklists.acqBudget)?_calEsc(c.checklists.acqBudget):'&mdash;', '#111','')}
+      ${_tile('Kickoff', (kn&&kn.done)?'completed':(kn?'in progress':'not run'), (kn&&kn.done)?'#0F7B54':'#8a6d1a','')}
     </div>`
     + _sub('On or off plan, and why') + ta2(c.id+'::money','Price, terms, anything that moves the date&hellip;',44)
     + addBoth;
+
+  // ---- the recap, built once the tiles above exist ----
+  // read the same store the boxes above write into, rather than a second copy that
+  // could drift out of step with what the room actually typed
+  const _notes=(((window._wmData||{})[wk]||{})['team'])||{};
+  const _said=(k)=>String(_notes[c.id+'::'+k]||'').trim();
+  const _recapLine=(label,txt)=>txt
+    ? `<div style="padding:5px 0;border-bottom:0.5px solid #f4f5f7"><div style="font-size:10.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em">${label}</div><div style="font-size:13.5px;color:#111;white-space:pre-wrap;line-height:1.45">${_calEsc(txt)}</div></div>`
+    : `<div style="padding:5px 0;border-bottom:0.5px solid #f4f5f7"><div style="font-size:10.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em">${label}</div><div style="font-size:12.5px;color:#a8aeb9">nothing written yet</div></div>`;
+  body.lag = '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:4px">'+_closeTile+_vacTile+'</div>'
+    + _recapLine('On or off plan', _said('money'))
+    + _recapLine('Before day one', _said('access'))
+    + _sub('Lag-time items &middot; carried until they close')
+    + _miBlock('lag', c, roNow)
+    + _sub('Questions for Bruce / Tommy &middot; carried until answered')
+    + _miBlock('q', c, roNow);
 
   return _wmTopicsFor(c).map(function(t){ return _wmTopicWrap(wk, c, t, body[t.key]||'', roNow); }).join('');
 }
@@ -14919,10 +15005,29 @@ function threeCalendarWidgets(u){
   // everyone else (e.g. a Project Manager like Alex) sees only tasks assigned to them.
   const myName=(u?(`${u.firstName||""} ${u.lastName||""}`).trim():"");
   const seeAll=!!(u && (u.isSuperAdmin || u.accessLevel==="full" || u.role==="Project Director"));
-  const upTasks=(_tasksCache||[]).filter(t=>_taskOpenFor(t,myName) && t.due_date && t.due_date>=todayStr && _taskHasAssignee(t,myName)).sort((a,b)=>a.due_date<b.due_date?-1:1).slice(0,4);
-  const taskRows=upTasks.length? upTasks.map(t=>`<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:0.5px solid #1e1e1e"><div style="min-width:0"><div style="font-size:13px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(t.title)}</div><div style="font-size:11px;color:#666">${t.assignee?_calEsc(t.assignee):"Unassigned"}</div></div><div style="font-size:11px;color:#1F6C9B;white-space:nowrap">${_calEsc(t.due_date)}</div></div>`).join("") : `<div style="text-align:center;color:#555;font-size:13px;padding:16px 0">No upcoming tasks</div>`;
-  const upEvents=(_calEventsCache||[]).filter(e=>e.event_date && e.event_date>=todayStr).sort((a,b)=>a.event_date<b.event_date?-1:1).slice(0,4);
-  const evRows=upEvents.length? upEvents.map(e=>{const lbl=e.kind==="contractor"?("★ "+_contractorName(e.contractor_id)):("📦 "+(e.title||"Material"));return `<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:0.5px solid #1e1e1e"><div style="min-width:0"><div style="font-size:13px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(lbl)}</div><div style="font-size:11px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(_locLabel(e))}</div></div><div style="font-size:11px;color:#f0c674;white-space:nowrap">${_calEsc(e.event_date)}</div></div>`;}).join("") : `<div style="text-align:center;color:#555;font-size:13px;padding:16px 0">No upcoming construction items</div>`;
+  // Bruce, 28 Sept: "I would like for those calendars on the home pages to show only
+  // stuff due within 48 hours." A home screen is the first thing somebody looks at in
+  // the morning - it should answer "what is on me today and tomorrow", not list the month.
+  const _48=(()=>{ const d=new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate()+2); return _ymd(d); })();
+  const upTasks=(_tasksCache||[]).filter(t=>_taskOpenFor(t,myName) && t.due_date && t.due_date>=todayStr && t.due_date<=_48 && _taskHasAssignee(t,myName)).sort((a,b)=>a.due_date<b.due_date?-1:1).slice(0,4);
+  const taskRows=upTasks.length? upTasks.map(t=>`<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:0.5px solid #1e1e1e"><div style="min-width:0"><div style="font-size:13px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(t.title)}</div><div style="font-size:11px;color:#666">${t.assignee?_calEsc(t.assignee):"Unassigned"}</div></div><div style="font-size:11px;color:#1F6C9B;white-space:nowrap">${_calEsc(t.due_date)}</div></div>`).join("") : `<div style="text-align:center;color:#555;font-size:13px;padding:16px 0">Nothing due in the next 48 hours</div>`;
+  // Bruce, 28 Sept: "on Alex's construction calendar, it's showing him stuff for 4111
+  // Dixon and 1313 Lincoln Road and 38 South Wayne on his home page. It should only show
+  // him stuff for properties that he's assigned to."
+  // It was showing EVERY house to everybody - there was no filter on this list at all.
+  // Now: his own houses only, unless he is somebody who is meant to see the whole board.
+  const _mine=(pid)=>{
+    if(seeAll) return true;
+    if(!pid) return false;
+    const c=(typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===pid; });
+    return !!(c && _sameAssignee(c.pm, myName));
+  };
+  // A booking that started before today but is still running IS on this week - match the
+  // whole range, the same way the meeting does.
+  const upEvents=(_calEventsCache||[])
+    .filter(e=>e.event_date && (e.end_date||e.event_date)>=todayStr && e.event_date<=_48 && _mine(e.property_id))
+    .sort((a,b)=>a.event_date<b.event_date?-1:1).slice(0,4);
+  const evRows=upEvents.length? upEvents.map(e=>{const lbl=e.kind==="contractor"?("★ "+_contractorName(e.contractor_id)):("📦 "+(e.title||"Material"));return `<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:0.5px solid #1e1e1e"><div style="min-width:0"><div style="font-size:13px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(lbl)}</div><div style="font-size:11px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(_locLabel(e))}</div></div><div style="font-size:11px;color:#f0c674;white-space:nowrap">${_calEsc(e.event_date)}</div></div>`;}).join("") : `<div style="text-align:center;color:#555;font-size:13px;padding:16px 0">Nothing on site in the next 48 hours</div>`;
   const card=(title,linkLabel,linkFn,body)=>`<div style="background:#111;border:1px solid #2a2a2a;border-radius:10px;overflow:hidden;display:flex;flex-direction:column">
       <div style="padding:10px 14px;border-bottom:1px solid #2a2a2a;display:flex;align-items:center;justify-content:space-between">
         <div style="font-size:13px;font-weight:500;color:#fff">${title}</div>
@@ -14949,8 +15054,8 @@ function threeCalendarWidgets(u){
     </div>`;
   return overdueCard + `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:12px">
     ${card("📆 Google Calendar","","",googleBody)}
-    ${card("🗒 Task Calendar","View","openProjectDashboard('taskcal')",taskRows)}
-    ${card("🏗 Construction Calendar","View","openProjectDashboard('construction')",evRows)}
+    ${card("🗒 Task Calendar &middot; next 48h","View","openProjectDashboard('taskcal')",taskRows)}
+    ${card((seeAll?"🏗 Construction Calendar":"🏗 Your sites")+" &middot; next 48h","View","openProjectDashboard('construction')",evRows)}
   </div>`;
 }
 
@@ -15152,6 +15257,47 @@ function _rhRow(tiles){ return `<div style="display:grid;grid-template-columns:r
 function _rhHead(t,sub){ return `<div style="margin:16px 0 8px"><span style="font-size:13px;font-weight:600;color:#fff">${t}</span>${sub?`<span style="font-size:11px;color:#555;margin-left:8px">${sub}</span>`:''}</div>`; }
 function _rhCards(){ return (typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived); }
 function _rhPhase(ph,pm){ return _rhCards().filter(c=>c.phase===ph && (!pm||_sameAssignee(c.pm,pm))).length; }
+// Every stage a property can sit in has to land on exactly one tile on the
+// "My projects by stage" strip, or a house goes quiet - still on the person's
+// board, but missing from the strip, and the numbers quietly stop adding up.
+// Four stages had no tile at all (Upcoming Takedowns, Occupied / Closed,
+// Vacant / On Standby, Rental Handoff Process). This map is now the single
+// place the strip is defined, and _pmStageUncovered() below is the alarm: if
+// anyone adds a phase to PROP_PHASES without giving it a home here, its
+// properties land in an "Other stages" tile instead of disappearing.
+const PM_STAGE_TILES = [
+  {label:"Takedown / standby", col:"#AF2C2B", sub:"not started yet",
+   phases:["Upcoming Takedowns","Occupied / Closed","Vacant / On Standby"]},
+  {label:"Pre Construction", col:"#378ADD", sub:"",
+   phases:["Pre Construction"]},
+  {label:"Waiting on permits", col:"#A63258", sub:"",
+   phases:["Waiting Permits"]},
+  {label:"Active construction", col:"#639922", sub:"framing \u2192 drywall",
+   phases:["Framing, MEPS, Insulation","Drywall / Exterior Work"]},
+  {label:"Finishes / Pre-list / Punch out", col:"#A63F1C", sub:"",
+   phases:["Finishes","Pre List / Punchout Process"]},
+  {label:"Rental handoff", col:"#0E7460", sub:"",
+   phases:["Rental Handoff Process"]},
+  {label:"On the market", col:"#7A3FA8", sub:"",
+   phases:["Listed on the Market","Listed on the Market / Final Inspections"]},
+  {label:"In contract", col:"#185FA5", sub:"",
+   phases:["In Contract"]},
+  {label:"End of project / bonuses", col:"#27500A", sub:"RTR + closed",
+   phases:["RTR In Process","RTR Completed (Pending Closing)","Closed"]}
+];
+function _pmStageUncovered(){
+  const seen={};
+  PM_STAGE_TILES.forEach(function(t){ (t.phases||[]).forEach(function(p){ seen[p]=1; }); });
+  return (typeof PROP_PHASES!=='undefined'?PROP_PHASES:[])
+    .map(function(p){ return p.name; })
+    .filter(function(n){ return !seen[n]; });
+}
+// How many active properties this person is carrying, counted off the same
+// cards the tiles count. The strip shows it first so the breakdown can be
+// checked against it at a glance - if the two disagree, something is miscounted.
+function _pmStageTotal(name){
+  return _rhCards().filter(function(c){ return !name || _sameAssignee(c.pm, name); }).length;
+}
 function _rhPct(v){ return (v==null||v==="--")?"—":(v+"%"); }
 function _rhMoney(v){ return (v==null)?"—":("$"+Number(v).toLocaleString()); }
 function _rhName(u){ return u?`${u.firstName||""} ${u.lastName||""}`.trim():""; }
@@ -15271,6 +15417,14 @@ function renderPMHome(user){
   const name=_rhName(user);
   const m=_rhMetrics30(name);
   const ph=(p)=>_rhPhase(p,name);
+  const _stageN=(t)=>(t.phases||[]).reduce(function(n,p){ return n+ph(p); },0);
+  const _left=_pmStageUncovered();
+  const _leftN=_left.reduce(function(n,p){ return n+ph(p); },0);
+  const _stageTiles=[_rhTile("All my projects",_pmStageTotal(name),"#fff","every stage below","openProjectDashboard('board')")]
+    .concat(PM_STAGE_TILES.map(function(t){
+      return _rhTile(t.label,_stageN(t),t.col,t.sub,"openProjectDashboard('board')");
+    }));
+  if(_leftN) _stageTiles.push(_rhTile("Other stages",_leftN,"#8A94A6",_left.join(", "),"openProjectDashboard('board')"));
   return `<div style="padding:20px 24px;max-width:100%">
     ${welcomeHeader(user)}
     ${sharedWidgets()}
@@ -15283,15 +15437,7 @@ function renderPMHome(user){
       _rhTile("Tasks rescheduled %",_rhPct(m.reschedPct),"#9A6206"),
     ])}
     ${_rhHead("My projects by stage","click a number to open the property dashboard")}
-    ${_rhRow([
-      _rhTile("Pre Construction",ph("Pre Construction"),"#378ADD","","openProjectDashboard('board')"),
-      _rhTile("Waiting on permits",ph("Waiting Permits"),"#A63258","","openProjectDashboard('board')"),
-      _rhTile("Active construction",ph("Framing, MEPS, Insulation")+ph("Drywall / Exterior Work"),"#639922","framing → drywall","openProjectDashboard('board')"),
-      _rhTile("Finishes / Pre-list / Punch out",ph("Finishes")+ph("Pre List / Punchout Process"),"#A63F1C","","openProjectDashboard('board')"),
-      _rhTile("On the market",ph("Listed on the Market")+ph("Listed on the Market / Final Inspections"),"#7A3FA8","","openProjectDashboard('board')"),
-      _rhTile("In contract",ph("In Contract"),"#185FA5","","openProjectDashboard('board')"),
-      _rhTile("End of project / bonuses",ph("RTR In Process")+ph("RTR Completed (Pending Closing)")+ph("Closed"),"#27500A","RTR + closed","openProjectDashboard('board')"),
-    ])}
+    ${_rhRow(_stageTiles)}
   </div>`;
 }
 
@@ -16291,7 +16437,10 @@ function _pmPickerNames(){
   const push=(n)=>{ const nm=(typeof _canonName==='function')?_canonName(n):String(n||'').trim();
     if(!nm) return; const k=nm.toLowerCase();
     if(seen[k]) return; seen[k]=true; out.push(nm); };
-  if(!_seesEveryone()) return _pmTabNames();          // a PM still only sees their own
+  // This used to hand a project manager only their own name, so the picker had nothing
+  // to pick and they were stuck on their own board. Bruce, 28 Sept: "make sure he has
+  // the option to view another project manager's board if he wants to." Their OWN board
+  // is still the one they land on - _pmTabNames decides that - this only fills the list.
   (typeof PM_MANAGERS!=='undefined'?PM_MANAGERS:[]).forEach(push);
   ((typeof getUsers==='function')?getUsers():[])
     .filter(function(u){ return u && u.status==='approved' &&
@@ -20986,7 +21135,13 @@ function _vaTrackers(){
   // separate site, so this tile opens it in a new tab instead of switching the view -
   // hence the arrow, so nobody expects it to load in place.
   const drawTile=`<div onclick="window.open('https://conventus-draw-desk.vercel.app/','_blank')" title="Opens Tommy's Draw Desk in a new tab" style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid #0B6E4F;border-radius:10px;padding:13px 15px;cursor:pointer"><div style="display:flex;justify-content:space-between"><div style="font-size:13.5px;font-weight:600;color:#111">\u{1F3E6} Draw Desk</div><span style="color:#636b7a">\u2197</span></div><div style="font-size:15px;font-weight:600;color:#0B6E4F;margin-top:9px">Draw schedules</div><div style="font-size:11px;color:#566070">opens in a new tab</div></div>`;
-  const tiles=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:16px">${tile('w9','🧾','W-9 Tracker',w9out,'#7A3FA8')}${tile('window','🪟','Window Tracker',winout,'#185FA5')}${tile('mow','🌱','Mowing Tracker',mowout,'#3B6D11')}${tile('checklist','✅','Checklist Tracker',clout,'#0B7285')}${tile('util','⚡','Utility Tracker',utilout,'#8A5A10')}${tile('permit','📄','Permit Tracker',permitout,'#B03A8B')}${drawTile}</div>`;
+  // Bruce, 28 Sept, on the Project Manager menu: "it does have the permit dashboard,
+  // which can be under trackers, so go ahead and put that under that one."
+  // The Permit TRACKER is the sheet you fill in; the Permit DASHBOARD is the read-across
+  // of where every permit stands. Both belong here, so taking the dashboard off the menu
+  // does not take it away from anybody.
+  const permitDashTile=`<div onclick="openPermitDashboard()" title="Where every permit stands" style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid #7A3FA8;border-radius:10px;padding:13px 15px;cursor:pointer"><div style="display:flex;justify-content:space-between"><div style="font-size:13.5px;font-weight:600;color:#111">\u{1F4CA} Permit Dashboard</div><span style="color:#636b7a">\u203A</span></div><div style="font-size:15px;font-weight:600;color:#7A3FA8;margin-top:9px">Where they all stand</div><div style="font-size:11px;color:#566070">submitted \u2192 approved \u2192 inspections</div></div>`;
+  const tiles=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:16px">${tile('w9','🧾','W-9 Tracker',w9out,'#7A3FA8')}${tile('window','🪟','Window Tracker',winout,'#185FA5')}${tile('mow','🌱','Mowing Tracker',mowout,'#3B6D11')}${tile('checklist','✅','Checklist Tracker',clout,'#0B7285')}${tile('util','⚡','Utility Tracker',utilout,'#8A5A10')}${tile('permit','📄','Permit Tracker',permitout,'#B03A8B')}${permitDashTile}${drawTile}</div>`;
   const back=`<div onclick="window._trkView='summary';(window._trkRerender||function(){openVAAdminDashboard('trackers');})()" style="display:inline-flex;align-items:center;gap:5px;font-size:13px;color:#185FA5;cursor:pointer;margin-bottom:10px">‹ Back to Trackers</div>`;
   const shell=(inner)=>`<div style="padding:20px;max-width:1120px;margin:0 auto">
       <div style="position:sticky;top:0;z-index:20;background:#f4f5f7;padding:2px 0 8px;margin:-2px 0 2px;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
@@ -23122,7 +23277,7 @@ function renderConstructionCalendar(){
     const ds=`${st.y}-${String(st.m+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
     return _calEventsCache.filter(e=> (e.event_date===ds || (e.end_date && e.event_date<=ds && ds<=e.end_date))
       && (st.prop==="all"||e.property_id===st.prop)
-      && (st.pm==="all"||_propPM(e.property_id)===st.pm)
+      && (st.pm==="all"||_sameAssignee(_propPM(e.property_id),st.pm))
       && (!st.rtrOnly || ["RTR In Process","RTR Completed (Pending Closing)"].includes(_propPhase(e.property_id)))
       && _matchFilter(e));
   };
@@ -23157,7 +23312,7 @@ function renderConstructionCalendar(){
     </div>`;
   if(st.view==='day'){
     const dayStr=st.day||todayStr;
-    const evs=_calEventsCache.filter(e=> e.event_date===dayStr && (st.prop==="all"||e.property_id===st.prop) && (st.pm==="all"||_propPM(e.property_id)===st.pm) && _matchFilter(e)).sort((a,b)=>(a.completed?1:0)-(b.completed?1:0));
+    const evs=_calEventsCache.filter(e=> e.event_date===dayStr && (st.prop==="all"||e.property_id===st.prop) && (st.pm==="all"||_sameAssignee(_propPM(e.property_id),st.pm)) && _matchFilter(e)).sort((a,b)=>(a.completed?1:0)-(b.completed?1:0));
     const isToday=dayStr===todayStr;
     const rowFor=(e)=>{ const done=!!e.completed;
       const lbl = e.kind==="contractor" ? ("★ Contractor start — "+_contractorName(e.contractor_id)) : e.kind==="custom" ? ("• "+(e.title||'Event')) : ("📦 Material delivery — "+(e.title||'Material'));
@@ -27192,4 +27347,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-28e calendar-by-property-and-reschedule-with-both-dates -->
+<!-- build: 2026-09-28h takedowns-in-five-sections -->
