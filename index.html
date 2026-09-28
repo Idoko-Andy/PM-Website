@@ -21925,13 +21925,34 @@ async function loadContractorsFromSupabase(){
   if(error){ ({ data, error } = await supabase.from("pm_contractors").select("id,name,phone,trade").order("name",{ascending:true})); }
   _contractorsCache = error ? [] : (data||[]);
 }
-async function loadCalendarEventsFromSupabase(){
-  let { data, error } = await supabase.from("pm_calendar_events").select("id,property_id,event_date,end_date,kind,title,contractor_id,notes,completed,location,reschedule_count,last_rescheduled_at,reschedule_reasons").order("event_date",{ascending:true});
-  if(error){ // reschedule_reasons may not exist yet — fall back without it
-    ({ data, error } = await supabase.from("pm_calendar_events").select("id,property_id,event_date,end_date,kind,title,contractor_id,notes,completed,location,reschedule_count,last_rescheduled_at").order("event_date",{ascending:true}));
+// Supabase hands back at most 1000 rows per request and says nothing about the rest.
+// The construction calendar crossed that line on 28 September, the day the Legacy TV
+// schedule came across: 1,122 bookings in the database, 1,000 in the app, 122 of them
+// silently invisible. Nothing errored - the list was just quietly short, which is the
+// worst way for a board to be wrong. Every list that can grow past a thousand rows is
+// read a page at a time from here on.
+async function _pageAll(build){
+  const SIZE=1000; let from=0; const all=[];
+  for(;;){
+    const { data, error } = await build().range(from, from+SIZE-1);
+    if(error) return { data:null, error:error };
+    const got=data||[];
+    all.push.apply(all, got);
+    if(got.length<SIZE) return { data:all, error:null };
+    from += SIZE;
+    if(from > 200000) return { data:all, error:null };   // a hard stop, never reached in practice
   }
-  if(error){ // location column may not exist on older DBs — fall back
-    ({ data, error } = await supabase.from("pm_calendar_events").select("id,property_id,event_date,kind,title,contractor_id,notes,completed").order("event_date",{ascending:true}));
+}
+async function loadCalendarEventsFromSupabase(){
+  const cols=["id,property_id,event_date,end_date,kind,title,contractor_id,notes,completed,location,reschedule_count,last_rescheduled_at,reschedule_reasons",
+              // reschedule_reasons may not exist yet — fall back without it
+              "id,property_id,event_date,end_date,kind,title,contractor_id,notes,completed,location,reschedule_count,last_rescheduled_at",
+              // location may not exist on older DBs — fall back again
+              "id,property_id,event_date,kind,title,contractor_id,notes,completed"];
+  let data=null, error=null;
+  for(let i=0;i<cols.length;i++){
+    ({ data, error } = await _pageAll(()=>supabase.from("pm_calendar_events").select(cols[i]).order("event_date",{ascending:true})));
+    if(!error) break;
   }
   _calEventsCache = error ? [] : (data||[]);
 }
@@ -23025,12 +23046,16 @@ async function deleteCalEvent(id){
 // ===================== TASK SYSTEM + TASK CALENDAR =====================
 let _tasksCache = [];
 async function loadTasks(){
-  let { data, error } = await supabase.from("pm_tasks").select("id,title,assignee,assignees,due_date,due_time,start_date,category,refer_to,status,property_id,notes,comments,subtasks,location,reschedule_count,last_rescheduled_at,reschedule_reasons,completed_at").order("due_date",{ascending:true});
-  if(error){ // subtasks is the newest column - drop it before giving up entirely
-    ({ data, error } = await supabase.from("pm_tasks").select("id,title,assignee,assignees,due_date,due_time,start_date,category,refer_to,status,property_id,notes,comments,location,reschedule_count,last_rescheduled_at,reschedule_reasons,completed_at").order("due_date",{ascending:true}));
-  }
-  if(error){ // some columns may not exist yet on older DBs — fall back gracefully
-    ({ data, error } = await supabase.from("pm_tasks").select("id,title,assignee,assignees,due_date,start_date,category,refer_to,status,property_id,notes").order("due_date",{ascending:true}));
+  // Same thousand-row trap as the calendar. Tasks are at 597 and climb every week.
+  const cols=["id,title,assignee,assignees,due_date,due_time,start_date,category,refer_to,status,property_id,notes,comments,subtasks,location,reschedule_count,last_rescheduled_at,reschedule_reasons,completed_at",
+              // subtasks is the newest column - drop it before giving up entirely
+              "id,title,assignee,assignees,due_date,due_time,start_date,category,refer_to,status,property_id,notes,comments,location,reschedule_count,last_rescheduled_at,reschedule_reasons,completed_at",
+              // some columns may not exist yet on older DBs — fall back gracefully
+              "id,title,assignee,assignees,due_date,start_date,category,refer_to,status,property_id,notes"];
+  let data=null, error=null;
+  for(let i=0;i<cols.length;i++){
+    ({ data, error } = await _pageAll(()=>supabase.from("pm_tasks").select(cols[i]).order("due_date",{ascending:true})));
+    if(!error) break;
   }
   _tasksCache = error ? [] : (data||[]);
 }
@@ -26592,4 +26617,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-28b tv-construction-calendar-linked -->
+<!-- build: 2026-09-28c calendar-and-tasks-read-past-the-1000-row-cap -->
