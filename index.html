@@ -9507,26 +9507,42 @@ function _wmRange(wk, weeks){
 // ===================== MONDAY MEETING — SCHEDULED WORK =====================
 // One list mixing tasks and calendar events for a property inside a date window,
 // so the room walks the week rather than two separate lists.
+// "1 Sept" is right for a one day job and wrong for a four week one. Show the span.
+function _wmSpan(d, ed){ return (ed && ed!==d) ? (d+' \u2192 '+ed) : d; }
+function _wmSpanShort(d, ed){ return (ed && ed!==d) ? (_wmDateShort(d)+' \u2192 '+_wmDateShort(ed)) : _wmDateShort(d); }
 function _wmItems(pid, from, to){
   const out=[];
   (typeof _tasksCache!=='undefined'?_tasksCache:[]).forEach(t=>{
     if(t.property_id!==pid) return;
     const d=t.due_date||''; if(!d || d<from || d>to) return;
-    out.push({key:'t:'+t.id, id:t.id, type:'task', date:d, title:t.title||'Task',
+    out.push({key:'t:'+t.id, id:t.id, type:'task', date:d, endDate:'', running:false, when:d, title:t.title||'Task',
               sub:(taskAssignees(t).join(', ')||'Unassigned')+(t.category?(' · '+t.category):''),
               note:String(t.notes||'').trim(),
               done:t.status==='done', kind:'t', kindLabel:'Task'});
   });
   (typeof _calEventsCache!=='undefined'?_calEventsCache:[]).forEach(e=>{
     if(e.property_id!==pid) return;
-    const d=e.event_date||''; if(!d || d<from || d>to) return;
+    const d=e.event_date||''; if(!d) return;
+    // A trade booked as a date RANGE is on site the whole way through, so it belongs
+    // in every week it touches - not only the week it started.
+    //
+    // Bruce, 28 Sept: "if the task calendars were connected and were linked, then you
+    // would have the foundation work showing on the full project team meeting doc."
+    // Once the Legacy TV schedule came across, the foundation crew were on 8 Hide Away
+    // Hills from 1 to 28 September - a four week booking. Filtering on the start date
+    // alone meant that after week one they vanished from the meeting, while the men
+    // were still standing in the hole. Same for every long paint, drywall or roof run.
+    const ed=e.end_date||d;
+    if(ed<from || d>to) return;
+    const running=(d<from);
     const isC=e.kind==='contractor';
     const trade=isC?(_contractorTrade(e.contractor_id)||''):'';
     // The notes ARE the description of the work. Boilerplate the app wrote itself is
     // not worth a line in the meeting.
     let enote=String(e.notes||'').trim();
     if(/^auto-added from the/i.test(enote)) enote='';
-    out.push({key:'e:'+e.id, id:e.id, type:'event', date:d,
+    out.push({key:'e:'+e.id, id:e.id, type:'event', date:d, endDate:(e.end_date||''), running:running,
+              when:_wmSpan(d, e.end_date||''),
               title:isC?(_contractorName(e.contractor_id)||'Contractor'):(e.title||(e.kind==='material'?'Material':'Event')),
               sub:isC?(trade?('Contractor \u00b7 '+trade):'Contractor booking'):(e.kind==='material'?'Material / delivery':'Scheduled'),
               note:enote,
@@ -10350,7 +10366,7 @@ function _wmSummaryHtml(wk){
     D.booked.slice(0,30).map(x=>{
       const cf=D.conf[x.it.key]||{};
       const pill=cf.c?'<span class="pill on">Confirmed</span>':'<span class="pill off">Not confirmed</span>';
-      return row([[_wmDateShort(x.it.date),'num'],['<b>'+esc(x.c.addr||'')+'</b>'],[esc(x.it.title)],[pill],[esc(_miItemNoteVal(x.it.key))||'&mdash;']]);
+      return row([[_wmSpanShort(x.it.date, x.it.endDate||''),'num'],['<b>'+esc(x.c.addr||'')+'</b>'],[esc(x.it.title)],[pill],[esc(_miItemNoteVal(x.it.key))||'&mdash;']]);
     }).join('')+'</tbody></table></div>':none('Nothing is booked for the next two weeks.');
 
   const winList=D.wins.length?'<ul>'+D.wins.map(x=>`<li><b>${esc(x.c.addr||'')}</b> &mdash; ${esc(x.t)}</li>`).join('')+'</ul>':none('No wins written up this week.');
@@ -12299,7 +12315,7 @@ function _wmTdTopics(wk, c, roNow, ta2, kn){
   const lastR=_wmRange(_wmPrevWeek(wk),1);
   const fwdR=_wmRange(wk,2);
   const row=(it)=>`<div style="display:flex;gap:9px;align-items:baseline;padding:5px 0;border-bottom:0.5px solid #f4f5f7">
-      <span style="font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#566070;width:92px;flex-shrink:0">${_calEsc(it.date)}</span>
+      <span style="font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#566070;width:${it.endDate&&it.endDate!==it.date?'168px':'92px'};flex-shrink:0">${_calEsc(it.when||it.date)}${it.running?'<span style="color:#8A5A10;font-weight:600"> \u00b7 already on site</span>':''}</span>
       <span style="flex:1;min-width:0">
         <span style="font-size:14px;color:#111">${_calEsc(it.title)}</span>
         ${it.sub?`<span style="font-size:11.5px;color:#566070"> &middot; ${_calEsc(it.sub)}</span>`:''}
@@ -12948,7 +12964,7 @@ function openWeeklyMeeting(kind, week){
           return `<label onclick="${call}" style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:${on?col:'#566070'};cursor:pointer"><span style="font-size:14px">${on?'&#9745;':'&#9744;'}</span>${label}</label>`;
         };
         return `<div style="display:flex;gap:10px;align-items:flex-start;padding:${it.done?'5px':'7px'} 0;border-bottom:0.5px solid #f4f5f7;${it.done?'opacity:.62':''}">
-          <div style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:#566070;width:88px;flex-shrink:0;padding-top:2px">${dayLbl(it.date)}</div>
+          <div style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:#566070;width:88px;flex-shrink:0;padding-top:2px">${dayLbl(it.date)}${it.endDate&&it.endDate!==it.date?`<div style="font-size:11px;color:#636b7a">to ${dayLbl(it.endDate)}</div>`:''}${it.running?'<div style="font-size:11px;color:#8A5A10;font-weight:600">already on site</div>':''}</div>
           <div style="flex:1;min-width:0">
             <div style="font-size:15px;color:${it.done?'#0F7B54':'#111'}">${kindPill(it.kind,it.kindLabel)}${_calEsc(it.title)}</div>
             <div style="font-size:12.5px;color:#566070;margin-top:2px">${_calEsc(it.sub)}</div>${it.note?`<div style="font-size:13.5px;color:#333;margin-top:3px;line-height:1.45">${_calEsc(it.note)}</div>`:''}
@@ -12970,7 +12986,7 @@ function openWeeklyMeeting(kind, week){
           ? `<span style="font-size:11.5px;font-weight:600;color:${x.done?'#0F7B54':'#636b7a'}">${x.done?'&#9745;':'&#9744;'} Completed</span>`
           : `<label onclick="_wmDone('${x.key}',${x.done?'false':'true'})" style="display:flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;color:${x.done?'#0F7B54':'#566070'};cursor:pointer"><span style="font-size:14px">${x.done?'&#9745;':'&#9744;'}</span>Completed</label>`;
         return `<div style="display:flex;gap:10px;align-items:flex-start;padding:${it.done?'5px':'7px'} 0;border-bottom:0.5px solid #f4f5f7;${it.done?'opacity:.62':''}">
-          <div style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:#566070;width:88px;flex-shrink:0;padding-top:2px">${dayLbl(it.date)}</div>
+          <div style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:#566070;width:88px;flex-shrink:0;padding-top:2px">${dayLbl(it.date)}${it.endDate&&it.endDate!==it.date?`<div style="font-size:11px;color:#636b7a">to ${dayLbl(it.endDate)}</div>`:''}${it.running?'<div style="font-size:11px;color:#8A5A10;font-weight:600">already on site</div>':''}</div>
           <div style="flex:1;min-width:0">
             <div style="font-size:15px;color:${it.done?'#0F7B54':'#111'}">${kindPill(it.kind,it.kindLabel)}${_calEsc(it.title)}${it.done?' <span style="font-size:9.5px;font-weight:700;color:#0F7B54;background:#E6F4ED;padding:1px 6px;border-radius:99px;vertical-align:middle">DONE</span>':''}</div>
             <div style="font-size:12.5px;color:#566070;margin-top:2px">${_calEsc(it.sub)}</div>${it.note?`<div style="font-size:13.5px;color:#333;margin-top:3px;line-height:1.45">${_calEsc(it.note)}</div>`:''}
@@ -16040,7 +16056,9 @@ function _pmaDueTasks(holders){
 function _pmaWeekEvents(phases){
   const today=new Date(); today.setHours(0,0,0,0); const todayStr=_ymd(today);
   const we=new Date(today); we.setDate(today.getDate()+6); const weStr=_ymd(we);
-  return (_calEventsCache||[]).filter(e=>e.event_date>=todayStr && e.event_date<=weStr && phases.includes(_propPhase(e.property_id)))
+  // A booking that runs across this week counts as this week's work even if it
+  // started earlier, so match on the whole range.
+  return (_calEventsCache||[]).filter(e=>(e.end_date||e.event_date)>=todayStr && e.event_date<=weStr && phases.includes(_propPhase(e.property_id)))
     .sort((a,b)=>a.event_date<b.event_date?-1:1);
 }
 function _pmaTaskRow(t){ return `<div onclick="pmaToggleTask('${t.id}')" title="Click to mark completed" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:0.5px solid #f4f5f7"><div style="min-width:0;flex:1"><div style="font-size:14px;color:#111;font-weight:500">${t.category?`<span style="font-size:11px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:6px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div><div style="font-size:12px;color:#566070;margin-top:2px">${_locLabel(t)?_calEsc(_locLabel(t))+' · ':''}${_calEsc(taskAssignees(t).join(', '))}</div></div><div style="font-size:12px;font-weight:600;color:${t._today?'#c0392b':'#8A5A10'};white-space:nowrap">${t.due_date||''} ☐</div></div>`; }
@@ -17763,7 +17781,10 @@ function _drTimelineFlags(c){
     if(last && last<c.end && _drDays(last,c.end)>14) flags.push({tone:'amber', text:'Steps stop '+_drDays(last,c.end)+' days before finish'});
   }
   const horizon=_ymd(new Date(Date.now()+14*86400000));
-  const onCal=(_calEventsCache||[]).some(function(e){ return e.property_id===c.id && e.event_date>=td && e.event_date<=horizon; })
+  const onCal=(_calEventsCache||[]).some(function(e){ if(e.property_id!==c.id) return false;
+             // A crew booked 1-28 Sept IS on the calendar on the 20th. Match the
+             // whole booking, not just the day it started.
+             return (e.end_date||e.event_date)>=td && e.event_date<=horizon; })
            || (_tasksCache||[]).some(function(t){ return t.property_id===c.id && t.status!=='done' && t.due_date>=td && t.due_date<=horizon; })
            || subs.some(function(s){ return !s.completed && _drIsDate(s.due) && s.due>=td && s.due<=horizon; });
   if(!onCal) flags.push({tone:'amber', text:'Nothing on the calendar next 14 days'});
@@ -26571,4 +26592,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-28a permit-subphase-dates-from-the-tracker -->
+<!-- build: 2026-09-28b tv-construction-calendar-linked -->
