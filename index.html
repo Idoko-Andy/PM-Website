@@ -7121,25 +7121,25 @@ function _sqAllBody(){
     return String(a.c.addr||'').localeCompare(String(b.c.addr||''));
   });
   const counts={};
-  _sqAllItems().filter(o=>!o.x.done).forEach(o=>{ const k=o.who||'\\u2014'; counts[k]=(counts[k]||0)+1; });
+  _sqAllItems().filter(o=>!o.x.done).forEach(o=>{ const k=o.who||'—'; counts[k]=(counts[k]||0)+1; });
   const mineOpen=counts[me]||0;
   const chip=(v,label,n,on)=>`<div onclick="_sqAllGo('${_argEsc(v)}')" style="padding:7px 14px;border-radius:9px;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap;${on?'background:#122A4A;color:#fff':'background:#fff;color:#555;border:0.5px solid #d8dce6'}">${_calEsc(label)}${n!==null?` <span style="opacity:.7;font-weight:400">${n}</span>`:''}</div>`;
   const others=canSeeAll?[...new Set(_sqAllItems().map(o=>o.who).filter(w=>w&&w!==me))].sort():[];
   const bar=`<div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
-      ${me?chip('me','\\uD83D\\uDC64 Mine',mineOpen,sel==='me'):''}
+      ${me?chip('me','👤 Mine',mineOpen,sel==='me'):''}
       ${canSeeAll?chip('all','Everyone',Object.values(counts).reduce((a,b)=>a+b,0),sel==='all'):''}
-      ${canSeeAll?chip('none','Nobody in particular',counts['\\u2014']||0,sel==='none'):''}
+      ${canSeeAll?chip('none','Nobody in particular',counts['—']||0,sel==='none'):''}
       ${others.map(w=>chip(w,w,counts[w]||0,sel===w)).join('')}
       <div style="flex:1"></div>
       <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#566070;cursor:pointer;white-space:nowrap"><input type="checkbox" ${showDone?'checked':''} onchange="_sqAllShowDone()" style="cursor:pointer"/> show handled ones too</label>
     </div>`;
   const rows=items.length?items.map(o=>{
     const over=o.at && o.at<today, due=o.at && o.at===today;
-    const when = !o.at ? 'no date' : (over?'Overdue \\u00b7 '+o.at : (due?'Today':o.at));
+    const when = !o.at ? 'no date' : (over?'Overdue · '+o.at : (due?'Today':o.at));
     const col  = !o.at ? '#636b7a' : (over?'#B42318':(due?'#8A5A10':'#185FA5'));
     const ph=(SQ_PHASES.find(pp=>pp.id===_sqPhaseOf(o.x))||{}).label||'';
     return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid ${col};border-radius:9px;padding:10px 13px;margin-bottom:7px;display:flex;gap:10px;align-items:flex-start">
-      <span onclick="_sqToggle('${o.c.id}','${o.x.id}')" title="${o.x.done?'Put it back on the list':'Mark it handled'}" style="cursor:pointer;font-size:15px;flex-shrink:0;line-height:1.2">${o.x.done?'\\u2705':'\\u2B1C'}</span>
+      <span onclick="_sqToggle('${o.c.id}','${o.x.id}')" title="${o.x.done?'Put it back on the list':'Mark it handled'}" style="cursor:pointer;font-size:15px;flex-shrink:0;line-height:1.2">${o.x.done?'✅':'⬜'}</span>
       <div style="flex:1;min-width:0">
         <div style="font-size:13.5px;color:${o.x.done?'#9aa3b2':'#111'};${o.x.done?'text-decoration:line-through':''};white-space:pre-wrap">${_calEsc(o.x.t||'')}</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:4px">
@@ -7153,7 +7153,7 @@ function _sqAllBody(){
     </div>`;
   }).join(''):`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:30px;text-align:center;color:#636b7a;font-size:13.5px">Nothing here. Side tasks are added on a property card &mdash; pick a name when you add one and it lands in that person's list.</div>`;
   return `<div style="padding:20px;max-width:900px">
-    <div style="font-size:17px;font-weight:700;color:#111">\\uD83E\\uDDE9 Side Tasks</div>
+    <div style="font-size:17px;font-weight:700;color:#111">🧩 Side Tasks</div>
     <div style="font-size:12.5px;color:#566070;margin-bottom:13px">Every reminder written on a property card, gathered by who it is for.</div>
     ${bar}${rows}</div>`;
 }
@@ -9873,34 +9873,70 @@ function _wmReschedVal(k){
   const st=window.__wmResched;
   return (st && st.key===k && st.val) ? st.val : '';
 }
+// The finish date, for a booking that runs across days.
+function _wmReschedVal2(k){
+  const inp=document.getElementById('rsj-'+_wmReschedId(k));
+  if(inp) return inp.value||'';
+  const st=window.__wmResched;
+  return (st && st.key===k && st.val2) ? st.val2 : '';
+}
 function _wmReschedPick(itemKey, val){
-  if(!window.__wmResched || window.__wmResched.key!==itemKey) window.__wmResched={key:itemKey, val:''};
+  if(!window.__wmResched || window.__wmResched.key!==itemKey) window.__wmResched={key:itemKey, val:'', val2:''};
   window.__wmResched.val=val||'';
 }
+function _wmReschedPick2(itemKey, val){
+  if(!window.__wmResched || window.__wmResched.key!==itemKey) window.__wmResched={key:itemKey, val:'', val2:''};
+  window.__wmResched.val2=val||'';
+}
+// Is this item a booking on the construction calendar (as opposed to a task)?
+function _wmReschedIsEvent(itemKey){ return String(itemKey||'').slice(0,1)==='e'; }
 // The open box, drawn from state so it survives a redraw.
+//
+// Bruce, 28 Sept: "when I click on that reschedule button it needs to give me an option
+// to click a new start date and a NEW FINISH DATE for that contractor."
+// He is right, and it was worse than missing. A booking is a range - the foundation crew
+// were on 8 Hide Away Hills from 1 to 28 September - and moving only the start left the
+// finish where it was. Push that start past the old finish and the booking ends before it
+// begins. So a contractor booking now asks for both ends, and refuses a finish that lands
+// before its start. A task still has one date, because a task has one date.
 function _wmReschedBox(itemKey){
   const id=_wmReschedId(itemKey);
-  const v=(window.__wmResched && window.__wmResched.key===itemKey) ? (window.__wmResched.val||'') : '';
-  return `<span style="display:inline-flex;align-items:center;gap:6px;background:#FDF8EC;border:0.5px solid #E7D6A8;border-radius:8px;padding:4px 7px;vertical-align:middle">`
-    + `<span style="font-size:11px;font-weight:700;color:#8A5A10;text-transform:uppercase;letter-spacing:.04em">Move to</span>`
-    + `<input id="rsi-${id}" type="date" value="${v}" onchange="_wmReschedPick('${itemKey}',this.value)" oninput="_wmReschedPick('${itemKey}',this.value)" style="padding:3px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12px;background:#fff"/>`
+  const st=window.__wmResched;
+  const mine=(st && st.key===itemKey);
+  const v =mine ? (st.val||'')  : '';
+  const v2=mine ? (st.val2||'') : '';
+  const isEv=_wmReschedIsEvent(itemKey);
+  const lbl=(t)=>`<span style="font-size:10.5px;font-weight:700;color:#8A5A10;text-transform:uppercase;letter-spacing:.04em">${t}</span>`;
+  const dt=(elId,val,onch,ph)=>`<input id="${elId}" type="date" value="${val}" title="${ph}" onchange="${onch}" oninput="${onch}" style="padding:3px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12px;background:#fff"/>`;
+  return `<span style="display:inline-flex;align-items:center;gap:6px;background:#FDF8EC;border:0.5px solid #E7D6A8;border-radius:8px;padding:4px 7px;vertical-align:middle;flex-wrap:wrap">`
+    + lbl(isEv?'Starts':'Move to')
+    + dt('rsi-'+id, v, `_wmReschedPick('${itemKey}',this.value)`, 'New start date')
+    + (isEv ? (lbl('Finishes')
+               + dt('rsj-'+id, v2, `_wmReschedPick2('${itemKey}',this.value)`, 'New finish date - leave empty for a one-day job')) : '')
     + `<button onclick="_wmReschedDo('${itemKey}')" style="padding:4px 12px;border:none;border-radius:6px;background:#111;color:#fff;font-size:11.5px;font-weight:700;cursor:pointer">Move it</button>`
     + `<button onclick="_wmReschedCancel('${itemKey}')" style="padding:4px 9px;border:0.5px solid #e6e8ee;border-radius:6px;background:#fff;font-size:11.5px;color:#566070;cursor:pointer">Cancel</button>`
     + `</span>`;
 }
 // The closed button.
-function _wmReschedBtn(itemKey, curDate){
-  return `<button onclick="_wmReschedOpen('${itemKey}','${curDate||''}')" style="padding:2px 9px;border:0.5px solid #e6e8ee;border-radius:6px;background:#fff;font-size:11.5px;color:#8A5A10;cursor:pointer">&#8635; Reschedule</button>`;
+function _wmReschedBtn(itemKey, curDate, curEnd){
+  return `<button onclick="_wmReschedOpen('${itemKey}','${curDate||''}','${curEnd||''}')" style="padding:2px 9px;border:0.5px solid #e6e8ee;border-radius:6px;background:#fff;font-size:11.5px;color:#8A5A10;cursor:pointer">&#8635; Reschedule</button>`;
 }
 // One span per item, drawn open or closed depending on the meeting's state.
-function _wmReschedCell(itemKey, curDate){
+function _wmReschedCell(itemKey, curDate, curEnd){
   const open = !!(window.__wmResched && window.__wmResched.key===itemKey);
-  return `<span id="rs-${_wmReschedId(itemKey)}">${open?_wmReschedBox(itemKey):_wmReschedBtn(itemKey,curDate)}</span>`;
+  return `<span id="rs-${_wmReschedId(itemKey)}">${open?_wmReschedBox(itemKey):_wmReschedBtn(itemKey,curDate,curEnd)}</span>`;
 }
-function _wmReschedOpen(itemKey, curDate){
+function _wmReschedOpen(itemKey, curDate, curEnd){
   if(_blockIfReadOnly()) return;
-  const keep=(window.__wmResched && window.__wmResched.key===itemKey) ? window.__wmResched.val : '';
-  window.__wmResched={ key:itemKey, val:keep || curDate || '' };
+  const was=(window.__wmResched && window.__wmResched.key===itemKey) ? window.__wmResched : null;
+  // Prefill from the booking itself when the caller did not pass the dates, so the box
+  // always opens showing where the job actually sits today.
+  let start=curDate||'', end=curEnd||'';
+  if(_wmReschedIsEvent(itemKey)){
+    const e=(typeof _calEventsCache!=='undefined'?_calEventsCache:[]).find(function(x){ return x.id===itemKey.slice(2); });
+    if(e){ start=start||e.event_date||''; if(!end) end=e.end_date||''; }
+  }
+  window.__wmResched={ key:itemKey, val:(was&&was.val)||start, val2:(was&&was.val2)||end };
   const host=_wmReschedHost(itemKey);
   if(host) host.innerHTML=_wmReschedBox(itemKey);
   const inp=document.getElementById('rsi-'+_wmReschedId(itemKey));
@@ -9948,13 +9984,24 @@ async function _wmReschedDo(itemKey, valArg){
   } else {
     const e=(_calEventsCache||[]).find(x=>x.id===id);
     if(!e){ alert("That booking is no longer on this screen — somebody may have removed it.\n\nRefresh the meeting and take another look."); window.__wmResched=null; return; }
-    if(e.event_date===due){ alert("That booking is already on "+due+"."); return; }
-    const {data,error}=await supabase.from("pm_calendar_events").update({event_date:due}).eq("id",id).select("id");
+    // A booking has two ends. Moving only the start is how a job ends before it begins.
+    const fin=(_wmReschedVal2(itemKey)||'').trim();
+    if(fin && fin<due){
+      alert("The finish date is before the start date.\n\nStart "+due+", finish "+fin+" \u2014 put the finish on or after the start, or clear it for a one-day job.");
+      return;
+    }
+    const sameStart=(e.event_date===due);
+    const sameEnd=((e.end_date||'')===fin);
+    if(sameStart && sameEnd){ alert("That booking is already "+due+(fin?(" to "+fin):"")+"."); return; }
+    const patch={ event_date:due, end_date: fin || null };
+    const {data,error}=await supabase.from("pm_calendar_events").update(patch).eq("id",id).select("id");
     if(error||!data||!data.length){ alert("That booking was NOT rescheduled — "+((error&&error.message)||"nothing saved, refresh and try again")); return; }
-    _logAudit("updated","calendar",_locLabel(e),'Rescheduled in the Monday meeting: '+(e.event_date||'no date')+' → '+due);
+    const was=(e.event_date||'no date')+(e.end_date?(' to '+e.end_date):'');
+    const now=due+(fin?(' to '+fin):'');
+    _logAudit("updated","calendar",_locLabel(e),'Rescheduled in the Monday meeting: '+was+' \u2192 '+now);
     window.__wmResched=null;
     await loadCalendarEventsFromSupabase();
-    _wmMovedToast("Booking moved to "+_wmNiceDate(due));
+    _wmMovedToast("Booking moved to "+_wmNiceDate(due)+(fin?(" \u2013 "+_wmNiceDate(fin)):""));
   }
   // Stay on the week that is actually open, not whichever week is current.
   openWeeklyMeeting('team', window.__wmLastWeek||undefined);
@@ -10260,10 +10307,50 @@ function _wmCarryBlock(wk, c, roNow){
   const add=roNow?'':`<div style="display:flex;gap:6px;margin-top:7px">
     <input id="${id}" placeholder="Something that must not be forgotten next week&hellip;" style="flex:1;min-width:0;padding:6px 9px;border:0.5px solid #ddd;border-radius:6px;font-size:12.5px"/>
     <button onclick="_wmCarryAdd('${wk}','${c.id}','${id}')" style="padding:6px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">Add</button></div>`;
+  const undone=_wmUndoneBlock(wk, c, roNow);
   return `<div style="border:0.5px solid #EAD9A8;background:#FFFCF4;border-radius:9px;padding:9px 12px;margin-top:10px">
     <div style="font-size:13.5px;font-weight:700;color:#8A5A10;margin-bottom:5px">\u{1F4CC} Carried over${open.length?(' &middot; '+open.length+' still open'):''}</div>
     <div style="font-size:11px;color:#8A5A10;margin-bottom:6px">Each line you write about the weeks ahead arrives here next Monday. Tick one off when it is no longer relevant &mdash; anything left keeps coming back.</div>
-    ${rows}${add}</div>`;
+    ${rows}${add}${undone}</div>`;
+}
+// Bruce, 28 Sept: "on the carried over tab we need to be able to reschedule tasks that
+// did not get done on the full project meeting tasks or construction calendar events."
+//
+// The carried-over box only ever held lines somebody typed. The work that actually
+// slipped - a task nobody ticked, a contractor who did not turn up - was one section
+// further up and got scrolled past. So the real unfinished items from last week now sit
+// here too, each with the same Reschedule button, and a booking gets both its dates.
+function _wmUndoneFor(wk, pid){
+  if(typeof _wmItems!=='function' || typeof _wmRange!=='function' || typeof _wmPrevWeek!=='function') return [];
+  const last=_wmRange(_wmPrevWeek(wk),1);
+  // the same ticks the room makes in the meeting, so something ticked off up there
+  // does not reappear down here as still outstanding
+  const done=(typeof _wmMeta==='function')?(_wmMeta(wk,'team','__done')||{}):{};
+  return _wmItems(pid, last.from, last.to).filter(function(it){
+    if(it.done) return false;                                   // ticked on the record
+    if(done && done[it.key]==='yes') return false;              // ticked in the meeting
+    return true;
+  });
+}
+function _wmUndoneBlock(wk, c, roNow){
+  const list=_wmUndoneFor(wk, c.id);
+  if(!list.length) return '';
+  const row=function(it){
+    const ev=(it.type==='event');
+    const when=it.when||it.date;
+    return `<div style="display:flex;gap:9px;align-items:flex-start;padding:6px 0;border-top:0.5px solid #F0E4C4;flex-wrap:wrap">
+      <span style="font-size:14px;flex-shrink:0">\u2b1c</span>
+      <div style="flex:1;min-width:150px">
+        <div style="font-size:14px;color:#111">${_calEsc(it.title)}</div>
+        <div style="font-size:11px;color:#8A5A10;margin-top:1px">${_calEsc(it.kindLabel||'')}${it.sub?(' \u00b7 '+_calEsc(it.sub)):''} \u00b7 was ${_calEsc(when)}</div>
+      </div>
+      ${roNow?'':_wmReschedCell(it.key, it.date, ev?(it.endDate||''):'')}
+    </div>`;
+  };
+  return `<div style="margin-top:9px;padding-top:8px;border-top:0.5px dashed #E7D6A8">
+    <div style="font-size:12.5px;font-weight:700;color:#8A5A10;margin-bottom:2px">\u21bb Did not get done last week \u00b7 ${list.length}</div>
+    <div style="font-size:11px;color:#8A5A10;margin-bottom:3px">Straight off last week's list \u2014 move it to a new date here rather than going hunting for it. A contractor booking takes a new start and a new finish.</div>
+    ${list.map(row).join('')}</div>`;
 }
 
 // ===================== MONDAY MEETING — THE TWO FINISH DATES =====================
@@ -22852,8 +22939,9 @@ function _prettyDay(ds){ const [y,m,d]=ds.split("-").map(Number); const dt=new D
 function _calRerender(){ const el=document.getElementById("pd-content"); if(el) el.innerHTML=renderConstructionCalendar(); }
 function _propPM(id){ const p=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===id); return p?p.pm:""; }
 function _propPhase(id){ const p=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===id); return p?p.phase:""; }
-function calSelectProp(id){ if(id==='__pick') return; _calState.prop=id; if(id!=="all") _calState.pm="all"; _calRerender(); }
+function calSelectProp(id){ if(id==='__pick') return; _calState.prop=id; if(id!=="all") _calState.pm="all"; if(id!=="all") _calState.rtrOnly=false; _calRerender(); }
 function calSelectPM(name){ _calState.pm=name; if(name!=="all") _calState.prop="all"; _calRerender(); }
+function calClearRTR(){ _calState.rtrOnly=false; _calRerender(); }
 function calSetFilter(f){ _calState.filter=f; _calRerender(); }
 function calToggleRTR(){ _calState.rtrOnly=!_calState.rtrOnly; _calRerender(); }
 function calPrevMonth(){ _calState.m--; if(_calState.m<0){_calState.m=11;_calState.y--;} _calRerender(); }
@@ -22863,31 +22951,165 @@ function calPrevDay(){ _calState.day=_shiftDay(_calState.day||_ymd(new Date()),-
 function calNextDay(){ _calState.day=_shiftDay(_calState.day||_ymd(new Date()),1); _calRerender(); }
 function calToday(){ _calState.day=_ymd(new Date()); _calRerender(); }
 
+// ---- picking a property on the construction calendar ---------------------------
+// Bruce, 28 Sept: "instead of organizing it by project manager, just organize it by
+// property. But right now the property navigation screen is a little choppy and you got
+// to scroll and look for a property. Let's clean that up. And also the categories, if
+// you want to filter by category, let's create that into a dropdown."
+//
+// Three things were wrong with the old bar. It opened on the logged-in manager's own
+// houses, so the calendar was organised by manager before anybody touched it. Picking a
+// house meant hunting down a flat list of 55 addresses in a native dropdown. And the
+// category filter was nineteen chips wrapped across the top of the page.
+//
+// Now: one button that says which house you are looking at, a panel you type into, and a
+// single dropdown for the category. The manager filter is still there - it just is not
+// the thing the page is built around any more.
+function _calPropOpen(){
+  const el=document.getElementById('cal-prop-panel'); if(!el) return;
+  el.style.display='block';
+  const f=document.getElementById('cal-prop-q');
+  if(f){ f.value=''; _calPropFilter(''); f.focus(); }
+}
+function _calPropClose(){ const el=document.getElementById('cal-prop-panel'); if(el) el.style.display='none'; }
+function _calPropToggle(){
+  const el=document.getElementById('cal-prop-panel');
+  if(el && el.style.display==='block') _calPropClose(); else _calPropOpen();
+}
+// Filters in the DOM rather than redrawing. Redrawing the calendar on every keystroke
+// would throw the cursor out of the box after the first letter.
+function _calPropFilter(v){
+  const q=String(v||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+  const rows=document.querySelectorAll('#cal-prop-panel [data-pk]');
+  let shown=0;
+  rows.forEach(function(r){
+    const hit = !q || String(r.getAttribute('data-pk')||'').indexOf(q)>=0;
+    r.style.display = hit ? '' : 'none';
+    if(hit) shown++;
+  });
+  // a heading whose houses are all hidden should go too
+  document.querySelectorAll('#cal-prop-panel [data-phhead]').forEach(function(h){
+    const key=h.getAttribute('data-phhead');
+    const any=Array.prototype.some.call(document.querySelectorAll('#cal-prop-panel [data-ph="'+key+'"]'),
+                                        function(r){ return r.style.display!=='none'; });
+    h.style.display = any ? '' : 'none';
+  });
+  const none=document.getElementById('cal-prop-none');
+  if(none) none.style.display = shown ? 'none' : 'block';
+}
+// Enter takes the first house still showing, so you can type three letters and go.
+function _calPropKey(ev){
+  if(!ev) return;
+  if(ev.key==='Escape'){ _calPropClose(); return; }
+  if(ev.key!=='Enter') return;
+  const first=Array.prototype.filter.call(document.querySelectorAll('#cal-prop-panel [data-pk]'),
+                                          function(r){ return r.style.display!=='none'; })[0];
+  if(first){ const id=first.getAttribute('data-pid'); if(id) calSelectProp(id); }
+}
+function _calPropKeyOf(c){
+  return String((c&&c.addr)||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()
+       + ' ' + String((c&&c.pm)||'').toLowerCase()
+       + ' ' + String((c&&c.phase)||'').toLowerCase();
+}
+// How many events this house has, so the list says which ones are actually live.
+function _calPropCount(pid){
+  return (typeof _calEventsCache!=='undefined'?_calEventsCache:[]).filter(function(e){ return e.property_id===pid; }).length;
+}
+function _calWhoLabel(st){
+  if(st.pm!=='all') return 'All of '+st.pm+"'s houses";
+  if(st.rtrOnly)    return 'RTR houses only';
+  if(st.prop==='all') return 'All properties';
+  return _propAddr(st.prop) || 'Selected property';
+}
+function _calPropButton(st){
+  const lbl=_calWhoLabel(st);
+  const narrowed = (st.prop!=='all' || st.pm!=='all' || st.rtrOnly);
+  return `<div onclick="_calPropToggle()" title="Pick a property - type to search"
+    style="display:inline-flex;align-items:center;gap:9px;padding:8px 14px;font-size:13.5px;cursor:pointer;border-radius:9px;background:${narrowed?'#111':'#fff'};color:${narrowed?'#fff':'#333'};border:0.5px solid ${narrowed?'#111':'#d8dce6'};max-width:360px">
+    <span style="font-size:14px">\u{1F3E0}</span>
+    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600">${_calEsc(lbl)}</span>
+    <span style="opacity:.6;font-size:11px">▾</span></div>`;
+}
+function _calPropPanel(st){
+  const props=(typeof propCards!=='undefined'?propCards:[]).filter(function(c){ return !c.archived; });
+  const phases=(typeof PROP_PHASES!=='undefined'?PROP_PHASES:[]).map(function(p){ return p.name; });
+  const order=function(c){ const i=phases.indexOf(c.phase); return i<0?999:i; };
+  const sorted=props.slice().sort(function(a,b){
+    return order(a)-order(b) || String(a.addr||'').localeCompare(String(b.addr||''), undefined, {numeric:true});
+  });
+  const pmNames=(typeof PM_MANAGERS!=='undefined'?PM_MANAGERS:[]);
+  let out=''; let lastPhase=null;
+  sorted.forEach(function(c){
+    if(c.phase!==lastPhase){
+      lastPhase=c.phase;
+      const ph=(typeof phInfo==='function')?phInfo(c.phase):{dot:'#566070',text:'#555'};
+      out+=`<div data-phhead="${_calEsc(c.phase||'none')}" style="display:flex;align-items:center;gap:7px;padding:9px 13px 4px;font-size:11px;font-weight:700;color:${ph.text};text-transform:uppercase;letter-spacing:.05em">
+        <span style="width:7px;height:7px;border-radius:50%;background:${ph.dot};flex-shrink:0"></span>${_calEsc(c.phase||'No phase')}</div>`;
+    }
+    const nEv=_calPropCount(c.id);
+    const on=(st.prop===c.id);
+    out+=`<div data-pk="${_calEsc(_calPropKeyOf(c))}" data-pid="${_calEsc(c.id)}" data-ph="${_calEsc(c.phase||'none')}"
+      onclick="calSelectProp('${_calEsc(c.id)}')"
+      style="display:flex;align-items:center;gap:10px;padding:8px 13px;cursor:pointer;font-size:13.5px;${on?'background:#EAF2FB;':''}"
+      onmouseover="this.style.background='#f4f6fa'" onmouseout="this.style.background='${on?'#EAF2FB':'transparent'}'">
+      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#111;${on?'font-weight:600':''}">${_calEsc(c.addr||'')}</span>
+      ${c.pm?`<span style="font-size:11px;color:#8A94A6;white-space:nowrap">${_calEsc(String(c.pm).split(' ')[0])}</span>`:''}
+      <span title="${nEv} on the calendar" style="font-size:11px;color:${nEv?'#185FA5':'#c3c8d2'};min-width:22px;text-align:right">${nEv||'–'}</span>
+    </div>`;
+  });
+  const quick=(label,onclk,active)=>`<div onclick="${onclk}" style="padding:6px 12px;border-radius:8px;font-size:12.5px;cursor:pointer;${active?'background:#111;color:#fff':'background:#fff;color:#566070;border:0.5px solid #dfe3ea'}">${label}</div>`;
+  return `<div id="cal-prop-panel" style="display:none;position:absolute;z-index:60;margin-top:6px;width:min(430px,92vw);background:#fff;border:0.5px solid #d8dce6;border-radius:12px;box-shadow:0 10px 34px rgba(17,20,26,.16);overflow:hidden">
+    <div style="padding:11px 13px 9px;border-bottom:0.5px solid #eef0f6">
+      <input id="cal-prop-q" oninput="_calPropFilter(this.value)" onkeydown="_calPropKey(event)" placeholder="Type an address…"
+        style="width:100%;box-sizing:border-box;padding:9px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:14px;font-family:inherit"/>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:9px">
+        ${quick('All properties', "calSelectProp('all');calSelectPM('all')", st.prop==='all'&&st.pm==='all'&&!st.rtrOnly)}
+        ${quick('RTR only', 'calToggleRTR()', !!st.rtrOnly)}
+      </div>
+      ${pmNames.length?`<div style="display:flex;align-items:center;gap:7px;margin-top:8px">
+        <span style="font-size:11.5px;color:#8A94A6;white-space:nowrap">or a manager's list</span>
+        <select onchange="calSelectPM(this.value)" style="flex:1;min-width:0;padding:5px 8px;border:0.5px solid #dfe3ea;border-radius:7px;font-size:12.5px;background:#fff;color:#566070">
+          <option value="all" ${st.pm==='all'?'selected':''}>— anybody —</option>
+          ${pmNames.map(nm=>`<option value="${_calEsc(nm)}" ${st.pm===nm?'selected':''}>${_calEsc(nm)}</option>`).join('')}
+        </select></div>`:''}
+    </div>
+    <div style="max-height:min(430px,54vh);overflow:auto">
+      ${out||'<div style="padding:20px;text-align:center;color:#636b7a;font-size:13px">No properties yet.</div>'}
+      <div id="cal-prop-none" style="display:none;padding:20px;text-align:center;color:#636b7a;font-size:13px">No property matches that.</div>
+    </div>
+  </div>`;
+}
+// Nineteen chips became one dropdown. The custom types people have actually used are
+// grouped under their own heading so the two built-in kinds stay easy to find.
+function _calKindSelect(st){
+  const types=_customCalTypes();
+  const opt=(v,label)=>`<option value="${_calEsc(v)}" ${st.filter===v?'selected':''}>${_calEsc(label)}</option>`;
+  return `<select onchange="calSetFilter(this.value)" title="Filter by category"
+    style="padding:8px 11px;font-size:13px;border:0.5px solid #d8dce6;border-radius:9px;background:#fff;color:#333;max-width:250px">
+    ${opt('all','All categories')}
+    ${opt('material','\u{1F4E6} Material deliveries')}
+    ${opt('contractor','★ Contractor starts')}
+    ${types.length?('<optgroup label="Your own types">'+types.map(t=>opt('custom::'+t,'• '+t)).join('')+'</optgroup>'):''}
+  </select>`;
+}
 function renderConstructionCalendar(){
   const st=_calState;
   if(st.y==null){ const d=new Date(); st.y=d.getFullYear(); st.m=d.getMonth(); }
   // End-of-Project Assistant (Gabe): default to RTR-only events on first open.
   if(!st._rtrInit){ st._rtrInit=true; const u=(typeof currentUser==='function')?currentUser():null; if(u&&u.role==="End of Project Assistant") st.rtrOnly=true; }
-  // Default to the logged-in PM's own calendar on first open.
-  if(!st._selfInit){ st._selfInit=true; try{ const u=(typeof currentUser==='function')?currentUser():null; if(u&&u.role==="Project Manager"&&st.prop==="all"&&st.pm==="all"){ const nm=((u.firstName||"")+" "+(u.lastName||"")).trim(); const pms=[...new Set((typeof propCards!=='undefined'?propCards:[]).map(c=>c.pm).filter(Boolean))]; const hit=pms.find(p=>p===nm)||pms.find(p=>u.firstName&&p.split(" ")[0]===u.firstName); if(hit) st.pm=hit; } }catch(e){} }
+  // This used to open on the logged-in manager's own houses. Bruce, 28 Sept: "instead of
+  // organizing it by project manager, just organize it by property." So it opens on every
+  // house now, and a manager's list is one pick inside the property panel.
   if(!st.loaded){ st.loaded=true; Promise.all([loadContractorsFromSupabase(), loadCalendarEventsFromSupabase(), loadSavedAddresses()]).then(_calRerender); }
   const props=(typeof propCards!=='undefined'?propCards:[]);
   const ro=isReadOnly();
-  // property selector: All Properties button + a "Select a property" dropdown (scales to 50+)
-  const allActive = st.prop==="all" && st.pm==="all";
-  const allBtn = `<div onclick="calSelectProp('all');calSelectPM('all')" style="padding:7px 14px;font-size:13px;cursor:pointer;border-radius:8px;${allActive?'background:#111;color:#fff':'background:#fff;color:#555;border:0.5px solid #ddd'}">All Properties</div><div onclick="calToggleRTR()" title="Only show events on RTR properties (End-of-Project)" style="padding:7px 14px;font-size:13px;cursor:pointer;border-radius:8px;${st.rtrOnly?'background:#3B6D11;color:#fff':'background:#fff;color:#555;border:0.5px solid #ddd'}">RTR only</div>`;
-  const propSelect = `<select onchange="calSelectProp(this.value)" style="padding:7px 12px;font-size:13px;border:0.5px solid #ddd;border-radius:8px;background:#fff;color:#333;max-width:300px">
-    <option value="__pick" ${st.prop==="all"?"selected":""}>Select a property…</option>
-    ${props.map(p=>`<option value="${p.id}" ${st.prop===p.id?"selected":""}>${_calEsc(p.addr)}</option>`).join("")}
-  </select>`;
-  // Project-manager selector: pick a PM to see all of that manager's properties at once.
-  const pmNames = (typeof PM_MANAGERS!=='undefined'?PM_MANAGERS:[]);
-  const pmSelect = `<select onchange="calSelectPM(this.value)" style="padding:7px 12px;font-size:13px;border:0.5px solid #ddd;border-radius:8px;background:#fff;color:#333;max-width:220px">
-    <option value="all" ${st.pm==="all"?"selected":""}>All project managers…</option>
-    ${pmNames.map(nm=>`<option value="${_calEsc(nm)}" ${st.pm===nm?"selected":""}>👤 ${_calEsc(nm)}</option>`).join("")}
-  </select>`;
-  // filter chips
-  const chip=(f,label)=>`<div onclick="calSetFilter('${f}')" style="padding:5px 12px;font-size:12px;cursor:pointer;border-radius:999px;${st.filter===f?'background:#1a2744;color:#fff':'background:#fff;color:#666;border:0.5px solid #ddd'}">${label}</div>`;
+  // One button that says which house you are on, with a type-to-search panel under it.
+  const propPick = `<div style="position:relative">${_calPropButton(st)}${_calPropPanel(st)}</div>`;
+  const kindPick = _calKindSelect(st);
+  // Still shown when something is narrowing the view, so nothing is ever filtered
+  // quietly - a calendar that is hiding work without saying so is worse than a busy one.
+  const clearBtn = (st.prop!=='all'||st.pm!=='all'||st.rtrOnly)
+    ? `<div onclick="calSelectProp('all');calSelectPM('all');calClearRTR()" title="Show every property again" style="padding:8px 12px;font-size:12.5px;cursor:pointer;border-radius:9px;background:#fff;color:#566070;border:0.5px solid #dfe3ea">Show everything</div>` : '';
   // month grid
   const first=new Date(st.y,st.m,1), startDow=first.getDay(), daysInMonth=new Date(st.y,st.m+1,0).getDate();
   const todayStr=(()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;})();
@@ -22942,8 +23164,8 @@ function renderConstructionCalendar(){
       return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:0.5px solid #f1f3f7;${done?'opacity:0.6;':''}"><div onclick="event.stopPropagation();toggleCalEventDone('${e.id}')" title="Mark ${done?'not done':'done'}" style="font-size:21px;cursor:pointer;line-height:1">${done?'✅':'⬜'}</div><div onclick="openCalEventDetail('${e.id}')" style="cursor:pointer;min-width:0;flex:1"><div style="font-size:15px;font-weight:500;color:#111;${done?'text-decoration:line-through;':''}">${_calEsc(lbl)}</div><div style="font-size:13px;color:#566070;margin-top:2px">${_calEsc(_locLabel(e)||'—')}</div></div><div onclick="openCalEventDetail('${e.id}')" style="font-size:12px;color:#566070;white-space:nowrap;cursor:pointer">Edit ›</div></div>`; };
     const dayBody=evs.length?`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">${evs.map(rowFor).join("")}</div>`:`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:34px;text-align:center;color:#636b7a;font-size:14px">Nothing scheduled for this day.</div>`;
     return `<div style="padding:20px;max-width:760px;margin:0 auto">
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">${allBtn}${propSelect}${pmSelect}</div>
-      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">${viewToggle}<div style="display:flex;gap:6px;flex-wrap:wrap">${chip("all","All")}${chip("material","📦 Material")}${chip("contractor","★ Contractor")}${_customCalTypes().map(t=>chip("custom::"+t,"• "+t)).join("")}</div>${addTop}</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">${propPick}${kindPick}${clearBtn}</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">${viewToggle}${addTop}</div>
       <div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:14px">
         <div onclick="calPrevDay()" style="cursor:pointer;font-size:19px;color:#566070;padding:5px 13px;border:0.5px solid #ddd;border-radius:8px;background:#fff">‹</div>
         <div style="text-align:center;min-width:230px"><div style="font-size:17px;font-weight:600;color:${isToday?'#185FA5':'#111'}">${_prettyDay(dayStr)}</div>${isToday?'<div style="font-size:12px;color:#185FA5">Today</div>':`<div onclick="calToday()" style="font-size:12px;color:#b4bcc8;cursor:pointer;text-decoration:underline">Jump to today</div>`}</div>
@@ -22954,7 +23176,7 @@ function renderConstructionCalendar(){
     </div>`;
   }
   return `<div style="padding:20px">
-    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">${allBtn}${propSelect}${pmSelect}</div>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">${propPick}${kindPick}${clearBtn}</div>
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px">
       <div style="display:flex;align-items:center;gap:12px">
         ${viewToggle}
@@ -22963,7 +23185,6 @@ function renderConstructionCalendar(){
           <div style="font-size:16px;font-weight:500;color:#111;min-width:130px;text-align:center">${_CAL_MONTHS[st.m]} ${st.y}</div>
           <div onclick="calNextMonth()" style="cursor:pointer;font-size:17px;color:#566070;padding:2px 8px;border:0.5px solid #ddd;border-radius:6px;background:#fff">›</div>
         </div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap">${chip("all","All")}${chip("material","📦 Material Deliveries")}${chip("contractor","★ Contractor Starts")}${_customCalTypes().map(t=>chip("custom::"+t,"• "+t)).join("")}</div>
       </div>
       ${addTop}
     </div>
@@ -26971,4 +27192,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-28d accounts-payable-quotes-attachments-and-a-project-dashboard-tab -->
+<!-- build: 2026-09-28e calendar-by-property-and-reschedule-with-both-dates -->
