@@ -2394,6 +2394,12 @@ function openProjectDashboard(activeTab) {
     { id: 'construction', label: 'Construction Calendar', icon: '📅' },
     { id: 'taskcal',      label: 'Task Calendar',               icon: '🗓' },
     { id: 'sidetasks',    label: 'Side Tasks',                  icon: '🧩' },
+    // Bruce, 27 Sept: "on the project dashboard, it needs to have a tab accounts payable
+    // dashboard as well like it does for the admin manager ... just make sure it's broke
+    // off by, you know, property cards."
+    // Same records as the admin one, cut the other way: the admin asks "who are we behind
+    // on paying", a project manager asks "what does THIS house owe".
+    { id: 'payables',     label: 'Accounts Payable',            icon: '💰' },
   ];
 
   const tabHtml = (t) => `
@@ -5589,7 +5595,19 @@ before completion. Final payment follows cleanup, punch-list correction and our 
 // does not name who is doing it. This is the record of what is OWED, and it carries the
 // contractor with every figure. A scope of work, the field app and a price form can all
 // feed it; the money lives here.
+// What the rest of the trade calls this chain, checked 28 Sept against Procore and the
+// construction-finance guides: a price you have been given is a QUOTE; once you say yes
+// it becomes a COMMITMENT (a subcontract if it is labour, a purchase order if it is
+// materials); the contractor then INVOICES against it, the invoice is APPROVED, and then
+// it is PAID. "Accounts payable" strictly means the invoiced end of that, but it is the
+// name the office already uses for the whole thing, so the tab keeps it and the states
+// below carry the precise meaning.
+//
+// Bruce, 27 Sept: "there's going to be a thing on the field app where you can add in a
+// quote OR agree on price from a contractor" - so a quote is its own step. A price we
+// have not said yes to yet is not money we owe, and it must not be counted as if it were.
 const AP_STATES = [
+  { k:'quoted',   label:'Quoted',   sub:'a price we have been given, not agreed yet', col:'#566070', bg:'#F1F2F6' },
   { k:'agreed',   label:'Agreed',   sub:'a price is agreed, no invoice yet', col:'#185FA5', bg:'#EAF2FB' },
   { k:'invoiced', label:'Invoiced', sub:'they have billed us',               col:'#8A5A10', bg:'#FBF3E2' },
   { k:'approved', label:'Approved', sub:'cleared to pay',                    col:'#7A3FA8', bg:'#F3E8FB' },
@@ -5599,15 +5617,28 @@ const AP_STATES = [
 function _apState(k){ return AP_STATES.find(function(x){ return x.k===String(k||'agreed'); }) || AP_STATES[0]; }
 let _apCache = [];
 async function loadPayables(){
-  const { data, error } = await supabase.from('pm_payables')
-    .select('id,property_id,contractor_id,contractor_name,label,category,agreed_amount,invoiced_amount,paid_amount,status,due_date,invoice_ref,source,sow_line_id,notes,created_at,created_by,updated_at,updated_by')
-    .order('created_at',{ascending:true});
+  // attachments came later - fall back without it rather than blanking the whole list.
+  // Paged, like the calendar and the tasks: a thousand rows is not far off for a company
+  // that puts every quote in here.
+  const cols=['id,property_id,contractor_id,contractor_name,label,category,agreed_amount,invoiced_amount,paid_amount,status,due_date,invoice_ref,source,sow_line_id,notes,attachments,created_at,created_by,updated_at,updated_by',
+              'id,property_id,contractor_id,contractor_name,label,category,agreed_amount,invoiced_amount,paid_amount,status,due_date,invoice_ref,source,sow_line_id,notes,created_at,created_by,updated_at,updated_by'];
+  let data=null, error=null;
+  for(let i=0;i<cols.length;i++){
+    ({ data, error } = await _pageAll(()=>supabase.from('pm_payables').select(cols[i]).order('created_at',{ascending:true})));
+    if(!error) break;
+  }
   _apCache = error ? [] : (data||[]);
   return !error;
 }
 function _apFor(pid){ return (_apCache||[]).filter(function(r){ return r.property_id===pid; }); }
+// A quote is a price somebody offered us. It is not a commitment and it is NOT money we
+// owe, so it stays out of every total until it is agreed. Counting quotes as spend is how
+// a job looks over budget on work nobody ever ordered.
+function _apIsQuote(r){ return String((r&&r.status)||'')==='quoted'; }
+function _apCommitted(pid){ return _apFor(pid).filter(function(r){ return !_apIsQuote(r) && r.status!=='void'; }); }
+function _apQuotes(pid){ return _apFor(pid).filter(_apIsQuote); }
 // What is still owed on this house: anything not paid and not voided.
-function _apOpen(pid){ return _apFor(pid).filter(function(r){ return r.status!=='paid' && r.status!=='void'; }); }
+function _apOpen(pid){ return _apFor(pid).filter(function(r){ return r.status!=='paid' && r.status!=='void' && !_apIsQuote(r); }); }
 function _apOpenCount(pid){ return _apOpen(pid).length; }
 function _apNum(v){ const n=parseFloat(String(v==null?'':v).replace(/[^0-9.\-]/g,'')); return isNaN(n)?null:n; }
 function _apMoney(v){ const n=_apNum(v); return n==null?'\u2014':('$'+n.toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})); }
@@ -5617,12 +5648,15 @@ function _apLive(r){
   return (p!=null)?p:((i!=null)?i:a);
 }
 function _apTotals(pid){
-  const rows=_apFor(pid).filter(function(r){ return r.status!=='void'; });
+  const rows=_apCommitted(pid);
   const sum=(f)=>rows.reduce(function(n,r){ const v=_apNum(r[f]); return n+(v||0); },0);
   const agreed=sum('agreed_amount'), invoiced=sum('invoiced_amount'), paid=sum('paid_amount');
+  const q=_apQuotes(pid);
   return { rows:rows.length, agreed:agreed, invoiced:invoiced, paid:paid,
            outstanding:(invoiced||0)-(paid||0),
-           leftToBill:(agreed||0)-(invoiced||0) };
+           leftToBill:(agreed||0)-(invoiced||0),
+           quotes:q.length,
+           quoted:q.reduce(function(n,r){ const v=_apNum(r.agreed_amount); return n+(v||0); },0) };
 }
 function _apWho(r){
   if(r && r.contractor_id){
@@ -5632,25 +5666,159 @@ function _apWho(r){
   return String((r&&r.contractor_name)||'');
 }
 function _apMe(){ return (typeof _miWho==='function')?_miWho():''; }
-async function _apAdd(pid){
+// ---- what a quote or an invoice is attached to ---------------------------------
+// The permit bucket is PUBLIC on purpose - city permits are public record. A contractor's
+// quote is not. It carries his pricing, and in a public bucket anybody holding the link
+// could read it without signing in. So these go in a PRIVATE bucket and are opened with a
+// short-lived signed link that is made when somebody actually clicks the file.
+const AP_DOC_BUCKET = 'hub-private';
+const AP_DOC_PREFIX = 'payables';
+const AP_DOC_MAX_MB = 25;
+function _apDocs(r){ const a=r&&r.attachments; return Array.isArray(a)?a:[]; }
+function _apSafeName(nm){
+  return String(nm||'quote.pdf').replace(/[^A-Za-z0-9._-]+/g,'-').replace(/^-+|-+$/g,'').slice(-80) || 'quote.pdf';
+}
+// Upload and hand back the record to store. Returns null and says why on failure - a
+// silent failure here means a quote that looks attached and is not.
+async function _apUploadDoc(file, pid, say){
+  if(!file) return null;
+  if(file.size > AP_DOC_MAX_MB*1048576){
+    alert('"'+file.name+'" is over '+AP_DOC_MAX_MB+'MB, so it was not attached. The line was still saved — attach a smaller copy from the property card.');
+    return null;
+  }
+  const path=AP_DOC_PREFIX+'/'+(pid||'no-property')+'/'+Date.now()+'-'+_apSafeName(file.name);
+  try{
+    if(say) say('Attaching ' + file.name + '…');
+    const up=await supabase.storage.from(AP_DOC_BUCKET).upload(path, file, {contentType:file.type||'application/pdf', upsert:false});
+    if(up.error){
+      alert('The line was saved, but "'+file.name+'" was NOT attached: '+(up.error.message||'storage refused it'));
+      return null;
+    }
+    return { id:Date.now().toString(36)+Math.random().toString(36).slice(2,5),
+             name:file.name, path:path, size:file.size,
+             by:_apMe(), at:new Date().toISOString() };
+  }catch(e){
+    alert('The line was saved, but "'+file.name+'" was NOT attached: '+((e&&e.message)||'upload failed'));
+    return null;
+  }finally{ if(say) say(''); }
+}
+// Private bucket, so there is no permanent URL to store. Make a link when it is clicked.
+async function _apOpenDoc(rowId, docId){
+  const r=(_apCache||[]).find(function(x){ return x.id===rowId; });
+  const d=_apDocs(r).find(function(x){ return x.id===docId; });
+  if(!d){ alert('That file is no longer on this line.'); return; }
+  try{
+    const sg=await supabase.storage.from(AP_DOC_BUCKET).createSignedUrl(d.path, 300);
+    if(sg.error || !(sg.data && sg.data.signedUrl)){
+      alert("Couldn't open that file: "+((sg.error&&sg.error.message)||'the link was refused')+"\n\nIf this keeps happening the file may have been removed from storage.");
+      return;
+    }
+    window.open(sg.data.signedUrl,'_blank','noopener');
+  }catch(e){ alert("Couldn't open that file: "+((e&&e.message)||'')); }
+}
+async function _apAttachTo(rowId, pid){
   if(_blockIfReadOnly()) return;
-  const g=(id)=>{ const e=document.getElementById(id); return e?String(e.value||'').trim():''; };
-  const label=g('ap-label-'+pid);
-  if(!label){ alert("Say what the money is for \u2014 \u201cframing labour\u201d, \u201croof, materials and labour\u201d\u2026"); return; }
-  const cid=g('ap-who-'+pid);
-  const con=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).find(function(x){ return x.id===cid; });
-  const row={ property_id:pid, label:label, category:g('ap-cat-'+pid)||null,
-              contractor_id:cid||null, contractor_name:con?(con.name||con.business_name||''):null,
-              agreed_amount:_apNum(g('ap-amt-'+pid)), status:'agreed', source:'manual',
-              due_date:g('ap-due-'+pid)||null, created_by:_apMe(), updated_by:_apMe() };
-  const { error } = await supabase.from('pm_payables').insert(row);
-  if(error){ alert("That was NOT saved: "+(error.message||'')); return; }
+  const inp=document.getElementById('ap-file-'+rowId);
+  const f=(inp && inp.files && inp.files[0])?inp.files[0]:null;
+  if(!f){ alert('Choose a file first.'); return; }
+  const st=document.getElementById('ap-fs-'+rowId);
+  const rec=await _apUploadDoc(f, pid, function(t){ if(st){ st.textContent=t; st.style.display=t?'inline':'none'; } });
+  if(inp) inp.value='';
+  if(!rec) return;
+  const r=(_apCache||[]).find(function(x){ return x.id===rowId; });
+  const arr=_apDocs(r).concat([rec]);
+  await _apSet(rowId, { attachments:arr }, pid);
+}
+async function _apDropDoc(rowId, docId, pid){
+  if(_blockIfReadOnly()) return;
+  const r=(_apCache||[]).find(function(x){ return x.id===rowId; });
+  const d=_apDocs(r).find(function(x){ return x.id===docId; });
+  if(!d) return;
+  if(!confirm('Remove "'+d.name+'" from this line?\n\nThe file itself stays in storage — this only takes it off the record.')) return;
+  await _apSet(rowId, { attachments:_apDocs(r).filter(function(x){ return x.id!==docId; }) }, pid);
+}
+function _apDocChips(r, ro){
+  const docs=_apDocs(r);
+  if(!docs.length) return '';
+  return '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:5px">'+docs.map(function(d){
+    return '<span style="display:inline-flex;align-items:center;gap:5px;background:#F1F2F6;border-radius:99px;padding:3px 9px;font-size:11.5px;color:#111">'
+      +'<span onclick="_apOpenDoc(\''+r.id+'\',\''+d.id+'\')" style="cursor:pointer;color:#185FA5;text-decoration:underline">\u{1F4CE} '+_calEsc(d.name)+'</span>'
+      +(ro?'':'<span onclick="_apDropDoc(\''+r.id+'\',\''+d.id+'\',\''+(r.property_id||'')+'\')" title="Take it off this line" style="cursor:pointer;color:#8A94A6">×</span>')
+      +'</span>';
+  }).join('')+'</div>';
+}
+// ---- add a quote from anywhere -------------------------------------------------
+// Bruce, 27 Sept: "I want to be able to add in quotes pretty much anywhere um, that I
+// should be able to."
+// So there is ONE way of writing a payable line and every button on the site calls it:
+// the property card, both dashboards, the contractor's own page and the field app. One
+// function means a quote raised on a phone in a basement is the same record as one typed
+// at a desk, and a fix to either is a fix to both.
+//
+// fields: {property_id, contractor_id, contractor_name, label, amount, status, due_date,
+//          category, notes, file}
+// Returns the saved row, or null (having already said why).
+async function _apWrite(fields){
+  if(_blockIfReadOnly()) return null;
+  const label=String((fields&&fields.label)||'').trim();
+  if(!label){ alert("Say what the money is for — “framing labour”, “roof, materials and labour”…"); return null; }
+  const pid=(fields&&fields.property_id)||null;
+  let con=null;
+  if(fields && fields.contractor_id){
+    con=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).find(function(x){ return x.id===fields.contractor_id; })||null;
+  }
+  const row={ property_id:pid,
+              label:label,
+              category:(fields&&fields.category)||null,
+              contractor_id:(fields&&fields.contractor_id)||null,
+              contractor_name:con?(con.name||con.business_name||''):((fields&&fields.contractor_name)||null),
+              agreed_amount:_apNum(fields&&fields.amount),
+              status:(fields&&fields.status)||'quoted',
+              source:(fields&&fields.source)||'manual',
+              due_date:(fields&&fields.due_date)||null,
+              notes:(fields&&fields.notes)||null,
+              attachments:[],
+              created_by:_apMe(), updated_by:_apMe() };
+  // The file goes up BEFORE the row is written, so a line never claims an attachment it
+  // does not have. If the upload fails the line is still saved - losing the price because
+  // a PDF would not upload would be the worse outcome.
+  if(fields && fields.file){
+    const rec=await _apUploadDoc(fields.file, pid, fields.say);
+    if(rec) row.attachments=[rec];
+  }
+  const ins=await supabase.from('pm_payables').insert(row).select('id');
+  if(ins.error){ alert("That was NOT saved: "+(ins.error.message||'')); return null; }
   if(typeof _logAudit==='function'){
     const c=(typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===pid; });
-    _logAudit('created','property',(c&&c.addr)||'','Accounts payable: '+label+(row.agreed_amount!=null?(' \u2014 '+_apMoney(row.agreed_amount)):'')+(con?(' \u2014 '+(con.name||'')):''));
+    const what=(row.status==='quoted'?'Quote':'Agreed price')+': '+label
+      +(row.agreed_amount!=null?(' — '+_apMoney(row.agreed_amount)):'')
+      +(row.contractor_name?(' — '+row.contractor_name):'')
+      +(row.attachments.length?' — with a file attached':'');
+    _logAudit('created','property',(c&&c.addr)||'', what);
   }
+  await loadPayables();
+  return (ins.data&&ins.data[0])||{};
+}
+async function _apAdd(pid){
+  const g=(id)=>{ const e=document.getElementById(id); return e?String(e.value||'').trim():''; };
+  const fEl=document.getElementById('ap-new-file-'+pid);
+  const st=document.getElementById('ap-new-s-'+pid);
+  const saved=await _apWrite({
+    property_id:pid, label:g('ap-label-'+pid), category:g('ap-cat-'+pid)||null,
+    contractor_id:g('ap-who-'+pid)||null, amount:g('ap-amt-'+pid),
+    due_date:g('ap-due-'+pid)||null,
+    // Typing straight onto the property card is the office putting in a price that has
+    // been agreed - that is what this tab has always meant, so it stays the default
+    // here. The field app and the quote box default the other way, because standing in
+    // a house with a contractor you are being GIVEN a price, not setting one.
+    status:(g('ap-state-'+pid)||'agreed'),
+    file:(fEl && fEl.files && fEl.files[0])?fEl.files[0]:null,
+    say:function(t){ if(st){ st.textContent=t; st.style.display=t?'inline':'none'; } }
+  });
+  if(!saved) return;
   ['ap-label-','ap-amt-','ap-due-','ap-cat-'].forEach(function(k){ const e=document.getElementById(k+pid); if(e) e.value=''; });
-  await loadPayables(); openPropDetail(pid);
+  if(fEl) fEl.value='';
+  openPropDetail(pid);
 }
 async function _apSet(id, patch, pid){
   if(_blockIfReadOnly()) return;
@@ -5692,79 +5860,180 @@ async function _apDel(id, pid){
 // accounts payable tab. Also side tasks needs to be on the admin dashboard ... the
 // senior VA dashboard, a tab for that at the top. The VA admin dashboard, because that
 // one's missing the side task calendar as well."
-// Outstanding first and biggest first, because this page exists to answer "who are we
-// behind on paying".
+// ---- one add-a-quote box, opened from anywhere ---------------------------------
+// Bruce, 27 Sept: "I want to be able to add in quotes pretty much anywhere um, that I
+// should be able to." So this overlay is the same form wherever it opens - a dashboard,
+// a property card, a contractor's page - and it writes through _apWrite like everything
+// else. Pass a property or a contractor to have it filled in already.
+function _apQuoteOpen(pid, cid){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
+  _apQuoteClose();
+  const esc=_calEsc;
+  const cards=(typeof propCards!=='undefined'?propCards:[]).filter(function(c){ return !c.archived; })
+    .slice().sort(function(a,b){ return String(a.addr||'').localeCompare(String(b.addr||'')); });
+  const cons=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).slice()
+    .sort(function(a,b){ return String(a.business_name||a.name||'').localeCompare(String(b.business_name||b.name||'')); });
+  const propOpts=['<option value="">— Pick the property —</option>'].concat(cards.map(function(c){
+    return '<option value="'+esc(c.id)+'"'+(c.id===pid?' selected':'')+'>'+esc(c.addr||'')+'</option>'; })).join('');
+  const conOpts=['<option value="">— Pick the contractor —</option>'].concat(cons.map(function(x){
+    const nm=x.business_name?((x.name||'')+' · '+x.business_name):(x.name||'');
+    return '<option value="'+esc(x.id)+'"'+(x.id===cid?' selected':'')+'>'+esc(nm)+'</option>'; })).join('');
+  const lbl=(t,sub)=>'<div style="font-size:11.5px;font-weight:600;color:#566070;text-transform:uppercase;letter-spacing:.04em;margin:13px 0 5px">'+t+(sub?'<span style="font-weight:400;text-transform:none;letter-spacing:0;color:#8A94A6"> — '+sub+'</span>':'')+'</div>';
+  const inp='width:100%;box-sizing:border-box;padding:9px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:14px;font-family:inherit';
+  const d=document.createElement('div');
+  d.id='ap-quote-ov';
+  d.setAttribute('style','position:fixed;inset:0;background:rgba(17,20,26,.45);z-index:9000;display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:28px 14px');
+  d.onclick=function(e){ if(e.target===d) _apQuoteClose(); };
+  d.innerHTML='<div style="background:#fff;border-radius:13px;max-width:520px;width:100%;padding:20px 22px 22px;box-shadow:0 12px 40px rgba(0,0,0,.25)">'
+    +'<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px">'
+      +'<div style="font-size:17px;font-weight:600;color:#111">\u{1F4B0} Add a quote or price</div>'
+      +'<span onclick="_apQuoteClose()" style="cursor:pointer;color:#8A94A6;font-size:21px;line-height:1">×</span></div>'
+    +'<div style="font-size:12.5px;color:#566070;margin-top:4px;line-height:1.5">A quote is a price we have been given. It is not counted as money owed until somebody marks it agreed.</div>'
+    +lbl('Property')+'<select id="apq-prop" style="'+inp+'">'+propOpts+'</select>'
+    +lbl('Contractor')+'<select id="apq-who" style="'+inp+'">'+conOpts+'</select>'
+    +lbl('Amount quoted')+'<input id="apq-amt" inputmode="decimal" placeholder="$0.00" style="'+inp+'"/>'
+    +lbl('What the money is for')+'<input id="apq-label" placeholder="Framing labour, roof tear-off and replace…" style="'+inp+'"/>'
+    +lbl('Description of work','optional')+'<textarea id="apq-notes" rows="3" placeholder="What is included, what is not…" style="'+inp+';resize:vertical"></textarea>'
+    +lbl('Attach the quote','optional, PDF or a photo')+'<input type="file" id="apq-file" accept="application/pdf,image/*" style="'+inp+'"/>'
+    +'<div style="font-size:11.5px;color:#8A94A6;margin-top:4px">Kept privately — it opens on a link that expires.</div>'
+    +lbl('Where it stands')+'<select id="apq-state" style="'+inp+'"><option value="quoted">Quoted — they gave us a price</option><option value="agreed">Agreed — we have said yes</option></select>'
+    +'<div id="apq-s" style="display:none;font-size:12.5px;color:#8A5A10;margin-top:10px"></div>'
+    +'<div style="display:flex;gap:9px;margin-top:17px">'
+      +'<button id="apq-save" onclick="_apQuoteSave(this)" style="flex:1;padding:11px;background:#111;color:#fff;border:none;border-radius:9px;font-size:14px;font-weight:600;cursor:pointer">Save it</button>'
+      +'<button onclick="_apQuoteClose()" style="padding:11px 16px;background:#fff;color:#566070;border:0.5px solid #d8dce6;border-radius:9px;font-size:14px;cursor:pointer">Cancel</button>'
+    +'</div></div>';
+  document.body.appendChild(d);
+  const f=document.getElementById(pid?'apq-who':'apq-prop'); if(f) f.focus();
+}
+function _apQuoteClose(){ const el=document.getElementById('ap-quote-ov'); if(el) el.remove(); }
+async function _apQuoteSave(btn){
+  const g=(k)=>{ const e=document.getElementById(k); return e?String(e.value||'').trim():''; };
+  const pid=g('apq-prop');
+  if(!pid){ alert("Pick the property this is for, so it lands on the right card."); return; }
+  const label=g('apq-label');
+  if(!label){ alert("Say what the money is for."); return; }
+  if(_apNum(g('apq-amt'))==null){ alert("Put the amount in. A price with no number is just a note."); return; }
+  const st=document.getElementById('apq-s');
+  const fEl=document.getElementById('apq-file');
+  if(btn){ btn.disabled=true; btn.style.opacity='.7'; btn.textContent='Saving…'; }
+  const saved=await _apWrite({
+    property_id:pid, label:label, contractor_id:g('apq-who')||null,
+    amount:g('apq-amt'), notes:g('apq-notes')||null,
+    status:g('apq-state')||'quoted', source:'manual',
+    file:(fEl && fEl.files && fEl.files[0])?fEl.files[0]:null,
+    say:function(t){ if(st){ st.textContent=t; st.style.display=t?'block':'none'; } }
+  });
+  if(btn){ btn.disabled=false; btn.style.opacity='1'; btn.textContent='Save it'; }
+  if(!saved) return;
+  _apQuoteClose();
+  if(typeof _toast==='function'){
+    const c=(typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===pid; });
+    _toast((g('apq-state')==='agreed'?'Agreed price':'Quote')+' added to '+((c&&c.addr)||'the property'));
+  }
+  _apRerender();
+}
+// ---- accounts payable across every house ---------------------------------------
+// Bruce, 26 Sept: "for the accounts payable, next to side tasks, I would like to see the
+// accounts payable tab. Also side tasks needs to be on the admin dashboard ... the
+// senior VA dashboard, a tab for that at the top. The VA admin dashboard, because that
+// one's missing the side task calendar as well."
+// And 27 Sept, for the project dashboard: "just make sure it's broke off by, you know,
+// property cards."
+// Two questions, one set of records. The admin asks "who are we behind on paying", so it
+// groups by contractor. A project manager asks "what does this house owe", so it groups
+// by property. The tab picks the starting cut; anybody can flip it.
 function _apAllGo(v){ window._apAllView=v; _apRerender(); }
+function _apAllGroup(v){ window._apAllGroupBy=v; _apRerender(); }
 function _apRerender(){
   const f=window._apReturn;
   if(typeof f==='function'){ f(); return; }
   if(typeof openAdminDashboard==='function') openAdminDashboard('payables');
 }
-function _apAllBody(){
+function _apAllBody(groupDefault){
   const esc=_calEsc;
+  const ro=(typeof isReadOnly==='function') && isReadOnly();
   const view=window._apAllView||'open';
+  const by=window._apAllGroupBy||groupDefault||'who';
   const cards=(typeof propCards!=='undefined'?propCards:[]);
   const addrOf=(pid)=>{ const c=cards.find(function(x){ return x.id===pid; }); return c?(c.addr||''):'(property removed)'; };
-  const all=(_apCache||[]).filter(function(r){ return r.status!=='void'; });
+
+  const live=(_apCache||[]).filter(function(r){ return r.status!=='void'; });
+  const quotes=live.filter(_apIsQuote);                       // offered, not agreed
+  const all=live.filter(function(r){ return !_apIsQuote(r); });// actually committed
   const open=all.filter(function(r){ return r.status!=='paid'; });
-  const rows=(view==='all')?all:open;
+  const rows=(view==='quotes')?quotes:((view==='all')?all:open);
 
   const sum=(list,f)=>list.reduce(function(n,r){ const v=_apNum(r[f]); return n+(v||0); },0);
   const outstanding=sum(all,'invoiced_amount')-sum(all,'paid_amount');
-  const tile=(label,val,col,sub)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${col};border-radius:10px;padding:12px 15px;min-width:160px;flex:1">
+  const tile=(label,val,col,sub)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${col};border-radius:10px;padding:12px 15px;min-width:150px;flex:1">
       <div style="font-size:11.5px;color:#566070">${label}</div>
       <div style="font-size:22px;font-weight:700;color:${col};margin-top:3px">${val}</div>
       ${sub?`<div style="font-size:10.5px;color:#8A94A6;margin-top:2px">${sub}</div>`:''}</div>`;
 
-  // grouped by who we owe, because that is who gets chased or paid
-  const byWho={};
-  rows.forEach(function(r){
-    const k=_apWho(r)||'\u2014 nobody set \u2014';
-    (byWho[k]=byWho[k]||[]).push(r);
-  });
-  const groups=Object.keys(byWho).map(function(k){
-    const list=byWho[k];
-    const owed=sum(list,'invoiced_amount')-sum(list,'paid_amount');
-    return {who:k, list:list, owed:owed, agreed:sum(list,'agreed_amount')};
+  const keyOf=(r)=> (by==='prop') ? (addrOf(r.property_id)||'— no property —')
+                                  : (_apWho(r)||'— nobody set —');
+  const bucket={};
+  rows.forEach(function(r){ const k=keyOf(r); (bucket[k]=bucket[k]||[]).push(r); });
+  const groups=Object.keys(bucket).map(function(k){
+    const list=bucket[k];
+    return {who:k, list:list,
+            pid:(by==='prop' && list[0])?list[0].property_id:null,
+            cid:(by==='who' && list[0])?(list[0].contractor_id||null):null,
+            owed:sum(list,'invoiced_amount')-sum(list,'paid_amount'),
+            quoted:sum(list,'agreed_amount')};
   }).sort(function(a,b){ return (b.owed-a.owed) || String(a.who).localeCompare(String(b.who)); });
 
   const chip=(v,label,n)=>`<span onclick="_apAllGo('${v}')" style="cursor:pointer;padding:6px 13px;border-radius:8px;font-size:12.5px;font-weight:600;${view===v?'background:#122A4A;color:#fff':'background:#fff;color:#555;border:0.5px solid #d8dce6'}">${label} <span style="opacity:.7;font-weight:400">${n}</span></span>`;
+  const gchip=(v,label)=>`<span onclick="_apAllGroup('${v}')" style="cursor:pointer;padding:6px 12px;border-radius:8px;font-size:12.5px;${by===v?'background:#eef1f6;color:#111;font-weight:600;border:0.5px solid #ccd3df':'background:#fff;color:#566070;border:0.5px solid #e6e8ee'}">${label}</span>`;
 
   const line=(r)=>{
     const st=_apState(r.status);
     const owed=(_apNum(r.invoiced_amount)||0)-(_apNum(r.paid_amount)||0);
+    const second=(by==='prop') ? (_apWho(r)||'— nobody set —') : addrOf(r.property_id);
     return `<div style="display:flex;gap:10px;align-items:baseline;padding:7px 0;border-top:0.5px solid #f4f5f7;flex-wrap:wrap">
-      <span onclick="openPropDetail('${r.property_id}')" style="cursor:pointer;font-size:12.5px;color:#185FA5;font-weight:600;min-width:150px">${esc(addrOf(r.property_id))}</span>
-      <span style="flex:1;min-width:140px;font-size:13px;color:#111">${esc(r.label||'')}</span>
+      <span onclick="openPropDetail('${r.property_id}')" title="Open this property" style="cursor:pointer;font-size:12.5px;color:#185FA5;font-weight:600;min-width:150px">${esc(second)}</span>
+      <span style="flex:1;min-width:140px;font-size:13px;color:#111">${esc(r.label||'')}${_apDocs(r).length?` <span onclick="_apOpenDoc('${r.id}','${_apDocs(r)[0].id}')" title="${esc(_apDocs(r)[0].name)}" style="cursor:pointer;font-size:11.5px;color:#185FA5">\u{1F4CE}</span>`:''}</span>
       <span style="font-size:11px;font-weight:700;color:${st.col};background:${st.bg};padding:2px 9px;border-radius:99px;white-space:nowrap">${st.label}</span>
       <span style="font-size:13px;font-weight:600;color:${owed>0?'#B42318':'#566070'};min-width:96px;text-align:right">${owed>0?_apMoney(owed):_apMoney(_apLive(r))}</span>
     </div>`;
   };
 
+  const emptyMsg = (view==='quotes')
+    ? 'No quotes waiting. Anything a contractor has priced but nobody has agreed to shows up here.'
+    : 'Nothing on accounts payable yet. Add a quote with the button above, from a property card, or from the field app.';
+
   const body=groups.length?groups.map(function(g){
     return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:11px 14px;margin-bottom:10px">
       <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
-        <span style="font-size:14.5px;font-weight:700;color:#111">${esc(g.who)}</span>
+        <span ${g.pid?`onclick="openPropDetail('${g.pid}')" `:''}style="font-size:14.5px;font-weight:700;color:#111;${g.pid?'cursor:pointer':''}">${esc(g.who)}</span>
         <span style="font-size:12px;color:#566070">${g.list.length} line${g.list.length===1?'':'s'}</span>
-        ${g.owed>0?`<span style="margin-left:auto;font-size:13.5px;font-weight:700;color:#B42318">${_apMoney(g.owed)} owed</span>`
-                  :`<span style="margin-left:auto;font-size:12.5px;color:#0F7B54">nothing outstanding</span>`}
+        ${ro?'':`<span onclick="_apQuoteOpen('${g.pid||''}','${g.cid||''}')" title="Add a quote here" style="cursor:pointer;font-size:12px;color:#185FA5;font-weight:600">&#65291; quote</span>`}
+        ${(view==='quotes')
+          ? `<span style="margin-left:auto;font-size:13px;color:#566070">${_apMoney(g.quoted)} quoted</span>`
+          : (g.owed>0?`<span style="margin-left:auto;font-size:13.5px;font-weight:700;color:#B42318">${_apMoney(g.owed)} owed</span>`
+                     :`<span style="margin-left:auto;font-size:12.5px;color:#0F7B54">nothing outstanding</span>`)}
       </div>
       ${g.list.map(line).join('')}
     </div>`;
   }).join('')
-  :`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:26px;text-align:center;color:#636b7a;font-size:13.5px">Nothing on accounts payable yet. Add what has been agreed on a property card &mdash; each card has its own Accounts Payable tab.</div>`;
+  :`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:26px;text-align:center;color:#636b7a;font-size:13.5px">${emptyMsg}</div>`;
 
   return `<div style="padding:20px;max-width:1120px;margin:0 auto">
-    <div style="font-size:19px;font-weight:500;color:#111;margin-bottom:3px">\u{1F4B0} Accounts Payable</div>
-    <div style="font-size:13px;color:#566070;margin-bottom:13px">Everything we owe, grouped by who we owe it to. Click a house to open its own accounts payable tab.</div>
+    <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
+      <div style="font-size:19px;font-weight:500;color:#111;margin-bottom:3px">\u{1F4B0} Accounts Payable</div>
+      ${ro?'':`<button onclick="_apQuoteOpen('','')" style="margin-left:auto;padding:8px 15px;background:#111;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">&#65291; Add a quote</button>`}
+    </div>
+    <div style="font-size:13px;color:#566070;margin-bottom:13px">Everything we owe. A <b>quote</b> is a price we have been given and have not agreed to — it is listed separately and counts towards nothing until somebody says yes. Click a house to open its own tab.</div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:13px">
       ${tile('Outstanding', _apMoney(outstanding), outstanding>0?'#B42318':'#0F7B54','billed and not yet paid')}
-      ${tile('Agreed', _apMoney(sum(all,'agreed_amount')), '#185FA5', all.length+' line'+(all.length===1?'':'s'))}
+      ${tile('Committed', _apMoney(sum(all,'agreed_amount')), '#185FA5', all.length+' agreed line'+(all.length===1?'':'s'))}
       ${tile('Paid', _apMoney(sum(all,'paid_amount')), '#0F7B54','')}
-      ${tile('People owed', String(groups.filter(function(g){ return g.owed>0; }).length), '#7A3FA8','')}
+      ${tile('Quotes waiting', _apMoney(sum(quotes,'agreed_amount')), '#566070', quotes.length+' not agreed yet')}
     </div>
-    <div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px">
-      ${chip('open','Still open',open.length)}${chip('all','Everything',all.length)}
+    <div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px;align-items:center">
+      ${chip('open','Still open',open.length)}${chip('all','Everything',all.length)}${chip('quotes','Quotes',quotes.length)}
+      <span style="margin-left:auto;font-size:11.5px;color:#8A94A6">Group by</span>
+      ${gchip('who','Who we owe')}${gchip('prop','Property')}
     </div>
     ${body}</div>`;
 }
@@ -5789,12 +6058,16 @@ function _apBody(c){
       ${sub?`<div style="font-size:10.5px;color:#8A94A6;margin-top:2px">${sub}</div>`:''}
     </div>`;
 
-  const head=`<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+  // The quote tile is deliberately last and grey: it is not money owed, and it must not
+  // read like it is.
+  const head=`<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">
       ${tile('Agreed', _apMoney(T.agreed), '#185FA5', T.rows+' line'+(T.rows===1?'':'s'))}
       ${tile('Invoiced', _apMoney(T.invoiced), '#8A5A10', T.leftToBill>0?(_apMoney(T.leftToBill)+' still to bill'):'')}
       ${tile('Paid', _apMoney(T.paid), '#0F7B54', '')}
       ${tile('Outstanding', _apMoney(T.outstanding), T.outstanding>0?'#B42318':'#0F7B54', 'billed and not yet paid')}
-    </div>`;
+      ${T.quotes?tile('Quotes waiting', _apMoney(T.quoted), '#566070', T.quotes+' not agreed yet'):''}
+    </div>
+    ${ro?'':`<div style="margin-bottom:12px"><button onclick="_apQuoteOpen('${pid}','')" style="padding:7px 14px;background:#fff;color:#185FA5;border:0.5px solid #cdd7e6;border-radius:8px;font-size:12.5px;font-weight:600;cursor:pointer">&#65291; Add a quote</button></div>`}`;
 
   const money=(r,f,ph)=>ro
     ? `<span style="font-size:13px">${_apMoney(r[f])}</span>`
@@ -5815,6 +6088,13 @@ function _apBody(c){
             :`<input value="${esc(r.label||'')}" onchange="_apField('${r.id}','label',this.value,'${pid}')" style="width:100%;min-width:160px;padding:5px 7px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13.5px;font-weight:600"/>`}
         ${r.category?`<div style="font-size:10.5px;color:#636b7a;margin-top:2px">${esc(r.category)}</div>`:''}
         <div style="font-size:10px;color:#9AA3B2;margin-top:2px">${esc(r.source==='sow'?'from the scope of work':(r.source==='field'?'from the field app':(r.source==='form'?'from a price form':'typed in here')))}</div>
+        ${r.notes?`<div style="font-size:11.5px;color:#444;margin-top:3px;white-space:pre-wrap">${esc(r.notes)}</div>`:''}
+        ${_apDocChips(r, ro)}
+        ${ro?'':`<div style="margin-top:4px;display:flex;gap:5px;align-items:center;flex-wrap:wrap">
+            <input type="file" id="ap-file-${r.id}" accept="application/pdf,image/*" style="font-size:10.5px;max-width:168px"/>
+            <span onclick="_apAttachTo('${r.id}','${pid}')" style="cursor:pointer;font-size:11px;color:#185FA5;font-weight:600">Attach</span>
+            <span id="ap-fs-${r.id}" style="display:none;font-size:10.5px;color:#8A5A10"></span>
+          </div>`}
       </td>
       <td style="padding:8px">
         ${ro?`<span style="font-size:13px">${esc(_apWho(r))||'\u2014'}</span>`
@@ -5831,15 +6111,26 @@ function _apBody(c){
   };
 
   const body=rows.length?rows.map(row).join('')
-    :`<tr><td colspan="7" style="padding:22px;text-align:center;color:#636b7a;font-size:13.5px">Nothing owed on this property yet.${ro?'':' Add the first agreed price below.'}</td></tr>`;
+    :`<tr><td colspan="7" style="padding:22px;text-align:center;color:#636b7a;font-size:13.5px">Nothing on accounts payable for this property yet.${ro?'':' Add the first quote or agreed price below.'}</td></tr>`;
 
   const adder=ro?'':`<tr style="background:#F7F8FB;border-top:0.5px solid #e0e4ec">
       <td style="padding:8px 10px"><input id="ap-label-${pid}" placeholder="What the money is for" style="width:100%;min-width:160px;padding:6px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px"/>
         <input id="ap-cat-${pid}" placeholder="Trade / category (optional)" style="width:100%;margin-top:4px;padding:5px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12px"/></td>
       <td style="padding:8px"><select id="ap-who-${pid}" style="padding:6px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px;max-width:210px">${conOpts('')}</select></td>
       <td style="padding:8px;text-align:right"><input id="ap-amt-${pid}" placeholder="$0.00" style="width:96px;padding:6px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px;text-align:right"/></td>
-      <td style="padding:8px;text-align:right" colspan="2"><input type="date" id="ap-due-${pid}" title="Due date (optional)" style="padding:6px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px"/></td>
-      <td colspan="2" style="padding:8px;text-align:right"><button onclick="_apAdd('${pid}')" style="padding:7px 15px;background:#111;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer">+ Add</button></td>
+      <td style="padding:8px;text-align:right" colspan="2">
+        <input type="date" id="ap-due-${pid}" title="Due date (optional)" style="padding:6px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px"/>
+        <div style="margin-top:4px;display:flex;gap:5px;align-items:center;justify-content:flex-end;flex-wrap:wrap">
+          <input type="file" id="ap-new-file-${pid}" accept="application/pdf,image/*" title="Attach the quote" style="font-size:10.5px;max-width:170px"/>
+          <span id="ap-new-s-${pid}" style="display:none;font-size:10.5px;color:#8A5A10"></span>
+        </div>
+      </td>
+      <td colspan="2" style="padding:8px;text-align:right">
+        <select id="ap-state-${pid}" title="Is this just a price we have been given, or one we have said yes to?" style="padding:6px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;margin-bottom:4px">
+          <option value="agreed">Agreed — we said yes</option>
+          <option value="quoted">Quoted — not agreed yet</option>
+        </select><br/>
+        <button onclick="_apAdd('${pid}')" style="padding:7px 15px;background:#111;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer">+ Add</button></td>
     </tr>`;
 
   const th=(t,a)=>`<th style="text-align:${a||'left'};padding:9px 10px;font-size:11.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap">${t}</th>`;
@@ -5850,7 +6141,7 @@ function _apBody(c){
           <thead><tr style="background:#fafbfc">
             ${th('What for')}${th('Who gets paid')}${th('Agreed','right')}${th('Invoiced','right')}${th('Paid','right')}${th('Where it stands')}${th('')}
           </tr></thead><tbody>${body}${adder}</tbody></table></div>`
-    + `<div style="font-size:12px;color:#566070;margin-top:9px">Every figure here names the contractor it belongs to, so it feeds the W-9 tracker and the contractor directory rather than sitting on its own. <b>Void</b> keeps a cancelled line on the record; <b>Remove</b> deletes it for good.</div>`;
+    + `<div style="font-size:12px;color:#566070;margin-top:9px">A <b>quote</b> is a price somebody offered us — it is not counted as money owed until it is marked Agreed. Every figure names the contractor it belongs to, so it feeds the W-9 tracker and the contractor directory rather than sitting on its own. <b>Void</b> keeps a cancelled line on the record; <b>Remove</b> deletes it for good. Attached files are kept privately and open on a link that expires, because a contractor's pricing is not public.</div>`;
 }
 function _pcTabs(c){
   const t=[{key:'info', label:'\u{1F4CB} Project Info'},
@@ -6880,6 +7171,9 @@ function getPDContent(tab) {
     case 'construction': return renderConstructionCalendar();
     case 'taskcal':      return renderTaskCalendar();
     case 'sidetasks':    return _sqAllBody();
+    case 'payables':
+      window._apReturn=function(){ openProjectDashboard('payables'); };
+      return _apAllBody('prop');
     default:       return placeholder('📊','Select a tab above to get started.');
   }
 }
@@ -24911,7 +25205,12 @@ function _mAddTab(){
     // need to add a change order form there as well... They also need to be able to add
     // a side task form."
     +item("📑","Add a change order","Scope added after the budget was set","co")
-    +item("📌","Add a side task","A reminder on a property — no calendar unless you say so","sq");
+    +item("📌","Add a side task","A reminder on a property — no calendar unless you say so","sq")
+    // Bruce, 27 Sept: "on the field app under the add tab I would like to add to accounts
+    // payable. When I click on that, I can click add, I can select a contractor, and then
+    // I can put amount quoted and description of work. I can either type something in or
+    // give the option to attach a PDF."
+    +item("\u{1F4B0}","Add a quote or price","What a contractor wants for a job — goes straight to the property card","ap");
 }
 function _mOpenAdd(kind){
   const body=document.getElementById("m-body"); if(!body) return;
@@ -24919,6 +25218,7 @@ function _mOpenAdd(kind){
   body.innerHTML = kind==="task" ? _mAddFormTask()
                  : kind==="co"   ? _mAddFormCO()
                  : kind==="sq"   ? _mAddFormSQ()
+                 : kind==="ap"   ? _mAddFormAP()
                  : _mAddFormEvent(kind==="material");
   if(kind==="task") _mNewStepsRender();
   body.scrollTop=0;
@@ -24998,6 +25298,60 @@ function _mAddFormSQ(){
     <label style="display:flex;align-items:center;gap:9px;margin-top:12px;font-size:14px;color:#444"><input type="checkbox" id="ms-c" style="width:19px;height:19px"/> Put it on the task calendar for that date too</label>
     <button class="m-btn" onclick="_submit('m-sq',this,'Saving…',_mSubmitSQ)">Save side task</button>
   `);
+}
+// ---- A quote or an agreed price, from the phone ----
+// Standing in the house with the contractor, you get a number. This is the shortest path
+// from that number to the property card: pick the house, pick the man, type the price,
+// say what it is for, attach his PDF if he sent one. Same record the desk sees.
+function _mAddFormAP(){
+  const cons=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).slice()
+    .sort(function(a,b){ return String(a.business_name||a.name||'').localeCompare(String(b.business_name||b.name||'')); });
+  const opts=['<option value="">— Pick the contractor —</option>'].concat(cons.map(function(x){
+    const nm=x.business_name?((x.name||'')+' · '+x.business_name):(x.name||'');
+    return '<option value="'+_calEsc(x.id)+'">'+_calEsc(nm)+'</option>';
+  })).join('');
+  return _mFormWrap("Add a quote or price",`
+    <div style="font-size:13px;color:#566070;margin-bottom:10px;line-height:1.5">A <b>quote</b> is a price you have been given. It does not count as money owed until somebody marks it agreed, so it is safe to put a number in here the moment you hear it.</div>
+    <div class="m-label">Property</div>${_mPropOnlyPicker("map")}
+    <div class="m-label" style="margin-top:12px">Contractor</div><select id="map-who" class="m-select">${opts}</select>
+    <div style="font-size:12px;color:#566070;margin-top:5px">Not in the list? Add them in the contractor directory first so the price ties to their W-9.</div>
+    <div class="m-label" style="margin-top:12px">Amount quoted</div><input id="map-amt" class="m-input" inputmode="decimal" placeholder="$0.00"/>
+    <div class="m-label" style="margin-top:12px">What the money is for</div><input id="map-label" class="m-input" placeholder="Framing labour, roof tear-off and replace…"/>
+    <div class="m-label" style="margin-top:12px">Description of work <span style="color:#566070;font-weight:400">&mdash; optional</span></div>
+    <textarea id="map-notes" class="m-input" rows="3" placeholder="What is included, what is not, anything he said that matters later…"></textarea>
+    <div class="m-label" style="margin-top:12px">Attach his quote <span style="color:#566070;font-weight:400">&mdash; optional, PDF or a photo</span></div>
+    <input type="file" id="map-file" accept="application/pdf,image/*" class="m-input" style="padding:9px"/>
+    <div style="font-size:12px;color:#566070;margin-top:5px">Kept privately &mdash; it opens on a link that expires, because his pricing is not public.</div>
+    <div class="m-label" style="margin-top:12px">Where it stands</div>
+    <select id="map-state" class="m-select">
+      <option value="quoted">Quoted — he gave us a price</option>
+      <option value="agreed">Agreed — we have said yes</option>
+    </select>
+    <div id="map-s" style="display:none;font-size:12.5px;color:#8A5A10;margin-top:9px"></div>
+    <button class="m-btn" onclick="_submit('m-ap',this,'Saving…',_mSubmitAP)">Save it</button>
+  `);
+}
+async function _mSubmitAP(){
+  if(_blockIfReadOnly()) return;
+  const g=(k)=>{ const el=document.getElementById(k); return el?String(el.value||'').trim():''; };
+  const pid=g("map-prop");
+  if(!pid){ alert("Pick the property this is for, so it lands on the right card."); return; }
+  const label=g("map-label");
+  if(!label){ alert("Say what the money is for."); return; }
+  if(_apNum(g("map-amt"))==null){ alert("Put the amount in. A price with no number is just a note."); return; }
+  const fEl=document.getElementById("map-file");
+  const st=document.getElementById("map-s");
+  const saved=await _apWrite({
+    property_id:pid, label:label, contractor_id:g("map-who")||null,
+    amount:g("map-amt"), notes:g("map-notes")||null,
+    status:g("map-state")||'quoted', source:'field',
+    file:(fEl && fEl.files && fEl.files[0])?fEl.files[0]:null,
+    say:function(t){ if(st){ st.textContent=t; st.style.display=t?'block':'none'; } }
+  });
+  if(!saved) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
+  _toast((g("map-state")==='agreed'?"Agreed price":"Quote")+" added to "+((c&&c.addr)||'the property'));
+  _mGo("add");
 }
 async function _mSubmitSQ(){
   if(_blockIfReadOnly()) return;
@@ -26617,4 +26971,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-28c calendar-and-tasks-read-past-the-1000-row-cap -->
+<!-- build: 2026-09-28d accounts-payable-quotes-attachments-and-a-project-dashboard-tab -->
