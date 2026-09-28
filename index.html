@@ -17293,6 +17293,15 @@ function _nfPermitItems(today){
         sub:where+' \u00b7 list the inspections in the order the city wants them',
         when:r.issued||today, click:"openPermitDashboard('insp')" });
     }
+    // Bruce, 27 Sept: "the finish date for that isn't set until it's been acknowledged
+    // that permits approved has been set." Until somebody says so, Pending Permit
+    // Approval stays open on the card - so the asking has to be visible somewhere.
+    if(typeof _permitNeedsApprovalAck==='function' && _permitNeedsApprovalAck(r)){
+      out.push({ id:'perm-ack:'+r.id, icon:'\u2705', tone:'amber',
+        text:addr+' was approved on '+(r.issued||'')+' \u2014 nobody has acknowledged it yet',
+        sub:where+' \u00b7 acknowledge it and Pending Permit Approval closes on the property card',
+        when:r.issued||today, click:"_permitAckApproval('"+r.id+"')" });
+    }
     insps.forEach(function(x,i){
       if(x.done) return;
       const res=(typeof _inspResult==='function')?_inspResult(x):(x.done?'pass':'');
@@ -18825,7 +18834,10 @@ function _winWinLine(c, wk){
     const mon=new Date(wk+'T00:00:00');
     if(!isNaN(mon)){
       const start=_ymd(new Date(mon.getTime()-7*86400000));
-      const end=_ymd(new Date(mon.getTime()-86400000));
+      // ...through the meeting day itself. Found 28 Sept: answering "yes they went in"
+      // DURING Monday's meeting made the win line vanish, because the window stopped on
+      // the Sunday. Anything confirmed in the room belongs to the meeting being held.
+      const end=_ymd(mon);
       if(on<start || on>end) return '';
     }
   }
@@ -19348,23 +19360,81 @@ function _permitSubLabels(r){
   const tag=_permitTag(r);
   return { sent:"Permit Submitted ("+tag+")", appr:"Pending Permit Approval ("+tag+")" };
 }
+// ---- what the permit tracker says these two steps actually happened on ----------
+// Bruce, 27 Sept: "on permitted jobs, for example Permit Submitted, that should
+// automatically read in the permit tracker when permits were submitted, and that should
+// automatically check the box ... it should still update the start date that the permits
+// were submitted. There is no finish date for that ... And then permits reviewed, the
+// start date for that starts once we get our first revision letter back from the plans
+// examiner ... the finish date for that isn't until the permit's approved date is set ...
+// and the finish date isn't set until it's been acknowledged that permits approved has
+// been set."
+// 1060 Glendale was the example and he was right: the tracker says R-26-94 was submitted
+// on 16 Sept, but the subphase on the card said 18 Sept - because the date written was
+// "today, when the app noticed", not the date on the tracker. It was also never updated
+// afterwards, so a corrected tracker date never reached the card.
+// The tracker is the source of truth for both steps now:
+//   Permit Submitted        start = submitted,  no finish date, ticked once submitted
+//   Pending Permit Approval start = received (the first letter back from the examiner)
+//                           finish = issued (the approved date)
+//                           ticked only once somebody has ACKNOWLEDGED the approval
+function _permitSubPlan(r){
+  const L=_permitSubLabels(r);
+  const submittedOn=String((r&&r.submitted)||"").trim();
+  const reviewFrom =String((r&&r.received)||"").trim();
+  const approvedOn =String((r&&r.issued)||"").trim();
+  const ackAt=String(((r&&r.appr_ack)||{}).at||"").trim();
+  return [
+    { label:L.sent, done:!!submittedOn, start:submittedOn, due:"" },
+    { label:L.appr, done:!!(approvedOn && ackAt), start:reviewFrom, due:approvedOn,
+      awaitingAck: !!(approvedOn && !ackAt) }
+  ];
+}
+// Has the permit been approved but nobody has said so out loud yet?
+function _permitNeedsApprovalAck(r){
+  if(!r) return false;
+  if(!String(r.issued||"").trim()) return false;
+  return !String(((r.appr_ack)||{}).at||"").trim();
+}
+async function _permitAckApproval(id){
+  if(typeof _blockIfReadOnly==="function" && _blockIfReadOnly()) return false;
+  const d=window._trkData||{}; d.permits=d.permits||{};
+  const r=d.permits[id]; if(!r) return false;
+  const who=(typeof _miWho==="function")?_miWho():"";
+  d.permits[id]=Object.assign({}, r, { appr_ack:{ by:who, at:(typeof _ymd==="function"?_ymd(new Date()):"") } });
+  window._trkData=d;
+  if(!await _trkSave()) return false;
+  if(typeof _logAudit==="function"){
+    _logAudit("completed","permit",(r.addr||"")+" \u2014 approval acknowledged",
+      "Permit approved "+(r.issued||"")+"; acknowledged by "+(who||"somebody")+", so Pending Permit Approval can close.");
+  }
+  try{ await _permitSyncCard(id); }catch(e){}
+  if(typeof _permitRerender==="function") _permitRerender();
+  return true;
+}
 // Write (or update) one subphase on the property card the permit belongs to.
-async function _permitWriteSubs(permit, pairs){
+// The dates come from the tracker every time, so a corrected tracker date reaches the
+// card instead of the card keeping whatever it was born with.
+async function _permitWriteSubs(permit, steps){
   const c=_permitProp(permit);
   if(!c) return false;
   const subs=Array.isArray(c.subPhases)?c.subPhases.map(s=>Object.assign({},s)):[];
   let changed=false;
-  pairs.forEach(([label,done,dueDays])=>{
-    const i=subs.findIndex(s=>String(s.name||"")===label);
+  const set=(o,k,v)=>{ if(String(o[k]||"")!==String(v||"")){ o[k]=v||""; changed=true; } };
+  steps.forEach((st)=>{
+    const i=subs.findIndex(s=>String(s.name||"")===st.label);
     if(i<0){
-      subs.push({ name:label,
-                  start:(typeof _ymdToday==="function"?_ymdToday():_ymd(new Date())),
-                  due:(typeof _ymdPlus==="function"?_ymdPlus(dueDays||14):""),
-                  completed:!!done });
+      subs.push({ name:st.label, start:st.start||"", due:st.due||"", completed:!!st.done });
       changed=true;
-    } else if(!!subs[i].completed !== !!done){
-      subs[i].completed=!!done; changed=true;
+      return;
     }
+    // Dates are the tracker's to say. Only write one we actually have - a blank tracker
+    // field must never wipe a date somebody typed on the card.
+    if(st.start) set(subs[i],'start',st.start);
+    if(st.due)   set(subs[i],'due',st.due);
+    // Never un-tick something already finished. Somebody ticked it for a reason, and
+    // pulling ticks back out from under the room mid-week is how trust goes.
+    if(st.done && !subs[i].completed){ subs[i].completed=true; changed=true; }
   });
   if(!changed) return true;
   const {data,error}=await supabase.from("pm_properties").update({sub_phases:subs}).eq("id",c.id).select("id");
@@ -19376,11 +19446,7 @@ async function _permitWriteSubs(permit, pairs){
 async function _permitSyncCard(id){
   const r=((window._trkData||{}).permits||{})[id];
   if(!r) return false;
-  const L=_permitSubLabels(r);
-  const st=String(r.status||"");
-  const submitted = !!r.submitted || !!st;                 // it exists in the tracker at all
-  const approved  = (st==="Issued" || st==="Closed");
-  return await _permitWriteSubs(r, [[L.sent, submitted, 1],[L.appr, approved, 21]]);
+  return await _permitWriteSubs(r, _permitSubPlan(r));
 }
 // Revisions means Jen has drawings to redo. That is real work with a date on it,
 // so it becomes a scheduled task rather than a colour on a dropdown.
@@ -19413,7 +19479,9 @@ async function _permitRevisionTask(id){
 }
 // One entry point for the tracker to call after a permit field changes.
 async function _permitAfterChange(id, field){
-  if(field!=="status" && field!=="submitted" && field!=="number") return;
+  // Bruce, 27 Sept: the dates on the card come off the tracker now, so a change to any
+  // of the dates has to reach the card too - not just the status.
+  if(["status","submitted","number","received","issued"].indexOf(field)<0) return;
   try{ await _permitSyncCard(id); }catch(e){}
   if(field==="status"){
     const st=String((((window._trkData||{}).permits||{})[id]||{}).status||"");
@@ -22601,7 +22669,8 @@ function openAddCalEvent(dateStr){
       </div>
       <div id="cal-newc" style="display:none">
         <div class="form-two">
-          <div class="form-row"><label>New contractor name</label><input type="text" id="cal-newc-name" placeholder="Company or person" /></div>
+          <div class="form-row"><label>New contractor name</label><input type="text" id="cal-newc-name" placeholder="Person" /></div>
+          <div class="form-row"><label>Business name <span style="font-size:11px;color:#8A94A6">&mdash; what goes on the W-9</span></label><input type="text" id="cal-newc-biz" placeholder="Company, if they trade as one" /></div>
           <div class="form-row"><label>Phone</label><input type="text" id="cal-newc-phone" placeholder="(614) 555-0100" /></div>
         </div>
       </div>
@@ -22679,8 +22748,15 @@ async function saveCalEvent(){
     if(contractorId==="__new"){
       const nm=(document.getElementById("cal-newc-name").value||"").trim();
       const ph=(document.getElementById("cal-newc-phone").value||"").trim();
+      // Bruce, 28 Sept: "when adding a new contractor to the construction calendar it
+      // says new contractor name. We also need to be able to add their business name.
+      // That way it ties into their W-9 as well automatically."
+      // The W-9 tracker leads with whichever name the W-9 is under, so a contractor
+      // booked without a business name lands there as a bare first name and somebody
+      // has to go and find out who they really are.
+      const bz=((document.getElementById("cal-newc-biz")||{}).value||"").trim();
       if(!nm){ showE("Enter the new contractor's name."); return; }
-      const ins=await supabase.from("pm_contractors").insert({name:nm,phone:ph}).select("id").single();
+      const ins=await supabase.from("pm_contractors").insert({name:nm,phone:ph,business_name:bz||null}).select("id").single();
       if(ins.error){ showE("Couldn't save contractor: "+(ins.error.message||"")); return; }
       contractorId=ins.data.id;
       await loadContractorsFromSupabase();
@@ -22763,7 +22839,8 @@ function openCalEventDetail(id){
       </div>
       <div id="cale-newc" style="display:none">
         <div class="form-two">
-          <div class="form-row"><label>New contractor name</label><input type="text" id="cale-newc-name" placeholder="Company or person" ${dis} /></div>
+          <div class="form-row"><label>New contractor name</label><input type="text" id="cale-newc-name" placeholder="Person" ${dis} /></div>
+          <div class="form-row"><label>Business name <span style="font-size:11px;color:#8A94A6">&mdash; what goes on the W-9</span></label><input type="text" id="cale-newc-biz" placeholder="Company, if they trade as one" ${dis} /></div>
           <div class="form-row"><label>Phone</label><input type="text" id="cale-newc-phone" placeholder="(614) 555-0100" ${dis} /></div>
         </div>
       </div>
@@ -22888,8 +22965,9 @@ async function saveCalEventEdit(id){
     if(contractorId==="__new"){
       const nm=(document.getElementById("cale-newc-name").value||"").trim();
       const ph=(document.getElementById("cale-newc-phone").value||"").trim();
+      const bz=((document.getElementById("cale-newc-biz")||{}).value||"").trim();
       if(!nm){ showE("Enter the new contractor's name."); return; }
-      const ins=await supabase.from("pm_contractors").insert({name:nm,phone:ph}).select("id").single();
+      const ins=await supabase.from("pm_contractors").insert({name:nm,phone:ph,business_name:bz||null}).select("id").single();
       if(ins.error){ showE("Couldn't save contractor: "+(ins.error.message||"")); return; }
       contractorId=ins.data.id;
       await loadContractorsFromSupabase();
@@ -26493,4 +26571,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-26h dashboards-tabs + meeting-fixes + permit-order-only-when-issued -->
+<!-- build: 2026-09-28a permit-subphase-dates-from-the-tracker -->
