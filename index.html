@@ -16279,7 +16279,9 @@ async function loadPMAssistants(){
   PM_ASSISTANTS = merged;
 }
 function _assistantRole(name){
-  const u = getUsers().find(x=>((x.firstName||"")+"").trim()===name && x.status==="approved");
+  // Matched on an exact first name only - the same pattern that gave Alex an empty
+  // board. _sameAssignee already knows the spellings and the alias table.
+  const u = getUsers().find(x=>x.status==="approved" && _sameAssignee(((x.firstName||"")+" "+(x.lastName||"")).trim()||(x.firstName||""), name));
   return u ? u.role : (name==="Alex"?"Start of Project Assistant":name==="Gabe"?"End of Project Assistant":"PM Assistant");
 }
 let _pmaActiveTab=null;
@@ -23876,6 +23878,36 @@ function _taskStatusFor(t,name){
   return _tkTicked(t,name) ? 'done' : 'open';
 }
 function _taskOpenFor(t,name){ return _taskStatusFor(t,name)!=='done'; }
+// Bruce, 29 Sept: "when one person marks a task complete, I want it to come off of
+// their day view. The team meeting - I'm marking it complete, everybody else hasn't
+// marked it on theirs, so it still shows."
+//
+// The per-person tick above was already being written and stored correctly; the day
+// views just were not READING it. They asked the task "are you done?" instead of
+// asking "is this person done with you?", so a shared job stayed unticked on your own
+// day until the last person on it caught up. These three helpers are what a day view
+// uses instead of t.status, so the answer is always about whoever's day it is.
+//
+// Whose day are we looking at? A calendar filtered to a person is that person's day;
+// an unfiltered one is your own.
+function _tkDayWho(selected){
+  const sel=String(selected||'').trim();
+  if(sel && sel!=='all' && sel!=='Unassigned') return sel;
+  return (typeof _miWho==='function') ? _miWho() : '';
+}
+// Done as far as this day is concerned.
+function _tkDoneOnDay(t, who){
+  return _taskStatusFor(t, who)==='done';
+}
+// A shared job you have ticked but others have not. Worth saying out loud on the row,
+// so a ticked-off team meeting does not look like it closed for the whole company.
+function _tkStillWithNote(t, who){
+  if(!t || t.status==='done') return '';
+  if(!_tkTicked(t, who)) return '';
+  const left=_tkWaitingOn(t).filter(function(n){ return !_sameAssignee(n, who); });
+  if(!left.length) return '';
+  return 'Off your list \u2014 still with '+left.join(', ');
+}
 // How many of the people on it are still to tick.
 function _tkOutstanding(t){
   const all=taskAssignees(t)||[];
@@ -24047,7 +24079,7 @@ function renderTaskCalendar(){
   const st=_taskCal;
   if(st.y==null){ const d=new Date(); st.y=d.getFullYear(); st.m=d.getMonth(); }
   // Default to the logged-in user's own tasks on first open.
-  if(!st._selfInit){ st._selfInit=true; try{ const u=(typeof currentUser==='function')?currentUser():null; if(u&&st.assignee==="all"){ const nm=((u.firstName||"")+" "+(u.lastName||"")).trim(); const tm=teamMembers(); const hit=tm.find(m=>m===nm)||tm.find(m=>u.firstName&&m.split(" ")[0]===u.firstName); if(hit) st.assignee=hit; } }catch(e){} }
+  if(!st._selfInit){ st._selfInit=true; try{ const u=(typeof currentUser==='function')?currentUser():null; if(u&&st.assignee==="all"){ const nm=((u.firstName||"")+" "+(u.lastName||"")).trim(); const tm=teamMembers(); const hit=tm.find(m=>_sameAssignee(m,nm))||(u.firstName?tm.find(m=>_sameAssignee(m,u.firstName)):null); if(hit) st.assignee=hit; } }catch(e){} }
   if(!st.loaded){ st.loaded=true; Promise.all([loadTasks(), loadSavedAddresses(), _fdLoad()]).then(_taskRerender); }
   const ro=isReadOnly();
   // Assignee picker: "All" button + a person dropdown (matches the construction calendar's picker)
@@ -24075,8 +24107,9 @@ function renderTaskCalendar(){
     });
     return out;
   };
+  const _tcWho=_tkDayWho(st.assignee);
   const taskChip=(entry)=>{
-    const t=entry.t, done=t.status==="done";
+    const t=entry.t, done=_tkDoneOnDay(t,_tcWho);
     const bg=done?"#EAF3DE":"#FAEEDA", col=done?"#3B6D11":"#633806", deco=done?"text-decoration:line-through;opacity:0.8;":"";
     // Bruce, 8 Sept: "when you tag multiple people for a task, the task takes up the
     // whole calendar because it shows every name." Month view now shows the type of
@@ -24085,7 +24118,10 @@ function renderTaskCalendar(){
     const label=t.category?t.category:t.title;
     const mk=entry.marker==="start"?"▶ ":(entry.marker==="due"?"■ ":"");
     const tip=`${t.category?t.category+" — ":""}${t.title}${entry.marker==="start"?" (start)":entry.marker==="due"?" (due)":""}${_who.length?" · "+_who.join(", "):" · Unassigned"}`;
-    return `<div onclick="event.stopPropagation();openTaskDetail('${t.id}')" title="${_calEsc(tip)} · click to open / edit" style="font-size:11px;background:${bg};color:${col};border-radius:4px;padding:2px 5px;margin-bottom:2px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${deco}">${done?'✓ ':mk}${_calEsc(label)}${_calEsc(who)}</div>`;
+    // A shared job the viewer has ticked still sits on other people's calendars, so say
+    // so in the tooltip - the chip alone has no room for it.
+    const _tipStill=_tkStillWithNote(t,_tcWho);
+    return `<div onclick="event.stopPropagation();openTaskDetail('${t.id}')" title="${_calEsc(tip)}${_tipStill?' \u00b7 '+_calEsc(_tipStill):''} · click to open / edit" style="font-size:11px;background:${bg};color:${col};border-radius:4px;padding:2px 5px;margin-bottom:2px;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${deco}">${done?'✓ ':mk}${_calEsc(label)}${_calEsc(who)}</div>`;
   };
   const cells=[];
   for(let i=0;i<startDow;i++) cells.push(`<div style="background:#fafbfc;min-height:92px;border:0.5px solid #edf0f4"></div>`);
@@ -24130,9 +24166,10 @@ function renderTaskCalendar(){
       if(t.start_date===dayStr && t.start_date!==t.due_date) entries.push({t,marker:"start"});
       if(t.due_date===dayStr) entries.push({t,marker: t.start_date&&t.start_date!==t.due_date?"due":"single"});
     });
-    entries.sort((a,b)=>(a.t.status==="done"?1:0)-(b.t.status==="done"?1:0));
-    const rowFor=(en)=>{ const t=en.t, done=t.status==="done"; const mk=en.marker==="start"?"▶ Start — ":(en.marker==="due"?"■ Due — ":""); const who=taskAssignees(t); const whoS=who.length?who.join(", "):"Unassigned";
-      return `<div style="display:flex;align-items:center;gap:11px;padding:12px 14px;border-bottom:0.5px solid #f1f3f7;${done?'opacity:0.6;':''}"><div onclick="event.stopPropagation();toggleTaskDone('${t.id}')" title="Mark ${done?'open':'done'}" style="font-size:21px;cursor:pointer;line-height:1">${done?'✅':'⬜'}</div><div onclick="openTaskDetail('${t.id}')" style="cursor:pointer;flex:1;min-width:0"><div style="font-size:15px;font-weight:500;color:#111;${done?'text-decoration:line-through;':''}">${mk}${t.category?`<span style="font-size:11px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:5px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}${_subPill(t,false)}</div><div style="font-size:13px;color:#566070;margin-top:2px">${(t.due_time&&en.marker!=='start')?`<span style="color:#2E8B57;font-weight:600">🕐 ${_fmtTime(t.due_time)}</span> · `:''}${_locLabel(t)?_calEsc(_locLabel(t))+' · ':''}${_calEsc(whoS)}</div>${t.notes?`<div style="font-size:12px;color:#566070;margin-top:3px;white-space:pre-wrap">💬 ${_calEsc(t.notes)}</div>`:''}</div><div onclick="openTaskDetail('${t.id}')" style="font-size:12px;color:#566070;white-space:nowrap;cursor:pointer">Edit ›</div></div>`; };
+    const _dvWho=_tkDayWho(st.assignee);
+    entries.sort((a,b)=>(_tkDoneOnDay(a.t,_dvWho)?1:0)-(_tkDoneOnDay(b.t,_dvWho)?1:0));
+    const rowFor=(en)=>{ const t=en.t, done=_tkDoneOnDay(t,_dvWho); const _still=_tkStillWithNote(t,_dvWho); const mk=en.marker==="start"?"▶ Start — ":(en.marker==="due"?"■ Due — ":""); const who=taskAssignees(t); const whoS=who.length?who.join(", "):"Unassigned";
+      return `<div style="display:flex;align-items:center;gap:11px;padding:12px 14px;border-bottom:0.5px solid #f1f3f7;${done?'opacity:0.6;':''}"><div onclick="event.stopPropagation();toggleTaskDone('${t.id}')" title="Mark ${done?'open':'done'}" style="font-size:21px;cursor:pointer;line-height:1">${done?'✅':'⬜'}</div><div onclick="openTaskDetail('${t.id}')" style="cursor:pointer;flex:1;min-width:0"><div style="font-size:15px;font-weight:500;color:#111;${done?'text-decoration:line-through;':''}">${mk}${t.category?`<span style="font-size:11px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:5px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}${_subPill(t,false)}</div><div style="font-size:13px;color:#566070;margin-top:2px">${(t.due_time&&en.marker!=='start')?`<span style="color:#2E8B57;font-weight:600">🕐 ${_fmtTime(t.due_time)}</span> · `:''}${_locLabel(t)?_calEsc(_locLabel(t))+' · ':''}${_calEsc(whoS)}</div>${_still?`<div style="font-size:12px;color:#8A5A10;margin-top:3px">${_calEsc(_still)}</div>`:''}${t.notes?`<div style="font-size:12px;color:#566070;margin-top:3px;white-space:pre-wrap">💬 ${_calEsc(t.notes)}</div>`:''}</div><div onclick="openTaskDetail('${t.id}')" style="font-size:12px;color:#566070;white-space:nowrap;cursor:pointer">Edit ›</div></div>`; };
     const dayBody=entries.length?`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">${entries.map(rowFor).join("")}</div>`:`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:34px;text-align:center;color:#636b7a;font-size:14px">No tasks starting or due this day.</div>`;
     return `<div style="padding:20px;max-width:760px;margin:0 auto">
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">${viewToggle}<div style="display:flex;gap:6px;flex-wrap:wrap">${filterBar}</div>${addTop}</div>
@@ -24489,7 +24526,10 @@ function openTaskDetail(id){
     : `<div style="font-size:13px;color:#566070;padding:4px 8px">No team members yet.</div>`;
   const catOpts=_taskCategories().map(c=>`<option ${c===t.category?'selected':''}>${_calEsc(c)}</option>`).join("");
   const referList=team.map(n=>`<option value="${_calEsc(n)}"></option>`).join("");
-  const done=t.status==="done";
+  // What this person's button should say. On a shared task the answer is about their
+  // own tick, not the task's - otherwise a job you have already ticked still offers
+  // you "Mark done".
+  const done=_tkDoneOnDay(t,_miWho());
   document.getElementById("task-inner").innerHTML=`
     <button class="modal-close" onclick="closeModal('task-modal')">✕</button>
     <h2>${ro?'Task':'Edit task'}</h2>
@@ -25328,9 +25368,10 @@ function _mDayTab(){
   </div>`;
   const ro=isReadOnly();
   const tasks=(typeof _tasksCache!=="undefined"?_tasksCache:[]).filter(t=>_taskHasAssignee(t,who) && (t.due_date===_mDay||t.start_date===_mDay));
-  tasks.sort((a,b)=>(a.status==="done"?1:0)-(b.status==="done"?1:0));
+  tasks.sort((a,b)=>(_tkDoneOnDay(a,who)?1:0)-(_tkDoneOnDay(b,who)?1:0));
   const rows=tasks.length?tasks.map(t=>{
-    const done=t.status==="done";
+    const done=_tkDoneOnDay(t,who);
+    const still=_tkStillWithNote(t,who);
     const mark=t.start_date===_mDay&&t.due_date!==_mDay?'<span class="m-pill" style="background:#EAF3DE;color:#3B6D11">Starts</span>':(t.due_date===_mDay?'<span class="m-pill" style="background:#FBEAF0;color:#72243E">Due</span>':'');
     const prop=_locLabel(t);
     const cc=(Array.isArray(t.comments)?t.comments.length:0);
@@ -25340,6 +25381,7 @@ function _mDayTab(){
         <div style="font-size:15px;font-weight:600;color:${done?"#9aa0a6":"#111"};${done?"text-decoration:line-through":""}">${_calEsc(t.title)}</div>
         <div style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">${mark}${(t.due_time&&t.due_date===_mDay)?`<span class="m-pill" style="background:#E1F5EA;color:#1E7A48">🕐 ${_fmtTime(t.due_time)}</span>`:""}${t.category?`<span class="m-pill" style="background:#EEEDFE;color:#3C3489">${_calEsc(t.category)}</span>`:""}</div>
         ${prop?`<div style="font-size:13px;color:#566070;margin-top:5px">🏠 ${_calEsc(prop)}</div>`:""}
+        ${still?`<div style="font-size:12.5px;color:#8A5A10;margin-top:5px">${_calEsc(still)}</div>`:""}
         <div style="font-size:12px;color:#566070;margin-top:5px">${cc?`💬 ${cc} comment${cc>1?"s":""} · `:""}Tap to open ›</div>
       </div>
     </div>`;
@@ -25371,14 +25413,17 @@ function _mTaskDetail(id){
   const t=(typeof _tasksCache!=="undefined"?_tasksCache:[]).find(x=>x.id===id);
   if(!t) return `<button class="m-btn m-btn-lite" onclick="_mGo('day')">‹ Back</button>`;
   const ro=isReadOnly();
-  const done=t.status==="done";
+  const _me=_miWho();
+  const done=_tkDoneOnDay(t,_me);
+  const _still=_tkStillWithNote(t,_me);
   const who=taskAssignees(t);
   const prop=_locLabel(t);
   return `<button class="m-btn m-btn-lite" style="width:auto;padding:7px 14px;font-size:14px;border-radius:99px;margin:0 0 12px" onclick="_mGo('day')">‹ Back</button>
     <div class="m-card">
       <div style="font-size:18px;font-weight:700;color:${done?'#9aa0a6':'#111'};${done?'text-decoration:line-through':''}">${_calEsc(t.title)}</div>
       <div style="margin-top:8px">
-        ${_mInfoRow("Status", done?'✅ Done':'⬜ Open')}
+        ${_mInfoRow("Status", t.status==='done' ? '✅ Closed' : (done?'✅ Done — your part':'⬜ Open'))}
+        ${_still?_mInfoRow("Waiting on", _calEsc(_still.replace(/^Off your list — still with /,''))):''}
         ${t.category?_mInfoRow("Category",_calEsc(t.category)):''}
         ${_mInfoRow("Assigned to", who.length?_calEsc(who.join(", ")):"Unassigned")}
         ${t.start_date?_mInfoRow("Start",_calEsc(t.start_date)):''}
@@ -27347,4 +27392,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-28h takedowns-in-five-sections -->
+<!-- build: 2026-09-29i takedowns-in-five-sections -->
