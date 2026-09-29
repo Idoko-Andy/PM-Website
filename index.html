@@ -17713,13 +17713,72 @@ function _confirmItems(){
   const buy=cards.filter(c=>c.closingDate && c.closingDate<=today && !c.purchaseConfirmed && c.phase!=='Closed')
     .map(c=>({c:c,kind:'buy',date:c.closingDate,days:ago(c.closingDate)}));
   const sell=cards.filter(c=>c.closingDateSell && c.closingDateSell<=today && !c.closeApproved && c.phase!=='Closed')
-    .map(c=>({c:c,kind:'sell',date:c.closingDateSell,days:ago(c.closingDateSell)}));
+    .map(c=>({c:c,kind:'sell',date:c.closingDateSell,days:ago(c.closingDateSell),suspect:_cfSuspect(c)}));
   // Only a house still sitting in Occupied / Closed needs its vacancy confirmed -
   // once it has moved on, the question has already been answered.
   const vac=cards.filter(c=>c.vacancyDate && c.vacancyDate<=today && c.phase==='Occupied / Closed')
     .map(c=>({c:c,kind:'vac',date:c.vacancyDate,days:ago(c.vacancyDate)}));
   const all=buy.concat(sell,vac).sort((a,b)=>b.days-a.days);
   return { buy:buy, sell:sell, vac:vac, all:all, total:all.length };
+}
+// Bruce, 29 Sept: "6888 Harlem Rd is popping up as confirmed sold ... we just bought
+// it. We didn't sell it. There's nothing in there that said we sold it."
+//
+// He was right, and the system already knew. 6888 Harlem carried the SAME date in the
+// buy field and the sell field, and the Slack sync had flagged exactly that seven
+// times between 22 and 28 September - correctly refusing to change it on its own,
+// because a person had touched the row more recently than the source message. Every
+// one of those warnings went into the audit log, which nobody reads. So the panel
+// kept asking a confident question ("did the sale close?") about a sale that never
+// existed, and the only honest answer was not on offer.
+//
+// Two things follow. A sale date that matches the purchase date to the day is not a
+// sale - one message is one side of one transaction - so the panel now says so
+// instead of asking. And every confirmation gets a way to answer "not yet": push the
+// date out, or clear it, without having to go and find the property card.
+function _cfSuspect(c){
+  if(!c || !c.closingDate || !c.closingDateSell) return '';
+  if(c.closingDateSell===c.closingDate) return 'Same date as the purchase — this looks like a bad sell date, not a sale.';
+  if(c.closingDateSell<c.closingDate) return 'Sell date is before the purchase date.';
+  return '';
+}
+// Which column each kind of confirmation owns.
+const _CF_COL={ buy:'closing_date', sell:'closing_date_sell', vac:'vacancy_date' };
+const _CF_WHAT={ buy:'purchase closing date', sell:'sell closing date', vac:'vacancy date' };
+// Swap the row's button for a date box. Kept inline rather than a pop-up: a browser
+// dialog loses the address you were looking at.
+function _cfResched(id, kind, cur){
+  const box=document.getElementById('cf-act-'+kind+'-'+id);
+  if(!box) return;
+  box.innerHTML='<input type="date" id="cf-date-'+kind+'-'+id+'" value="'+(cur||'')+'" style="padding:6px 8px;font-size:12.5px;border:0.5px solid #ccc;border-radius:6px" />'
+    +'<button onclick="_cfReschedSave(\''+id+'\',\''+kind+'\')" style="padding:7px 11px;font-size:12.5px;font-weight:700;border-radius:6px;cursor:pointer;background:#185FA5;color:#fff;border:none">Save date</button>'
+    +'<button onclick="_cfReschedSave(\''+id+'\',\''+kind+'\',true)" style="padding:7px 11px;font-size:12.5px;font-weight:600;border-radius:6px;cursor:pointer;background:#fff;color:#B42318;border:0.5px solid #f0c0bb">Clear it</button>'
+    +'<button onclick="_confirmNavRefresh();_cfRepaint()" style="padding:7px 11px;font-size:12.5px;border-radius:6px;cursor:pointer;background:#fff;color:#566070;border:0.5px solid #ddd">Cancel</button>';
+}
+async function _cfReschedSave(id, kind, clear){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
+  if(typeof canApprove==='function' && !canApprove()){ alert('Only Bruce, Marlo or Tommy can change a closing date.'); return; }
+  const col=_CF_COL[kind]; if(!col) return;
+  const el=document.getElementById('cf-date-'+kind+'-'+id);
+  const v=clear?null:(((el&&el.value)||'').trim()||null);
+  if(!clear && !v){ alert('Pick a date, or use "Clear it" to take the date off the card.'); return; }
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===id);
+  const patch={}; patch[col]=v;
+  const { error }=await supabase.from('pm_properties').update(patch).eq('id',id);
+  if(error){ alert('That did NOT save \u2014 '+(error.message||'')); return; }
+  if(typeof _logAudit==='function') _logAudit('updated','property',(c&&c.addr)||'',
+    v ? ('Moved the '+_CF_WHAT[kind]+' to '+v+' from the confirmations panel')
+      : ('Cleared the '+_CF_WHAT[kind]+' from the confirmations panel \u2014 it did not happen'));
+  await loadPropertiesFromSupabase();
+  _confirmNavRefresh();
+  _cfRepaint();
+}
+// Redraw whichever screen is showing the panel, without guessing which one it is.
+function _cfRepaint(){
+  if(typeof _refreshCurrentView==='function'){ try{ _refreshCurrentView(); return; }catch(e){} }
+  document.querySelectorAll('[data-cf-panel]').forEach(function(el){
+    el.outerHTML=_confirmPanel(el.getAttribute('data-cf-title')||'Needs confirming');
+  });
 }
 const _CONFIRM_META={
   buy:  { icon:'🏠', label:'Purchase closing', color:'#185FA5', bg:'#E6F1FB', verb:'did we close on it?',  btn:'Confirm we own it',  fn:'confirmPurchase' },
@@ -17734,10 +17793,16 @@ function _confirmRow(it){
   return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:0.5px solid #f1f3f7">
     <div style="min-width:0">
       <div style="font-size:13.5px;font-weight:600;color:#111"><span onclick="openPropDetail('${it.c.id}')" style="cursor:pointer;color:#185FA5">${_calEsc(it.c.addr||'')}</span></div>
-      <div style="font-size:12px;color:#566070">${m.icon} ${m.label} ${_calEsc(it.date)} · ${m.verb} · ${late}</div>
+      <div style="font-size:12px;color:#566070">${m.icon} ${m.label} ${_calEsc(it.date)} · ${it.suspect?'is this right?':m.verb} · ${late}</div>
+      ${it.suspect?`<div style="font-size:12px;color:#8A5A10;margin-top:3px">⚠ ${_calEsc(it.suspect)}</div>`:''}
     </div>
     ${can
-      ? `<button onclick="${m.fn}('${it.c.id}')" style="flex-shrink:0;padding:7px 13px;font-size:12.5px;font-weight:700;border-radius:6px;cursor:pointer;background:${m.color};color:#fff;border:none">⚑ ${m.btn}</button>`
+      ? `<div id="cf-act-${it.kind}-${it.c.id}" style="flex-shrink:0;display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+          ${it.suspect
+            ? `<button onclick="_cfResched('${it.c.id}','${it.kind}','${_calEsc(it.date||'')}')" style="padding:7px 13px;font-size:12.5px;font-weight:700;border-radius:6px;cursor:pointer;background:#8A5A10;color:#fff;border:none">Fix the date</button>`
+            : `<button onclick="${m.fn}('${it.c.id}')" style="padding:7px 13px;font-size:12.5px;font-weight:700;border-radius:6px;cursor:pointer;background:${m.color};color:#fff;border:none">⚑ ${m.btn}</button>`}
+          <button onclick="_cfResched('${it.c.id}','${it.kind}','${_calEsc(it.date||'')}')" title="Move this date, or take it off the card" style="padding:7px 11px;font-size:12.5px;font-weight:600;border-radius:6px;cursor:pointer;background:#fff;color:#566070;border:0.5px solid #ddd">Not yet — reschedule</button>
+        </div>`
       : `<span style="flex-shrink:0;font-size:11.5px;color:#566070">Bruce, Marlo or Tommy to confirm</span>`}
   </div>`;
 }
@@ -17746,7 +17811,7 @@ function _confirmRow(it){
 function _confirmPanel(title){
   const d=_confirmItems();
   if(!d.total) return '';
-  return `<div style="background:#fff;border:1px solid #f0c0bb;border-top:3px solid #B42318;border-radius:10px;padding:12px 15px;margin-bottom:16px;color:#111">
+  return `<div data-cf-panel="1" data-cf-title="${_calEsc(title||'Needs confirming')}" style="background:#fff;border:1px solid #f0c0bb;border-top:3px solid #B42318;border-radius:10px;padding:12px 15px;margin-bottom:16px;color:#111">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px">
       <div style="font-size:14.5px;font-weight:700;color:#B42318">⚑ ${title||'Needs confirming'}</div>
       <span style="font-size:11.5px;background:#FCEBEB;color:#B42318;padding:2px 9px;border-radius:99px;font-weight:600">${d.total}</span>
@@ -27392,4 +27457,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-29i takedowns-in-five-sections -->
+<!-- build: 2026-09-29j takedowns-in-five-sections -->
