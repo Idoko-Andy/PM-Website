@@ -1592,6 +1592,7 @@ function applyPermissionsUI() {
   setMenu("sop-t",  hasPerm(u,"sops_view")); // SOPs = single toggle (default on)
   const _hb=document.getElementById("hist-box"); if(_hb) _hb.style.display = hasPerm(u,"edit_history") ? "flex" : "none"; // Edit History box beside search
   if(typeof _confirmNavRefresh==='function') _confirmNavRefresh();
+  if(typeof _flgLoad==='function') _flgLoad(true).then(function(){ if(typeof _flgRepaint==='function') _flgRepaint(); });
   const _ab=document.getElementById("auto-box"); if(_ab) _ab.style.display = u ? "flex" : "none"; // Automations box (visible to any approved user)
   const _sb=document.getElementById("settings-box"); if(_sb) _sb.style.display = _canEditSettings(u) ? "flex" : "none"; // Settings box (super/full only)
   // Tools tab (tools-t) is always available — never hidden.
@@ -15492,6 +15493,7 @@ function renderAdminHome(user){
   return `<div style="padding:20px 24px;max-width:100%">
     ${welcomeHeader(user)}
     ${_confirmPanel('Needs confirming')}
+    ${_flgPanel()}
     ${_sqMineBox(name)}
     ${sharedWidgets()}
     ${_rhHead("My desk",`invoice list finalizes Mondays · pays Friday ${fri}`)}
@@ -17558,6 +17560,7 @@ function _adminMainDashboard(){
   const band=(label,rows)=>`<div style="font-size:12px;font-weight:600;color:#566070;text-transform:uppercase;letter-spacing:0.5px;margin:0 0 8px">${label}</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-bottom:20px">${rows}</div>`;
   return `<div style="padding:20px;max-width:1100px;margin:0 auto">
     ${_confirmPanel('Needs confirming')}
+    ${_flgPanel()}
     <div style="font-size:16px;font-weight:600;color:#111;margin-bottom:3px">Administrative Overview</div>
     <div style="font-size:13px;color:#566070;margin-bottom:8px">Every board the project managers and the start / end-of-project assistants work from, across all properties. Click any square to see its properties grouped by PM.</div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px">
@@ -17640,6 +17643,7 @@ function _marloTab(){
     </div>
 
     ${_confirmPanel('Needs confirming')}
+    ${_flgPanel()}
 
     <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden;border-top:3px solid #E24B4A;margin-bottom:14px">
       <div style="padding:9px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between">
@@ -17804,6 +17808,130 @@ function _confirmRow(it){
           <button onclick="_cfResched('${it.c.id}','${it.kind}','${_calEsc(it.date||'')}')" title="Move this date, or take it off the card" style="padding:7px 11px;font-size:12.5px;font-weight:600;border-radius:6px;cursor:pointer;background:#fff;color:#566070;border:0.5px solid #ddd">Not yet — reschedule</button>
         </div>`
       : `<span style="flex-shrink:0;font-size:11.5px;color:#566070">Bruce, Marlo or Tommy to confirm</span>`}
+  </div>`;
+}
+// ============ WHAT THE AUTOMATIONS FLAGGED =====================================
+// Bruce, 29 Sept: "we need to clean up your functions, clean up your automations,
+// and make sure there's no confusion."
+//
+// The automations were not the problem. They were careful: when the evidence did not
+// add up they refused to write, and they explained why in plain English. The problem
+// is WHERE they said it. Every one of those explanations went into pm_audit_log, which
+// has no screen, so nobody has ever read one.
+//
+// Two live examples of what that cost. 6888 Harlem carried the same date in the buy
+// and sell fields; the Slack sync flagged it seven times over six days and it still
+// reached Bruce as "confirm it sold". And on 13 September one bulk write stripped the
+// contingency out of Final Budget board-wide; the financials sync spotted it the same
+// morning, refused to overwrite it, and sat blocked for sixteen days - 407 flags, none
+// of them seen, $523,110 missing from the budget figures the whole time.
+//
+// So the flags now have a home. Newest per property, dismissible, and the dismissal is
+// remembered per person - if the automation flags that property again tomorrow with
+// something new, it comes back.
+let _flgCache=null, _flgSeen=null;
+async function _flgLoad(force){
+  if(_flgCache && !force) return _flgCache;
+  try{
+    const since=new Date(Date.now()-30*86400000).toISOString();
+    const { data, error } = await supabase.from('pm_audit_log')
+      .select('actor_name,action,label,detail,created_at')
+      .eq('action','flagged').gte('created_at', since)
+      .order('created_at',{ascending:false}).limit(600);
+    if(error){ _flgCache=[]; return _flgCache; }
+    // Newest entry per property, plus how many times it has been said.
+    const byLabel={};
+    (data||[]).forEach(function(r){
+      const k=String(r.label||'').trim(); if(!k) return;
+      if(!byLabel[k]) byLabel[k]={ label:k, who:r.actor_name, at:r.created_at, why:r.detail, times:0 };
+      byLabel[k].times++;
+    });
+    _flgCache=Object.keys(byLabel).map(function(k){ return byLabel[k]; })
+      .sort(function(a,b){ return String(b.at).localeCompare(String(a.at)); });
+  }catch(e){ _flgCache=[]; }
+  _flgSeen=await _pmSettingsRead('audit_flags_seen') || {};
+  return _flgCache;
+}
+function _flgMine(){
+  const seen=(_flgSeen&&typeof _flgSeen==='object')?_flgSeen:{};
+  const me=(typeof _miWho==='function')?_miWho():'';
+  const mine=(seen[me]&&typeof seen[me]==='object')?seen[me]:{};
+  return (_flgCache||[]).filter(function(f){
+    const t=mine[f.label];
+    return !t || String(f.at) > String(t);
+  });
+}
+async function _flgDismiss(label){
+  const me=(typeof _miWho==='function')?_miWho():'';
+  const f=(_flgCache||[]).find(function(x){ return x.label===label; });
+  if(!f) return;
+  const all=await _pmSettingsRead('audit_flags_seen') || {};
+  all[me]=all[me]||{};
+  all[me][label]=f.at;
+  const err=await _pmSettingsWrite('audit_flags_seen', all);
+  if(err){ alert('That did NOT save \u2014 '+err); return; }
+  _flgSeen=all;
+  _flgRepaint();
+}
+async function _flgDismissAll(){
+  const me=(typeof _miWho==='function')?_miWho():'';
+  const all=await _pmSettingsRead('audit_flags_seen') || {};
+  all[me]=all[me]||{};
+  _flgMine().forEach(function(f){ all[me][f.label]=f.at; });
+  const err=await _pmSettingsWrite('audit_flags_seen', all);
+  if(err){ alert('That did NOT save \u2014 '+err); return; }
+  _flgSeen=all;
+  _flgRepaint();
+}
+function _flgRepaint(){
+  document.querySelectorAll('[data-flg-panel]').forEach(function(el){ el.outerHTML=_flgPanel(); });
+}
+// Long machine explanations are honest but unreadable at a glance. Show the first
+// sentence, let the row open for the rest.
+function _flgShort(t){
+  const s=String(t||'').replace(/\s+/g,' ').trim();
+  const cut=s.search(/[.!?]\s/);
+  return (cut>0 && cut<160) ? s.slice(0,cut+1) : (s.length>170 ? s.slice(0,167)+'\u2026' : s);
+}
+function _flgRow(f){
+  const many=f.times>2 ? `<span title="said ${f.times} times" style="font-size:11px;color:#B42318;background:#FCEBEB;border-radius:99px;padding:1px 7px;font-weight:700;margin-left:6px">\u00d7${f.times}</span>` : '';
+  const id='flg-'+String(f.label).replace(/[^a-z0-9]+/gi,'-');
+  return `<div style="padding:9px 0;border-bottom:0.5px solid #f1f3f7">
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
+      <div style="min-width:0;flex:1">
+        <div style="font-size:13.5px;font-weight:600;color:#111">${_calEsc(f.label)}${many}</div>
+        <div style="font-size:12px;color:#566070;margin-top:2px">${_calEsc(f.who||'an automation')} \u00b7 ${_calEsc(String(f.at||'').slice(0,10))}</div>
+        <div id="${id}" style="font-size:12.5px;color:#444;margin-top:4px;cursor:pointer" onclick="_flgToggle('${id}')" data-full="${_calEsc(f.why||'')}" data-open="0">${_calEsc(_flgShort(f.why))}${String(f.why||'').length>170?' <span style="color:#185FA5">more \u203a</span>':''}</div>
+      </div>
+      <button onclick="_flgDismiss('${_argEsc(f.label)}')" title="I have dealt with this" style="flex-shrink:0;padding:5px 10px;font-size:12px;border-radius:6px;cursor:pointer;background:#fff;color:#566070;border:0.5px solid #ddd">Done</button>
+    </div>
+  </div>`;
+}
+function _flgToggle(id){
+  const el=document.getElementById(id); if(!el) return;
+  const open=el.getAttribute('data-open')==='1';
+  const full=el.getAttribute('data-full')||'';
+  el.setAttribute('data-open', open?'0':'1');
+  el.innerHTML = open ? (_calEsc(_flgShort(full))+(full.length>170?' <span style="color:#185FA5">more \u203a</span>':''))
+                      : _calEsc(full);
+}
+function _flgPanel(){
+  const can=(typeof canApprove==='function')?canApprove():false;
+  if(!can) return '';
+  const mine=_flgMine();
+  if(!mine.length) return '';
+  const show=mine.slice(0,8);
+  return `<div data-flg-panel="1" style="background:#fff;border:1px solid #EAD9A8;border-top:3px solid #8A5A10;border-radius:10px;padding:12px 15px;margin-bottom:16px;color:#111">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px">
+      <div style="font-size:14.5px;font-weight:700;color:#8A5A10">\u26a0 What the automations flagged</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="font-size:11.5px;background:#FAEEDA;color:#8A5A10;padding:2px 9px;border-radius:99px;font-weight:600">${mine.length}</span>
+        <button onclick="_flgDismissAll()" style="padding:4px 10px;font-size:11.5px;border-radius:6px;cursor:pointer;background:#fff;color:#566070;border:0.5px solid #ddd">Clear all</button>
+      </div>
+    </div>
+    <div style="font-size:12px;color:#566070;margin-bottom:4px">Things a sync could see but would not decide on its own. These used to go only into the audit log, where nobody read them.</div>
+    ${show.map(_flgRow).join('')}
+    ${mine.length>show.length?`<div style="font-size:12px;color:#566070;padding-top:8px">and ${mine.length-show.length} more</div>`:''}
   </div>`;
 }
 // The banner. Returns nothing at all when there is nothing to confirm - an empty
@@ -18182,6 +18310,7 @@ function openConfirmations(){
     <div style="font-size:17px;font-weight:600;color:#111;margin-bottom:4px">⚑ Confirmations</div>
     <div style="font-size:13px;color:#566070;margin-bottom:14px">Purchase closings, sale closings and vacancy dates that have passed and still need a yes or no.</div>
     ${d.total?_confirmPanel('Waiting on you'):'<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:26px;text-align:center;color:#16794C;font-size:14px">Everything is confirmed ✅</div>'}
+    ${_flgPanel()}
   </div></div></div>`;
 }
 // A red flag on the board card itself, so it shows wherever the property appears.
@@ -18234,6 +18363,7 @@ function renderDirectorHome(){
   const grid=(inner)=>`<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px">${inner}</div>`;
   return `<div style="padding:20px">
     ${_confirmPanel('Needs confirming')}
+    ${_flgPanel()}
     <div style="font-size:17px;font-weight:600;color:#111;margin-bottom:2px">Director / CEO Overview</div>
     <div style="font-size:13px;color:#566070">Click any box to drill in.</div>
     ${_dirGroup("Money &amp; Closings")}${grid(money)}
@@ -18715,6 +18845,7 @@ function _vaMainDashboard(vaName){
   const box=(t,v,sub,color,fn)=>`<div onclick="${fn}" style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${color};border-radius:10px;padding:14px 16px;cursor:pointer"><div style="font-size:13.5px;font-weight:600;color:#111">${t}</div><div style="font-size:27px;font-weight:600;color:${color};margin-top:6px">${v}</div><div style="font-size:11.5px;color:#566070">${sub}</div></div>`;
   return `<div style="padding:20px;max-width:900px;margin:0 auto;color:#111">
     ${_confirmPanel('Needs confirming')}
+    ${_flgPanel()}
     <div style="font-size:17px;font-weight:600;color:#111;margin-bottom:12px">📊 VA Admin — Main</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">
       ${box('My Open Tasks', mine.length, 'assigned to '+_calEsc(vaName), '#185FA5', "openVAAdminDashboard('va')")}
@@ -27457,4 +27588,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-29j takedowns-in-five-sections -->
+<!-- build: 2026-09-29k takedowns-in-five-sections -->
