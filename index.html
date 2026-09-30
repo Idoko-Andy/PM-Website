@@ -18988,7 +18988,26 @@ function _trkApplyPatch(target, ops){
   });
   return target;
 }
+// Every box on the trackers saves itself the moment you leave it - and a person fills boxes
+// faster than a save finishes. Nothing used to stop two saves running at once. Both re-read
+// the whole trackers row, both lay their own change on it, and whichever finished LAST wrote
+// a row that had never heard of the other. The change that saved FIRST was wiped out of the
+// database, and _trkBase was then set to match, so nothing ever noticed it had gone.
+//
+// Patience, 30 Sept, 4445 Central College: logged $262.29 of electric for 9/22 and then put
+// in the due day. The due day stuck, the payment vanished, and no message came up. The
+// database agrees - that Electric sheet kept its provider, account number, contact, notes
+// and due day, and has no payment on it at all. Five days of her payments went this way.
+//
+// Saves now run one at a time, in the order they were asked for, each one working out its
+// change against what the save before it actually wrote.
 async function _trkSave(){
+  const prev = window._trkQueue || Promise.resolve();
+  const run = prev.then(_trkSaveNow, _trkSaveNow);
+  window._trkQueue = run.catch(function(){});
+  return await run;
+}
+async function _trkSaveNow(){
   if(window._trkLoadOk===false){ _trkStatus('error','the trackers could not be loaded, so saving would wipe them - refresh the page'); return false; }
   _trkStatus('saving');
   const mine=window._trkData||{};
@@ -19008,8 +19027,13 @@ async function _trkSave(){
   const merged=_trkApplyPatch(JSON.parse(JSON.stringify(fresh)), ops);
   const _err=await _pmSettingsWrite('trackers', merged);
   if(_err){ _trkStatus('error', _err); return false; }
-  window._trkData=merged;
-  window._trkBase=JSON.parse(JSON.stringify(merged));  // our edits are now the baseline
+  // The row now says `merged`. But a write takes a moment, and in that moment somebody can
+  // fill in another box - so window._trkData may already hold edits this save knows nothing
+  // about. Handing it `merged` wholesale is what threw those edits away. Work out what is in
+  // hand that was not in the baseline we started from, and carry it across.
+  const stillTyped=_trkDiff(base, window._trkData||{}, [], []);
+  window._trkBase=JSON.parse(JSON.stringify(merged));   // what the row actually says now
+  window._trkData=_trkApplyPatch(JSON.parse(JSON.stringify(merged)), stillTyped);
   _trkStatus('saved');
   return true;
 }
@@ -19271,10 +19295,21 @@ async function _utilPayCommit(pid, sub, opts){
     return false;
   }
   if(!pressed && !amt && !conf && !note) return false;   // a date alone, mid-typing
-  const guard='upqbusy-'+pid+'-'+sub;
-  if(window[guard]) return false;
-  window[guard]=true;
-  try{
+  // She fills the date, the amount, the confirmation number and the note one after another,
+  // and each one saves as she leaves it. The old guard here threw away any of those that
+  // arrived while the one before it was still saving - so the amount stuck and the
+  // confirmation number and the note quietly did not. Now they QUEUE instead: each one waits
+  // for the one before it and then reads the record as it actually stands, so they all land
+  // on the same payment and typing fast still makes one record, not four.
+  const qk='upqq-'+pid+'-'+sub;
+  const prev=window[qk]||Promise.resolve();
+  const step=function(){ return _utilPayApply(pid, sub, d, amt, conf, note); };
+  const run=prev.then(step, step);
+  window[qk]=run.catch(function(){});
+  return await run;
+}
+async function _utilPayApply(pid, sub, d, amt, conf, note){
+  {
     const arr=_utilArr('upay',pid,sub).slice();
     const at=arr.findIndex(function(r){ return r && r.d===d; });
     if(at>=0){
@@ -19290,14 +19325,17 @@ async function _utilPayCommit(pid, sub, opts){
       alert("That payment was NOT saved. Nothing was lost on screen \u2014 check your connection and press + Payment again.");
       return false;
     }
+    // The row's summary line reads off the NEWEST record in full. Stamping the raw boxes here
+    // was wiping an amount already recorded whenever a later box came through empty.
+    const top=arr[0]||{};
     const kind=(UTILS.find(u=>u.key===sub)||{}).k;
-    if(kind){ const dd=window._trkData; dd[kind]=dd[kind]||{}; dd[kind][pid]=Object.assign({},dd[kind][pid]||{},{last:d,amt:amt,conf:conf}); window._trkData=dd; await _trkSave(); }
+    if(kind){ const dd=window._trkData; dd[kind]=dd[kind]||{}; dd[kind][pid]=Object.assign({},dd[kind][pid]||{},{last:top.d||d,amt:top.amt||'',conf:top.conf||''}); window._trkData=dd; await _trkSave(); }
     const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===_utilBaseId(pid));
     _logAudit(at>=0?'updated':'created','property',(c&&c.addr)||'',
       (UTILS.find(u=>u.key===sub)||{}).label+' payment logged: '+d+(amt?(' \u2014 '+amt):' \u2014 amount still to add'));
     (window._trkRerender||function(){openVAAdminDashboard('trackers');})();
     return true;
-  } finally { window[guard]=false; }
+  }
 }
 async function _utilPayQuick(pid,sub){ return await _utilPayCommit(pid,sub,{pressed:true}); }
 async function _utilPayBlur(pid,sub){ return await _utilPayCommit(pid,sub,{pressed:false}); }
@@ -19310,10 +19348,16 @@ async function _utilPayHistCommit(pid, sub, pressed){
         method=g('up-m-'+sub), conf=g('up-n-'+sub), note=g('up-t-'+sub);
   if(!d){ if(pressed) alert("Pick the date the payment was made."); return false; }
   if(!pressed && !amt && !chg && !method && !conf && !note) return false;
-  const guard='uphbusy-'+pid+'-'+sub;
-  if(window[guard]) return false;
-  window[guard]=true;
-  try{
+  // Same rule as the square's adder: queue, never drop.
+  const qk='uphq-'+pid+'-'+sub;
+  const prev=window[qk]||Promise.resolve();
+  const step=function(){ return _utilPayHistApply(pid, sub, d, amt, chg, method, conf, note); };
+  const run=prev.then(step, step);
+  window[qk]=run.catch(function(){});
+  return await run;
+}
+async function _utilPayHistApply(pid, sub, d, amt, chg, method, conf, note){
+  {
     const arr=_utilArr('upay',pid,sub).slice();
     const at=arr.findIndex(function(r){ return r && r.d===d; });
     if(at>=0){
@@ -19328,14 +19372,15 @@ async function _utilPayHistCommit(pid, sub, pressed){
       alert("That payment was NOT saved. Check your connection and press + Add payment again.");
       return false;
     }
+    const top=arr[0]||{};
     const kind=(UTILS.find(u=>u.key===sub)||{}).k;
-    if(kind){ const dd=window._trkData; dd[kind]=dd[kind]||{}; dd[kind][pid]=Object.assign({},dd[kind][pid]||{},{last:d,amt:amt,conf:conf}); window._trkData=dd; await _trkSave(); }
+    if(kind){ const dd=window._trkData; dd[kind]=dd[kind]||{}; dd[kind][pid]=Object.assign({},dd[kind][pid]||{},{last:top.d||d,amt:top.amt||'',conf:top.conf||''}); window._trkData=dd; await _trkSave(); }
     const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===_utilBaseId(pid));
     _logAudit(at>=0?'updated':'created','property',(c&&c.addr)||'',
       (UTILS.find(u=>u.key===sub)||{}).label+' payment logged: '+d+(amt?(' \u2014 '+amt):' \u2014 amount still to add'));
     (window._trkRerender||function(){openVAAdminDashboard('trackers');})();
     return true;
-  } finally { window[guard]=false; }
+  }
 }
 async function _utilPayHistBlur(pid,sub){ return await _utilPayHistCommit(pid,sub,false); }
 // Payments grouped by month, newest month first - the month-on-month history Patience
@@ -27628,4 +27673,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-30a tiered-contingency -->
+<!-- build: 2026-09-30b trackers-save-queue -->
