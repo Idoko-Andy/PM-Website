@@ -2078,15 +2078,17 @@ function _dhScan(){
       cards.filter(function(c){ return c.phase==='Waiting Permits' && !_hasPermitRows(c) && !_isPermittedCard(c); })
            .map(function(c){ return {id:c.id, addr:c.addr, detail:'not ticked permitted either'}; }));
 
-  add('breakdown','Budget figures that disagree with each other',
-      'The Budgeted figure and the base-plus-contingency underneath it are two different numbers, and neither is obviously the right one. The card falls back to the tracker figure until somebody re-pulls it.',
-      // Only the ones that genuinely disagree. A house whose tracker figure is the
-      // pre-contingency one is the normal case now - the card adds the contingency on
-      // and says so - so listing all 37 of those here would be noise, not a finding.
-      cards.filter(function(c){ return _budParts(c).kind==='stale'; })
+  // Bruce, 29 Sept: the contingency became a house rule instead of a cell, so the card
+  // and the sheet can no longer disagree about the total - the old "which of these two
+  // numbers is right" finding cannot happen any more. What IS worth knowing is which
+  // tracker sheets still carry a hand-typed contingency that is not what the rule says,
+  // because those are the sheets somebody will eventually read and be misled by.
+  add('breakdown','Tracker sheets whose contingency is not the standard',
+      'The app works the contingency out from the final budget \u2014 5% at or under $50,000, 10% to $100,000, 15% above it. These sheets still have a different figure typed into them. The app ignores it; the sheet is what needs tidying.',
+      cards.filter(function(c){ return _budParts(c).sheetDisagrees; })
       .map(function(c){
         const P=_budParts(c);
-        return {id:c.id, addr:c.addr, detail:'tracker says '+_budMoney(P.total)+', breakdown says '+_budMoney(P.base)+' + '+_budMoney(P.cont)+' = '+_budMoney(P.sum)};
+        return {id:c.id, addr:c.addr, detail:'sheet says '+_budMoney(P.sheetCont)+', the rule on '+_budMoney(P.base)+' is '+P.tierLabel+' = '+_budMoney(P.cont)};
       }));
 
   add('insp','Inspections that never reached the property card',
@@ -6687,22 +6689,16 @@ function _pdLinked(c, which){
           <div style="background:#f4f5f7;border-radius:8px;padding:12px 14px">
             <div style="font-size:11px;color:#566070;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Final Budget</div>
             <div style="font-size:18px;font-weight:500;color:#111">${(()=>{ const B=_budOf(c); return (B.budget!=null&&B.budget>0)?_budMoney(B.budget):(c.budget||'\u2014'); })()}</div>
-            ${(()=>{ const cl=c.checklists||{}; const base=cl.budget_base, cont=cl.budget_contingency;
-              // Bruce, 30 Aug: the Final Budget is the C30-C32 block. The card carries C32 -
-              // the budget WITH contingency - and shows the two figures it is made of, so
-              // nobody has to open the sheet to see where the number came from.
-              // Bruce, 22 Sept: on 35 of the 55 houses the base and the total are the SAME
-              // number with a contingency printed under them, which makes the breakdown add
-              // up to more than the headline it sits beneath. Two answers to one question is
-              // worse than one answer, so when they disagree the card says so instead.
-              // Bruce, 22 Sept: "if my budget with contingency is $100,000 and I've spent
-              // $108,000, that means I'm 8% over budget." So the headline IS the figure
-              // with contingency in it, and this says what it is made of underneath.
-              const P=_budParts(c);
-              if(P.kind==='same') return `<div style="font-size:11.5px;color:#566070;margin-top:2px">${_budMoney(P.base)} + ${_budMoney(P.cont)} contingency</div><div style="font-size:11px;color:#636b7a">The tracker sends the figure before contingency; this is the two added up.</div>`;
-              if(P.kind==='stale') return `<div style="font-size:11.5px;color:#B42318;font-weight:600;margin-top:2px">Breakdown is out of date</div><div style="font-size:11px;color:#8a4038;line-height:1.4">The tracker says ${_budMoney(P.total)} but the breakdown under it reads ${_budMoney(P.base)} + ${_budMoney(P.cont)} = ${_budMoney(P.sum)}. Using the tracker's figure until it is re-pulled.</div>`;
-              if(base||cont) return `<div style="font-size:11.5px;color:#566070;margin-top:2px">${_calEsc(base)||'—'} + ${_calEsc(cont)||'$0'} contingency</div><div style="font-size:11px;color:#636b7a">Total W/ Contingency, from the tracker</div>`;
-              return `<div style="font-size:12px;color:#566070;margin-top:2px">From project tracker &middot; incl. contingency</div>`; })()}
+            ${(()=>{ const P=_budParts(c);
+              // Bruce, 29 Sept: the contingency is now a house rule, not a cell in the
+              // sheet - 5% at or under $50,000, 10% to $100,000, 15% above it, worked out
+              // from the tracker's Final Budget. So this says what the rule did, and where
+              // the base came from, instead of repeating two numbers that could disagree.
+              if(P.base==null) return `<div style="font-size:12px;color:#566070;margin-top:2px">No final budget on the tracker yet</div>`;
+              const src = P.fromFallback ? 'on this card' : 'from the project tracker';
+              return `<div style="font-size:11.5px;color:#566070;margin-top:2px">${_budMoney(P.base)} + ${_budMoney(P.cont)} contingency</div>
+                <div style="font-size:11px;color:#8A94A6;margin-top:1px">${P.tierLabel} \u2014 ${P.tierBand} \u00b7 final budget ${src}</div>
+                ${P.sheetDisagrees?`<div style="font-size:11px;color:#8A5A10;margin-top:2px">The tracker sheet still shows ${_budMoney(P.sheetCont)} contingency. The rule above is what counts.</div>`:''}`; })()}
             ${(()=>{
               // Bruce, 26 Sept: tick this and the final budget is settled - the nightly
               // tracker sync leaves it alone from then on.
@@ -9017,16 +9013,64 @@ function _wmFmt(n){ return n==null?'—':('$'+Math.round(n).toLocaleString()); }
 //   same     base equals the total AND there is a contingency - cannot both be right
 //   stale    base and total disagree and the contingency does not close the gap
 //   none     nothing to say
+// ===================== CONTINGENCY IS A RULE, NOT A CELL =====================
+// Bruce, 29 Sept: "each type of rehab has a different amount of contingency ... projects
+// under 50K only have a 5% contingency ... 50,000 and one dollar to one hundred thousand
+// gets a 10% contingency ... anything budgeted over one hundred thousand and one dollars
+// gets a 15% contingency. That way any scheduled tasks no longer need to read the
+// contingency tab in the final budget tracker."
+//
+// So the contingency stops being a number somebody types into a spreadsheet and becomes
+// a house rule the app applies. That kills a whole class of problem at once: the sheet
+// and the card can no longer disagree, a sync cannot copy a stale contingency forward,
+// and nothing has to read a cell that Google Drive has started truncating away.
+//
+// The tier is decided by the FINAL BUDGET from the project tracker - the base, before any
+// contingency - because that is the figure the job was actually budgeted at. Tiering on
+// the total would be circular.
+const CONTINGENCY_TIERS = [
+  { upTo: 50000,  rate: 0.05, label: '5%',  band: '$50,000 and under' },
+  { upTo: 100000, rate: 0.10, label: '10%', band: '$50,001 to $100,000' },
+  { upTo: null,   rate: 0.15, label: '15%', band: 'over $100,000' }
+];
+function _contTier(base){
+  if(base==null || !(base>0)) return null;
+  for(const t of CONTINGENCY_TIERS){ if(t.upTo==null || base<=t.upTo) return t; }
+  return CONTINGENCY_TIERS[CONTINGENCY_TIERS.length-1];
+}
+function _contRate(base){ const t=_contTier(base); return t?t.rate:null; }
+// Rounded to the cent, so the figure on the card is the figure in the books.
+function _contAmt(base){
+  const r=_contRate(base);
+  return (r==null) ? null : Math.round(base*r*100)/100;
+}
 function _budParts(c){
   const cl=(c&&c.checklists)||{};
   const n=(v)=>{ const x=parseFloat(String(v==null?'':v).replace(/[^0-9.\-]/g,'')); return isNaN(x)?null:x; };
-  const base=n(cl.budget_base), cont=n(cl.budget_contingency), total=n(c&&c.budget);
-  const out={base:base, cont:cont, total:total, sum:(base!=null&&cont!=null)?(base+cont):null, kind:'none'};
-  if(base==null || cont==null) return out;
-  if(total==null){ out.kind='ok'; return out; }
-  if(Math.abs(base+cont-total) <= 1){ out.kind='ok'; return out; }
-  if(Math.abs(base-total) <= 1 && cont > 1){ out.kind='same'; return out; }
-  out.kind='stale'; return out;
+  const total=n(c&&c.budget);
+  // The tracker's Final Budget. When the sync has not stamped a base yet, fall back to
+  // whatever the card carries rather than showing nothing - and say so, so a fallback is
+  // never mistaken for a figure read off the sheet.
+  const stamped=n(cl.budget_base);
+  const fallback=(stamped==null || !(stamped>0)) && total!=null && total>0;
+  // A budget of zero is not a budget. Normalise it to nothing, so "no final budget on
+  // the tracker yet" is one answer everywhere instead of a $0 figure with a $0
+  // contingency under it.
+  const raw=fallback ? total : stamped;
+  const base=(raw!=null && raw>0) ? raw : null;
+  const cont=_contAmt(base);
+  const tier=_contTier(base);
+  const sheetCont=n(cl.budget_contingency);          // kept for the record, never used to compute
+  return {
+    base:base, cont:cont, total:total,
+    sum:(base!=null&&cont!=null)?Math.round((base+cont)*100)/100:null,
+    rate:tier?tier.rate:null, tierLabel:tier?tier.label:null, tierBand:tier?tier.band:null,
+    fromFallback:fallback, sheetCont:sheetCont,
+    // True when the spreadsheet still carries a contingency that is not what the rule
+    // says. Worth showing once so the sheet gets tidied, never worth obeying.
+    sheetDisagrees: (sheetCont!=null && cont!=null && Math.abs(sheetCont-cont) > 1),
+    kind:(base!=null&&cont!=null)?'ok':'none'
+  };
 }
 // Bruce, 22 Sept: "if my budget with contingency is $100,000 and I've spent $108,000,
 // that means I'm 8% over budget."
@@ -9044,9 +9088,10 @@ function _budParts(c){
 // and marks itself unsure rather than inventing a figure.
 function _budOf(c){
   const P=_budParts(c);
-  if(P.base!=null && P.cont!=null && (P.kind==='ok' || P.kind==='same'))
-    return { budget:P.sum, unsure:false, cont:P.cont };
-  return { budget:(P.total!=null && P.total>0)?P.total:null, unsure:(P.kind==='stale'), cont:P.cont };
+  // Base plus the rule's contingency. There is no longer a case where the card and the
+  // sheet can disagree about the total, so there is no longer an "unsure" answer.
+  if(P.base!=null && P.cont!=null) return { budget:P.sum, unsure:false, cont:P.cont, rate:P.rate };
+  return { budget:(P.total!=null && P.total>0)?P.total:null, unsure:false, cont:null, rate:null };
 }
 // Where this house stands against that budget.
 //   over   signed whole percent: -12 means 12% left, +8 means 8% past it
@@ -9169,10 +9214,8 @@ function _wmAutoWinsInner(c, wk){
   </div>`;
 }
 function _wmBudNote(c){
-  const cl=(c&&c.checklists)||{};
-  const base=String(cl.budget_base||'').trim();
-  const cont=String(cl.budget_contingency||'').trim();
-  if(!base || !cont){
+  const P0=_budParts(c);
+  if(P0.base==null){
     const L0=(typeof _budLock==='function')?_budLock(c):null;
     return L0 ? ('final \u2014 locked'+(L0.at?(' '+L0.at):'')) : '';
   }
@@ -9181,16 +9224,13 @@ function _wmBudNote(c){
   // at $185,560, so the card was showing a total with a breakdown that did not add up
   // to it - two different answers to the same question, stacked on top of each other.
   // Say the breakdown is out of date rather than quietly contradicting the total.
-  const P=_budParts(c);
+  const P=P0;
   // Bruce, 26 Sept: the meeting has to show whether a final budget is SETTLED, not just
   // what it is. A locked figure is one the room has agreed and the tracker cannot move.
   const L=(typeof _budLock==='function')?_budLock(c):null;
   const lockNote=L?('final \u2014 locked'+(L.at?(' '+L.at):'')):'';
   const join=(a,b)=>[a,b].filter(Boolean).join(' \u00b7 ');
-  if(P.kind==='stale') return join('breakdown is out of date', lockNote);
-  if(P.kind==='same')  return join(_budMoney(P.base)+' + '+_budMoney(P.cont)+' contingency = '+_budMoney(P.sum), lockNote);
-  const trim=(v)=>v.replace(/\.00$/,'');
-  return join(trim(base)+' + '+trim(cont)+' contingency', lockNote);
+  return join(_budMoney(P.base)+' + '+_budMoney(P.cont)+' ('+P.tierLabel+') = '+_budMoney(P.sum), lockNote);
 }
 // Redraw just the numbers on one card. Never re-renders the page: somebody is
 // usually mid-sentence in a notes box while this fires.
@@ -27588,4 +27628,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-29k takedowns-in-five-sections -->
+<!-- build: 2026-09-30a tiered-contingency -->
