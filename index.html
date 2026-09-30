@@ -16868,8 +16868,38 @@ async function _maybeScheduleMarketChecklists(){
       });
       if(!error){ made++; _logAudit("created","task","On the Market Checklist — "+(c.addr||""),"Auto-scheduled for "+who+" — listed property, weekly cadence"); }
     }
-    if(made && typeof loadTasks==='function') await loadTasks();
-    return {made:made,stamped:stamped};
+    // A house can come back OFF the market - pulled to be rehabbed, put under contract, or
+    // parked in the wrong phase for a day. Its weekly checklist used to stay open forever,
+    // chasing somebody about a listing that is not a listing any more. Bruce, 30 Sept:
+    // 3260 Avalon "was never listed on the market at all", and 1257 Flagstone "we removed
+    // that one off the market to rehab it - it should not be sitting in the on the market
+    // channel". So close them when the house leaves, and forget the listing clock, so that
+    // if it really is listed later it starts a fresh one.
+    let closed=0;
+    const off=(typeof propCards!=='undefined'?propCards:[]).filter(function(c){
+      return !c.archived && MARKET_PHASES.indexOf(c.phase)<0 && _marketBaseline(c);
+    });
+    for(const c of off){
+      const open=await supabase.from("pm_tasks").select("id")
+        .eq("property_id",c.id).eq("category",MARKET_TASK_CATEGORY).neq("status","done").limit(20);
+      if(open.error) continue;
+      const rows=open.data||[];
+      for(const t of rows){
+        const r=await supabase.from("pm_tasks").update({ status:"done", completed_at:new Date().toISOString(),
+          notes:"Closed automatically \u2014 "+(c.addr||"this property")+" is no longer on the market (now "+_phLabel(c.phase)+")." }).eq("id",t.id);
+        if(!r.error){ closed++; _logAudit("completed","task","On the Market Checklist \u2014 "+(c.addr||""),
+          "Closed automatically \u2014 the property came off the market and is now "+_phLabel(c.phase)); }
+      }
+      // Forget the listing clock too, so a real listing later starts from its own day.
+      const cl=Object.assign({},c.checklists||{});
+      if(cl.market_since!==undefined || c.checklistMarketLast){
+        delete cl.market_since;
+        const u=await supabase.from("pm_properties").update({ checklists:cl, checklist_market_last:null }).eq("id",c.id);
+        if(!u.error){ c.checklists=cl; c.checklistMarketLast=null; }
+      }
+    }
+    if((made||closed) && typeof loadTasks==='function') await loadTasks();
+    return {made:made,stamped:stamped,closed:closed};
   }catch(e){ /* never block a page load */ }
   finally{ _marketSchedRunning=false; }
 }
@@ -27673,4 +27703,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-30b trackers-save-queue -->
+<!-- build: 2026-09-30c market-checklist-closes -->
