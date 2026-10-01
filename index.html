@@ -6197,6 +6197,122 @@ function _apBody(c){
           </tr></thead><tbody>${body}${adder}</tbody></table></div>`
     + `<div style="font-size:12px;color:#566070;margin-top:9px">A <b>quote</b> is a price somebody offered us — it is not counted as money owed until it is marked Agreed. Every figure names the contractor it belongs to, so it feeds the W-9 tracker and the contractor directory rather than sitting on its own. <b>Void</b> keeps a cancelled line on the record; <b>Remove</b> deletes it for good. Attached files are kept privately and open on a link that expires, because a contractor's pricing is not public.</div>`;
 }
+// ---- Per-person tabs on the property card -------------------------------------
+// Bruce, 26 Sept, and again 30 Sept when he gave me the spec: "per person's tab on each
+// property card ... just their general tasks and to-do lists, scheduled work for them
+// pertaining to only that property for that property."
+//
+// So: one tab per person who actually has something on THIS house, and nothing on it
+// that belongs to another house or another person. Nobody is listed because of their job
+// title - they are listed because there is work here with their name on it. That way the
+// tab row is short on a quiet house and honest on a busy one.
+//
+// Everything is read from the same caches the rest of the site uses, so it cannot drift,
+// and ticking a job off here is the same tick as anywhere else - including the per-person
+// tick on a shared job, so taking the team meeting off your own list does not close it
+// for the other four people on it.
+// _pdOpenTasks / _pdEvents live INSIDE the card renderer, so they are not reachable from
+// here. Read the same caches the same way instead of reaching for them.
+function _ppTasksOn(pid){
+  return (typeof _tasksCache!=='undefined'?_tasksCache:[])
+    .filter(function(t){ return t && t.property_id===pid; })
+    .sort(function(a,b){
+      const ad=(a.status==='done')?1:0, bd=(b.status==='done')?1:0;
+      return ad-bd || String(a.due_date||'9999').localeCompare(String(b.due_date||'9999'));
+    });
+}
+function _ppEventsOn(pid){
+  return ((typeof _calEventsCache!=='undefined'?_calEventsCache:[])||[])
+    .filter(function(e){ return e && e.property_id===pid; })
+    .sort(function(a,b){ return String(a.event_date||'').localeCompare(String(b.event_date||'')); });
+}
+function _ppNames(c){
+  // A property card holds a manager by first name ("Isaiah") while the tasks carry the
+  // full one ("Isaiah Stinson"). That is the same trap that once gave Alex two tabs and an
+  // empty board, so match on the person, not the string - and when two spellings are the
+  // same person, keep the fuller one so the tab is labelled with their actual name.
+  const seen=[]; const add=(n)=>{
+    const nm=String(n||'').trim(); if(!nm) return;
+    if(/^unassigned$/i.test(nm)) return;
+    const at=seen.findIndex(x=>_sameAssignee(x,nm));
+    if(at<0){ seen.push(nm); return; }
+    if(nm.length>seen[at].length) seen[at]=nm;
+  };
+  add(c&&c.pm);
+  _ppTasksOn(c.id).forEach(function(t){ (taskAssignees(t)||[]).forEach(add); });
+  _ppEventsOn(c.id).forEach(function(e){
+    if(e.assignee) add(e.assignee);
+    if(e.contractor_name) add(e.contractor_name);
+  });
+  if(typeof _pdPermits==='function'){
+    try{ _pdPermits(c.id).forEach(function(r){ add(r.owner||r.assignee); }); }catch(e){}
+  }
+  return seen.sort(function(a,b){ return String(a).localeCompare(String(b)); });
+}
+function _ppKey(n){ return 'p_'+String(n||'').toLowerCase().replace(/[^a-z0-9]+/g,'_'); }
+function _ppOpenCount(c, name){
+  return _ppTasksOn(c.id).filter(function(t){
+    return _taskHasAssignee(t,name) && _taskStatusFor(t,name)!=='done';
+  }).length;
+}
+// Their work on this house, and only this house.
+function _ppBody(c, name){
+  const today=_ymd(new Date());
+  const tasks=_ppTasksOn(c.id).filter(function(t){ return _taskHasAssignee(t,name); });
+  const open=tasks.filter(function(t){ return _taskStatusFor(t,name)!=='done'; });
+  const done=tasks.filter(function(t){ return _taskStatusFor(t,name)==='done'; });
+  const evs=_ppEventsOn(c.id).filter(function(e){
+    return _sameAssignee(e.assignee||'',name) || _sameAssignee(e.contractor_name||'',name);
+  });
+  const ro=(typeof isReadOnly==='function')?isReadOnly():false;
+
+  const row=(t)=>{
+    const late = t.due_date && t.due_date<today;
+    const note = (typeof _tkStillWithNote==='function') ? _tkStillWithNote(t,name) : '';
+    const mine = _taskStatusFor(t,name)==='done';
+    const tick = ro?'' : `<span onclick="_ppTick('${c.id}','${_calEsc(name)}','${t.id}')" title="${mine?'Put it back on the list':'Take it off your list'}" style="cursor:pointer;font-size:16px;line-height:1;flex:none">${mine?'✅':'⬜'}</span>`;
+    return `<div style="display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-top:0.5px solid #eef0f6">
+      ${tick}
+      <div style="min-width:0;flex:1">
+        <div onclick="openTaskDetail('${t.id}')" style="cursor:pointer;font-size:13.5px;font-weight:600;color:#111">${_calEsc(t.title||'')}</div>
+        <div style="font-size:11.5px;color:${late?'#B42318':'#566070'};margin-top:2px">
+          ${t.due_date?((late?'was due ':'due ')+_calEsc(_prettyDay(t.due_date))):'no date on it'}
+          ${t.category?(' · '+_calEsc(t.category)):''}
+          ${note?(' · <span style="color:#0F7B54">'+_calEsc(note)+'</span>'):''}
+        </div>
+      </div>
+    </div>`;
+  };
+  const evRow=(e)=>{
+    const past = e.event_date && e.event_date<today;
+    return `<div style="display:flex;gap:10px;align-items:baseline;padding:8px 0;border-top:0.5px solid #eef0f6">
+      <span style="font-family:ui-monospace,monospace;font-size:11.5px;color:${past?'#8a93a5':'#185FA5'};white-space:nowrap">${_calEsc(e.event_date||'')}</span>
+      <span style="font-size:13px;color:#222;min-width:0">${_calEsc(e.title||'')}${e.kind?(' <span style="font-size:11px;color:#566070">· '+_calEsc(e.kind)+'</span>'):''}</span>
+    </div>`;
+  };
+  const panel=(title, inner, empty)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:12px 14px;margin-bottom:12px">
+      <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#566070;margin-bottom:4px">${title}</div>
+      ${inner||('<div style="font-size:12.5px;color:#636b7a;padding:7px 0">'+empty+'</div>')}
+    </div>`;
+
+  return `<div style="max-width:860px">
+    <div style="font-size:12.5px;color:#566070;margin-bottom:11px">Everything on <b>${_calEsc(c.addr||'this property')}</b> with ${_calEsc(name)}&rsquo;s name on it. Nothing here belongs to another house.</div>
+    ${panel('To do on this property', open.map(row).join(''), 'Nothing outstanding on this house.')}
+    ${panel('Scheduled work on this property', evs.map(evRow).join(''), 'Nothing booked on the construction calendar.')}
+    ${done.length?panel('Already done', done.map(row).join(''), ''):''}
+  </div>`;
+}
+async function _ppTick(pid, name, taskId){
+  if(_blockIfReadOnly()) return;
+  const t=(typeof _tasksCache!=='undefined'?_tasksCache:[]).find(x=>x.id===taskId);
+  if(!t) return;
+  const mine=_taskStatusFor(t,name)==='done';
+  // Shared jobs tick per person; a job that is only theirs closes outright.
+  const names=taskAssignees(t)||[];
+  if(names.length>1 && typeof _tkTick==='function'){ await _tkTick(t, name, !mine); await loadTasks(); }
+  else { await toggleTaskDone(taskId); }
+  if(typeof openPropDetail==='function') openPropDetail(pid);
+}
 function _pcTabs(c){
   const t=[{key:'info', label:'\u{1F4CB} Project Info'},
            {key:'work', label:'\u{1F528} Sub Phases / Tasks'}];
@@ -6206,6 +6322,12 @@ function _pcTabs(c){
   const owed=(typeof _apOpenCount==='function')?_apOpenCount(c.id):0;
   t.push({key:'ap', label:'\u{1F4B0} Accounts Payable'+(owed?(' \u00b7 '+owed):'')});
   t.push({key:'history', label:'\u{1F553} History'});
+  // One tab per person with work on this house. The number is what is still on their
+  // list HERE, so a glance at the row says who this property is waiting on.
+  _ppNames(c).forEach(function(n){
+    const open=_ppOpenCount(c,n);
+    t.push({key:_ppKey(n), label:'\u{1F464} '+n+(open?(' \u00b7 '+open):''), person:n});
+  });
   return t;
 }
 function _pcTab(c){
@@ -6479,7 +6601,7 @@ function _pdLinked(c, which){
     </div>`;
 
   // --- tasks -----------------------------------------------------------------
-  const tasks=_pdOpenTasks(c.id);
+  const tasks=_ppTasksOn(c.id);
   const openN=tasks.filter(t=>t.status!=='done').length;
   const lateN=tasks.filter(t=>t.status!=='done' && t.due_date && t.due_date<today).length;
   const taskRows=tasks.slice(0,12).map(t=>{
@@ -6502,7 +6624,7 @@ function _pdLinked(c, which){
     `openProjectDashboard('tasks')`);
 
   // --- construction calendar --------------------------------------------------
-  const evs=_pdEvents(c.id);
+  const evs=_ppEventsOn(c.id);
   const evRows=evs.slice(0,8).map(e=>{
     const con=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).find(x=>x.id===e.contractor_id);
     const label=con?(con.business_name||con.name):(e.title||'');
@@ -6827,6 +6949,9 @@ function _pdLinked(c, which){
         ${_pcTabs(c).some(function(t){return t.key==='permits';}) ? `<div style="display:${_pcTab(c)==='permits'?'block':'none'}">${_pdLinked(c,'permits')}${_pdPermitNudge(c)}</div>` : ''}
         <div style="display:${_pcTab(c)==='ap'?'block':'none'};max-width:1000px">${_pcTab(c)==='ap'?_apBody(c):''}</div>
         <div style="display:${_pcTab(c)==='history'?'block':'none'};max-width:900px">${_pcTab(c)==='history'?_pdHistory(c):''}</div>
+        ${_pcTabs(c).filter(function(t){return t.person;}).map(function(t){
+          return `<div style="display:${_pcTab(c)===t.key?'block':'none'}">${_pcTab(c)===t.key?_ppBody(c,t.person):''}</div>`;
+        }).join('')}
         <div style="display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-top:12px">
           ${c.driveUrl ? `<a href="${c.driveUrl}" target="_blank" style="display:flex;align-items:center;gap:5px;padding:7px 14px;font-size:13px;border-radius:6px;cursor:pointer;background:#fff;color:#185FA5;border:0.5px solid #cdd7e6;text-decoration:none">📁 Open Folder ↗</a>` : ''}
           ${_ro_sp ? '' : `<button onclick="openPropModal('edit','${c.id}')" style="display:flex;align-items:center;gap:5px;padding:7px 14px;font-size:13px;border-radius:6px;cursor:pointer;background:#fff;color:#111;border:0.5px solid #ccc">✏️ Edit Property</button>`}
@@ -27703,4 +27828,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-09-30c market-checklist-closes -->
+<!-- build: 2026-10-01a per-person-tabs -->
