@@ -5919,6 +5919,38 @@ async function _apDel(id, pid){
 // should be able to." So this overlay is the same form wherever it opens - a dashboard,
 // a property card, a contractor's page - and it writes through _apWrite like everything
 // else. Pass a property or a contractor to have it filled in already.
+// The trades we already use, so a type of work is picked from the same list everywhere
+// instead of being spelled three ways.
+function _apTradeOpts(){
+  const seen={};
+  (typeof _contractorsCache!=='undefined'?_contractorsCache:[]).forEach(function(x){
+    const t=String(x.trade||'').trim(); if(t) seen[t]=1;
+  });
+  (_apCache||[]).forEach(function(r){ const t=String(r.category||'').trim(); if(t) seen[t]=1; });
+  return Object.keys(seen).sort().map(function(t){ return '<option value="'+_calEsc(t)+'"></option>'; }).join('');
+}
+function _apQuoteNewCon(){
+  const sel=document.getElementById('apq-who');
+  const box=document.getElementById('apq-newcon');
+  if(!sel||!box) return;
+  const on=(sel.value==='__new');
+  box.style.display=on?'block':'none';
+  if(on){ const n=document.getElementById('apq-nc-name'); if(n) n.focus(); }
+}
+// Create the contractor the quote box asked for and hand back their id. Returns the string
+// 'error' when it could not, so the caller stops rather than saving an orphan line.
+async function _apQuoteMakeCon(say){
+  const g=(k)=>{ const e=document.getElementById(k); return e?String(e.value||'').trim():''; };
+  const name=g('apq-nc-name'), biz=g('apq-nc-biz'), phone=g('apq-nc-phone'), trade=g('apq-nc-trade');
+  if(!name && !biz){ if(say) say("Put the new contractor's name in, or their business name."); return 'error'; }
+  const ins=await supabase.from('pm_contractors')
+    .insert({ name:name||biz, business_name:biz||null, phone:phone||null, trade:trade||null })
+    .select('id').single();
+  if(ins.error){ if(say) say("Could not add the contractor: "+(ins.error.message||'')); return 'error'; }
+  if(typeof loadContractorsFromSupabase==='function') await loadContractorsFromSupabase();
+  if(typeof _logAudit==='function') _logAudit('created','contractor', name||biz, 'Added while logging a quote');
+  return ins.data.id;
+}
 function _apQuoteOpen(pid, cid){
   if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
   _apQuoteClose();
@@ -5931,7 +5963,8 @@ function _apQuoteOpen(pid, cid){
     return '<option value="'+esc(c.id)+'"'+(c.id===pid?' selected':'')+'>'+esc(c.addr||'')+'</option>'; })).join('');
   const conOpts=['<option value="">— Pick the contractor —</option>'].concat(cons.map(function(x){
     const nm=x.business_name?((x.name||'')+' · '+x.business_name):(x.name||'');
-    return '<option value="'+esc(x.id)+'"'+(x.id===cid?' selected':'')+'>'+esc(nm)+'</option>'; })).join('');
+    return '<option value="'+esc(x.id)+'"'+(x.id===cid?' selected':'')+'>'+esc(nm)+'</option>'; }))
+    .concat(['<option value="__new">\u2795 Not in here yet \u2014 add them</option>']).join('');
   const lbl=(t,sub)=>'<div style="font-size:11.5px;font-weight:600;color:#566070;text-transform:uppercase;letter-spacing:.04em;margin:13px 0 5px">'+t+(sub?'<span style="font-weight:400;text-transform:none;letter-spacing:0;color:#8A94A6"> — '+sub+'</span>':'')+'</div>';
   const inp='width:100%;box-sizing:border-box;padding:9px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:14px;font-family:inherit';
   const d=document.createElement('div');
@@ -5944,10 +5977,23 @@ function _apQuoteOpen(pid, cid){
       +'<span onclick="_apQuoteClose()" style="cursor:pointer;color:#8A94A6;font-size:21px;line-height:1">×</span></div>'
     +'<div style="font-size:12.5px;color:#566070;margin-top:4px;line-height:1.5">A quote is a price we have been given. It is not counted as money owed until somebody marks it agreed.</div>'
     +lbl('Property')+'<select id="apq-prop" style="'+inp+'">'+propOpts+'</select>'
-    +lbl('Contractor')+'<select id="apq-who" style="'+inp+'">'+conOpts+'</select>'
+    +lbl('Contractor')+'<select id="apq-who" onchange="_apQuoteNewCon()" style="'+inp+'">'+conOpts+'</select>'
+    // Bruce, 3 Oct: "we also need to be able to add a contractor from the desktop version
+    // and the mobile version if we can't find a contractor that we're searching in our
+    // system if they're not in our system yet ... once we add that there, they need to auto
+    // populate into the contractor directory." Same box, no second trip.
+    +'<div id="apq-newcon" style="display:none;margin-top:7px;padding:11px 12px;background:#F7F8FB;border:0.5px solid #e0e4ec;border-radius:9px">'
+      +'<div style="font-size:11.5px;color:#566070;margin-bottom:7px">They will be added to the Contractor Directory, so the W-9 tracker picks them up too.</div>'
+      +'<input id="apq-nc-name" placeholder="Their name" style="'+inp+'"/>'
+      +'<input id="apq-nc-biz" placeholder="Business name (optional)" style="'+inp+';margin-top:6px"/>'
+      +'<input id="apq-nc-phone" placeholder="Phone (optional)" style="'+inp+';margin-top:6px"/>'
+      +'<input id="apq-nc-trade" placeholder="Trade \u2014 framing, roofing, plumbing…" style="'+inp+';margin-top:6px"/>'
+    +'</div>'
     +lbl('Amount quoted')+'<input id="apq-amt" inputmode="decimal" placeholder="$0.00" style="'+inp+'"/>'
-    +lbl('What the money is for')+'<input id="apq-label" placeholder="Framing labour, roof tear-off and replace…" style="'+inp+'"/>'
-    +lbl('Description of work','optional')+'<textarea id="apq-notes" rows="3" placeholder="What is included, what is not…" style="'+inp+';resize:vertical"></textarea>'
+    +lbl('Description of work')+'<input id="apq-label" placeholder="Framing labour, roof tear-off and replace…" style="'+inp+'"/>'
+    +lbl('Type of work','trade or category')+'<input id="apq-cat" list="apq-trades" placeholder="Framing, Roofing, Plumbing…" style="'+inp+'"/>'
+    +'<datalist id="apq-trades">'+_apTradeOpts()+'</datalist>'
+    +lbl('Anything worth adding','optional')+'<textarea id="apq-notes" rows="3" placeholder="What is included, what is not…" style="'+inp+';resize:vertical"></textarea>'
     +lbl('Attach the quote','optional, PDF or a photo')+'<input type="file" id="apq-file" accept="application/pdf,image/*" style="'+inp+'"/>'
     +'<div style="font-size:11.5px;color:#8A94A6;margin-top:4px">Kept privately — it opens on a link that expires.</div>'
     +lbl('Where it stands')+'<select id="apq-state" style="'+inp+'"><option value="quoted">Quoted — they gave us a price</option><option value="agreed">Agreed — we have said yes</option></select>'
@@ -5965,17 +6011,26 @@ async function _apQuoteSave(btn){
   const pid=g('apq-prop');
   if(!pid){ alert("Pick the property this is for, so it lands on the right card."); return; }
   const label=g('apq-label');
-  if(!label){ alert("Say what the money is for."); return; }
+  if(!label){ alert("Say what the work is \u2014 the description of work."); return; }
   if(_apNum(g('apq-amt'))==null){ alert("Put the amount in. A price with no number is just a note."); return; }
   const st=document.getElementById('apq-s');
+  const say=function(t){ if(st){ st.textContent=t; st.style.display=t?'block':'none'; } };
   const fEl=document.getElementById('apq-file');
   if(btn){ btn.disabled=true; btn.style.opacity='.7'; btn.textContent='Saving…'; }
+  // A contractor typed in here is created first, so the line is never saved against nobody.
+  let who=g('apq-who');
+  if(who==='__new'){
+    const made=await _apQuoteMakeCon(say);
+    if(made==='error'){ if(btn){ btn.disabled=false; btn.style.opacity='1'; btn.textContent='Save it'; } return; }
+    who=made;
+  }
   const saved=await _apWrite({
-    property_id:pid, label:label, contractor_id:g('apq-who')||null,
+    property_id:pid, label:label, contractor_id:who||null,
+    category:g('apq-cat')||null,
     amount:g('apq-amt'), notes:g('apq-notes')||null,
     status:g('apq-state')||'quoted', source:'manual',
     file:(fEl && fEl.files && fEl.files[0])?fEl.files[0]:null,
-    say:function(t){ if(st){ st.textContent=t; st.style.display=t?'block':'none'; } }
+    say:say
   });
   if(btn){ btn.disabled=false; btn.style.opacity='1'; btn.textContent='Save it'; }
   if(!saved) return;
@@ -6015,14 +6070,25 @@ function _apAllBody(groupDefault){
   const quotes=live.filter(_apIsQuote);                       // offered, not agreed
   const all=live.filter(function(r){ return !_apIsQuote(r); });// actually committed
   const open=all.filter(function(r){ return r.status!=='paid'; });
-  const rows=(view==='quotes')?quotes:((view==='all')?all:open);
+  const paid=all.filter(function(r){ return r.status==='paid'; });
+  // Bruce, 3 Oct: "committed eighteen hundred dollars - when I click on that I want to see
+  // all of the committed for all the properties, and then paid same thing, and then quotes
+  // waiting not agreed yet, that'll be its own tab as well." So each figure along the top
+  // is the way INTO its own list, not just a number to look at.
+  const rows=(view==='quotes')?quotes
+            :(view==='committed')?all
+            :(view==='paid')?paid
+            :open;
 
   const sum=(list,f)=>list.reduce(function(n,r){ const v=_apNum(r[f]); return n+(v||0); },0);
   const outstanding=sum(all,'invoiced_amount')-sum(all,'paid_amount');
-  const tile=(label,val,col,sub)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${col};border-radius:10px;padding:12px 15px;min-width:150px;flex:1">
-      <div style="font-size:11.5px;color:#566070">${label}</div>
+  const tile=(label,val,col,sub,go)=>{
+    const on=(go && view===go);
+    return `<div ${go?`onclick="_apAllGo('${go}')" title="Show just these" `:''}style="background:${on?col+'0F':'#fff'};border:0.5px solid ${on?col:'#e0e4ec'};border-top:3px solid ${col};border-radius:10px;padding:12px 15px;min-width:150px;flex:1${go?';cursor:pointer':''}">
+      <div style="font-size:11.5px;color:#566070">${label}${go?'<span style="float:right;color:#8A94A6;font-size:14px;line-height:1">&rsaquo;</span>':''}</div>
       <div style="font-size:22px;font-weight:700;color:${col};margin-top:3px">${val}</div>
       ${sub?`<div style="font-size:10.5px;color:#8A94A6;margin-top:2px">${sub}</div>`:''}</div>`;
+  };
 
   const keyOf=(r)=> (by==='prop') ? (addrOf(r.property_id)||'— no property —')
                                   : (_apWho(r)||'— nobody set —');
@@ -6054,7 +6120,11 @@ function _apAllBody(groupDefault){
 
   const emptyMsg = (view==='quotes')
     ? 'No quotes waiting. Anything a contractor has priced but nobody has agreed to shows up here.'
-    : 'Nothing on accounts payable yet. Add a quote with the button above, from a property card, or from the field app.';
+    : (view==='paid')
+      ? 'Nothing paid out yet. A line moves here once it is marked Paid.'
+      : (view==='committed')
+        ? 'Nothing committed yet. A quote becomes committed the moment somebody marks it Agreed.'
+        : 'Nothing outstanding. Everything committed has been paid.';
 
   const body=groups.length?groups.map(function(g){
     return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:11px 14px;margin-bottom:10px">
@@ -6079,13 +6149,13 @@ function _apAllBody(groupDefault){
     </div>
     <div style="font-size:13px;color:#566070;margin-bottom:13px">Everything we owe. A <b>quote</b> is a price we have been given and have not agreed to — it is listed separately and counts towards nothing until somebody says yes. Click a house to open its own tab.</div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:13px">
-      ${tile('Outstanding', _apMoney(outstanding), outstanding>0?'#B42318':'#0F7B54','billed and not yet paid')}
-      ${tile('Committed', _apMoney(sum(all,'agreed_amount')), '#185FA5', all.length+' agreed line'+(all.length===1?'':'s'))}
-      ${tile('Paid', _apMoney(sum(all,'paid_amount')), '#0F7B54','')}
-      ${tile('Quotes waiting', _apMoney(sum(quotes,'agreed_amount')), '#566070', quotes.length+' not agreed yet')}
+      ${tile('Outstanding', _apMoney(outstanding), outstanding>0?'#B42318':'#0F7B54','billed and not yet paid','open')}
+      ${tile('Committed', _apMoney(sum(all,'agreed_amount')), '#185FA5', all.length+' agreed line'+(all.length===1?'':'s'),'committed')}
+      ${tile('Paid', _apMoney(sum(paid,'paid_amount')), '#0F7B54', paid.length+' line'+(paid.length===1?'':'s')+' settled','paid')}
+      ${tile('Quotes waiting', _apMoney(sum(quotes,'agreed_amount')), '#566070', quotes.length+' not agreed yet','quotes')}
     </div>
     <div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:12px;align-items:center">
-      ${chip('open','Still open',open.length)}${chip('all','Everything',all.length)}${chip('quotes','Quotes',quotes.length)}
+      ${chip('open','Outstanding',open.length)}${chip('committed','Committed',all.length)}${chip('paid','Paid',paid.length)}${chip('quotes','Quotes waiting',quotes.length)}
       <span style="margin-left:auto;font-size:11.5px;color:#8A94A6">Group by</span>
       ${gchip('who','Who we owe')}${gchip('prop','Property')}
     </div>
@@ -6121,28 +6191,38 @@ function _apBody(c){
       ${tile('Outstanding', _apMoney(T.outstanding), T.outstanding>0?'#B42318':'#0F7B54', 'billed and not yet paid')}
       ${T.quotes?tile('Quotes waiting', _apMoney(T.quoted), '#566070', T.quotes+' not agreed yet'):''}
     </div>
-    ${ro?'':`<div style="margin-bottom:12px"><button onclick="_apQuoteOpen('${pid}','')" style="padding:7px 14px;background:#fff;color:#185FA5;border:0.5px solid #cdd7e6;border-radius:8px;font-size:12.5px;font-weight:600;cursor:pointer">&#65291; Add a quote</button></div>`}`;
+    ${ro?'':`<div style="margin-bottom:12px"><button onclick="_apQuoteOpen('${pid}','')" style="padding:9px 17px;background:#111;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">&#65291; Add a quote or price</button>
+      <span style="font-size:11.5px;color:#8A94A6;margin-left:9px">contractor, amount, description of work, type of work \u2014 and you can add a contractor who is not in here yet</span></div>`}`;
 
   const money=(r,f,ph)=>ro
     ? `<span style="font-size:13px">${_apMoney(r[f])}</span>`
     : `<input value="${r[f]==null?'':esc(String(r[f]))}" placeholder="${ph}" onchange="_apField('${r.id}','${f}',this.value,'${pid}')" style="width:96px;padding:5px 7px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px;text-align:right"/>`;
 
-  const stateChips=(r)=>ro
-    ? `<span style="font-size:11px;font-weight:700;color:${_apState(r.status).col};background:${_apState(r.status).bg};padding:2px 9px;border-radius:99px">${_apState(r.status).label}</span>`
-    : AP_STATES.map(function(x){
-        const on=(String(r.status||'agreed')===x.k);
-        return `<span onclick="_apStatus('${r.id}','${x.k}','${pid}')" title="${esc(x.sub)}" style="cursor:pointer;font-size:10.5px;font-weight:${on?'700':'500'};color:${on?'#fff':x.col};background:${on?x.col:'#fff'};border:0.5px solid ${on?x.col:'#dfe4ec'};padding:2px 8px;border-radius:99px;white-space:nowrap">${x.label}</span>`;
-      }).join('');
+  // Bruce, 3 Oct: "where it stands, that needs to be a drop down. So you got quoted, agreed,
+  // invoiced, approved, and then paid and then void." Six pills across a table column was a
+  // row of things to misclick; one box says where it is and changes it.
+  const stateChips=(r)=>{
+    const st=_apState(r.status);
+    if(ro) return `<span style="font-size:11px;font-weight:700;color:${st.col};background:${st.bg};padding:2px 9px;border-radius:99px">${st.label}</span>`;
+    const opts=AP_STATES.map(function(x){
+      return `<option value="${x.k}"${String(r.status||'agreed')===x.k?' selected':''}>${x.label}</option>`;
+    }).join('');
+    return `<select onchange="_apStatus('${r.id}',this.value,'${pid}')" title="${esc(st.sub)}" style="padding:5px 8px;border:0.5px solid ${st.col};border-radius:7px;font-size:12.5px;font-weight:600;color:${st.col};background:${st.bg};min-width:112px">${opts}</select>`;
+  };
 
   const row=(r)=>{
     const st=_apState(r.status);
     return `<tr style="border-top:0.5px solid #eef0f6;${r.status==='void'?'opacity:.55;':''}">
       <td style="padding:8px 10px;min-width:180px">
         ${ro?`<span style="font-size:13.5px;font-weight:600">${esc(r.label||'')}</span>`
-            :`<input value="${esc(r.label||'')}" onchange="_apField('${r.id}','label',this.value,'${pid}')" style="width:100%;min-width:160px;padding:5px 7px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13.5px;font-weight:600"/>`}
-        ${r.category?`<div style="font-size:10.5px;color:#636b7a;margin-top:2px">${esc(r.category)}</div>`:''}
+            :`<input value="${esc(r.label||'')}" placeholder="Description of work" onchange="_apField('${r.id}','label',this.value,'${pid}')" style="width:100%;min-width:160px;padding:5px 7px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13.5px;font-weight:600"/>`}
+        ${ro
+          ? (r.category?`<div style="font-size:10.5px;color:#636b7a;margin-top:2px">${esc(r.category)}</div>`:'')
+          : `<input value="${esc(r.category||'')}" list="ap-trades-${pid}" placeholder="Type of work (trade)" onchange="_apField('${r.id}','category',this.value,'${pid}')" style="width:100%;min-width:160px;margin-top:3px;padding:4px 7px;border:0.5px solid #e6e8ee;border-radius:6px;font-size:11.5px"/>`}
         <div style="font-size:10px;color:#9AA3B2;margin-top:2px">${esc(r.source==='sow'?'from the scope of work':(r.source==='field'?'from the field app':(r.source==='form'?'from a price form':'typed in here')))}</div>
-        ${r.notes?`<div style="font-size:11.5px;color:#444;margin-top:3px;white-space:pre-wrap">${esc(r.notes)}</div>`:''}
+        ${ro
+          ? (r.notes?`<div style="font-size:11.5px;color:#444;margin-top:3px;white-space:pre-wrap">${esc(r.notes)}</div>`:'')
+          : `<textarea placeholder="Anything worth adding — what is included, what is not…" onchange="_apField('${r.id}','notes',this.value,'${pid}')" style="width:100%;min-width:160px;margin-top:4px;padding:5px 7px;border:0.5px solid #e6e8ee;border-radius:6px;font-size:11.5px;font-family:inherit;resize:vertical" rows="${r.notes?2:1}">${esc(r.notes||'')}</textarea>`}
         ${_apDocChips(r, ro)}
         ${ro?'':`<div style="margin-top:4px;display:flex;gap:5px;align-items:center;flex-wrap:wrap">
             <input type="file" id="ap-file-${r.id}" accept="application/pdf,image/*" style="font-size:10.5px;max-width:168px"/>
@@ -6165,35 +6245,22 @@ function _apBody(c){
   };
 
   const body=rows.length?rows.map(row).join('')
-    :`<tr><td colspan="7" style="padding:22px;text-align:center;color:#636b7a;font-size:13.5px">Nothing on accounts payable for this property yet.${ro?'':' Add the first quote or agreed price below.'}</td></tr>`;
+    :`<tr><td colspan="7" style="padding:22px;text-align:center;color:#636b7a;font-size:13.5px">Nothing on accounts payable for this property yet.${ro?'':' Use &ldquo;Add a quote or price&rdquo; at the top.'}</td></tr>`;
 
-  const adder=ro?'':`<tr style="background:#F7F8FB;border-top:0.5px solid #e0e4ec">
-      <td style="padding:8px 10px"><input id="ap-label-${pid}" placeholder="What the money is for" style="width:100%;min-width:160px;padding:6px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px"/>
-        <input id="ap-cat-${pid}" placeholder="Trade / category (optional)" style="width:100%;margin-top:4px;padding:5px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12px"/></td>
-      <td style="padding:8px"><select id="ap-who-${pid}" style="padding:6px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px;max-width:210px">${conOpts('')}</select></td>
-      <td style="padding:8px;text-align:right"><input id="ap-amt-${pid}" placeholder="$0.00" style="width:96px;padding:6px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px;text-align:right"/></td>
-      <td style="padding:8px;text-align:right" colspan="2">
-        <input type="date" id="ap-due-${pid}" title="Due date (optional)" style="padding:6px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px"/>
-        <div style="margin-top:4px;display:flex;gap:5px;align-items:center;justify-content:flex-end;flex-wrap:wrap">
-          <input type="file" id="ap-new-file-${pid}" accept="application/pdf,image/*" title="Attach the quote" style="font-size:10.5px;max-width:170px"/>
-          <span id="ap-new-s-${pid}" style="display:none;font-size:10.5px;color:#8A5A10"></span>
-        </div>
-      </td>
-      <td colspan="2" style="padding:8px;text-align:right">
-        <select id="ap-state-${pid}" title="Is this just a price we have been given, or one we have said yes to?" style="padding:6px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;margin-bottom:4px">
-          <option value="agreed">Agreed — we said yes</option>
-          <option value="quoted">Quoted — not agreed yet</option>
-        </select><br/>
-        <button onclick="_apAdd('${pid}')" style="padding:7px 15px;background:#111;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer">+ Add</button></td>
-    </tr>`;
+  // Bruce, 3 Oct: "it needs to be set up like it is on the other page as well ... maybe just
+  // put that at the top." So the inline row at the bottom of the table is gone and there is
+  // ONE way to add a line anywhere on the site - the box at the top of this tab, the same
+  // box the dashboard and the field app open. One form means one set of field names.
+  const adder='';
 
   const th=(t,a)=>`<th style="text-align:${a||'left'};padding:9px 10px;font-size:11.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap">${t}</th>`;
 
   return head
+    + `<datalist id="ap-trades-${pid}">${_apTradeOpts()}</datalist>`
     + `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:auto">
         <table style="width:100%;border-collapse:collapse;font-size:13px;color:#111">
           <thead><tr style="background:#fafbfc">
-            ${th('What for')}${th('Who gets paid')}${th('Agreed','right')}${th('Invoiced','right')}${th('Paid','right')}${th('Where it stands')}${th('')}
+            ${th('Description of work')}${th('Contractor')}${th('Agreed','right')}${th('Invoiced','right')}${th('Paid','right')}${th('Where it stands')}${th('')}
           </tr></thead><tbody>${body}${adder}</tbody></table></div>`
     + `<div style="font-size:12px;color:#566070;margin-top:9px">A <b>quote</b> is a price somebody offered us — it is not counted as money owed until it is marked Agreed. Every figure names the contractor it belongs to, so it feeds the W-9 tracker and the contractor directory rather than sitting on its own. <b>Void</b> keeps a cancelled line on the record; <b>Remove</b> deletes it for good. Attached files are kept privately and open on a link that expires, because a contractor's pricing is not public.</div>`;
 }
@@ -6238,15 +6305,18 @@ function _ppNames(c){
     if(at<0){ seen.push(nm); return; }
     if(nm.length>seen[at].length) seen[at]=nm;
   };
-  add(c&&c.pm);
-  _ppTasksOn(c.id).forEach(function(t){ (taskAssignees(t)||[]).forEach(add); });
-  _ppEventsOn(c.id).forEach(function(e){
-    if(e.assignee) add(e.assignee);
-    if(e.contractor_name) add(e.contractor_name);
+  // Bruce, 3 Oct, looking at 1060 Glendale: "I see Gabe's name pop up as a tab because he's
+  // had a task assigned to him in the past. But I only want his name to pop up on the tab
+  // when there's an active open task for that property. And that goes for anyone and
+  // everyone." So a tab is earned by OPEN work on this house and nothing else - not by
+  // being the manager, not by having finished something here months ago, not by being
+  // booked on the calendar. Open means open FOR THEM: a shared job they have ticked off
+  // their own list no longer holds their tab open.
+  _ppTasksOn(c.id).forEach(function(t){
+    (taskAssignees(t)||[]).forEach(function(n){
+      if(_taskStatusFor(t,n)!=='done') add(n);
+    });
   });
-  if(typeof _pdPermits==='function'){
-    try{ _pdPermits(c.id).forEach(function(r){ add(r.owner||r.assignee); }); }catch(e){}
-  }
   return seen.sort(function(a,b){ return String(a).localeCompare(String(b)); });
 }
 function _ppKey(n){ return 'p_'+String(n||'').toLowerCase().replace(/[^a-z0-9]+/g,'_'); }
@@ -6947,7 +7017,7 @@ function _pdLinked(c, which){
           <div>${_sqBody(c)}${_pdLinked(c,'work')}${quickAddForms}</div>
         </div>
         ${_pcTabs(c).some(function(t){return t.key==='permits';}) ? `<div style="display:${_pcTab(c)==='permits'?'block':'none'}">${_pdLinked(c,'permits')}${_pdPermitNudge(c)}</div>` : ''}
-        <div style="display:${_pcTab(c)==='ap'?'block':'none'};max-width:1000px">${_pcTab(c)==='ap'?_apBody(c):''}</div>
+        <div style="display:${_pcTab(c)==='ap'?'block':'none'}">${_pcTab(c)==='ap'?_apBody(c):''}</div>
         <div style="display:${_pcTab(c)==='history'?'block':'none'};max-width:900px">${_pcTab(c)==='history'?_pdHistory(c):''}</div>
         ${_pcTabs(c).filter(function(t){return t.person;}).map(function(t){
           return `<div style="display:${_pcTab(c)===t.key?'block':'none'}">${_pcTab(c)===t.key?_ppBody(c,t.person):''}</div>`;
@@ -26166,15 +26236,23 @@ function _mAddFormAP(){
   const opts=['<option value="">— Pick the contractor —</option>'].concat(cons.map(function(x){
     const nm=x.business_name?((x.name||'')+' · '+x.business_name):(x.name||'');
     return '<option value="'+_calEsc(x.id)+'">'+_calEsc(nm)+'</option>';
-  })).join('');
+  })).concat(['<option value="__new">\u2795 Not in here yet — add them</option>']).join('');
   return _mFormWrap("Add a quote or price",`
     <div style="font-size:13px;color:#566070;margin-bottom:10px;line-height:1.5">A <b>quote</b> is a price you have been given. It does not count as money owed until somebody marks it agreed, so it is safe to put a number in here the moment you hear it.</div>
     <div class="m-label">Property</div>${_mPropOnlyPicker("map")}
-    <div class="m-label" style="margin-top:12px">Contractor</div><select id="map-who" class="m-select">${opts}</select>
-    <div style="font-size:12px;color:#566070;margin-top:5px">Not in the list? Add them in the contractor directory first so the price ties to their W-9.</div>
+    <div class="m-label" style="margin-top:12px">Contractor</div><select id="map-who" class="m-select" onchange="_mApNewCon()">${opts}</select>
+    <div id="map-newcon" style="display:none;margin-top:8px;padding:11px 12px;background:#F7F8FB;border:0.5px solid #e0e4ec;border-radius:9px">
+      <div style="font-size:12px;color:#566070;margin-bottom:7px">They go straight into the Contractor Directory, so their W-9 is tracked from here on.</div>
+      <input id="map-nc-name" class="m-input" placeholder="Their name"/>
+      <input id="map-nc-biz" class="m-input" style="margin-top:6px" placeholder="Business name (optional)"/>
+      <input id="map-nc-phone" class="m-input" style="margin-top:6px" placeholder="Phone (optional)"/>
+      <input id="map-nc-trade" class="m-input" style="margin-top:6px" placeholder="Trade — framing, roofing, plumbing…"/>
+    </div>
     <div class="m-label" style="margin-top:12px">Amount quoted</div><input id="map-amt" class="m-input" inputmode="decimal" placeholder="$0.00"/>
-    <div class="m-label" style="margin-top:12px">What the money is for</div><input id="map-label" class="m-input" placeholder="Framing labour, roof tear-off and replace…"/>
-    <div class="m-label" style="margin-top:12px">Description of work <span style="color:#566070;font-weight:400">&mdash; optional</span></div>
+    <div class="m-label" style="margin-top:12px">Description of work</div><input id="map-label" class="m-input" placeholder="Framing labour, roof tear-off and replace…"/>
+    <div class="m-label" style="margin-top:12px">Type of work <span style="color:#566070;font-weight:400">&mdash; trade or category</span></div>
+    <input id="map-cat" class="m-input" list="map-trades" placeholder="Framing, Roofing, Plumbing…"/><datalist id="map-trades">${_apTradeOpts()}</datalist>
+    <div class="m-label" style="margin-top:12px">Anything worth adding <span style="color:#566070;font-weight:400">&mdash; optional</span></div>
     <textarea id="map-notes" class="m-input" rows="3" placeholder="What is included, what is not, anything he said that matters later…"></textarea>
     <div class="m-label" style="margin-top:12px">Attach his quote <span style="color:#566070;font-weight:400">&mdash; optional, PDF or a photo</span></div>
     <input type="file" id="map-file" accept="application/pdf,image/*" class="m-input" style="padding:9px"/>
@@ -26188,22 +26266,49 @@ function _mAddFormAP(){
     <button class="m-btn" onclick="_submit('m-ap',this,'Saving…',_mSubmitAP)">Save it</button>
   `);
 }
+function _mApNewCon(){
+  const sel=document.getElementById('map-who'), box=document.getElementById('map-newcon');
+  if(!sel||!box) return;
+  const on=(sel.value==='__new');
+  box.style.display=on?'block':'none';
+  if(on){ const n=document.getElementById('map-nc-name'); if(n) n.focus(); }
+}
+async function _mApMakeCon(say){
+  const g=(k)=>{ const e=document.getElementById(k); return e?String(e.value||'').trim():''; };
+  const name=g('map-nc-name'), biz=g('map-nc-biz'), phone=g('map-nc-phone'), trade=g('map-nc-trade');
+  if(!name && !biz){ if(say) say("Put the new contractor's name in, or their business name."); return 'error'; }
+  const ins=await supabase.from('pm_contractors')
+    .insert({ name:name||biz, business_name:biz||null, phone:phone||null, trade:trade||null })
+    .select('id').single();
+  if(ins.error){ if(say) say("Could not add the contractor: "+(ins.error.message||'')); return 'error'; }
+  if(typeof loadContractorsFromSupabase==='function') await loadContractorsFromSupabase();
+  if(typeof _logAudit==='function') _logAudit('created','contractor', name||biz, 'Added from the field app while logging a quote');
+  return ins.data.id;
+}
 async function _mSubmitAP(){
   if(_blockIfReadOnly()) return;
   const g=(k)=>{ const el=document.getElementById(k); return el?String(el.value||'').trim():''; };
   const pid=g("map-prop");
   if(!pid){ alert("Pick the property this is for, so it lands on the right card."); return; }
   const label=g("map-label");
-  if(!label){ alert("Say what the money is for."); return; }
+  if(!label){ alert("Say what the work is — the description of work."); return; }
   if(_apNum(g("map-amt"))==null){ alert("Put the amount in. A price with no number is just a note."); return; }
   const fEl=document.getElementById("map-file");
   const st=document.getElementById("map-s");
+  const say=function(t){ if(st){ st.textContent=t; st.style.display=t?'block':'none'; } };
+  let who=g("map-who");
+  if(who==='__new'){
+    const made=await _mApMakeCon(say);
+    if(made==='error') return;
+    who=made;
+  }
   const saved=await _apWrite({
-    property_id:pid, label:label, contractor_id:g("map-who")||null,
+    property_id:pid, label:label, contractor_id:who||null,
+    category:g("map-cat")||null,
     amount:g("map-amt"), notes:g("map-notes")||null,
     status:g("map-state")||'quoted', source:'field',
     file:(fEl && fEl.files && fEl.files[0])?fEl.files[0]:null,
-    say:function(t){ if(st){ st.textContent=t; st.style.display=t?'block':'none'; } }
+    say:say
   });
   if(!saved) return;
   const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
@@ -27828,4 +27933,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-01a per-person-tabs -->
+<!-- build: 2026-10-03a ap-tabs-and-contractors -->
