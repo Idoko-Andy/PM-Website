@@ -3898,8 +3898,117 @@ async function toggleSubPhaseComplete(propId, name){
   _logAudit(s.completed?"completed":"reopened","property", card.addr||"", "Subphase: "+name);
   await loadPropertiesFromSupabase();
   await _syncSubphaseTasks(propId);
+  await _spTasksDone(propId, name, !!s.completed);
   const advanced = s.completed ? await _maybeAutoAdvance(propId) : false;
   _afterSubPhase(propId);
+}
+// Bruce, 3 Oct: "When I mark the sub phase task completed in the property card, it needs
+// to also mark it completed on the person's tasks, whether it's on a sub task or task
+// calendar."
+// Jen's "272 E Weisheimer - Drawing / Structural Phase" was the live example: ticked on
+// the property card, still sitting overdue on her tab in Monday's meeting and still on
+// the construction calendar. _syncSubphaseTasks only ever CREATED the task - nothing
+// ever closed it again, so the two halves of the same job disagreed for weeks.
+// Both ends now agree. _spTasksDone closes the task when the subphase is ticked on the
+// card; _spFromTask ticks the subphase when the person closes their own task.
+function _spTaskIds(propId, name){
+  const card=(typeof propCards!=='undefined'?propCards:[]).find(p=>p.id===propId);
+  const sp=card?((card.subPhases||[]).find(x=>x.name===name)):null;
+  const out=[];
+  if(sp && sp.taskId) out.push(sp.taskId);
+  // The link is also matched on category, not just the stored taskId: tasks created
+  // before the id was recorded (or re-created by hand) still belong to this step.
+  const key=String(name||'').trim().toLowerCase();
+  (typeof _tasksCache!=='undefined'?_tasksCache:[]).forEach(function(t){
+    if(!t || !t.id || t.property_id!==propId) return;
+    if(String(t.category||'').trim().toLowerCase()!==key) return;
+    if(out.indexOf(t.id)<0) out.push(t.id);
+  });
+  return out;
+}
+// Drop a task's per-person tick record. A shared job closed from the property card is
+// closed for everyone on it, so a half-finished tick list must not survive - it would
+// make a reopened task look done for whoever had already ticked. Never alerts: this is
+// tidying up behind a tick that has already been saved.
+async function _tkForget(t){
+  if(!t || !t.id) return;
+  try{
+    const fresh=await _pmSettingsRead("task_done_by");
+    const all=(fresh && typeof fresh==='object')?fresh:{};
+    if(all[t.id]){
+      delete all[t.id];
+      window.__pmDenied=false;
+      const err=await _pmSettingsWrite("task_done_by", all);
+      if(!err) window._tkDone=all;
+    }
+  }catch(e){}
+  try{ await _tkClearOnTask(t); }catch(e){}
+}
+async function _spTasksDone(propId, name, done){
+  const ids=_spTaskIds(propId, name);
+  if(!ids.length) return 0;
+  const stamp = done ? new Date().toISOString() : null;
+  let n=0;
+  for(const id of ids){
+    const t=(typeof _tasksCache!=='undefined'?_tasksCache:[]).find(x=>x.id===id);
+    if(t && ((t.status==='done')===!!done)) continue;      // already agrees
+    let { error } = await supabase.from("pm_tasks").update({status: done?'done':'open', completed_at:stamp}).eq("id",id);
+    if(error && /completed_at/.test(error.message||"")){
+      ({ error } = await supabase.from("pm_tasks").update({status: done?'done':'open'}).eq("id",id));
+    }
+    if(error) continue;
+    n++;
+    if(t){
+      t.status = done?'done':'open';
+      if(typeof _logAudit==='function') _logAudit(done?"completed":"reopened","task", t.title||name,
+        "Followed the "+name+" sub phase being "+(done?"ticked":"reopened")+" on the property card"+
+        ((taskAssignees(t)||[]).length?(" \u2014 was with "+taskAssignees(t).join(", ")):""));
+      if(done) await _tkForget(t);
+    }
+  }
+  if(n) await loadTasks();
+  return n;
+}
+// The other direction: Jen ticks "Drawing / Structural Phase" off her own list and the
+// sub phase on the property card ticks itself. Without this the card still shows the
+// step open, the phase never advances, and she gets asked about it again on Monday.
+async function _spFromTask(tid, done){
+  if(!tid) return 0;
+  const t=(typeof _tasksCache!=='undefined'?_tasksCache:[]).find(x=>x.id===tid);
+  if(!t || !t.property_id) return 0;
+  const card=(typeof propCards!=='undefined'?propCards:[]).find(p=>p.id===t.property_id);
+  if(!card) return 0;
+  const key=String(t.category||'').trim().toLowerCase();
+  const subs=(card.subPhases||[]).map(sp=>({...sp}));
+  const s=subs.find(function(x){
+    if(x.taskId && x.taskId===tid) return true;
+    return !!key && String(x.name||'').trim().toLowerCase()===key;
+  });
+  if(!s) return 0;
+  if(!!s.completed===!!done) return 0;
+  s.completed=!!done;
+  if(done){ if(!s.completedAt) s.completedAt=new Date().toISOString(); _applyChain(subs, s.name, "complete", card); }
+  else { s.approved=false; delete s.approvedBy; delete s.completedAt; }
+  const { error } = await supabase.from("pm_properties").update({ sub_phases:subs }).eq("id", card.id);
+  if(error) return 0;
+  if(typeof _logAudit==='function') _logAudit(done?"completed":"reopened","property", card.addr||"",
+    "Sub phase: "+s.name+" \u2014 followed "+((taskAssignees(t)||[]).join(", ")||"somebody")+" closing their own task");
+  await loadPropertiesFromSupabase();
+  if(done){ try{ await _maybeAutoAdvance(card.id); }catch(e){} }
+  return 1;
+}
+// Called after a per-person tick on a SHARED task. The sub phase only closes once the
+// last person on it has ticked - one of three people being done is not the step being
+// done. Never reopens: a tick coming off one person's list does not undo the step.
+async function _spAfterTaskTick(tid){
+  try{
+    const t=(typeof _tasksCache!=='undefined'?_tasksCache:[]).find(x=>x.id===tid);
+    if(!t) return 0;
+    const names=(typeof taskAssignees==='function'?taskAssignees(t):[])||[];
+    const closed = t.status==='done' || (names.length>0 && typeof _tkOutstanding==='function' && _tkOutstanding(t)===0);
+    if(!closed) return 0;
+    return await _spFromTask(tid, true);
+  }catch(e){ return 0; }
 }
 // Bruce, 26 Sept, prepping Monday's meeting: "when I'm marking subtasks completed from
 // the full project meeting doc, it kicks me out of the meeting doc."
@@ -3931,6 +4040,7 @@ async function approveSubPhase(propId, name){
   _logAudit("approved","property", card.addr||"", "Subphase approved: "+name+" by "+s.approvedBy);
   await loadPropertiesFromSupabase();
   await _syncSubphaseTasks(propId);
+  await _spTasksDone(propId, name, true);
   const advanced = await _maybeAutoAdvance(propId);
   _afterSubPhase(propId);
 }
@@ -6379,7 +6489,7 @@ async function _ppTick(pid, name, taskId){
   const mine=_taskStatusFor(t,name)==='done';
   // Shared jobs tick per person; a job that is only theirs closes outright.
   const names=taskAssignees(t)||[];
-  if(names.length>1 && typeof _tkTick==='function'){ await _tkTick(t, name, !mine); await loadTasks(); }
+  if(names.length>1 && typeof _tkTick==='function'){ await _tkTick(t, name, !mine); await loadTasks(); await _spAfterTaskTick(taskId); }
   else { await toggleTaskDone(taskId); }
   if(typeof openPropDetail==='function') openPropDetail(pid);
 }
@@ -11443,9 +11553,17 @@ async function _mktPrefillWeek(wk){
 // So the rotation stays - it is genuinely useful - but it no longer fills the box. Last
 // week's plan now sits ABOVE the box as a quiet reminder of what was meant to happen,
 // and the box you type in opens empty.
-const WM_TEAM_CARRY = {
-  money: 'money'    // "on or off budget, and why" - a standing position, not a weekly event
-};
+// Bruce, 3 Oct: "money analysis on or off budget. It carried over what I had in there
+// from last week's meeting. So, um, that's a bug that I told you to fix a long time ago."
+// He is right. The 26 Sept fix stopped the FORWARD box carrying, but money was still
+// listed here, so every Monday the money box opened holding last week's position. A box
+// that opens already full reads as something somebody wrote this morning, so it gets
+// read past and left alone - which is exactly what he caught.
+// Money now gets the same treatment as the forward box: nothing carries into the box,
+// and what was said last week sits ABOVE it as a quiet reminder. Nothing is lost.
+// Nothing carries now. The map is kept because the rotation machinery below reads it,
+// and because the next field somebody wants carried goes in here rather than in a loop.
+const WM_TEAM_CARRY = {};
 // Deliberately NOT carried: 'wins' (explicitly "wins this week"), and 'lastc' does not
 // carry itself - it is written fresh each week on top of whatever rotated in.
 let _wmPrefilling=false;
@@ -11475,10 +11593,22 @@ async function _wmPrefillWeek(wk){
   const curCarry=(cur['__carry']&&typeof cur['__carry']==='object')?cur['__carry']:{};
   const carry={};
   const seen={};
+  // Bruce, 3 Oct: "send drawings to Jesus this week and go to print them off of roll
+  // plans ... it's in the carried over for eight Hideaway Hills. I already went through
+  // and marked that in last week's meeting completed. So make sure that that stuff's
+  // saving, registering it, we're keeping it clean."
+  // It WAS saving. The tick was written, the item was correctly dropped from the carry
+  // list - and then the loop below put it straight back, because the same sentence was
+  // still sitting in last week's "what's coming up" box and the only thing stopping a
+  // line from being re-created was whether it was already on THIS week's list. Ticked
+  // items were never on that list, so they were recreated every single Monday.
+  // Everything last week knew about now counts as seen, ticked or not. A line that was
+  // dealt with stays dealt with; only the ones still open come forward.
   Object.keys(prevCarry).forEach(function(pid){
-    const keep=(Array.isArray(prevCarry[pid])?prevCarry[pid]:[]).filter(function(x){ return x && !x.done; });
+    const all=(Array.isArray(prevCarry[pid])?prevCarry[pid]:[]);
+    all.forEach(function(x){ if(x) seen[pid+'|'+String(x.text||'').toLowerCase()]=true; });
+    const keep=all.filter(function(x){ return x && !x.done; });
     if(keep.length){ carry[pid]=keep.map(function(x){ return Object.assign({},x); }); }
-    keep.forEach(function(x){ seen[pid+'|'+String(x.text||'').toLowerCase()]=true; });
   });
   Object.keys(prev).forEach(function(k){
     if(k.indexOf('::')<0) return;
@@ -11494,6 +11624,42 @@ async function _wmPrefillWeek(wk){
   });
   // Never write over a list this week has already started working through.
   if(Object.keys(carry).length && !Object.keys(curCarry).length) patch['__carry']=carry;
+  else if(Object.keys(curCarry).length){
+    // This week's list was built before the fix above, so it may be holding items that
+    // were ticked off last week and came back anyway. Take those back out - once, in
+    // place - so Monday's sheet is clean rather than only being clean from next week.
+    // Anything added or ticked THIS week is left exactly as it is.
+    const doneLast={};
+    Object.keys(prevCarry).forEach(function(pid){
+      (Array.isArray(prevCarry[pid])?prevCarry[pid]:[]).forEach(function(x){
+        if(x && x.done) doneLast[pid+'|'+String(x.text||'').toLowerCase()]=true;
+      });
+    });
+    if(Object.keys(doneLast).length){
+      const cleaned={}; let dropped=0;
+      Object.keys(curCarry).forEach(function(pid){
+        const list=(Array.isArray(curCarry[pid])?curCarry[pid]:[]);
+        const keep=list.filter(function(x){
+          if(!x || x.done) return true;                          // ticked here: leave it alone
+          if(String(x.from||'')!==_wmPrevWeek(wk)) return true;   // not one the roll-over made
+          if(!doneLast[pid+'|'+String(x.text||'').toLowerCase()]) return true;
+          dropped++; return false;
+        });
+        if(keep.length) cleaned[pid]=keep;
+      });
+      if(dropped) patch['__carry']=cleaned;
+    }
+  }
+  // Same clean-up for the money box: a week already built the old way is still holding
+  // last week's words. They are not lost - they are in last week's sheet, and they now
+  // show above the box as a reminder. The box itself opens empty, which is the point.
+  Object.keys(prev).forEach(function(k){
+    if(!/::money$/.test(k)) return;
+    const was=String(prev[k]==null?'':prev[k]).trim();
+    if(!was) return;
+    if(String(cur[k]==null?'':cur[k]).trim()!==was) return;   // somebody has since typed
+    patch[k]='';
+  });
 
   if(!Object.keys(patch).length) return 0;
   _wmPrefilling=true;
@@ -13046,7 +13212,8 @@ function _wmTdTopics(wk, c, roNow, ta2, kn){
       ${_tile('ACQ budget', (c.checklists&&c.checklists.acqBudget)?_calEsc(c.checklists.acqBudget):'&mdash;', '#111','')}
       ${_tile('Kickoff', (kn&&kn.done)?'completed':(kn?'in progress':'not run'), (kn&&kn.done)?'#0F7B54':'#8a6d1a','')}
     </div>`
-    + _sub('On or off plan, and why') + ta2(c.id+'::money','Price, terms, anything that moves the date&hellip;',44)
+    + _sub('On or off plan, and why') + _wmPrevSaid(wk, c, 'money', 'Last week')
+    + ta2(c.id+'::money','Price, terms, anything that moves the date&hellip;',44)
     + addBoth;
 
   // ---- the recap, built once the tiles above exist ----
@@ -13463,6 +13630,33 @@ function _wmPlanWas(wk, c){
     </div>`;
   }catch(e){ return ''; }
 }
+// The same quiet reminder as _wmPlanWas, for any box that used to carry its contents
+// into the new week. What was said last week sits ABOVE the box; the box opens empty.
+function _wmPrevSaid(wk, c, field, label){
+  if(!c) return '';
+  try{
+    const prev=_wmPrevWeek(wk);
+    const notes=(((window._wmData||{})[prev]||{})['team'])||{};
+    const said=String(notes[c.id+'::'+field]||'').trim();
+    if(!said) return '';
+    return `<div style="background:#F7F8FB;border-left:3px solid #cdd7e6;border-radius:0 7px 7px 0;padding:7px 11px;margin:0 0 7px">
+      <div style="font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#566070">${_calEsc(label||'Last week')}</div>
+      <div style="font-size:12.5px;color:#444;white-space:pre-wrap;line-height:1.45;margin-top:2px">${_calEsc(said)}</div>
+    </div>`;
+  }catch(e){ return ''; }
+}
+// True when this week's money box is holding nothing but a copy of last week's, put
+// there by the old carry. Nobody typed it this morning, so it does not belong in the
+// box - it shows above it instead, and the box opens empty.
+function _wmMoneyStale(wk, pid, notes){
+  try{
+    const here=String((notes||{})[pid+'::money']==null?'':notes[pid+'::money']).trim();
+    if(!here) return false;
+    const prev=(((window._wmData||{})[_wmPrevWeek(wk)]||{})['team'])||{};
+    const last=String(prev[pid+'::money']||'').trim();
+    return !!last && here===last;
+  }catch(e){ return false; }
+}
 function _wmDocOpen(){ return !!document.querySelector('[data-wm-doc]'); }
 // A redraw that has to happen, held until the room stops typing.
 function _wmRenderWhenIdle(kind, week){
@@ -13614,6 +13808,8 @@ function openWeeklyMeeting(kind, week){
     // this clears up the week that was already built the old way. The text is not
     // touched or lost - it is in "Last week", which is where it belongs now.
     const _fwdStale=(key)=>{
+      // Bruce, 3 Oct: the money box carried over too. Same rule, same treatment.
+      if(/::money$/.test(key)) return _wmMoneyStale(wk, key.replace(/::money$/,''), notes);
       if(!/::nextc$/.test(key)) return false;
       const here=String(notes[key]==null?'':notes[key]).trim();
       if(!here) return false;
@@ -13622,7 +13818,7 @@ function openWeeklyMeeting(kind, week){
     };
     const ta2=(key,ph,minH)=>roNow
       ? `<div style="font-size:13px;color:#333;white-space:pre-wrap;background:#F7F8FB;border-radius:8px;padding:9px 11px;min-height:34px">${(_fwdStale(key)?'':_calEsc(notes[key]||''))||'<span style="color:#636b7a">Nothing written</span>'}</div>`
-      : `${_fwdStale(key)?`<div style="font-size:12px;color:#633806;background:#FFF7E0;border:0.5px solid #EAD9A8;border-radius:8px;padding:7px 11px;margin-bottom:6px">Last week&rsquo;s plan moved across into <b>How last week actually went</b>. This box is yours for the week ahead.</div>`:''}<textarea id="wm-${key}" placeholder="${ph}" style="width:100%;min-height:${minH?(minH+22):76}px;padding:11px 13px;border:0.5px solid #d8dce6;border-radius:8px;font-size:15px;line-height:1.5;color:#222;resize:vertical;font-family:inherit">${_fwdStale(key)?'':_calEsc(notes[key]||'')}</textarea>
+      : `${_fwdStale(key)?`<div style="font-size:12px;color:#633806;background:#FFF7E0;border:0.5px solid #EAD9A8;border-radius:8px;padding:7px 11px;margin-bottom:6px">${/::money$/.test(key)?'Last week&rsquo;s money note is shown above. This box is yours for this week.':'Last week&rsquo;s plan moved across into <b>How last week actually went</b>. This box is yours for the week ahead.'}</div>`:''}<textarea id="wm-${key}" placeholder="${ph}" style="width:100%;min-height:${minH?(minH+22):76}px;padding:11px 13px;border:0.5px solid #d8dce6;border-radius:8px;font-size:15px;line-height:1.5;color:#222;resize:vertical;font-family:inherit">${_fwdStale(key)?'':_calEsc(notes[key]||'')}</textarea>
          <div style="display:flex;align-items:center;gap:8px;margin-top:4px"><button onclick="_wmSaveNote('${kind}','${key}','${wk}')" style="padding:5px 13px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer">Save</button><span id="wm-ok-${key}" style="display:none;font-size:12px;color:#16794C">Saved &#10003;</span></div>`;
     const secHead=(t,right)=>`<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;background:#F7F8FB;border-radius:8px 8px 0 0;padding:7px 12px;border-bottom:0.5px solid #eef0f6"><div style="font-size:12px;font-weight:700;color:#111">${t}</div><div style="font-size:11.5px;color:#566070">${right||''}</div></div>`;
     const secWrap=(head,inner)=>`<div style="border:0.5px solid #e6e8ee;border-radius:9px;margin-top:11px;overflow:hidden">${head}<div style="padding:9px 12px">${inner}</div></div>`;
@@ -13821,6 +14017,7 @@ function openWeeklyMeeting(kind, week){
                  <div><div style="font-size:9.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em">Closing &middot; us selling</div><div style="font-size:13px;font-weight:600;color:${c.closingDateSell?'#111':'#8A5A10'}">${_dt(c.closingDateSell)}</div></div>
                </div>`
             + _sub('&#128176; Money analysis &mdash; on or off budget, and why')
+            + _wmPrevSaid(wk, c, 'money', 'Last week')
             + ta2(c.id+'::money','On or off budget, and why?')
             + _sqBody(c, true)
             + _bar(_roleBtn(_mar,'Task for '+String(_mar).split(' ')[0])+_anyBtn);
@@ -24716,7 +24913,7 @@ async function toggleTaskDone(id){
   // completed_at is what makes "finished on time" answerable - without it a task
   // finished three weeks late is indistinguishable from one finished early.
   // Reopening clears it, so a reopened task is scored on its next real completion.
-  if(await _tkSharedToggle(t)){ await loadTasks(); _taskRerender(); return; }
+  if(await _tkSharedToggle(t)){ await loadTasks(); await _spAfterTaskTick(id); _taskRerender(); return; }
   const _stamp = newStatus==="done" ? new Date().toISOString() : null;
   let { error } = await supabase.from("pm_tasks").update({status:newStatus, completed_at:_stamp}).eq("id",id);
   if(error && /completed_at/.test(error.message||"")){
@@ -24727,6 +24924,9 @@ async function toggleTaskDone(id){
   _logAudit(newStatus==="done"?"completed":"reopened","task", t.title, taskAssignees(t).length?("Assignee: "+taskAssignees(t).join(", ")):"");
   // If this task came from a side task on a property card, tick that too.
   try{ if(typeof _sqFromTask==='function') await _sqFromTask(id, newStatus==="done"); }catch(e){}
+  // Bruce, 3 Oct: a sub phase task closed from the calendar or a day view ticks the
+  // step off on the property card too, so the card is never the last to know.
+  try{ if(typeof _spFromTask==='function') await _spFromTask(id, newStatus==="done"); }catch(e){}
   await loadTasks(); _taskRerender();
 }
 
@@ -27933,4 +28133,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-03a ap-tabs-and-contractors -->
+<!-- build: 2026-10-03b meeting-carry-money-subphase -->
