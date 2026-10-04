@@ -23326,14 +23326,19 @@ function _taskCategories(){
 }
 
 // ---- Contractor Directory (Tools menu) ----
-async function openContractorDirectory(){
+async function openContractorDirectory(view){
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
   await loadContractorsFromSupabase();
   // The import cleanup panel has to know which contractors carry a W-9 record or a
-  // mowing route before it offers to remove anything.
+  // mowing route before it offers to remove anything. The starting lineups live in the
+  // same trackers record, so this load is what puts them on screen too.
   if(typeof _trkLoad==='function' && window._trkLoaded!==true){ try{ await _trkLoad(); }catch(e){} }
-  renderContractorDirectory();
+  // Coming in off the menu lands on the directory, with no lineup half-open from last
+  // time. The tabs remember where you are only while you are on the page.
+  window.__luNew=null;
+  if(!view) window.__luOpen=null;
+  renderContractorDirectory(view||'directory');
 }
 const CONTRACTOR_TRADES=["General","Plumbing","HVAC","Electrical","Roofing","Flooring","Drywall","Painting","Framing / Carpentry","Concrete / Masonry","Landscaping","Cleaning","Windows / Doors","Appliances","Pest Control","Demolition","Handyman"];
 function _tradeCell(c){
@@ -23653,7 +23658,397 @@ async function _ctMerge(keepId, dropIds){
   if(typeof loadCalendarEvents==='function'){ try{ await loadCalendarEvents(); }catch(e){} }
   renderContractorDirectory();
 }
-function renderContractorDirectory(){
+// ---- Starting Lineups (a tab inside the Contractor Directory) ------------------
+// Bruce, 4 Oct: "can we create a tab under that tab? So click contractor directory and
+// then a separate tab that says create a starting lineup ... add a section for each
+// trade, and then a first, second, third option for everything all the way down from
+// foundation all the way to finishing the house ... we'll just literally call the tab
+// the starting lineup."
+// And on what it is for: "a dashboard to where you can create and edit multiple lineups
+// and name them a different name ... just something for the employees to refer to for
+// different types of projects, job roles or tasks they've been assigned ... and then the
+// contractor directory we have now is a home base like it is now, same stuff, same
+// connects ... just to reference too, and print off for a list as well."
+//
+// So: the directory is untouched and stays the one record per contractor that feeds the
+// W-9 tracker, the mowing tracker and every dropdown. A lineup is a NAMED TEAM built out
+// of those same records - it owns nothing, it points. Change a phone number in the
+// directory and every lineup that names that person is already right.
+//
+// It is reference only, by his decision. Nothing on the site reads a lineup to decide
+// anything; it does not pre-pick a contractor on a booking or a quote. That can come
+// later once the lists are real.
+//
+// WHERE IT IS STORED, and why it matters. Lineups live inside the trackers record, not
+// in a settings key of their own. The database only lets ordinary staff write six named
+// keys, and 'trackers' is one of them - a key of its own would have meant only Bruce,
+// Tommy, Andy and Idoko could edit a lineup, which is the opposite of a list the crew
+// keeps. It also means lineups inherit the one-save-at-a-time fix from 30 Sept, so two
+// people filling the same lineup cannot erase each other.
+const LINEUP_TRADES = [
+  'Demolition / Cleanout','Excavation / Grading','Concrete / Foundation','Masonry',
+  'Framing / Carpentry','Roofing','Windows / Doors','Siding / Exterior','Gutters',
+  'Plumbing — rough','Electrical — rough','HVAC — rough','Insulation','Drywall',
+  'Trim / Interior Carpentry','Painting','Cabinets / Countertops','Flooring','Tile',
+  'Plumbing — finish','Electrical — finish','HVAC — finish','Appliances',
+  'Landscaping','Final Clean','Punch Out / Handyman'
+];
+const LU_SLOTS = ['First call','Second call','Third call'];
+function _luId(p){ return (p||'lu')+Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
+function _luAll(){
+  const v=(window._trkData||{}).lineups;
+  if(!v || typeof v!=='object') return { order:[], items:{} };
+  return { order:Array.isArray(v.order)?v.order.slice():[], items:(v.items&&typeof v.items==='object')?v.items:{} };
+}
+function _luList(){
+  const a=_luAll();
+  const out=a.order.map(function(id){ return a.items[id]; }).filter(Boolean);
+  // Anything written by somebody else's tab that our order has not caught up with yet.
+  Object.keys(a.items).forEach(function(id){ if(a.order.indexOf(id)<0) out.push(a.items[id]); });
+  return out;
+}
+function _luGet(id){ return _luAll().items[id]||null; }
+function _luTrades(l){ return (l && Array.isArray(l.trades)) ? l.trades : []; }
+// How many trades on this lineup have somebody in the first-call slot. That is the number
+// worth showing - a lineup with thirty trades and two names filled is not two-thirds ready.
+function _luFilled(l){
+  return _luTrades(l).filter(function(t){ return String((t.picks||[])[0]||'').trim(); }).length;
+}
+function _luCon(id){
+  if(!id) return null;
+  return (typeof _contractorsCache!=='undefined'?_contractorsCache:[]).find(function(c){ return c.id===id; })||null;
+}
+function _luConLabel(id){
+  const c=_luCon(id);
+  if(!c) return id ? '— no longer in the directory' : '';
+  const nm=String(c.name||'').trim(), bz=String(c.business_name||'').trim();
+  return (nm && bz && nm!==bz) ? (nm+' · '+bz) : (bz||nm||'(unnamed)');
+}
+async function _luWrite(mut){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return false;
+  const d=window._trkData||{};
+  const cur=_luAll();
+  const next={ order:cur.order.slice(), items:JSON.parse(JSON.stringify(cur.items)) };
+  mut(next);
+  d.lineups=next; window._trkData=d;
+  const ok=await _trkSave();
+  return ok!==false;
+}
+function _luRerender(){ if(typeof renderContractorDirectory==='function') renderContractorDirectory('lineups'); }
+async function _luNew(){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
+  const el=document.getElementById('lu-new-name');
+  const name=String((el&&el.value)||'').trim();
+  if(!name){ if(el) el.focus(); return; }
+  const from=String(((document.getElementById('lu-new-from')||{}).value)||'standard');
+  let trades;
+  if(from==='blank') trades=[];
+  else if(from==='standard') trades=LINEUP_TRADES.map(function(t){ return {id:_luId('t'), name:t, picks:['','',''], note:''}; });
+  else {
+    const src=_luGet(from);
+    trades=_luTrades(src).map(function(t){ return {id:_luId('t'), name:t.name, picks:(t.picks||['','','']).slice(0,3), note:t.note||''}; });
+  }
+  const id=_luId('lu');
+  const who=(typeof _miWho==='function'?_miWho():'')||'';
+  const ok=await _luWrite(function(n){
+    n.items[id]={ id:id, name:name, note:'', trades:trades, by:who, at:new Date().toISOString() };
+    n.order.push(id);
+  });
+  if(!ok) return;
+  if(el) el.value='';
+  window.__luOpen=id;
+  if(typeof _logAudit==='function') _logAudit('created','contractor', name, 'New starting lineup');
+  _luRerender();
+}
+async function _luField(id, field, val){
+  const ok=await _luWrite(function(n){ if(n.items[id]){ n.items[id][field]=val; n.items[id].at=new Date().toISOString(); } });
+  if(ok && field==='name') _luRerender();
+}
+async function _luDup(id){
+  const src=_luGet(id); if(!src) return;
+  const nid=_luId('lu');
+  const who=(typeof _miWho==='function'?_miWho():'')||'';
+  const ok=await _luWrite(function(n){
+    n.items[nid]=JSON.parse(JSON.stringify(src));
+    n.items[nid].id=nid; n.items[nid].name=String(src.name||'Lineup')+' (copy)';
+    n.items[nid].by=who; n.items[nid].at=new Date().toISOString();
+    n.items[nid].trades=_luTrades(src).map(function(t){ return {id:_luId('t'), name:t.name, picks:(t.picks||['','','']).slice(0,3), note:t.note||''}; });
+    n.order.push(nid);
+  });
+  if(ok){ window.__luOpen=nid; _luRerender(); }
+}
+async function _luDel(id){
+  const l=_luGet(id); if(!l) return;
+  // Named out loud, the way every other delete on this site is, because a lineup is
+  // somebody's afternoon of work and there is no undo on it.
+  if(typeof _confirmDelete==='function'){ if(!_confirmDelete('the lineup “'+(l.name||'')+'”','It is gone for good. The contractors themselves are not touched — only this list of who you call first.')) return; }
+  else if(!confirm('Delete the lineup "'+(l.name||'')+'"? The contractors themselves are not touched.')) return;
+  const ok=await _luWrite(function(n){ delete n.items[id]; n.order=n.order.filter(function(x){ return x!==id; }); });
+  if(ok){ if(window.__luOpen===id) window.__luOpen=null;
+    if(typeof _logAudit==='function') _logAudit('deleted','contractor', l.name||'', 'Starting lineup removed');
+    _luRerender(); }
+}
+async function _luMove(id, dir){
+  const ok=await _luWrite(function(n){
+    const i=n.order.indexOf(id); const j=i+dir;
+    if(i<0 || j<0 || j>=n.order.length) return;
+    const t=n.order[i]; n.order[i]=n.order[j]; n.order[j]=t;
+  });
+  if(ok) _luRerender();
+}
+// ---- trades inside one lineup ----
+async function _luTradeAdd(id){
+  const el=document.getElementById('lu-trade-new');
+  const name=String((el&&el.value)||'').trim();
+  if(!name){ if(el) el.focus(); return; }
+  const ok=await _luWrite(function(n){
+    if(!n.items[id]) return;
+    n.items[id].trades=(n.items[id].trades||[]).concat([{id:_luId('t'), name:name, picks:['','',''], note:''}]);
+    n.items[id].at=new Date().toISOString();
+  });
+  if(ok){ if(el){ el.value=''; } _luRerender(); }
+}
+async function _luTradeName(id, tid, val){
+  await _luWrite(function(n){
+    const t=((n.items[id]||{}).trades||[]).find(function(x){ return x.id===tid; });
+    if(t) t.name=val;
+  });
+}
+async function _luTradeNote(id, tid, val){
+  await _luWrite(function(n){
+    const t=((n.items[id]||{}).trades||[]).find(function(x){ return x.id===tid; });
+    if(t) t.note=val;
+  });
+}
+async function _luTradeDel(id, tid){
+  const l=_luGet(id); const t=_luTrades(l).find(function(x){ return x.id===tid; });
+  if(!t) return;
+  if(!confirm('Take "'+(t.name||'this trade')+'" off this lineup?')) return;
+  const ok=await _luWrite(function(n){
+    if(!n.items[id]) return;
+    n.items[id].trades=(n.items[id].trades||[]).filter(function(x){ return x.id!==tid; });
+  });
+  if(ok) _luRerender();
+}
+async function _luTradeMove(id, tid, dir){
+  const ok=await _luWrite(function(n){
+    const arr=(n.items[id]||{}).trades||[];
+    const i=arr.findIndex(function(x){ return x.id===tid; }); const j=i+dir;
+    if(i<0 || j<0 || j>=arr.length) return;
+    const t=arr[i]; arr[i]=arr[j]; arr[j]=t;
+  });
+  if(ok) _luRerender();
+}
+// Picking somebody. "Not in here yet" opens an add-them strip on that row rather than
+// letting a name be typed loose - a lineup that names somebody the directory has never
+// heard of is a phone number nobody can find and a W-9 nobody chases.
+async function _luPick(id, tid, slot, val){
+  if(val==='__new'){ window.__luNew={id:id, tid:tid, slot:slot}; _luRerender(); return; }
+  const ok=await _luWrite(function(n){
+    const t=((n.items[id]||{}).trades||[]).find(function(x){ return x.id===tid; });
+    if(!t) return;
+    t.picks=(t.picks||['','','']).slice(0,3);
+    while(t.picks.length<3) t.picks.push('');
+    t.picks[slot]=val||'';
+    n.items[id].at=new Date().toISOString();
+  });
+  if(ok) _luRerender();
+}
+function _luNewCancel(){ window.__luNew=null; _luRerender(); }
+async function _luNewCon(){
+  const c=window.__luNew; if(!c) return;
+  const g=(k)=>{ const e=document.getElementById(k); return e?String(e.value||'').trim():''; };
+  const name=g('lu-nc-name'), biz=g('lu-nc-biz'), phone=g('lu-nc-phone'), trade=g('lu-nc-trade');
+  const say=(m)=>{ const e=document.getElementById('lu-nc-err'); if(e){ e.textContent=m; e.style.display=''; } };
+  if(!name && !biz){ say("Put the person's name in, or their business name."); return; }
+  const ins=await supabase.from('pm_contractors')
+    .insert({ name:name||biz, business_name:biz||null, phone:phone||null, trade:trade||null })
+    .select('id').single();
+  if(ins.error){ say("Could not add them: "+(ins.error.message||'')); return; }
+  if(typeof loadContractorsFromSupabase==='function') await loadContractorsFromSupabase();
+  if(typeof _logAudit==='function') _logAudit('created','contractor', name||biz, 'Added while building a starting lineup');
+  window.__luNew=null;
+  await _luPick(c.id, c.tid, c.slot, ins.data.id);
+}
+// ---- the printed sheet -------------------------------------------------------
+function _luPrintHtml(id){
+  const l=_luGet(id); if(!l) return '';
+  const esc=_calEsc;
+  const rows=_luTrades(l).map(function(t){
+    const cells=[0,1,2].map(function(i){
+      const cid=(t.picks||[])[i]||'';
+      const c=_luCon(cid);
+      if(!c) return '<td class="e">&mdash;</td>';
+      const nm=esc(c.business_name||c.name||'');
+      const sub=[c.business_name&&c.name&&c.business_name!==c.name?esc(c.name):'', esc(c.phone||'')].filter(Boolean).join(' &middot; ');
+      return '<td'+(c.red_flag?' class="fl"':'')+'><b>'+(c.red_flag?'\u{1F6A9} ':'')+nm+'</b>'+(sub?'<div class="s">'+sub+'</div>':'')+'</td>';
+    }).join('');
+    return '<tr><th scope="row">'+esc(t.name||'')+(t.note?'<div class="s">'+esc(t.note)+'</div>':'')+'</th>'+cells+'</tr>';
+  }).join('');
+  const when=new Date().toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  return '<!doctype html><html><head><meta charset="utf-8"><title>Starting lineup — '+esc(l.name||'')+'</title><style>'
+    + 'body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#111;margin:26px;max-width:950px}'
+    + 'h1{font-size:21px;margin:0 0 3px}.sub{font-size:12.5px;color:#566070;margin-bottom:4px}'
+    + '.note{font-size:13px;color:#333;background:#f7f8fb;border-left:3px solid #cdd7e6;border-radius:0 6px 6px 0;padding:8px 11px;margin:10px 0 14px;white-space:pre-wrap}'
+    + 'table{width:100%;border-collapse:collapse;font-size:13px}'
+    + 'thead th{text-align:left;font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:#566070;border-bottom:1.5px solid #111;padding:0 9px 6px}'
+    + 'td,tbody th{border-bottom:0.5px solid #e6e8ee;padding:8px 9px;vertical-align:top;text-align:left}'
+    + 'tbody th{font-weight:600;width:24%;color:#111}'
+    + '.s{font-size:11px;color:#566070;font-weight:400;margin-top:1px}'
+    + '.e{color:#aab0ba}.fl{background:#FDF3F2;color:#B42318}'
+    + 'tr{page-break-inside:avoid}.noprint{margin-bottom:14px}'
+    + 'button{padding:8px 16px;background:#111;color:#fff;border:none;border-radius:7px;font-size:13px;cursor:pointer}'
+    + '.foot{font-size:11px;color:#566070;margin-top:20px;border-top:1px solid #e6e8ee;padding-top:8px}'
+    + '@media print{.noprint{display:none}body{margin:0}}'
+    + '</style></head><body>'
+    + '<div class="noprint"><button onclick="window.print()">Save as PDF / Print</button></div>'
+    + '<h1>⭐ '+esc(l.name||'Starting lineup')+'</h1>'
+    + '<div class="sub">Starting lineup · who we call first, second and third · printed '+esc(when)+'</div>'
+    + (l.note?('<div class="note">'+esc(l.note)+'</div>'):'')
+    + '<table><thead><tr><th>Trade</th><th>'+LU_SLOTS.map(esc).join('</th><th>')+'</th></tr></thead><tbody>'
+    + (rows||'<tr><td colspan="4" style="padding:20px;color:#636b7a">No trades on this lineup yet.</td></tr>')
+    + '</tbody></table>'
+    + '<div class="foot">Reference only. Phone numbers come from the Contractor Directory — fix one there and every lineup is right.</div>'
+    + '</body></html>';
+}
+function _luPrint(id){
+  const html=_luPrintHtml(id);
+  if(!html) return;
+  const w=window.open('','_blank');
+  if(!w){ alert("Your browser blocked the window. Allow pop-ups for this site and try again."); return; }
+  w.document.open(); w.document.write(html); w.document.close();
+}
+// ---- rendering ---------------------------------------------------------------
+function _luConOpts(cur){
+  const esc=_calEsc;
+  const cons=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).slice()
+    .sort(function(a,b){ return String(a.business_name||a.name||'').localeCompare(String(b.business_name||b.name||'')); });
+  let gone='';
+  if(cur && !cons.some(function(c){ return c.id===cur; })) gone='<option value="'+esc(cur)+'" selected>— no longer in the directory</option>';
+  return '<option value=""'+(cur?'':' selected')+'>— nobody yet —</option>'+gone
+    + cons.map(function(c){
+        const nm=(c.business_name&&c.name&&c.business_name!==c.name)?(c.name+' · '+c.business_name):(c.business_name||c.name||'(unnamed)');
+        return '<option value="'+esc(c.id)+'"'+(c.id===cur?' selected':'')+'>'+(c.red_flag?'\u{1F6A9} ':'')+esc(nm)+(c.trade?(' — '+esc(c.trade)):'')+'</option>';
+      }).join('')
+    + '<option value="__new">➕ Not in here yet — add them</option>';
+}
+function _luOpen(id){ window.__luOpen=id||null; window.__luNew=null; _luRerender(); }
+function _luCardsBody(ro){
+  const esc=_calEsc;
+  const list=_luList();
+  const cards=list.map(function(l,i){
+    const filled=_luFilled(l), total=_luTrades(l).length;
+    const who=l.by?('last touched by '+esc(l.by)):'';
+    return '<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:13px 15px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">'
+      + '<div style="flex:1;min-width:200px;cursor:pointer" onclick="_luOpen(\''+l.id+'\')">'
+      +   '<div style="font-size:15.5px;font-weight:600;color:#111">⭐ '+esc(l.name||'Untitled lineup')+'</div>'
+      +   '<div style="font-size:12px;color:#566070;margin-top:2px">'+filled+' of '+total+' trade'+(total===1?'':'s')+' have a first call'+(who?(' · '+who):'')+'</div>'
+      +   (l.note?'<div style="font-size:12px;color:#636b7a;margin-top:3px">'+esc(String(l.note).split('\n')[0]).slice(0,110)+'</div>':'')
+      + '</div>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap">'
+      +   '<button onclick="_luOpen(\''+l.id+'\')" style="padding:6px 13px;background:#111;color:#fff;border:none;border-radius:7px;font-size:12.5px;cursor:pointer">Open</button>'
+      +   '<button onclick="_luPrint(\''+l.id+'\')" style="padding:6px 13px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">\u{1F5A8} Print</button>'
+      +   (ro?'':'<button onclick="_luDup(\''+l.id+'\')" style="padding:6px 11px;background:#fff;border:0.5px solid #e6e8ee;border-radius:7px;font-size:12.5px;color:#566070;cursor:pointer">Duplicate</button>')
+      +   (ro?'':'<button onclick="_luMove(\''+l.id+'\',-1)" title="Move up"'+(i===0?' disabled':'')+' style="padding:6px 9px;background:#fff;border:0.5px solid #e6e8ee;border-radius:7px;font-size:12.5px;color:'+(i===0?'#c3c8d2':'#566070')+';cursor:'+(i===0?'default':'pointer')+'">↑</button>')
+      +   (ro?'':'<button onclick="_luMove(\''+l.id+'\',1)" title="Move down"'+(i===list.length-1?' disabled':'')+' style="padding:6px 9px;background:#fff;border:0.5px solid #e6e8ee;border-radius:7px;font-size:12.5px;color:'+(i===list.length-1?'#c3c8d2':'#566070')+';cursor:'+(i===list.length-1?'default':'pointer')+'">↓</button>')
+      +   (ro?'':'<button onclick="_luDel(\''+l.id+'\')" style="padding:6px 11px;background:#fff;border:0.5px solid #f0c9c4;border-radius:7px;font-size:12.5px;color:#B42318;cursor:pointer">Delete</button>')
+      + '</div></div>';
+  }).join('');
+  const fromOpts='<option value="standard">Start from the standard trade list — foundation to finish</option>'
+    + '<option value="blank">Start blank — I will add the trades myself</option>'
+    + list.map(function(l){ return '<option value="'+esc(l.id)+'">Copy “'+esc(l.name||'')+'”</option>'; }).join('');
+  const adder=ro?'':'<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:13px 15px;display:flex;gap:9px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px">'
+    + '<div style="flex:1.5;min-width:200px"><label style="font-size:12px;color:#566070;display:block;margin-bottom:4px">Name this lineup</label>'
+    +   '<input id="lu-new-name" placeholder="e.g. Full gut rehab — A team" style="width:100%;box-sizing:border-box;padding:9px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:14px"/></div>'
+    + '<div style="flex:1.6;min-width:230px"><label style="font-size:12px;color:#566070;display:block;margin-bottom:4px">Start it from</label>'
+    +   '<select id="lu-new-from" style="width:100%;box-sizing:border-box;padding:9px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:14px;background:#fff;cursor:pointer">'+fromOpts+'</select></div>'
+    + '<button onclick="_luNew()" style="padding:9px 16px;background:#111;color:#fff;border:none;border-radius:8px;font-size:14px;cursor:pointer">＋ Create lineup</button></div>';
+  return adder
+    + (cards
+      ? '<div style="display:flex;flex-direction:column;gap:9px">'+cards+'</div>'
+      : '<div style="background:#fff;border:0.5px dashed #d5d9e2;border-radius:10px;padding:30px;text-align:center;color:#636b7a;font-size:14px">No lineups yet.'
+        + (ro?'':' Name one above and it starts with the full trade list, foundation to finish — then put your people against it.')+'</div>');
+}
+function _luOneBody(l, ro){
+  const esc=_calEsc;
+  const nw=window.__luNew;
+  const inp='width:100%;box-sizing:border-box;padding:7px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px;font-family:inherit';
+  const trades=_luTrades(l);
+  const rows=trades.map(function(t,i){
+    const picks=(t.picks||['','','']);
+    const cells=[0,1,2].map(function(k){
+      const cur=picks[k]||'';
+      const c=_luCon(cur);
+      const sub=c?('<div style="font-size:11px;color:#566070;margin-top:3px">'+(c.phone?('<a href="tel:'+esc(String(c.phone).replace(/[^0-9+]/g,''))+'" style="color:#185FA5;text-decoration:none">\u{1F4DE} '+esc(c.phone)+'</a>'):'no phone on file')+'</div>')
+                : (cur?'<div style="font-size:11px;color:#B42318;margin-top:3px">no longer in the directory</div>':'');
+      const flag=(c&&c.red_flag&&typeof _ctFlagChip==='function')?('<div style="margin-top:3px">'+_ctFlagChip(c.id,true)+'</div>'):'';
+      const box=ro
+        ? '<div style="font-size:13px;color:'+(c?'#111':'#aab0ba')+';font-weight:'+(c?'600':'400')+'">'+(c?esc(_luConLabel(cur)):'—')+'</div>'
+        : '<select onchange="_luPick(\''+l.id+'\',\''+t.id+'\','+k+',this.value)" style="'+inp+';background:#fff;cursor:pointer">'+_luConOpts(cur)+'</select>';
+      return '<td style="padding:8px 9px;border-bottom:0.5px solid #eef0f6;vertical-align:top;min-width:170px">'+box+sub+flag+'</td>';
+    }).join('');
+    const addStrip=(nw && nw.id===l.id && nw.tid===t.id)
+      ? '<tr><td colspan="5" style="padding:0 9px 11px"><div style="background:#F7F8FB;border:0.5px solid #d8dce6;border-radius:9px;padding:11px 12px">'
+        + '<div style="font-size:12.5px;font-weight:600;color:#111;margin-bottom:3px">Add them to the Contractor Directory</div>'
+        + '<div style="font-size:11.5px;color:#566070;margin-bottom:8px">They go in as a real record, so the phone number is one place and the W-9 tracker picks them up. Then they land in the '+esc(LU_SLOTS[nw.slot]||'')+' slot for '+esc(t.name||'')+'.</div>'
+        + '<div id="lu-nc-err" style="display:none;font-size:12px;color:#B42318;margin-bottom:7px"></div>'
+        + '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">'
+        +   '<div style="flex:1.2;min-width:140px"><label style="font-size:11px;color:#566070;display:block;margin-bottom:3px">Name</label><input id="lu-nc-name" placeholder="Person" style="'+inp+'"/></div>'
+        +   '<div style="flex:1.2;min-width:140px"><label style="font-size:11px;color:#566070;display:block;margin-bottom:3px">Business name</label><input id="lu-nc-biz" placeholder="Company" style="'+inp+'"/></div>'
+        +   '<div style="flex:1;min-width:130px"><label style="font-size:11px;color:#566070;display:block;margin-bottom:3px">Phone</label><input id="lu-nc-phone" placeholder="(614) 555-0100" style="'+inp+'"/></div>'
+        +   '<div style="flex:1;min-width:130px"><label style="font-size:11px;color:#566070;display:block;margin-bottom:3px">Trade</label><input id="lu-nc-trade" value="'+esc(t.name||'')+'" style="'+inp+'"/></div>'
+        +   '<button onclick="_luNewCon()" style="padding:8px 14px;background:#111;color:#fff;border:none;border-radius:7px;font-size:13px;cursor:pointer">Add &amp; use</button>'
+        +   '<button onclick="_luNewCancel()" style="padding:8px 12px;background:#fff;border:0.5px solid #e6e8ee;border-radius:7px;font-size:13px;color:#566070;cursor:pointer">Cancel</button>'
+        + '</div></div></td></tr>'
+      : '';
+    const head=ro
+      ? '<div style="font-size:13.5px;font-weight:600;color:#111">'+esc(t.name||'')+'</div>'+(t.note?'<div style="font-size:11.5px;color:#566070;margin-top:2px">'+esc(t.note)+'</div>':'')
+      : '<input value="'+esc(t.name||'')+'" onchange="_luTradeName(\''+l.id+'\',\''+t.id+'\',this.value)" style="'+inp+';font-weight:600"/>'
+        + '<input value="'+esc(t.note||'')+'" placeholder="note — optional" onchange="_luTradeNote(\''+l.id+'\',\''+t.id+'\',this.value)" style="'+inp+';margin-top:5px;font-size:11.5px"/>'
+        + '<div style="display:flex;gap:5px;margin-top:6px">'
+        +   '<span onclick="_luTradeMove(\''+l.id+'\',\''+t.id+'\',-1)" title="Move up" style="cursor:'+(i===0?'default':'pointer')+';font-size:12px;color:'+(i===0?'#c3c8d2':'#566070')+'">↑</span>'
+        +   '<span onclick="_luTradeMove(\''+l.id+'\',\''+t.id+'\',1)" title="Move down" style="cursor:'+(i===trades.length-1?'default':'pointer')+';font-size:12px;color:'+(i===trades.length-1?'#c3c8d2':'#566070')+'">↓</span>'
+        +   '<span onclick="_luTradeDel(\''+l.id+'\',\''+t.id+'\')" title="Take this trade off the lineup" style="cursor:pointer;font-size:11.5px;color:#B42318;margin-left:auto">remove</span>'
+        + '</div>';
+    return '<tr><th scope="row" style="text-align:left;padding:8px 9px;border-bottom:0.5px solid #eef0f6;vertical-align:top;width:25%;min-width:190px;font-weight:400">'
+      + '<div style="font-size:10px;color:#8A94A6;margin-bottom:3px">'+(i+1)+'</div>'+head+'</th>'+cells+'</tr>'+addStrip;
+  }).join('');
+  const th=(t)=>'<th style="text-align:left;padding:9px;font-size:11px;color:#566070;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap">'+t+'</th>';
+  const filled=_luFilled(l), total=trades.length;
+  return '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">'
+    + '<button onclick="_luOpen(null)" style="padding:7px 13px;background:#fff;border:0.5px solid #e6e8ee;border-radius:7px;font-size:13px;color:#566070;cursor:pointer">← All lineups</button>'
+    + '<button onclick="_luPrint(\''+l.id+'\')" style="padding:7px 14px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:13px;color:#185FA5;cursor:pointer;font-weight:600">\u{1F5A8} Print this lineup</button>'
+    + '<span style="font-size:12.5px;color:#566070">'+filled+' of '+total+' trade'+(total===1?'':'s')+' have a first call</span>'
+    + '<span id="trk-status" style="margin-left:auto;font-size:12px"></span></div>'
+  + '<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:14px 15px;margin-bottom:12px">'
+    + (ro
+       ? '<div style="font-size:17px;font-weight:600;color:#111">⭐ '+esc(l.name||'')+'</div>'+(l.note?'<div style="font-size:13px;color:#566070;margin-top:4px;white-space:pre-wrap">'+esc(l.note)+'</div>':'')
+       : '<input value="'+esc(l.name||'')+'" onchange="_luField(\''+l.id+'\',\'name\',this.value)" style="width:100%;box-sizing:border-box;padding:9px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:17px;font-weight:600;color:#111"/>'
+         + '<textarea onchange="_luField(\''+l.id+'\',\'note\',this.value)" placeholder="What this lineup is for — the kind of job, the crew, anything the person reading it should know…" style="width:100%;box-sizing:border-box;margin-top:8px;min-height:52px;padding:9px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:13.5px;font-family:inherit;resize:vertical">'+esc(l.note||'')+'</textarea>')
+  + '</div>'
+  + '<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:auto">'
+    + '<table style="width:100%;border-collapse:collapse"><thead><tr style="background:#fafbfc">'
+    + th('Trade · foundation to finish')+LU_SLOTS.map(th).join('')
+    + '</tr></thead><tbody>'
+    + (rows||'<tr><td colspan="4" style="padding:24px;text-align:center;color:#636b7a;font-size:14px">No trades on this lineup yet.</td></tr>')
+    + '</tbody></table></div>'
+  + (ro?'':'<div style="display:flex;gap:8px;margin-top:11px;flex-wrap:wrap;align-items:center">'
+      + '<input id="lu-trade-new" placeholder="Add a trade — e.g. Septic, Pool, Fire sprinkler…" style="flex:1;min-width:220px;max-width:420px;'+inp+'"/>'
+      + '<button onclick="_luTradeAdd(\''+l.id+'\')" style="padding:8px 14px;background:#111;color:#fff;border:none;border-radius:7px;font-size:13px;cursor:pointer">＋ Add trade</button>'
+      + '<span style="font-size:12px;color:#566070">It goes on the end — use the arrows to put it in build order.</span></div>');
+}
+function _luBody(ro){
+  const open=window.__luOpen ? _luGet(window.__luOpen) : null;
+  if(window.__luOpen && !open) window.__luOpen=null;
+  return open ? _luOneBody(open, ro) : _luCardsBody(ro);
+}
+function renderContractorDirectory(view){
+  // Bruce, 4 Oct: a tab under the Contractor Directory tab. The directory itself is
+  // untouched - same records, same connections to the W-9 tracker, the mowing tracker
+  // and every dropdown. The second tab is the starting lineups, which only POINT at
+  // those same records.
+  if(view) window.__cdView=view;
+  const cdView = (window.__cdView==='lineups') ? 'lineups' : 'directory';
   const ro = isReadOnly();
   const inp=(c,field,ph,w)=>ro?`<span style="color:#333">${_calEsc(c[field])||'<span style="color:#636b7a">—</span>'}</span>`
     :`<input value="${_calEsc(c[field]||'')}" placeholder="${ph}" onchange="setContractorField('${c.id}','${field}',this.value)" style="width:${w||'100%'};padding:6px 8px;border:1px solid #e3e6ec;border-radius:6px;font-size:13px"/>`;
@@ -23693,11 +24088,15 @@ function renderContractorDirectory(){
       <button onclick="_submit('ct-add',this,'Adding…',saveContractor)" style="padding:9px 16px;background:#111;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer">+ Add</button>
     </div>`;
   const th=(t,align)=>`<th style="text-align:${align||'left'};padding:9px 12px;font-size:12px;color:#566070;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap">${t}</th>`;
-  document.getElementById("dash-body").innerHTML =
-    `<div style="background:#f4f5f7;min-height:500px;padding:24px">
-      <div style="max-width:1180px;margin:0 auto">
-        <div style="font-size:19px;font-weight:500;color:#111;margin-bottom:4px">📇 Contractor Directory</div>
-        <div style="font-size:13px;color:#566070;margin-bottom:6px">One record per contractor. <b>Times used</b> counts their bookings on the construction calendar and updates itself. The same record feeds the W-9 tracker, the mowing tracker and every contractor dropdown — fix a number here and it is fixed everywhere.</div>
+  const _cdTab=(k,label,sub)=>`<div onclick="renderContractorDirectory('${k}')" style="padding:8px 15px;border-radius:9px 9px 0 0;cursor:pointer;font-size:13.5px;font-weight:${cdView===k?'600':'400'};color:${cdView===k?'#111':'#566070'};background:${cdView===k?'#fff':'transparent'};border:0.5px solid ${cdView===k?'#e0e4ec':'transparent'};border-bottom:${cdView===k?'0.5px solid #fff':'0.5px solid #e0e4ec'};margin-bottom:-0.5px;white-space:nowrap">${label}${sub?`<span style="font-size:11.5px;color:#8A94A6;font-weight:400"> · ${sub}</span>`:''}</div>`;
+  const _cdTabs=`<div style="display:flex;gap:4px;border-bottom:0.5px solid #e0e4ec;margin-bottom:16px;overflow-x:auto">
+      ${_cdTab('directory','\u{1F4C7} Directory', list.length+'')}
+      ${_cdTab('lineups','\u2B50 Starting Lineups', (typeof _luList==='function'?_luList().length:0)+'')}
+    </div>`;
+  const _cdBlurb = cdView==='lineups'
+    ? 'Named teams built out of the directory — who we call first, second and third for each trade, foundation to finish. Make as many as you like for different kinds of job, and print one off for whoever is running it. <b>Reference only</b> — nothing on the site books off a lineup.'
+    : 'One record per contractor. <b>Times used</b> counts their bookings on the construction calendar and updates itself. The same record feeds the W-9 tracker, the mowing tracker and every contractor dropdown — fix a number here and it is fixed everywhere.';
+  const _cdDirBody = `
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
           <span style="font-size:12px;background:#EEF3FA;color:#185FA5;padding:3px 10px;border-radius:99px">${list.length} contractor${list.length===1?'':'s'}</span>
           ${flagged?`<span style="font-size:12px;background:#FBEAE8;color:#B42318;padding:3px 10px;border-radius:99px">🚩 ${flagged} red-flagged — do not hire</span>`:''}
@@ -23717,9 +24116,22 @@ function renderContractorDirectory(){
             </tr></thead>
             <tbody>${rows || `<tr><td colspan="8" style="padding:24px;text-align:center;color:#636b7a;font-size:14px">No contractors yet.${ro?"":" Add your first one above."}</td></tr>`}</tbody>
           </table>
-        </div>
+        </div>`;
+  // Saving a lineup goes through the trackers record, so the trackers' own save machinery
+  // is what reports success or failure - and its redraw has to come back HERE, not to the
+  // tracker screen somebody was last on.
+  window._trkRerender=function(){ renderContractorDirectory('lineups'); };
+  window._trkCtx='lineups';
+  document.getElementById("dash-body").innerHTML =
+    `<div style="background:#f4f5f7;min-height:calc(100vh - 160px);padding:24px">
+      <div style="max-width:1180px;margin:0 auto">
+        <div style="font-size:19px;font-weight:500;color:#111;margin-bottom:10px">\u{1F4C7} Contractor Directory</div>
+        ${_cdTabs}
+        <div style="font-size:13px;color:#566070;margin-bottom:14px">${_cdBlurb}</div>
+        ${cdView==='lineups' ? _luBody(ro) : _cdDirBody}
       </div>
     </div>`;
+  if(cdView==='lineups' && typeof _trkStatus==='function') _trkStatus((window.__trkState||{}).state||'idle',(window.__trkState||{}).detail);
 }
 async function saveContractor(){
   if(_blockIfReadOnly()) return;
@@ -28133,4 +28545,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-03b meeting-carry-money-subphase -->
+<!-- build: 2026-10-04a starting-lineups -->
