@@ -6053,6 +6053,9 @@ async function _apQuoteMakeCon(say){
   const g=(k)=>{ const e=document.getElementById(k); return e?String(e.value||'').trim():''; };
   const name=g('apq-nc-name'), biz=g('apq-nc-biz'), phone=g('apq-nc-phone'), trade=g('apq-nc-trade');
   if(!name && !biz){ if(say) say("Put the new contractor's name in, or their business name."); return 'error'; }
+  // Already in the directory? Use that record rather than making a second one.
+  const dup=_ctDupAsk(name, biz, phone);
+  if(dup!=='new') return dup.id;
   const ins=await supabase.from('pm_contractors')
     .insert({ name:name||biz, business_name:biz||null, phone:phone||null, trade:trade||null })
     .select('id').single();
@@ -23341,6 +23344,43 @@ async function openContractorDirectory(view){
   renderContractorDirectory(view||'directory');
 }
 const CONTRACTOR_TRADES=["General","Plumbing","HVAC","Electrical","Roofing","Flooring","Drywall","Painting","Framing / Carpentry","Concrete / Masonry","Landscaping","Cleaning","Windows / Doors","Appliances","Pest Control","Demolition","Handyman"];
+// ---- One contractor, one record - checked at every door ------------------------
+// Bruce, 7 Sept: "make sure we don't have duplicates of people."
+// That check was written into the directory's own Add form and nowhere else. Since then
+// five more doors into the directory have opened - a starting lineup, a quote on the
+// desktop, a quote on the field app, and both construction-calendar booking boxes - and
+// every one of them could put the same man in a second time. One record per contractor is
+// the whole reason the W-9 tracker, the mowing route and every dropdown agree with each
+// other, so the check belongs to the directory, not to one form.
+// Matched on the person's name, on the business name, or on the phone number, because
+// "Brady Pack" and "Brady Packs" on the same number is the same man.
+function _ctNormName(v){ return String(v||'').toLowerCase().replace(/[^a-z0-9]/g,''); }
+function _ctDigits(v){ return String(v||'').replace(/[^0-9]/g,''); }
+function _ctDupFind(name, business, phone, skipId){
+  const nk=_ctNormName(name), bk=_ctNormName(business), pk=_ctDigits(phone);
+  return (typeof _contractorsCache!=='undefined'?_contractorsCache:[]).find(function(c){
+    if(!c || (skipId && c.id===skipId)) return false;
+    const cn=_ctNormName(c.name), cb=_ctNormName(c.business_name);
+    if(nk && (cn===nk || cb===nk)) return true;
+    if(bk && (cb===bk || cn===bk)) return true;
+    return pk.length>=10 && _ctDigits(c.phone)===pk;
+  })||null;
+}
+function _ctDupLabel(c){
+  return '"'+String((c&&(c.name||c.business_name))||'')+'"'
+       + ((c&&c.trade)?(' — '+c.trade):'')
+       + ((c&&c.phone)?(' — '+c.phone):'');
+}
+// Returns the EXISTING record to use, or the string 'new' to go ahead and create one.
+// Never writes anything itself. Used by every door except the directory's own Add form,
+// which has nothing to reuse a record FOR and so just warns instead.
+function _ctDupAsk(name, business, phone){
+  const hit=_ctDupFind(name, business, phone);
+  if(!hit) return 'new';
+  return confirm(_ctDupLabel(hit)+' is already in the Contractor Directory.\n\n'
+    + 'OK — use the record that is already there (keeps one record per contractor).\n'
+    + 'Cancel — add this as a SECOND, separate record.') ? hit : 'new';
+}
 function _tradeCell(c){
   const cur=c.trade||"";
   let opts=`<option value=""${cur?"":" selected"}>— Assign trade —</option>`;
@@ -23861,6 +23901,13 @@ async function _luNewCon(){
   const name=g('lu-nc-name'), biz=g('lu-nc-biz'), phone=g('lu-nc-phone'), trade=g('lu-nc-trade');
   const say=(m)=>{ const e=document.getElementById('lu-nc-err'); if(e){ e.textContent=m; e.style.display=''; } };
   if(!name && !biz){ say("Put the person's name in, or their business name."); return; }
+  // Already in the directory? Use that record rather than making a second one.
+  const dup=_ctDupAsk(name, biz, phone);
+  if(dup!=='new'){
+    window.__luNew=null;
+    await _luPick(c.id, c.tid, c.slot, dup.id);
+    return;
+  }
   const ins=await supabase.from('pm_contractors')
     .insert({ name:name||biz, business_name:biz||null, phone:phone||null, trade:trade||null })
     .select('id').single();
@@ -24143,13 +24190,8 @@ async function saveContractor(){
   // feeds the calendar, the mowing route and the W-9 tracker, so one person entered
   // twice becomes three wrong lists. Catch it at the door - by name OR by phone,
   // because "Brady Pack" and "Brady Packs" on the same number is the same man.
-  const _norm=(v)=>String(v||'').toLowerCase().replace(/[^a-z0-9]/g,'');
-  const _dig=(v)=>String(v||'').replace(/[^0-9]/g,'');
-  const _nk=_norm(name||business_name), _pk=_dig(phone);
-  const _hit=(_contractorsCache||[]).find(c=>
-      (_nk && (_norm(c.name)===_nk || _norm(c.business_name)===_nk)) ||
-      (_pk.length>=10 && _dig(c.phone)===_pk));
-  if(_hit && !confirm('"'+(_hit.name||_hit.business_name||'')+'"'+(_hit.trade?(' ('+_hit.trade+')'):'')+(_hit.phone?(' '+_hit.phone):'')
+  const _hit=_ctDupFind(name, business_name, phone);
+  if(_hit && !confirm(_ctDupLabel(_hit)
       +' is already in the directory.\n\nAdd this as a SECOND record anyway?\n\nSay no if it is the same person — use the existing one so the calendar, the mowing route and the W-9 tracker all point at one record.')) return;
   const { error } = await supabase.from("pm_contractors").insert({name:name||business_name, business_name, phone, email, trade});
   if(error){ alert("Failed to add contractor: "+(error.message||"unknown error")); return; }
@@ -24585,10 +24627,15 @@ async function saveCalEvent(){
       // has to go and find out who they really are.
       const bz=((document.getElementById("cal-newc-biz")||{}).value||"").trim();
       if(!nm){ showE("Enter the new contractor's name."); return; }
-      const ins=await supabase.from("pm_contractors").insert({name:nm,phone:ph,business_name:bz||null}).select("id").single();
-      if(ins.error){ showE("Couldn't save contractor: "+(ins.error.message||"")); return; }
-      contractorId=ins.data.id;
-      await loadContractorsFromSupabase();
+      // Already in the directory? Use that record rather than making a second one.
+      const _dup=_ctDupAsk(nm, bz, ph);
+      if(_dup!=='new'){ contractorId=_dup.id; }
+      else {
+        const ins=await supabase.from("pm_contractors").insert({name:nm,phone:ph,business_name:bz||null}).select("id").single();
+        if(ins.error){ showE("Couldn't save contractor: "+(ins.error.message||"")); return; }
+        contractorId=ins.data.id;
+        await loadContractorsFromSupabase();
+      }
     } else if(!contractorId){ showE("Pick a contractor (or add a new one)."); return; }
     // A red flag means somebody decided we should not use them again. It does not
     // block the booking outright - it makes you say yes on purpose.
@@ -24796,10 +24843,15 @@ async function saveCalEventEdit(id){
       const ph=(document.getElementById("cale-newc-phone").value||"").trim();
       const bz=((document.getElementById("cale-newc-biz")||{}).value||"").trim();
       if(!nm){ showE("Enter the new contractor's name."); return; }
-      const ins=await supabase.from("pm_contractors").insert({name:nm,phone:ph,business_name:bz||null}).select("id").single();
-      if(ins.error){ showE("Couldn't save contractor: "+(ins.error.message||"")); return; }
-      contractorId=ins.data.id;
-      await loadContractorsFromSupabase();
+      // Already in the directory? Use that record rather than making a second one.
+      const _dup=_ctDupAsk(nm, bz, ph);
+      if(_dup!=='new'){ contractorId=_dup.id; }
+      else {
+        const ins=await supabase.from("pm_contractors").insert({name:nm,phone:ph,business_name:bz||null}).select("id").single();
+        if(ins.error){ showE("Couldn't save contractor: "+(ins.error.message||"")); return; }
+        contractorId=ins.data.id;
+        await loadContractorsFromSupabase();
+      }
     } else if(!contractorId){ showE("Pick a contractor (or add a new one)."); return; }
     // A red flag means somebody decided we should not use them again. It does not
     // block the booking outright - it makes you say yes on purpose.
@@ -26889,6 +26941,9 @@ async function _mApMakeCon(say){
   const g=(k)=>{ const e=document.getElementById(k); return e?String(e.value||'').trim():''; };
   const name=g('map-nc-name'), biz=g('map-nc-biz'), phone=g('map-nc-phone'), trade=g('map-nc-trade');
   if(!name && !biz){ if(say) say("Put the new contractor's name in, or their business name."); return 'error'; }
+  // Already in the directory? Use that record rather than making a second one.
+  const dup=_ctDupAsk(name, biz, phone);
+  if(dup!=='new') return dup.id;
   const ins=await supabase.from('pm_contractors')
     .insert({ name:name||biz, business_name:biz||null, phone:phone||null, trade:trade||null })
     .select('id').single();
@@ -28545,4 +28600,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-04a starting-lineups -->
+<!-- build: 2026-10-04b lineup-roundtrip-and-no-duplicates -->
