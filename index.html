@@ -2525,6 +2525,10 @@ const PROP_PHASES = [
   {name:"Closed",                         bg:"#EAF3DE",text:"#173404",cnt:"#27500A",dot:"#173404"},
 ];
 
+// Bruce, 4 Oct: "we need to add a property or rehab type in there ... another one that is
+// luxury rehab." Top of the range - his own starting lineup for it reads "Luxury Rehabs
+// 1 Million & up" - so it sits at the end, after Full Rehab Permit. Adding it here is all
+// that is needed: every dropdown, filter and chip on the site reads this one list.
 const PROP_TYPES = [
   "Rental Turn / Flip",
   "Whole Tail / Flip",
@@ -2533,6 +2537,7 @@ const PROP_TYPES = [
   "Full Cosmetic",
   "Full Rehab No Permit",
   "Full Rehab Permit",
+  "Luxury Rehab",
 ];
 
 let SUB_PHASES = [
@@ -2821,6 +2826,7 @@ const PROP_TYPE_STYLE = {
   "Full Cosmetic":         "background:#FAECE7;color:#712B13",
   "Full Rehab No Permit":  "background:#FCEBEB;color:#791F1F",
   "Full Rehab Permit":     "background:#CECBF6;color:#26215C",
+  "Luxury Rehab":          "background:#F3E6F6;color:#5B2A6B",
 };
 
 // propCards is populated from Supabase (table public.pm_properties) by
@@ -13110,39 +13116,63 @@ function _unmMakeCard(key){
 async function _ctlLoad(){
   try{ const d=await _pmSettingsRead('contract_timeline_cursor'); window._ctlData=(d&&typeof d==='object')?d:{}; }
   catch(e){ window._ctlData=window._ctlData||{}; }
+  // The handled list lives in the trackers record, not in the cursor - see _ctlHandled.
+  try{ if(typeof _trkLoad==='function' && window._trkLoaded!==true) await _trkLoad(); }catch(e){}
+}
+// Bruce, 4 Oct: "I already clicked through that one and it didn't register ... that's a
+// little bug that needs fixed, so it disappears."
+// He was right and the cause was mine. The first version wrote done:true INTO the cursor's
+// own pending array - and the Slack check rebuilds that array from scratch every morning,
+// so his click was overwritten by the next run a few hours later. Worse, the cursor is not
+// one of the six settings keys ordinary staff are allowed to write, so for most of the team
+// it would never have saved at all.
+// What a person decided now lives in the trackers record instead: an allow-listed key the
+// whole team can write, which nothing else rewrites, and which already saves one change at
+// a time so two people cannot wipe each other.
+function _ctlHandled(){
+  const h=(window._trkData||{}).ctl_handled;
+  return (h && typeof h==='object') ? h : {};
 }
 function _ctlPending(){
   const d=(window._ctlData&&typeof window._ctlData==='object')?window._ctlData:{};
   const arr=Array.isArray(d.pending)?d.pending:[];
-  return arr.filter(function(x){ return x && x.addr && !x.done; });
+  const done=_ctlHandled();
+  return arr.filter(function(x){ return x && x.addr && !x.done && !done[String(x.ts||'')]; });
 }
 function _ctlKey(x){ return String((x&&x.ts)||''); }
 async function _ctlSet(ts, patch){
-  const d=Object.assign({}, window._ctlData||{});
-  const arr=(Array.isArray(d.pending)?d.pending:[]).map(function(x){
-    return (String(x&&x.ts)===String(ts)) ? Object.assign({},x,patch) : x; });
-  d.pending=arr;
-  const r=await _pmMergeWrite('contract_timeline_cursor', d, [['pending']]);
-  if(r && r.err){
-    const why=(r.err && r.err.message)?r.err.message:(typeof r.err==='string'?r.err:'');
-    alert("That was NOT saved"+(why?(" - "+why):"")+".");
-    return false;
-  }
-  window._ctlData=(r && r.base)?r.base:d;
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return false;
+  const d=window._trkData||{};
+  d.ctl_handled=Object.assign({}, d.ctl_handled||{});
+  d.ctl_handled[String(ts)]=Object.assign({ by:_miWho(), at:new Date().toISOString() }, patch||{});
+  window._trkData=d;
+  const ok=await _trkSave();
+  if(ok===false){ alert("That was NOT saved. Nothing has been changed — try again in a moment."); return false; }
   return true;
+}
+// Redraw just this panel, in place. Bruce, 4 Oct: "keeps us on the full project meeting tab
+// and doesn't take us to another page after it saves." Re-opening the whole meeting threw
+// him back to the top of a long document every time he cleared one line.
+function _ctlRepaint(){
+  const host=document.getElementById('ctl-panel');
+  if(!host) return;
+  const ro=(typeof isReadOnly==='function' && isReadOnly());
+  const html=_ctlPanel(ro);
+  if(!html){ host.remove(); return; }
+  const tmp=document.createElement('div'); tmp.innerHTML=html;
+  const fresh=tmp.firstElementChild;
+  if(fresh) host.replaceWith(fresh); else host.remove();
 }
 async function _ctlDismiss(ts){
   if(_blockIfReadOnly()) return;
   const x=_ctlPending().find(function(y){ return String(y.ts)===String(ts); })||{};
-  if(!confirm("Take \u201C"+(x.addr||'this one')+"\u201D off the stuck list?\n\nUse this when it is not ours, or somebody has already dealt with it by hand.")) return;
-  if(await _ctlSet(ts,{done:true, doneBy:_miWho(), doneAt:new Date().toISOString()})){
+  if(!confirm("Take “"+(x.addr||'this one')+"” off the stuck list?\n\nUse this when it is not ours, or somebody has already dealt with it by hand.")) return;
+  if(await _ctlSet(ts,{how:'dismissed', addr:x.addr||''})){
     _logAudit('updated','property', x.addr||'', 'Closing timeline taken off the stuck list');
-    if(typeof openWeeklyMeeting==='function') openWeeklyMeeting(window.__wmLastKind||'team', window.__wmLastWeek||undefined);
+    _ctlRepaint();
+    if(typeof _toast==='function') _toast('Taken off the list.');
   }
 }
-// Open the normal Add Property form with what the timeline sheet told us already filled
-// in. The person still presses Save, so nothing reaches the board without somebody
-// looking at it - same rule as every other address Slack finds.
 function _ctlMakeCard(ts){
   if(_blockIfReadOnly()) return;
   const x=_ctlPending().find(function(y){ return String(y.ts)===String(ts); })||{};
@@ -13155,68 +13185,96 @@ function _ctlMakeCard(ts){
     const n=document.getElementById('pm-notes');
     if(n && !String(n.value||'').trim()){
       n.value='From the closing timeline posted in #listings-closings'
-        + (x.in_contract?(' \u2014 in contract '+x.in_contract):'')
+        + (x.in_contract?(' — in contract '+x.in_contract):'')
         + (x.closing?(', closing '+x.closing):'')
         + '. Put the selling closing date on the card once it is saved.';
     }
     const a=document.getElementById('pm-addr'); if(a) a.focus();
   }, 60);
 }
-// The duplex case: the timeline matches two cards and somebody has to say which one
-// carries the sale. One click, named out loud before it happens.
-async function _ctlApply(ts, pid){
+// Which property cards does this timeline actually land on?
+function _ctlHits(x){
+  const a=String((x&&x.addr)||'').toLowerCase();
+  if(!a) return [];
+  const nums=(a.match(/\d{2,}/g)||[]);
+  return (typeof propCards!=='undefined'?propCards:[]).filter(function(c){
+    if(!c||c.archived) return false;
+    const ca=String(c.addr||'').toLowerCase();
+    const cn=(ca.match(/\d{2,}/)||[])[0];
+    if(!cn || nums.indexOf(cn)<0) return false;
+    // and a real word in common, so "3610 Grove City" does not match "3610 Mulberry"
+    return a.split(/[^a-z]+/).some(function(w){ return w.length>3 && ca.indexOf(w)>=0; });
+  });
+}
+// Bruce, 4 Oct: "3610 and 3612, that's a duplex. The closing is both for the same property.
+// So there needs to be an apply to both option."
+async function _ctlApply(ts, pids){
   if(_blockIfReadOnly()) return;
   const x=_ctlPending().find(function(y){ return String(y.ts)===String(ts); })||{};
-  const c=(typeof propCards!=='undefined'?propCards:[]).find(function(p){ return p.id===pid; });
-  if(!c){ alert("That property card could not be found."); return; }
-  if(!confirm("Apply the closing timeline to "+(c.addr||'')+"?\n\n"
-     + "\u2022 phase \u2192 In Contract\n"
-     + (x.closing?("\u2022 closing, us selling \u2192 "+x.closing+"\n"):'')
-     + "\nThe other card on this timeline is left exactly as it is.")) return;
-  if(x.closing){
-    const u=await supabase.from("pm_properties").update({ closing_date_sell:x.closing }).eq("id",pid);
-    if(u.error){ alert("Could not write the closing date: "+(u.error.message||'')); return; }
+  const ids=String(pids||'').split('|').filter(Boolean);
+  const cards=ids.map(function(id){ return (typeof propCards!=='undefined'?propCards:[]).find(function(p){ return p.id===id; }); }).filter(Boolean);
+  if(!cards.length){ alert("Those property cards could not be found."); return; }
+  const names=cards.map(function(c){ return c.addr||''; });
+  if(!confirm("Apply the closing timeline to "+names.join(" AND ")+"?\n\n"
+     + "• phase → In Contract\n"
+     + (x.closing?("• closing, us selling → "+x.closing+"\n"):'')
+     + (cards.length>1?"\nBoth halves of the duplex are treated as one sale.\n":"\nAny other card on this timeline is left exactly as it is.\n"))) return;
+  let failed=null;
+  for(const c of cards){
+    if(x.closing){
+      const u=await supabase.from("pm_properties").update({ closing_date_sell:x.closing }).eq("id",c.id);
+      if(u.error){ failed=(u.error.message||'could not write the closing date'); break; }
+    }
+    if(c.phase!=='In Contract'){ await updatePropertyPhaseInSupabase(c.id,'In Contract'); }
   }
-  if(c.phase!=='In Contract'){ await updatePropertyPhaseInSupabase(pid,'In Contract'); }
-  else { await loadPropertiesFromSupabase(); }
-  _logAudit('updated','property', c.addr||'',
-    'Closing timeline applied by hand from the stuck list \u2014 In Contract'+(x.closing?(', selling '+x.closing):''));
-  await _ctlSet(ts,{done:true, doneBy:_miWho(), doneAt:new Date().toISOString(), appliedTo:pid});
-  if(typeof openWeeklyMeeting==='function') openWeeklyMeeting(window.__wmLastKind||'team', window.__wmLastWeek||undefined);
+  await loadPropertiesFromSupabase();
+  if(failed){ alert("Not fully applied — "+failed+". Nothing else was changed."); _ctlRepaint(); return; }
+  _logAudit('updated','property', names.join(' + '),
+    'Closing timeline applied by hand from the stuck list — In Contract'+(x.closing?(', selling '+x.closing):''));
+  if(await _ctlSet(ts,{how:'applied', addr:x.addr||'', appliedTo:ids.join('|')})){
+    _ctlRepaint();
+    if(typeof _toast==='function') _toast('Applied to '+names.join(' and ')+'.');
+  }
 }
 function _ctlPanel(roNow){
   const list=_ctlPending();
   if(!list.length) return '';
   const today=_ymd(new Date());
+  const btn=(bg,col,bd)=>'padding:4px 11px;background:'+bg+';color:'+col+';border:'+(bd||'none')+';border-radius:6px;font-size:12px;cursor:pointer;font-weight:600';
   const rows=list.map(function(x){
     const key=_ctlKey(x);
     const days=(function(){ try{ return Math.round((new Date(today)-new Date(x.first_seen))/86400000); }catch(e){ return null; } })();
     const bits=[x.in_contract?('in contract '+x.in_contract):'', x.closing?('closing '+x.closing):'',
-                days!=null?(days+' day'+(days===1?'':'s')+' stuck'):''].filter(Boolean).join(' \u00b7 ');
-    // Which cards does this address actually hit? That is what decides the buttons.
-    const hits=(typeof propCards!=='undefined'?propCards:[]).filter(function(c){
-      if(!c||c.archived) return false;
-      const a=String(x.addr||'').toLowerCase();
-      const n=(String(c.addr||'').match(/\d+/)||[])[0];
-      return n && a.indexOf(n)>=0 && a.split(/[ ,]+/).some(function(w){
-        return w.length>3 && String(c.addr||'').toLowerCase().indexOf(w)>=0; });
-    });
-    const act=roNow?'':(hits.length
-      ? hits.map(function(c){ return '<button onclick="_ctlApply(\''+_argEsc(key)+'\',\''+_argEsc(c.id)+'\')" style="padding:4px 11px;background:#122A4A;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600">Apply to '+_calEsc(c.addr||'')+'</button>'; }).join('')
-      : '<button onclick="_ctlMakeCard(\''+_argEsc(key)+'\')" style="padding:4px 11px;background:#122A4A;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600">Create the card</button>')
-      + '<button onclick="_ctlDismiss(\''+_argEsc(key)+'\')" title="Not ours, or already handled by hand" style="padding:4px 10px;background:#fff;color:#8A5A10;border:0.5px solid #EAD9A8;border-radius:6px;font-size:12px;cursor:pointer">Not ours</button>';
+                days!=null?(days+' day'+(days===1?'':'s')+' stuck'):''].filter(Boolean).join(' · ');
+    const hits=_ctlHits(x);
+    let act='';
+    if(!roNow){
+      if(!hits.length){
+        act+='<button onclick="_ctlMakeCard(\''+_argEsc(key)+'\')" style="'+btn('#122A4A','#fff')+'">Create the card</button>';
+      } else if(hits.length===1){
+        act+='<button onclick="_ctlApply(\''+_argEsc(key)+'\',\''+_argEsc(hits[0].id)+'\')" style="'+btn('#122A4A','#fff')+'">Apply to '+_calEsc(hits[0].addr||'')+'</button>';
+      } else {
+        act+='<button onclick="_ctlApply(\''+_argEsc(key)+'\',\''+_argEsc(hits.map(function(c){return c.id;}).join('|'))+'\')" style="'+btn('#122A4A','#fff')+'">Apply to both</button>';
+        hits.forEach(function(c){
+          act+='<button onclick="_ctlApply(\''+_argEsc(key)+'\',\''+_argEsc(c.id)+'\')" style="'+btn('#fff','#185FA5','0.5px solid #cdd7e6')+'">Only '+_calEsc(c.addr||'')+'</button>';
+        });
+      }
+      act+='<button onclick="_ctlDismiss(\''+_argEsc(key)+'\')" title="Not ours, or already handled by hand" style="'+btn('#fff','#8A5A10','0.5px solid #EAD9A8')+';font-weight:400">Not ours</button>';
+    }
     return '<div style="padding:8px 0;border-top:0.5px solid #EAD9A8">'
       + '<div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap">'
       +   '<span style="font-size:13.5px;font-weight:700;color:#633806">'+_calEsc(x.addr||'')+'</span>'
       +   (act?'<span style="display:flex;gap:6px;flex-wrap:wrap">'+act+'</span>':'')
       + '</div>'
+      + (hits.length===2?'<div style="font-size:11.5px;color:#0F7B54;margin-top:2px">One timeline, two cards — <b>Apply to both</b> if it is a duplex selling as one.</div>'
+        :(hits.length>2?'<div style="font-size:11.5px;color:#B42318;margin-top:2px">This address matches <b>'+hits.length+' property cards</b>. That usually means the board has duplicates — worth tidying those before applying anything.</div>':''))
       + (x.why?'<div style="font-size:11.5px;color:#8A5A10;margin-top:2px"><b>Why it has not gone on:</b> '+_calEsc(x.why)+'</div>':'')
       + (bits?'<div style="font-size:11.5px;color:#8A5A10;margin-top:2px">'+_calEsc(bits)+'</div>':'')
       + '</div>';
   }).join('');
-  return '<div style="background:#FFFCF4;border:0.5px solid #EAD9A8;border-radius:11px;padding:11px 14px;margin-bottom:12px">'
-    + '<div style="font-size:13.5px;font-weight:700;color:#8A5A10">\u26A0 '+list.length+' closing timeline'+(list.length===1?'':'s')+' the board could not put on by itself</div>'
-    + '<div style="font-size:12px;color:#8A5A10;margin:3px 0 2px;line-height:1.5">A timeline was posted in #listings-closings and the check would not guess. It has been carrying these forward every morning since &mdash; each one needs one decision from a person.</div>'
+  return '<div id="ctl-panel" style="background:#FFFCF4;border:0.5px solid #EAD9A8;border-radius:11px;padding:11px 14px;margin-bottom:12px">'
+    + '<div style="font-size:13.5px;font-weight:700;color:#8A5A10">⚠ '+list.length+' closing timeline'+(list.length===1?'':'s')+' the board could not put on by itself</div>'
+    + '<div style="font-size:12px;color:#8A5A10;margin:3px 0 2px;line-height:1.5">A timeline was posted in #listings-closings and the check would not guess. Each one needs one decision from a person — it clears from this list the moment you make it, and you stay where you are.</div>'
     + rows + '</div>';
 }
 function _unmPanel(roNow){
@@ -13976,7 +14034,11 @@ function openWeeklyMeeting(kind, week){
       // how a start date ends up being the day a contract was signed on one house and the day
       // the dumpster arrived on the next. The definition now sits under the box, in his words,
       // so nobody has to remember what was agreed in a meeting they were not in.
-      const fld=(label,inner,note)=>`<div style="display:flex;flex-direction:column;gap:4px"><div style="font-size:11.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em">${label}</div>${inner}${note?`<div style="font-size:10.5px;color:#636b7a;line-height:1.35">${note}</div>`:''}</div>`;
+      // Bruce, 4 Oct: "that little change you made with the start and committed finish date
+      // is just a little too much ... shrink that down to where it just says start date
+      // equals means hammer swinging. Then that's it." So the definition rides on the label
+      // itself in a lighter grey, costs no extra line, and the row is the height it was.
+      const fld=(label,inner,note)=>`<div style="display:flex;flex-direction:column;gap:4px"><div style="font-size:11.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em">${label}${note?`<span style="text-transform:none;letter-spacing:0;color:#8A94A6;font-weight:400"> ${note}</span>`:''}</div>${inner}</div>`;
 
       const est=_wmEst(c), pushes=_wmPushes(c), drift=_wmEstDrift(c);
       const paceDate=est||c.end||'';
@@ -14094,11 +14156,9 @@ function openWeeklyMeeting(kind, week){
           ${fld('Start date', ro
             ? `<span style="font-size:13px;color:${cStart?'#111':'#8A5A10'}">${_calEsc(cStart||'set when it goes vacant')}</span>`
             : `<input type="date" value="${_calEsc(c.start||'')}" onchange="_wmStartSet('${c.id}',this.value,this)" style="padding:5px 8px;border:0.5px solid ${c.start?'#d8dce6':'#EAD9A8'};border-radius:6px;font-size:13px;background:${c.start?'#fff':'#FFF7E0'}"/>${c.start?'':`<div style="font-size:9.5px;color:#8A5A10">not set &mdash; nothing can be measured yet</div>`}`,
-            '<b>Hammers swinging.</b> The day work actually starts on site &mdash; not the day we closed, not the day it went vacant. Everything on this row is measured from it.')}
-          ${fld('Committed finish &#128274;',commitCell,
-            '<b>Scheduled photos.</b> The day the house is booked to be photographed. Locked — moving it is a push, and the push is recorded.')}
-          ${fld('Estimated finish',estCell,
-            'What today\'s pace says that finish date will really be. Not a promise — a warning when it drifts.')}
+            '= hammers swinging')}
+          ${fld('Committed finish &#128274;',commitCell,'= scheduled photos')}
+          ${fld('Estimated finish',estCell)}
           ${fld('Est. profit',inp('est_profit',c.estProfit||'','$0'))}
           ${fld('Goal ARV',inp('goal_arv',c.goalArv||'','$0'))}
           ${fld('Listing on the market',_wmAgentField(c))}
@@ -28759,4 +28819,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-04d meeting-glossary-and-stuck-timelines -->
+<!-- build: 2026-10-04e apply-to-both-luxury-rehab-short-glossary -->
