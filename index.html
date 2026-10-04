@@ -23837,6 +23837,24 @@ async function _luMove(id, dir){
   if(ok) _luRerender();
 }
 // ---- trades inside one lineup ----
+// Bruce made "The A Team" on the first build and it came out with no trades on it at all -
+// he had picked "start blank" and then there was nothing on screen offering him the standard
+// list back. A blank lineup was a dead end. It is one click now, from inside the lineup, and
+// it only ever ADDS what is missing rather than replacing anything already there.
+async function _luFillStandard(id){
+  const l=_luGet(id); if(!l) return;
+  const have={};
+  _luTrades(l).forEach(function(t){ have[String(t.name||'').trim().toLowerCase()]=true; });
+  const add=LINEUP_TRADES.filter(function(n){ return !have[n.toLowerCase()]; });
+  if(!add.length){ alert("Every trade on the standard list is already on this lineup."); return; }
+  const ok=await _luWrite(function(n){
+    if(!n.items[id]) return;
+    n.items[id].trades=(n.items[id].trades||[]).concat(add.map(function(nm){
+      return {id:_luId('t'), name:nm, picks:['','',''], note:''}; }));
+    n.items[id].at=new Date().toISOString();
+  });
+  if(ok) _luRerender();
+}
 async function _luTradeAdd(id){
   const el=document.getElementById('lu-trade-new');
   const name=String((el&&el.value)||'').trim();
@@ -23989,7 +24007,7 @@ function _luCardsBody(ro){
     return '<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:13px 15px;display:flex;gap:12px;align-items:center;flex-wrap:wrap">'
       + '<div style="flex:1;min-width:200px;cursor:pointer" onclick="_luOpen(\''+l.id+'\')">'
       +   '<div style="font-size:15.5px;font-weight:600;color:#111">⭐ '+esc(l.name||'Untitled lineup')+'</div>'
-      +   '<div style="font-size:12px;color:#566070;margin-top:2px">'+filled+' of '+total+' trade'+(total===1?'':'s')+' have a first call'+(who?(' · '+who):'')+'</div>'
+      +   '<div style="font-size:12px;color:'+(total?'#566070':'#A86A0D')+';margin-top:2px">'+(total?(filled+' of '+total+' trade'+(total===1?'':'s')+' have a first call'):'no trades on it yet — open it and add the standard list')+(who?(' · '+who):'')+'</div>'
       +   (l.note?'<div style="font-size:12px;color:#636b7a;margin-top:3px">'+esc(String(l.note).split('\n')[0]).slice(0,110)+'</div>':'')
       + '</div>'
       + '<div style="display:flex;gap:6px;flex-wrap:wrap">'
@@ -24001,8 +24019,8 @@ function _luCardsBody(ro){
       +   (ro?'':'<button onclick="_luDel(\''+l.id+'\')" style="padding:6px 11px;background:#fff;border:0.5px solid #f0c9c4;border-radius:7px;font-size:12.5px;color:#B42318;cursor:pointer">Delete</button>')
       + '</div></div>';
   }).join('');
-  const fromOpts='<option value="standard">Start from the standard trade list — foundation to finish</option>'
-    + '<option value="blank">Start blank — I will add the trades myself</option>'
+  const fromOpts='<option value="standard">The standard trade list — all 26, foundation to finish (recommended)</option>'
+    + '<option value="blank">Blank — no trades at all, I will add every one myself</option>'
     + list.map(function(l){ return '<option value="'+esc(l.id)+'">Copy “'+esc(l.name||'')+'”</option>'; }).join('');
   const adder=ro?'':'<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:13px 15px;display:flex;gap:9px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px">'
     + '<div style="flex:1.5;min-width:200px"><label style="font-size:12px;color:#566070;display:block;margin-bottom:4px">Name this lineup</label>'
@@ -24065,7 +24083,7 @@ function _luOneBody(l, ro){
   return '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">'
     + '<button onclick="_luOpen(null)" style="padding:7px 13px;background:#fff;border:0.5px solid #e6e8ee;border-radius:7px;font-size:13px;color:#566070;cursor:pointer">← All lineups</button>'
     + '<button onclick="_luPrint(\''+l.id+'\')" style="padding:7px 14px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:13px;color:#185FA5;cursor:pointer;font-weight:600">\u{1F5A8} Print this lineup</button>'
-    + '<span style="font-size:12.5px;color:#566070">'+filled+' of '+total+' trade'+(total===1?'':'s')+' have a first call</span>'
+    + '<span style="font-size:12.5px;color:'+(total?'#566070':'#A86A0D')+'">'+(total?(filled+' of '+total+' trade'+(total===1?'':'s')+' have a first call'):'no trades on it yet')+'</span>'
     + '<span id="trk-status" style="margin-left:auto;font-size:12px"></span></div>'
   + '<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:14px 15px;margin-bottom:12px">'
     + (ro
@@ -24077,7 +24095,11 @@ function _luOneBody(l, ro){
     + '<table style="width:100%;border-collapse:collapse"><thead><tr style="background:#fafbfc">'
     + th('Trade · foundation to finish')+LU_SLOTS.map(th).join('')
     + '</tr></thead><tbody>'
-    + (rows||'<tr><td colspan="4" style="padding:24px;text-align:center;color:#636b7a;font-size:14px">No trades on this lineup yet.</td></tr>')
+    + (rows||('<tr><td colspan="4" style="padding:26px;text-align:center">'
+        + '<div style="font-size:14px;color:#566070;margin-bottom:4px">No trades on this lineup yet.</div>'
+        + (ro?'':'<div style="font-size:12.5px;color:#636b7a;margin-bottom:11px">Put the standard list on it and edit from there, or add your own trades one at a time below.</div>'
+             + '<button onclick="_luFillStandard(\''+l.id+'\')" style="padding:9px 17px;background:#111;color:#fff;border:none;border-radius:8px;font-size:13.5px;cursor:pointer">\uFF0B Add the standard trade list \u2014 foundation to finish</button>')
+        + '</td></tr>'))
     + '</tbody></table></div>'
   + (ro?'':'<div style="display:flex;gap:8px;margin-top:11px;flex-wrap:wrap;align-items:center">'
       + '<input id="lu-trade-new" placeholder="Add a trade — e.g. Septic, Pool, Fire sprinkler…" style="flex:1;min-width:220px;max-width:420px;'+inp+'"/>'
@@ -28600,4 +28622,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-04b lineup-roundtrip-and-no-duplicates -->
+<!-- build: 2026-10-04c lineup-roundtrip-dupes-and-blank-rescue -->
