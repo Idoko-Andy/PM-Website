@@ -19,6 +19,8 @@
 <style>
 *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
 body{background:#1a1a1a;color:#fff;min-height:100vh}
+/* VA Assistant dashboard: the category rail drops above the table on a phone. */
+@media (max-width:820px){.va-split{grid-template-columns:1fr !important}}
 
 /* HEADER */
 .util-bar{background:#111;border-bottom:1px solid #2a2a2a;padding:6px 20px;display:flex;align-items:center;justify-content:space-between;min-height:36px}
@@ -302,7 +304,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openPMAssistantDashboard()">🗂 PM Assistant Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
       <div class="ddi" onclick="openRealtorDashboard()">🔑 Realtor Dashboard</div>
-      <div class="ddi" onclick="openAdminDashboard('trackers')">📋 Trackers · permits, windows, utilities</div>
+      <div class="ddi" onclick="openTrackers()">📋 Trackers · permits, windows, utilities</div>
     </div>
   </div>
   <div class="ni has-dd" id="am-t">👤 Asst. Manager ▾
@@ -312,7 +314,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openProjectDashboard()">📊 Project Dashboard</div>
       <div class="ddi" onclick="openProjectDashboard('trello')">🏗 Property Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
-      <div class="ddi" onclick="openAdminDashboard('trackers')">📋 Trackers</div>
+      <div class="ddi" onclick="openTrackers()">📋 Trackers</div>
       <div class="ddi" onclick="openPermitDashboard()">📄 Permit Dashboard</div>
     </div>
   </div>
@@ -1527,6 +1529,7 @@ const ROLE_FALLBACK = ["dash_project","dash_pmassistant","sops_view"]; // acquis
 // Dashboard's permission instead of its own.
 const ONCLICK_PERM = [
   ["openAdminDashboard('trackers')",   "trk_all"],
+  ["openTrackers",                     "trk_all"],
   ["openVAAdminDashboard('trackers')", "trk_all"],
   ["openWeeklyMeeting('team')",        "rep_team"],
   ["openWeeklyMeeting('market')",      "rep_market"],
@@ -4386,7 +4389,7 @@ async function _snapshotSpentDaily(){
 // Stay on the same page across browser refreshes: remember the last view opened and
 // re-open it once the app (and its data) has loaded, instead of dumping back to home.
 (function(){
-  const NAVS=["openProjectDashboard","openPMDashboard","openPMAssistantDashboard","openDirectorCEODashboard","openAdminDashboard","openVAAdminDashboard","openArchitectDashboard","openPermitDashboard","openTaskDataHousing","openDollarsDayHousing","openSettings","openStartOfProjectDashboard","openEndOfProjectDashboard","openSeniorVADashboard","openPropDetail","openWeeklyMeeting","openDailyReports","openEndOfDayReports"];
+  const NAVS=["openProjectDashboard","openPMDashboard","openPMAssistantDashboard","openDirectorCEODashboard","openAdminDashboard","openVAAdminDashboard","openArchitectDashboard","openPermitDashboard","openTaskDataHousing","openDollarsDayHousing","openSettings","openStartOfProjectDashboard","openEndOfProjectDashboard","openSeniorVADashboard","openTrackers","openPropDetail","openWeeklyMeeting","openDailyReports","openEndOfDayReports"];
   setTimeout(()=>{ // wrap after all functions are defined
     NAVS.forEach(fn=>{
       const orig=window[fn];
@@ -18328,6 +18331,23 @@ function _marloTab(){
     </div>
   </div>`;
 }
+// ---- Trackers on their own, with nothing else around them ---------------------------
+// Bruce, 4 Oct: "PM menu, Trackers ... I just need it to take us to a trackers only tab."
+// It used to open Marlo's Admin Dashboard on its Trackers tab, so a PM landed inside
+// somebody else's dashboard - every one of her tabs sitting there across the top - just
+// to tick a permit. This is the same tracker screen with none of that.
+function openTrackers(){
+  const u=_viewUser();
+  if(!(u&&(u.isSuperAdmin||hasPerm(u,'trk_all')))){
+    _execShell('openTrackers',[{id:'trackers',label:'Trackers',icon:'\uD83D\uDCCB'}],'trackers',
+      '<div class="empty-state"><div class="icon">&#128274;</div><p style="color:#566070;font-size:16px;font-weight:500">Trackers</p><p style="color:#555;font-size:14px;margin-top:6px">Ask Bruce to turn Trackers on for your account in Settings &rarr; Permissions.</p></div>');
+    return;
+  }
+  window._trkRerender=()=>_trkKeepScroll(()=>openTrackers());
+  window._trkCtx='trk';
+  _execShell('openTrackers',[{id:'trackers',label:'Trackers',icon:'\uD83D\uDCCB'}],'trackers',_vaTrackers());
+  if(!window._trkLoaded){ Promise.all([_trkLoad(), loadContractorsFromSupabase()]).then(()=>_permitSeedIfEmpty()).then(()=>openTrackers()); }
+}
 function openAdminDashboard(activeTab) {
   activeTab = activeTab || 'main';
   const tabs=[
@@ -18800,6 +18820,11 @@ async function _nfSetRead(ids){
   }
   _nfBadge(); _nfRender();
 }
+// The furthest-ahead due date the bell will mention: today plus two days.
+function _nfHorizon(){
+  const d=new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate()+2);
+  return (typeof _ymd==='function') ? _ymd(d) : d.toISOString().slice(0,10);
+}
 function _nfItems(){
   const out=[];
   const me=_nfMe();
@@ -18812,7 +18837,11 @@ function _nfItems(){
       // A task shared by two people stays open until BOTH tick it, which is the point.
       // But it kept sitting in the bell of the person who had already done their half.
       if(me && typeof _taskStatusFor==='function' && _taskStatusFor(t,me)==='done') return;
-      if(!t.due_date || t.due_date>today) return;
+      // Bruce, 4 Oct: "the only time a notification should pop up is when it's within
+      // 48 hours of being due." Before this a task appeared the morning it was due and
+      // not a moment earlier, so anything needing a call the day before was already late
+      // by the time the bell knew about it. Two days ahead, and everything already past.
+      if(!t.due_date || t.due_date>_nfHorizon()) return;
       const who=(typeof taskAssignees==='function')?taskAssignees(t):[];
       // This was the one assignee test in the app still done by exact string, so a
       // task on "Andrew" never reached Andrew Scrape's bell and one on "Tom" never
@@ -18894,7 +18923,11 @@ function _nfItems(){
         sub:'The date has passed and nobody has confirmed it', when:today, click:'openConfirmations()' });
     }
   }catch(e){}
-  out.sort(function(a,b){ return String(b.when||'').localeCompare(String(a.when||'')); });
+  // Bruce, 4 Oct: "that's the only notifications each individual person should see right
+  // now at the top of their notification screen, in order from oldest to newest due."
+  // It used to read newest first, which buried the thing that had been waiting longest
+  // at the bottom of the list - the exact opposite of what you want to see first.
+  out.sort(function(a,b){ return String(a.when||'').localeCompare(String(b.when||'')); });
   return out;
 }
 function _nfUnread(){ const rd=_nfReadMap(); return _nfItems().filter(function(x){ return !rd[x.id]; }); }
@@ -18920,7 +18953,7 @@ function _nfRender(){
     + '</div>';
   if(!items.length){
     p.innerHTML=head+'<div style="padding:26px 16px;text-align:center;color:#636b7a;font-size:13px">Nothing is waiting on you.</div>'
-      +'<div style="padding:9px 14px;border-top:0.5px solid #eef0f6;font-size:11px;color:#c4c9d2">These are worked out live from your tasks, side tasks and the permit tracker. More gets tied in as Bruce says what he wants in here.</div>';
+      +'<div style="padding:9px 14px;border-top:0.5px solid #eef0f6;font-size:11px;color:#c4c9d2">Your own work only. A task appears here once it is within 48 hours of its due date.</div>';
     return;
   }
   const rows=items.map(function(x){
@@ -18935,7 +18968,7 @@ function _nfRender(){
       + (isNew?'<div style="width:7px;height:7px;border-radius:99px;background:'+t.fg+';flex-shrink:0;margin-top:6px"></div>':'')
       + '</div>';
   }).join('');
-  p.innerHTML=head+rows+'<div style="padding:9px 14px;font-size:11px;color:#c4c9d2">Worked out live from your tasks, side tasks and the permit tracker. More gets tied in as Bruce says what he wants in here.</div>';
+  p.innerHTML=head+rows+'<div style="padding:9px 14px;font-size:11px;color:#c4c9d2">Your own work only, oldest due first. A task appears here once it is within 48 hours of its due date, and stays until it is ticked.</div>';
 }
 function _nfOpen(id){
   let items=[]; try{ items=_nfItems(); }catch(e){}
@@ -19468,7 +19501,11 @@ function openVAAdminDashboard(activeTab) {
   switch(activeTab){
     case 'sidetasks':    content=_sqAllBody(); break;
     case 'payables':     content=_apAllBody(); break;
-    case 'va':           content=_vaPersonView(vaName); break;
+    // Bruce, 4 Oct: "I was just on her tab and it took me out of her tab." Ticking a
+    // checklist box runs the shared tracker save, and the shared save used to redraw
+    // whatever the LAST tracker screen was - which threw her onto the Trackers tab
+    // mid-click. Every screen that writes a tracker now says how to redraw itself.
+    case 'va':           window._trkRerender=()=>_trkKeepScroll(()=>openVAAdminDashboard('va')); content=_vaDeskView(vaName); break;
     case 'utilities':    content=_utilitiesDashboard(); break;
     case 'trackers':     window._trkRerender=()=>_trkKeepScroll(()=>openVAAdminDashboard('trackers')); window._trkCtx='va'; content=_vaTrackers(); break;
     case 'property':     content=renderPropertyBoard(); break;
@@ -19521,6 +19558,310 @@ function _vaMainDashboard(vaName){
 function _vaPersonView(vaName){
   const g=`<div style="max-width:900px;margin:0 auto;padding:0 20px 20px"><div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:14px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px"><div><div style="font-size:14px;font-weight:600;color:#111">📆 Google Calendar</div><div style="font-size:12px;color:#566070">${_calEsc(vaName)}'s calendar — property deadlines sync automatically (Account → Calendar).</div></div><div onclick="window.open('https://calendar.google.com','_blank')" style="font-size:13px;background:#111;color:#fff;border-radius:6px;padding:8px 14px;cursor:pointer">Open Google Calendar</div></div></div>`;
   return _personDashView(vaName,'Virtual Administrative Assistant')+g;
+}
+
+function _vaSaveBar(){ return `<div id="trk-status" style="font-size:12.5px;line-height:1.2;margin-bottom:10px">${isReadOnly()?'<span style="color:#636b7a">Read only</span>':'<span style="color:#636b7a">Every box saves itself as you go</span>'}</div>`; }
+
+// ===================== VA ASSISTANT DASHBOARD (three sections) =====================
+// Bruce, 4 Oct: "I want to keep it simple in three dashboards, and then their own little
+// mini dashboards within the dashboards ... pre-construction for Patience's dashboard
+// would be properties sitting in upcoming takedowns all the way to waiting permits or
+// pre-construction. Essentially, once it's been moved into framing and MEPs it'll be
+// active construction from there until it enters the rental handoff process or listed on
+// the market. And then post construction will be listed on the market all the way till
+// closed, and then it'll stay there when it's closed for four weeks, like it does on the
+// property dashboard."
+//
+// So the three sections are not a new way of labelling houses - they are three slices of
+// the phase ladder the board already uses, and a house lands in exactly one of them.
+// Nothing here renames a phase or moves a card.
+//
+// "remember this is the settings for anybody that has her job role too. When we select
+// their job role, it'll pop their name up at the top." Hence every function takes the
+// name rather than hard-coding Patience.
+const VA_CATS = {
+  pre1:  {sec:'pre',  n:1, name:'Upcoming Takedowns',              phases:["Upcoming Takedowns"]},
+  pre2:  {sec:'pre',  n:2, name:'Occupied / Closed',               phases:["Occupied / Closed"]},
+  pre3:  {sec:'pre',  n:3, name:'Vacant on Standby',               phases:["Vacant / On Standby"]},
+  pre4:  {sec:'pre',  n:4, name:'Pre-Construction',                phases:["Pre Construction","Waiting Permits"]},
+  act1:  {sec:'act',  n:1, name:'Framing, MEPs & Exterior',        phases:["Framing, MEPS, Insulation"]},
+  act2:  {sec:'act',  n:2, name:'Insulation & Drywall',            phases:["Drywall / Exterior Work"]},
+  act3:  {sec:'act',  n:3, name:'Finish MEPs',                     phases:["Finishes"]},
+  act4:  {sec:'act',  n:4, name:'Punch Out & Pre-List Inspections',phases:["Pre List / Punchout Process"]},
+  post1: {sec:'post', n:1, name:'Listed on the Market',            phases:["Listed on the Market","Listed on the Market / Final Inspections"]},
+  post2: {sec:'post', n:2, name:'In Contract',                     phases:["In Contract"]},
+  post3: {sec:'post', n:3, name:'Rental Handoff / RTR',            phases:["Rental Handoff Process","RTR In Process","RTR Completed (Pending Closing)"]},
+  post4: {sec:'post', n:4, name:'Closed (last 4 weeks)',           phases:["Closed"], recent:28}
+};
+const VA_SECS = {
+  pre:  {name:'Pre-Construction',    cats:['pre1','pre2','pre3','pre4'],     col:'#AF2C2B'},
+  act:  {name:'Active Construction', cats:['act1','act2','act3','act4'],     col:'#639922'},
+  post: {name:'Post-Construction',   cats:['post1','post2','post3','post4'], col:'#7A3FA8'}
+};
+// Starting checklists. Bruce: "I'll start building checklists within the website once you
+// make it live" - so these are a first draft he overwrites, not a rule. The template lives
+// in the trackers row, which ordinary approved staff are allowed to write.
+const VA_TPL_SEED = {
+  pre1:["Property card created and the address double-checked","CompanyCam folder created","Closing / takedown date on the card","Utilities ordered in our name","Lockbox on and the code logged"],
+  pre2:["Purchase confirmed on the card","Occupancy checked - who is still in it","Keys and access confirmed","Utilities transferred to us","CompanyCam folder started"],
+  pre3:["Lockbox on and the code logged","Electric, water and gas all on","Added to the mowing route","Property secured and photographed"],
+  pre4:["Scope of work uploaded to the card","Budget created and approved","Permits applied for","Start date agreed with the PM","Contractors lined up for week one"],
+  act1:["Rough-in inspections booked","Framing photos in CompanyCam","Exterior scope confirmed with the PM","Material deliveries logged"],
+  act2:["Insulation inspection passed","Drywall scheduled","Weekly photos uploaded","Budget against spent checked"],
+  act3:["Finish MEP trim scheduled","Fixtures ordered and received","Paint and flooring dates confirmed","Punch list opened"],
+  act4:["Pre-list inspection booked","NPI report received and typed up","Punch-out items assigned to a trade","Final clean scheduled","Photos scheduled"],
+  post1:["On the Market checklist run this week","Photos live on the listing","Agent feedback logged","Price review with Bruce"],
+  post2:["Closing timeline applied to the card","Inspection items logged","Remedy requests opened","Utility end-date set"],
+  post3:["Rental handoff packet sent","Rent-ready walk done","Keys handed to property management","Utilities transferred out"],
+  post4:["Final spend reconciled","Utilities removed","CompanyCam folder closed out","End of project report filed"]
+};
+const VA_SOP_SEED = {
+  pre:"1. UPCOMING TAKEDOWNS - the card exists but we do not own it yet. Get the folder, the dates and the utilities ordered so nothing waits on day one.\n2. OCCUPIED / CLOSED - we own it, somebody may still be in it. Confirm the purchase on the card, find out who has keys, move the utilities to us.\n3. VACANT ON STANDBY - empty and waiting. Lockbox, utilities on, mowing route, photos. This is where houses quietly rot, so check it weekly.\n4. PRE-CONSTRUCTION - scope, budget, permits, start date. Nothing moves to Framing until all four are on the card.",
+  act:"1. FRAMING, MEPs & EXTERIOR - rough-ins booked, photos going up, exterior scope agreed.\n2. INSULATION & DRYWALL - insulation inspection passed before drywall is scheduled. Check budget against spent here, not later.\n3. FINISH MEPs - trim-out scheduled, fixtures on site, paint and flooring dated. Open the punch list now.\n4. PUNCH OUT & PRE-LIST - NPI inspection, punch items assigned, final clean, photos booked. Photos booked is the finish date.",
+  post:"1. LISTED ON THE MARKET - run the On the Market checklist every week, log agent feedback, take the price question to Bruce.\n2. IN CONTRACT - closing timeline on the card, inspection items logged, remedies opened, utility end-date set.\n3. RENTAL HANDOFF / RTR - packet sent, rent-ready walk, keys to property management, utilities out of our name.\n4. CLOSED - final spend reconciled, utilities removed, folder closed, end of project report filed. The house stays on this list four weeks after closing, then drops off."
+};
+function _vaSlug(s){ let h=0,t=String(s||''); for(let i=0;i<t.length;i++){ h=((h<<5)-h+t.charCodeAt(i))|0; } return 'i'+Math.abs(h).toString(36); }
+function _vaTpl(cat){
+  const raw=_trkVal('va_tpl',cat,'items');
+  if(raw && String(raw).trim()) return String(raw).split('\n').map(s=>s.trim()).filter(Boolean);
+  return (VA_TPL_SEED[cat]||[]).slice();
+}
+function _vaSop(sec){
+  const raw=_trkVal('va_sop',sec,'text');
+  return (raw && String(raw).trim()) ? String(raw) : (VA_SOP_SEED[sec]||'');
+}
+function _vaChkOn(propId,cat,item){ return _trkOn('va_chk',propId,cat+'|'+_vaSlug(item)); }
+async function _vaChkToggle(propId,cat,itemSlug){
+  if(_blockIfReadOnly()) return;
+  const cur=_trkOn('va_chk',propId,cat+'|'+itemSlug);
+  await _trkSet('va_chk',propId,cat+'|'+itemSlug,!cur,true);
+}
+function _vaChkCount(propId,cat){
+  const items=_vaTpl(cat);
+  const done=items.filter(it=>_vaChkOn(propId,cat,it)).length;
+  return [done,items.length];
+}
+// A card belongs to exactly one category. Closed houses fall off after four weeks, the
+// same window the property dashboard uses.
+function _vaCards(cat){
+  const d=VA_CATS[cat]||{};
+  let list=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && (d.phases||[]).includes(c.phase));
+  if(d.recent){
+    const cut=Date.now()-d.recent*86400000;
+    list=list.filter(c=>{ const t=Date.parse(c.closed_date||c.closing_date_sell||c.updated_at||''); return !t || t>=cut; });
+  }
+  return list.sort((a,b)=>String(a.addr||'').localeCompare(String(b.addr||'')));
+}
+function _vaSecCount(sec){ return (VA_SECS[sec].cats||[]).reduce((n,c)=>n+_vaCards(c).length,0); }
+// ---- Her three boxes. Bruce, 4 Oct: "the overdue tasks thing on her page, or open
+// tasks, it only needs to show her open tasks, not everybody's open tasks."
+function _vaMyTasks(vaName){
+  return (typeof _tasksCache!=='undefined'?_tasksCache:[])
+    .filter(t=>_taskOpenFor(t,vaName) && _taskHasAssignee(t,vaName));
+}
+function _vaTaskSplit(vaName){
+  const today=new Date(); today.setHours(0,0,0,0);
+  const mine=_vaMyTasks(vaName);
+  const dt=t=>{ const v=t&&(t.due_date||t.dueDate); if(!v) return null; const d=new Date(v+'T00:00:00'); return isNaN(d)?null:d; };
+  return {
+    all:mine,
+    over:mine.filter(t=>{const d=dt(t); return d && d<today;}).sort((a,b)=>String(a.due_date||'').localeCompare(String(b.due_date||''))),
+    today:mine.filter(t=>{const d=dt(t); return d && d.getTime()===today.getTime();})
+  };
+}
+function _vaGo(sec,cat){
+  // Leaving a category closes the template editor, but toggling the editor open on the
+  // same category must not close it again on the way back in.
+  if((window._vaCat||null)!==(cat||null)) window._vaTplEdit=false;
+  window._vaSec=sec||null;
+  window._vaCat=cat||null;
+  openVAAdminDashboard('va');
+}
+function _vaBoard(vaName){
+  const s=_vaTaskSplit(vaName);
+  const box=(lab,val,fine,col,fn)=>`<div onclick="${fn}" style="background:#fff;border:0.5px solid #e0e4ec;border-left:4px solid ${col};border-radius:11px;padding:15px 17px;cursor:pointer;min-width:0">
+    <div style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:${col}">${lab}</div>
+    <div style="font-size:38px;font-weight:600;color:#111;line-height:1.05;margin:5px 0 3px">${val}</div>
+    <div style="font-size:12px;color:#566070">${fine}</div></div>`;
+  const seccard=(key)=>{
+    const d=VA_SECS[key];
+    const rows=d.cats.map(c=>`<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:0.5px dashed #eef0f6;font-size:13px;color:#566070">
+        <span style="width:18px;height:18px;border-radius:5px;background:#f5f6f9;border:0.5px solid #e0e4ec;font-size:10.5px;font-weight:700;display:grid;place-items:center;color:#8A94A6">${VA_CATS[c].n}</span>
+        <span style="flex:1;min-width:0">${_calEsc(VA_CATS[c].name)}</span>
+        <span style="font-weight:600;color:#111">${_vaCards(c).length}</span></div>`).join('');
+    return `<div onclick="_vaGo('${key}',null)" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;overflow:hidden;cursor:pointer;min-width:0">
+      <div style="padding:13px 16px 11px;border-bottom:0.5px solid #e0e4ec;background:#fafbfc">
+        <div style="font-size:16.5px;font-weight:600;color:#111">${d.name}</div>
+        <div style="font-size:12px;color:#566070">${_vaSecCount(key)} properties</div></div>
+      <div style="padding:8px 16px 12px">
+        <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:0.5px dashed #eef0f6;font-size:13px;color:#111;font-weight:600">
+          <span style="width:18px;height:18px;border-radius:5px;background:#FBEFDF;border:0.5px solid #F0D5AE;font-size:10.5px;display:grid;place-items:center;color:#D4760A">&#9776;</span>
+          <span style="flex:1">SOP / Order of Operations</span></div>
+        ${rows}</div></div>`;
+  };
+  return `<div style="padding:18px 20px 30px;max-width:1060px;margin:0 auto;color:#111">
+    ${_vaSaveBar()}
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:4px">
+      <div style="width:42px;height:42px;border-radius:11px;background:#E6F1FB;border:0.5px solid #C3DAEA;color:#185FA5;display:grid;place-items:center;font-weight:700;font-size:16px">${_calEsc(String(vaName||'VA').slice(0,2).toUpperCase())}</div>
+      <div><div style="font-size:21px;font-weight:600">${_calEsc(vaName)}</div>
+      <div style="font-size:12px;color:#8A94A6">VA Assistant &middot; ${_vaSecCount('pre')+_vaSecCount('act')+_vaSecCount('post')} properties on her desk</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:11px;margin:16px 0 8px">
+      ${box('Overdue', s.over.length, 'her own tasks only', '#B3261E', "_vaGo('tasks','over')")}
+      ${box('Due today', s.today.length, 'her own tasks only', '#D4760A', "_vaGo('tasks','today')")}
+      ${box('Open tasks', s.all.length, 'everything still on her plate', '#185FA5', "_vaGo('tasks','all')")}
+    </div>
+    <div style="font-size:11.5px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#8A94A6;margin:22px 0 10px">Her three sections</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(265px,1fr));gap:12px">
+      ${seccard('pre')}${seccard('act')}${seccard('post')}
+    </div>
+    <div style="margin-top:18px;background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:13px 16px">
+      <div style="font-size:13.5px;font-weight:600;margin-bottom:3px">Tracker clean-up</div>
+      <div style="font-size:12.5px;color:#566070">W-9, utilities, mowing, permits and the window list all live under the Trackers tab. They are counted separately from her tasks on purpose, so the three boxes above stay her own work.</div>
+      <div style="margin-top:9px;display:flex;gap:8px;flex-wrap:wrap">
+        <div onclick="openVAAdminDashboard('trackers')" style="font-size:12.5px;background:#111;color:#fff;border-radius:6px;padding:6px 12px;cursor:pointer">Open the trackers</div>
+        <div onclick="_vaGo('person',null)" style="font-size:12.5px;background:#fff;border:0.5px solid #e0e4ec;border-radius:6px;padding:6px 12px;cursor:pointer;color:#566070">Her task calendar</div>
+      </div>
+    </div>
+  </div>`;
+}
+function _vaTaskList(vaName,which){
+  const s=_vaTaskSplit(vaName);
+  const list=which==='over'?s.over:(which==='today'?s.today:s.all);
+  const title=which==='over'?'Overdue':(which==='today'?'Due today':'Open tasks');
+  const today=new Date(); today.setHours(0,0,0,0);
+  const row=t=>{
+    const due=t.due_date||t.dueDate||'';
+    const d=due?new Date(due+'T00:00:00'):null;
+    const late=d?Math.round((today-d)/86400000):0;
+    const card=(typeof propCards!=='undefined'?propCards:[]).find(c=>c.id===t.property_id);
+    return `<tr style="border-top:0.5px solid #eef0f6">
+      <td style="padding:8px 12px;font-weight:600">${card?`<span onclick="openPropDetail('${card.id}')" style="cursor:pointer;color:#185FA5">${_calEsc(card.addr||'')}</span>`:'<span style="color:#8A94A6">&mdash;</span>'}</td>
+      <td style="padding:8px 12px">${_calEsc(t.title||'')}</td>
+      <td style="padding:8px 12px;white-space:nowrap">${_calEsc(due)}</td>
+      <td style="padding:8px 12px;white-space:nowrap;color:${late>0?'#B3261E':'#566070'}">${late>0?(late+' days late'):(late===0?'today':'')}</td></tr>`;
+  };
+  return `<div style="padding:18px 20px 30px;max-width:980px;margin:0 auto;color:#111">
+    <div onclick="_vaGo(null,null)" style="display:inline-block;font-size:12.5px;background:#fff;border:0.5px solid #e0e4ec;border-radius:7px;padding:5px 11px;cursor:pointer;color:#566070">&larr; Back to her dashboard</div>
+    <div style="font-size:19px;font-weight:600;margin:14px 0 3px">${title} &mdash; ${_calEsc(vaName)}</div>
+    <div style="font-size:12.5px;color:#566070;margin-bottom:12px">Only her tasks. Everybody else's overdue work shows on their own page, not here.</div>
+    <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:13.5px">
+        <thead><tr style="background:#122A4A;color:#fff"><th style="padding:9px 12px;text-align:left">Property</th><th style="padding:9px 12px;text-align:left">Task</th><th style="padding:9px 12px;text-align:left">Due</th><th style="padding:9px 12px;text-align:left"></th></tr></thead>
+        <tbody>${list.map(row).join('')||'<tr><td colspan="4" style="padding:22px;text-align:center;color:#636b7a">Nothing here. </td></tr>'}</tbody>
+      </table></div>
+  </div>`;
+}
+async function _vaSopSave(sec){
+  const e=document.getElementById('va-sop-box'); if(!e) return;
+  await _trkSet('va_sop',sec,'text',e.value,true);
+}
+async function _vaTplSave(cat){
+  const e=document.getElementById('va-tpl-box'); if(!e) return;
+  await _trkSet('va_tpl',cat,'items',e.value,true);
+}
+async function _vaTplReset(cat){
+  if(_blockIfReadOnly()) return;
+  if(!confirm('Put this checklist back to the starting version? Anything you have typed into the template is replaced.')) return;
+  await _trkSet('va_tpl',cat,'items','',true);
+}
+function _vaSectionView(vaName,sec){
+  const d=VA_SECS[sec];
+  const cat=window._vaCat && VA_CATS[window._vaCat] && VA_CATS[window._vaCat].sec===sec ? window._vaCat : 'sop';
+  const ro=isReadOnly();
+  const railBtn=(key,label,num,count,on)=>`<div onclick="_vaGo('${sec}','${key==='sop'?'':key}')" style="display:flex;align-items:center;gap:9px;padding:9px;border-radius:8px;cursor:pointer;font-size:13.5px;color:${on?'#111':'#566070'};background:${on?'#E6F1FB':'transparent'};font-weight:${on?'600':'400'}">
+      <span style="width:18px;height:18px;border-radius:5px;font-size:10.5px;font-weight:700;display:grid;place-items:center;flex:none;${key==='sop'?'background:#FBEFDF;border:0.5px solid #F0D5AE;color:#D4760A':(on?'background:#185FA5;border:0.5px solid #185FA5;color:#fff':'background:#f5f6f9;border:0.5px solid #e0e4ec;color:#8A94A6')}">${num}</span>
+      <span style="flex:1;min-width:0">${_calEsc(label)}</span>
+      <span style="font-size:12px;color:#8A94A6">${count}</span></div>`;
+  const rail=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:8px;min-width:0">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8A94A6;padding:6px 9px 7px">Categories, in order</div>
+      ${railBtn('sop','SOP / Order of Operations','&#9776;','',cat==='sop')}
+      ${d.cats.map(c=>railBtn(c,VA_CATS[c].name,VA_CATS[c].n,_vaCards(c).length,cat===c)).join('')}
+      ${sec==='post'?`<div onclick="alert('The Request Remedy dashboard is not built yet. It is next on the list - this button is where it will open from.')" style="display:flex;align-items:center;gap:9px;padding:9px;border-radius:8px;cursor:pointer;font-size:13.5px;color:#7A3FA8"><span style="width:18px;height:18px;border-radius:5px;background:#F3E8FB;border:0.5px solid #D9BCF0;font-size:10.5px;display:grid;place-items:center;flex:none">&#8599;</span><span style="flex:1">Request Remedy</span><span style="font-size:11px;color:#8A94A6">to build</span></div>`:''}
+    </div>`;
+  let body;
+  if(cat==='sop'){
+    body=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;overflow:hidden">
+      <div style="padding:13px 16px;border-bottom:0.5px solid #e0e4ec;background:#fafbfc;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <div><div style="font-size:16px;font-weight:600">SOP / Order of Operations</div>
+        <div style="font-size:12px;color:#566070">What she does in 1, 2, 3 and 4 &mdash; the whole recap on one tab. Edit it here; it saves to the website.</div></div>
+        ${ro?'':`<div onclick="_vaSopSave('${sec}')" style="font-size:12.5px;background:#111;color:#fff;border-radius:6px;padding:7px 14px;cursor:pointer">Save</div>`}
+      </div>
+      <div style="padding:14px 16px">
+        ${ro?`<div style="white-space:pre-wrap;font-size:13.5px;line-height:1.65;color:#111">${_calEsc(_vaSop(sec))}</div>`
+            :`<textarea id="va-sop-box" style="width:100%;min-height:270px;font:inherit;font-size:13.5px;line-height:1.65;color:#111;border:0.5px solid #e0e4ec;border-radius:8px;padding:11px 12px;resize:vertical">${_calEsc(_vaSop(sec))}</textarea>`}
+      </div></div>`;
+  } else {
+    const items=_vaTpl(cat);
+    const cards=_vaCards(cat);
+    const prow=c=>{
+      const [done,total]=_vaChkCount(c.id,cat);
+      const boxes=items.map(it=>{
+        const sl=_vaSlug(it), on=_vaChkOn(c.id,cat,it);
+        return ro?`<span title="${_calEsc(it)}" style="font-size:15px">${on?'✅':'⬜'}</span>`
+                 :`<span onclick="_vaChkToggle('${c.id}','${cat}','${sl}')" title="${_calEsc(it)}" style="cursor:pointer;font-size:15px">${on?'✅':'⬜'}</span>`;
+      }).join(' ');
+      return `<tr style="border-top:0.5px solid #eef0f6">
+        <td style="padding:9px 12px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span>
+          <div style="font-size:11px;color:#8A94A6">${_calEsc(_phLabel(c.phase))}${c.pm?(' &middot; '+_calEsc(c.pm)):''}</div></td>
+        <td style="padding:9px 12px;white-space:nowrap">${boxes}</td>
+        <td style="padding:9px 12px;white-space:nowrap;font-weight:600;color:${done===total&&total?'#2E7D32':'#8A5A10'}">${done}/${total}</td></tr>`;
+    };
+    // Upcoming Takedowns also carries the addresses the Slack check found with no card.
+    // It never creates one by itself - it flags, and a person presses Save.
+    let unm='';
+    if(cat==='pre1'){
+      const list=(typeof _unmList==='function'?_unmList():[]);
+      unm=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid #AF2C2B;border-radius:11px;margin-bottom:12px;overflow:hidden">
+        <div style="padding:12px 16px;border-bottom:0.5px solid #e0e4ec;background:#FCEBEB">
+          <div style="font-size:14px;font-weight:600;color:#791F1F">Needs a property card (${list.length})</div>
+          <div style="font-size:12px;color:#72243E">Addresses the scheduled check found in the closings and vacancy channels that have no card on the board. Nothing is created automatically &mdash; open it, look at it, and press Save.</div></div>
+        ${list.length?list.map(x=>`<div style="display:flex;align-items:center;gap:10px;padding:10px 16px;border-top:0.5px solid #eef0f6;flex-wrap:wrap">
+            <div style="flex:1;min-width:160px"><div style="font-weight:600;font-size:13.5px">${_calEsc(x.addr||'')}</div>
+            <div style="font-size:11.5px;color:#8A94A6">${_calEsc([x.kind,x.deal,x.vacancy?('vacant '+x.vacancy):'',x.closing?('closing '+x.closing):''].filter(Boolean).join(' · '))}</div></div>
+            ${ro?'':`<div onclick="_unmMakeCard('${x.key}')" style="font-size:12px;background:#111;color:#fff;border-radius:6px;padding:5px 11px;cursor:pointer">Create the card</div>
+            <div onclick="_unmDismiss('${x.key}')" style="font-size:12px;background:#fff;border:0.5px solid #e0e4ec;border-radius:6px;padding:5px 11px;cursor:pointer;color:#566070">Not ours</div>`}
+          </div>`).join(''):'<div style="padding:14px 16px;font-size:13px;color:#636b7a">Nothing waiting. Every address Slack has mentioned already has a card.</div>'}
+      </div>`;
+    }
+    body=`${unm}
+      <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;overflow:hidden">
+      <div style="padding:13px 16px;border-bottom:0.5px solid #e0e4ec;background:#fafbfc;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <div><div style="font-size:16px;font-weight:600">${_calEsc(VA_CATS[cat].name)}</div>
+        <div style="font-size:12px;color:#566070">${cards.length} ${cards.length===1?'property':'properties'} &middot; her checklist on each</div></div>
+        ${ro?'':`<div onclick="window._vaTplEdit=!window._vaTplEdit;_vaGo('${sec}','${cat}')" style="font-size:12.5px;background:#fff;border:0.5px solid #e0e4ec;border-radius:6px;padding:6px 12px;cursor:pointer;color:#566070">${window._vaTplEdit?'Close the template':'Edit the checklist'}</div>`}
+      </div>
+      ${(!ro&&window._vaTplEdit)?`<div style="padding:13px 16px;background:#FBFAF7;border-bottom:0.5px solid #e0e4ec">
+        <div style="font-size:12.5px;color:#566070;margin-bottom:7px">One line per item. This is the template for <b>${_calEsc(VA_CATS[cat].name)}</b> &mdash; it applies to every property in this category. Ticks already made stay with the wording they were made against, so changing a line resets that one box.</div>
+        <textarea id="va-tpl-box" style="width:100%;min-height:150px;font:inherit;font-size:13.5px;line-height:1.6;border:0.5px solid #e0e4ec;border-radius:8px;padding:10px 11px;resize:vertical">${_calEsc(items.join('\n'))}</textarea>
+        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+          <div onclick="_vaTplSave('${cat}')" style="font-size:12.5px;background:#111;color:#fff;border-radius:6px;padding:7px 14px;cursor:pointer">Save the checklist</div>
+          <div onclick="_vaTplReset('${cat}')" style="font-size:12.5px;background:#fff;border:0.5px solid #e0e4ec;border-radius:6px;padding:7px 14px;cursor:pointer;color:#566070">Back to the starting version</div></div>
+      </div>`:''}
+      <div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13.5px">
+        <thead><tr style="background:#122A4A;color:#fff"><th style="padding:9px 12px;text-align:left">Property</th><th style="padding:9px 12px;text-align:left">Her checklist</th><th style="padding:9px 12px;text-align:left">Done</th></tr></thead>
+        <tbody>${cards.map(prow).join('')||'<tr><td colspan="3" style="padding:22px;text-align:center;color:#636b7a">No properties in this category right now.</td></tr>'}</tbody>
+      </table></div>
+      ${items.length?`<div style="padding:11px 16px;border-top:0.5px solid #eef0f6;font-size:12px;color:#8A94A6">Boxes read left to right: ${items.map(_calEsc).join(' &middot; ')}</div>`:''}
+    </div>`;
+  }
+  return `<div style="padding:18px 20px 30px;max-width:1060px;margin:0 auto;color:#111">
+    ${_vaSaveBar()}
+    <div onclick="_vaGo(null,null)" style="display:inline-block;font-size:12.5px;background:#fff;border:0.5px solid #e0e4ec;border-radius:7px;padding:5px 11px;cursor:pointer;color:#566070">&larr; Back to her dashboard</div>
+    <div style="display:flex;align-items:center;gap:11px;flex-wrap:wrap;margin:14px 0 2px">
+      <div style="font-size:21px;font-weight:600">${d.name}</div>
+      <div style="font-size:11.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:${d.col};background:#fff;border:0.5px solid ${d.col}33;border-radius:999px;padding:3px 10px">${_vaSecCount(sec)} properties</div>
+    </div>
+    <div style="display:grid;grid-template-columns:250px 1fr;gap:14px;align-items:start;margin-top:14px" class="va-split">
+      ${rail}${body}
+    </div>
+  </div>`;
+}
+function _vaDeskView(vaName){
+  if(window._vaSec==='tasks')  return _vaTaskList(vaName, window._vaCat||'all');
+  if(window._vaSec==='person') return `<div style="padding:18px 20px 0;max-width:1060px;margin:0 auto"><div onclick="_vaGo(null,null)" style="display:inline-block;font-size:12.5px;background:#fff;border:0.5px solid #e0e4ec;border-radius:7px;padding:5px 11px;cursor:pointer;color:#566070">&larr; Back to her dashboard</div></div>`+_vaPersonView(vaName);
+  if(window._vaSec && VA_SECS[window._vaSec]) return _vaSectionView(vaName, window._vaSec);
+  return _vaBoard(vaName);
 }
 // ---- Trackers (W-9 / Mowing / Checklists) — persisted in pm_settings key 'trackers'. ----
 async function _trkLoad(){ window._trkLoaded=true; try{ const r=await supabase.from("pm_settings").select("data").eq("key","trackers").maybeSingle(); if(r.error){ window._trkLoadOk=false; window._trkData={}; window._trkBase={}; return; } window._trkLoadOk=true; window._trkData=(r.data&&r.data.data)||{}; window._trkBase=JSON.parse(JSON.stringify(window._trkData)); }catch(e){ window._trkLoadOk=false; window._trkData={}; window._trkBase={}; } }
@@ -21852,6 +22193,67 @@ function _vaTrackers(){
   // with whichever one the W-9 was actually filled out as and shows the other underneath
   // as the cross-reference. The Jobs column is gone - it belongs on the directory.
   const _w9on=(c)=>!!(d.w9||{})[c.id];
+  // ---- Catching a bad entry at the point it is typed ---------------------------------
+  // Bruce, 4 Oct: "Antonio deck build and siding ripoff. That's not a contractor name. He
+  // just explained a contractor task ... BP, who's that? Is that BP Remodeling? Carlos
+  // Granite, that needs corrected. Chris Har, Tree Guy, that needs corrected."
+  // None of these were caught because nothing ever looked at what was typed. These rules
+  // look, and they only ever FLAG - nothing is renamed, merged or deleted automatically.
+  const _W9_TASKWORDS=/\b(rip\s*off|ripoff|tear\s*out|build|install|installation|repair|haul|hauling|removal|remove|clean\s*out|cleaning|siding|deck|roofing|granite|concrete|drywall|framing|paint|painting|plumbing|electrical|hvac|dumpster|tree|stump|mow|mowing|trim|window|door|flooring|tile|insulation|demo|demolition)\b/i;
+  const _w9Digits=(v)=>String(v||'').replace(/\D+/g,'').slice(-10);
+  const _w9Flags=(c)=>{
+    const out=[];
+    const nm=String(c.name||'').trim();
+    const biz=String(c.business_name||'').trim();
+    const w9n=String(_trkVal('w9info',c.id,'w9name')||'').trim();
+    const first=String(_trkVal('w9info',c.id,'first')||'').trim();
+    const last=String(_trkVal('w9info',c.id,'last')||'').trim();
+    const words=nm.split(/\s+/).filter(Boolean);
+    // 1. The name field is describing a job rather than naming a person or a company.
+    if(nm && _W9_TASKWORDS.test(nm) && words.length>=3)
+      out.push('Reads like a job or a nickname, not a name');
+    // 2. One word and nothing else to go on - "BP", "Devon", "gladis".
+    else if(nm && words.length===1 && !biz && !w9n)
+      out.push('First name only, no business and no W-9 name');
+    // 3. A nickname carried into the name field - "Chris Harr Tree Guy", "Doug Dumpster".
+    else if(nm && _W9_TASKWORDS.test(nm) && words.length===2 && !biz)
+      out.push('Looks like a nickname - needs the real name');
+    // 4. The W-9 is ticked but we never captured whose legal name is on it.
+    if(_w9on(c) && !first && !last && !w9n)
+      out.push('W-9 ticked but no name recorded for it');
+    // 5. The typed W-9 name matches neither the person nor the company.
+    if(w9n && nm && biz){
+      const t=w9n.toLowerCase();
+      if(t.indexOf(nm.toLowerCase())<0 && t.indexOf(biz.toLowerCase())<0 &&
+         nm.toLowerCase().indexOf(t)<0 && biz.toLowerCase().indexOf(t)<0)
+        out.push('W-9 name matches neither the person nor the business');
+    }
+    // 6. Somebody else in the directory has the same phone, or the same name.
+    const dup=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).find(o=>{
+      if(!o || o.id===c.id) return false;
+      const ph=_w9Digits(c.phone);
+      if(ph && ph.length===10 && _w9Digits(o.phone)===ph) return true;
+      const a=(nm||biz).toLowerCase(), b=String(o.name||o.business_name||'').toLowerCase();
+      return !!a && a===b;
+    });
+    if(dup) out.push('Looks like a duplicate of "'+String(dup.name||dup.business_name||'')+'"');
+    return out;
+  };
+  // Split a plain "Firstname Lastname" so she is not retyping what is already there.
+  const _w9Guess=(c,which)=>{
+    const nm=String(c.name||'').trim();
+    if(!nm || _W9_TASKWORDS.test(nm)) return '';
+    const w=nm.split(/\s+/).filter(Boolean);
+    if(w.length<2) return which==='first'?(w[0]||''):'';
+    return which==='first'?w[0]:w.slice(1).join(' ');
+  };
+  const _w9NameCell=(c,which)=>{
+    const have=String(_trkVal('w9info',c.id,which)||'').trim();
+    if(ro) return have||'<span style="color:#8A94A6">&mdash;</span>';
+    const guess=have?'':_w9Guess(c,which);
+    return txt('w9info',c.id,which,which==='first'?'First name':'Last name',104)
+      + (guess?`<div onclick="_trkSet('w9info','${c.id}','${which}','${_calEsc(guess).replace(/'/g,"&#39;")}',true)" style="font-size:10px;color:#185FA5;cursor:pointer;margin-top:2px">use &ldquo;${_calEsc(guess)}&rdquo;</div>`:'');
+  };
   // What name is this W-9 under? The typed "Name on W-9" wins, then the business, then
   // the person - because that is the order of what the paperwork will actually say.
   const _w9Title=(c)=>{
@@ -21870,19 +22272,23 @@ function _vaTrackers(){
     if(per && per.toLowerCase()!==t) return per;
     return '';
   };
-  const w9sorted=cons.slice().sort((a,b)=> (_w9on(a)-_w9on(b)) || ((!!a.red_flag)-(!!b.red_flag)) || String(a.name||'').localeCompare(String(b.name||'')));
-  const w9rows=cons.length?w9sorted.map(c=>{ const T=_w9Title(c); return `<tr data-trk="${_calEsc((c.name||'')+' '+(c.business_name||'')+' '+T.main+' '+(c.trade||'')+' '+(c.phone||'')+' '+(c.email||''))}" style="border-top:0.5px solid #eef0f6;${_w9on(c)?'':'background:#FFFBF7'}">
-    <td style="padding:7px 10px;font-weight:600;color:${c.red_flag?'#B42318':'#111'}">${c.red_flag?'🚩 ':''}${_calEsc(T.main)}
+  const w9sorted=cons.slice().sort((a,b)=> (_w9Flags(b).length?1:0)-(_w9Flags(a).length?1:0) || (_w9on(a)-_w9on(b)) || ((!!a.red_flag)-(!!b.red_flag)) || String(a.name||'').localeCompare(String(b.name||'')));
+  const w9flagged=cons.filter(c=>_w9Flags(c).length).length;
+  const w9rows=cons.length?w9sorted.map(c=>{ const T=_w9Title(c); const fl=_w9Flags(c); return `<tr data-trk="${_calEsc((c.name||'')+' '+(c.business_name||'')+' '+T.main+' '+(c.trade||'')+' '+(c.phone||'')+' '+(c.email||'')+(fl.length?' flagged needs fixing':''))}" style="border-top:0.5px solid #eef0f6;${fl.length?'background:#FFF6F5':(_w9on(c)?'':'background:#FFFBF7')}">
+    <td style="padding:7px 10px;font-weight:600;color:${c.red_flag?'#B42318':'#111'};min-width:170px">${c.red_flag?'\uD83D\uDEA9 ':''}${_calEsc(T.main)}
       <div style="font-size:10px;color:#8A5A10;font-weight:400">${_calEsc(T.how)}</div>
       ${T.sub?`<div style="font-size:11px;color:#566070;font-weight:400">${_calEsc(T.sub)}</div>`:''}
       ${c.trade?`<div style="font-size:11px;color:#636b7a;font-weight:400">${_calEsc(c.trade)}</div>`:''}</td>
+    <td style="padding:7px">${_w9NameCell(c,'first')}</td>
+    <td style="padding:7px">${_w9NameCell(c,'last')}</td>
     <td style="padding:7px">${txt('w9info',c.id,'w9name','Name on W-9',150)}</td>
     <td style="text-align:center;padding:7px">${chk('w9',c.id,(d.w9||{})[c.id])}${_w9on(c)?'':'<div style="font-size:10.5px;color:#8A5A10;margin-top:2px">still needed</div>'}</td>
+    <td style="padding:7px;min-width:150px">${fl.length?fl.map(x=>`<div style="font-size:11px;color:#B42318;line-height:1.35">\uD83D\uDEA9 ${_calEsc(x)}</div>`).join(''):'<span style="color:#8A94A6;font-size:11.5px">&mdash;</span>'}</td>
     <td style="padding:7px">${txt('w9info',c.id,'note','Notes / no W-9 needed',170)}</td>
-    <td style="padding:7px">${ro?(_calEsc(c.email)||'—'):`<input value="${_calEsc(c.email||'')}" placeholder="Email" onchange="setContractorField('${c.id}','email',this.value)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:150px"/>`}
+    <td style="padding:7px">${ro?(_calEsc(c.email)||'\u2014'):`<input value="${_calEsc(c.email||'')}" placeholder="Email" onchange="setContractorField('${c.id}','email',this.value)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:150px"/>`}
       <div style="font-size:10px;color:#636b7a;margin-top:2px">from the directory</div></td>
-    <td style="padding:7px">${ro?(_calEsc(c.phone)||'—'):`<input value="${_calEsc(c.phone||'')}" placeholder="Phone" onchange="setContractorField('${c.id}','phone',this.value)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:120px"/>`}</td>
-    ${ro?'':`<td style="padding:7px;text-align:right;white-space:nowrap"><span onclick="deleteContractor('${c.id}','trackers')" title="Delete this contractor everywhere" style="cursor:pointer;color:#c0392b;font-size:12.5px">Remove</span></td>`}</tr>`; }).join(""):'<tr><td colspan="7" style="padding:16px;color:#636b7a;text-align:center">No contractors in the directory yet. Add them under Tools → Contractor Directory.</td></tr>';
+    <td style="padding:7px">${ro?(_calEsc(c.phone)||'\u2014'):`<input value="${_calEsc(c.phone||'')}" placeholder="Phone" onchange="setContractorField('${c.id}','phone',this.value)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:120px"/>`}</td>
+    ${ro?'':`<td style="padding:7px;text-align:right;white-space:nowrap"><span onclick="deleteContractor('${c.id}','trackers')" title="Delete this contractor everywhere" style="cursor:pointer;color:#c0392b;font-size:12.5px">Remove</span></td>`}</tr>`; }).join(""):'<tr><td colspan="10" style="padding:16px;color:#636b7a;text-align:center">No contractors in the directory yet. Add them under Tools \u2192 Contractor Directory.</td></tr>';
 
   // ---------- Mowing tracker (mirrors the Active Mowing Tracker sheet) ----------
   const mowWhoSel=(c)=>{
@@ -22054,7 +22460,9 @@ function _vaTrackers(){
         <div id="trk-status" style="font-size:12.5px;line-height:1.2">${ro?'<span style="color:#636b7a">Read only</span>':'<span style="color:#636b7a">Every box saves itself as you go</span>'}</div>
       </div>${tiles}${inner}</div>`;
 
-  if(view==='w9') return shell(back+_trkSearchBox('Search a person, a business name or a trade…')+_trkTable('🧾 W-9 Tracker','#7A3FA8','<th style="padding:9px 10px;text-align:left">Who the W-9 is under</th><th style="padding:9px;text-align:left">Name on W-9</th><th style="padding:9px">On file</th><th style="padding:9px;text-align:left">Notes</th><th style="padding:9px;text-align:left">Email</th><th style="padding:9px;text-align:left">Phone</th>'+(ro?'':'<th></th>'),w9rows)+`<div style="font-size:12px;color:#566070">A contractor fills a W-9 in as <b>either himself or his company</b> — whichever it was, that is the name shown first, with the other underneath so you can still find him. Type it in "Name on W-9" if it differs from both. Ticking "On file" here also marks them in the Contractor Directory.${ro?'':' <b>Remove</b> deletes the whole contractor record — use it on duplicates.'}</div>`);
+  if(view==='w9') return shell(back+_trkSearchBox('Search a person, a business name or a trade…')
+    +(w9flagged?`<div style="background:#FBE9E7;border:0.5px solid #F0C7C3;border-radius:9px;padding:10px 13px;margin-bottom:11px;font-size:12.5px;color:#72241F"><b>${w9flagged} ${w9flagged===1?'entry needs':'entries need'} fixing.</b> They are at the top of the list with the reason beside them. Nothing has been renamed or merged \u2014 fix them in the Contractor Directory, or type the right name into <i>Name on W-9</i>. Search <b>flagged</b> to see only these.</div>`:'')
+    +_trkTable('🧾 W-9 Tracker','#7A3FA8','<th style="padding:9px 10px;text-align:left">Who the W-9 is under</th><th style="padding:9px;text-align:left">First name</th><th style="padding:9px;text-align:left">Last name</th><th style="padding:9px;text-align:left">Name on W-9</th><th style="padding:9px">On file</th><th style="padding:9px;text-align:left">Needs fixing</th><th style="padding:9px;text-align:left">Notes</th><th style="padding:9px;text-align:left">Email</th><th style="padding:9px;text-align:left">Phone</th>'+(ro?'':'<th></th>'),w9rows)+`<div style="font-size:12px;color:#566070">A contractor fills a W-9 in as <b>either himself or his company</b> — whichever it was, that is the name shown first, with the other underneath so you can still find him. Type it in "Name on W-9" if it differs from both. Ticking "On file" here also marks them in the Contractor Directory.${ro?'':' <b>Remove</b> deletes the whole contractor record — use it on duplicates.'}</div>`);
   if(view==='mow') return shell(back+_trkSearchBox('Search a property…')+_trkTable('🌱 Mowing Tracker','#3B6D11','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px;text-align:left">Who is mowing</th><th style="padding:9px;text-align:left">How often</th><th style="padding:9px;text-align:left">Cost/mow</th><th style="padding:9px;text-align:left">Contact #</th><th style="padding:9px;text-align:left">PM</th><th style="padding:9px;text-align:left">Payment</th><th style="padding:9px">On route</th><th style="padding:9px">Removed after</th>',mowrows)+_trkClosedSimple(closed,'mowing history'));
   if(view==='window') return shell(back+winStageBar+winAdd+_trkSearchBox('Search a property…')+_trkTable('🪟 Window Tracker'+(_wf?' — '+_winStageMeta(_wf).label:''),'#185FA5','<th style="padding:9px 10px;text-align:left">Property / what’s being replaced</th><th style="padding:9px">Needed</th><th style="padding:9px">Measure</th><th style="padding:9px">Ordered</th><th style="padding:9px">Arrival</th><th style="padding:9px">Install &amp; confirm</th><th style="padding:9px;text-align:left">Notes &amp; comments</th>',winrows)+`<div style="font-size:12px;color:#566070;margin-top:-8px">This list is the window <b>queue</b> &mdash; only houses somebody has actually asked for windows or glass on. Use <b>Add to the window list</b> above for a one-off job. Each square is one stage: the number is how many houses are waiting on <i>that</i> step, and clicking a square filters the list to it. A house moves on when you tick the box, not when you set the date &mdash; a booked install is still an install to chase. Dates you set here land on that property’s construction calendar automatically, and Slack posts 48 hours before the measure and install dates — in <b>#Window-Tracker</b>, the same channel the scheduled alerts go to. Post there when you have asked for a measure and the request shows up on this list.${winFin.length?` <b>${winFin.length}</b> finished propert${winFin.length===1?'y is':'ies are'} in the completed folder below.`:''}</div>`+winFinished+winClosed);
   // ---------- Utility tracker, one rectangle per property ----------
@@ -28819,4 +29227,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-04e apply-to-both-luxury-rehab-short-glossary -->
+<!-- build: 2026-10-05a va-dashboard-w9-names-trackers-route-48h-bell -->
