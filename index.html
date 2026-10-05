@@ -10072,6 +10072,46 @@ function _miItemNoteVal(itemKey){ return ((window._miData||{}).notes||{})[itemKe
 // Ticks and confirmations belong to one week and are not carried, so they live
 // with that week's notes under keys that cannot collide with a property id.
 function _wmMeta(wk, kind, key){ return ((((window._wmData||{})[wk]||{})[kind]||{})[key])||{}; }
+// ---- One person's tick must not undo somebody else's --------------------------
+// Bruce, 5 Oct: "on the monday project meeting doc andrew already marked things
+// completed and it didnt register and save it."
+//
+// It did register. It was then overwritten. Every one of these meeting records -
+// the carried-over list, the ready/covered flags, the per-topic pills, the
+// confirmations - is ONE object holding every property in the meeting. Ticking a box
+// rebuilt that whole object from what THIS browser happened to be holding and wrote
+// it back over the top. _wmWriteField re-reads the live row first, which is why a
+// note typed in one box never ate a note typed in another - but it then replaced the
+// whole map with the stale copy anyway, so every tick anybody else had made since
+// this tab last refreshed was wiped without a word.
+//
+// Andrew ticked his houses on Monday morning. The next PM to tick anything had the
+// meeting open from before that, and his save put the pre-Andrew list back.
+//
+// This writes ONE entry of ONE map, laid onto a freshly read record. Two people
+// ticking different houses - or the same house - now both keep their tick.
+// `value` may be a function, which receives whatever is in the live record right now
+// and returns what should replace it; return undefined to remove the entry.
+async function _wmSetMetaAt(wk, kind, metaKey, subKey, value){
+  if(_blockIfReadOnly()) return false;
+  if(window._wmLoadOk===false){ alert("This week's meeting could not be loaded a moment ago. Saving now would overwrite the real record with a blank one, so this save was stopped."); return false; }
+  const fresh=await _pmSettingsRead('meeting_notes');
+  if(!fresh || typeof fresh!=='object'){
+    alert("THAT WAS NOT SAVED \u2014 the meeting record could not be re-read, so nothing was written. Nothing was lost; try again in a moment.");
+    return false;
+  }
+  fresh[wk]=fresh[wk]||{};
+  fresh[wk][kind]=fresh[wk][kind]||{};
+  const live=fresh[wk][kind][metaKey];
+  const map=Object.assign({}, (live && typeof live==='object' && !Array.isArray(live)) ? live : {});
+  const next=(typeof value==='function') ? value(map[subKey]) : value;
+  if(next===undefined) delete map[subKey]; else map[subKey]=next;
+  fresh[wk][kind][metaKey]=map;
+  const err=await _pmSettingsWrite('meeting_notes', fresh);
+  if(err){ alert("THAT WAS NOT SAVED \u2014 "+err); return false; }
+  window._wmData=fresh;
+  return true;
+}
 async function _wmSetMeta(wk, kind, key, obj){
   if(_blockIfReadOnly()) return false;
   if(window._wmLoadOk===false){ alert("This week's meeting could not be loaded a moment ago. Saving now would overwrite the real record with a blank one, so this save was stopped."); return false; }
@@ -10139,15 +10179,11 @@ function _wmStateOf(wk, pid){
   return 'todo';
 }
 async function _wmReady(wk, pid){
-  const m=Object.assign({}, _wmMeta(wk,'team','__ready'));
-  if(m[pid]) delete m[pid]; else m[pid]=true;
-  if(await _wmSetMeta(wk,'team','__ready',m)) openWeeklyMeeting('team', wk);
+  if(await _wmSetMetaAt(wk,'team','__ready',pid, function(cur){ return cur?undefined:true; })) openWeeklyMeeting('team', wk);
 }
 async function _wmCovered(wk, pid){
-  const m=Object.assign({}, _wmMeta(wk,'team','__covered'));
-  if(m[pid]) delete m[pid]; else m[pid]=true;
   _wmToggleOpen(pid,false);
-  if(await _wmSetMeta(wk,'team','__covered',m)) openWeeklyMeeting('team', wk);
+  if(await _wmSetMetaAt(wk,'team','__covered',pid, function(cur){ return cur?undefined:true; })) openWeeklyMeeting('team', wk);
 }
 // Bruce, 7 Sept: "the PDF needs to appear on the property card once the kickoff
 // for that property has been marked completed." The kickoff meeting had no way to
@@ -10155,15 +10191,11 @@ async function _wmCovered(wk, pid){
 // was nothing to gate the PDF on. This is the same control the Monday meeting has,
 // kept per property because a kickoff room does one house and moves on.
 async function _kickCovered(wk, pid){
-  const m=Object.assign({}, _wmMeta(wk,'kickoff','__covered'));
-  if(m[pid]) delete m[pid]; else m[pid]=true;
   _wmToggleOpen(pid,false);
-  if(await _wmSetMeta(wk,'kickoff','__covered',m)) openWeeklyMeeting('kickoff', wk);
+  if(await _wmSetMetaAt(wk,'kickoff','__covered',pid, function(cur){ return cur?undefined:true; })) openWeeklyMeeting('kickoff', wk);
 }
 async function _wmTick(wk, itemKey, val){
-  const m=Object.assign({}, _wmMeta(wk,'team','__done'));
-  if(m[itemKey]===val) delete m[itemKey]; else m[itemKey]=val;
-  if(await _wmSetMeta(wk,'team','__done',m)) openWeeklyMeeting('team', wk);
+  if(await _wmSetMetaAt(wk,'team','__done',itemKey, function(cur){ return cur===val?undefined:val; })) openWeeklyMeeting('team', wk);
 }
 // ---- Marking it done in the meeting marks it done, full stop ------------------
 // Bruce, 4 Sept: "on the full project meeting we need to be able to mark tasks
@@ -10198,10 +10230,10 @@ async function _wmDone(itemKey, on){
 }
 
 async function _wmConf(wk, itemKey, field, on){
-  const m=Object.assign({}, _wmMeta(wk,'team','__conf'));
-  const row=Object.assign({}, m[itemKey]||{});
-  row[field]=!!on; m[itemKey]=row;
-  await _wmSetMeta(wk,'team','__conf',m);
+  await _wmSetMetaAt(wk,'team','__conf',itemKey, function(cur){
+    const row=Object.assign({}, (cur&&typeof cur==='object')?cur:{});
+    row[field]=!!on; return row;
+  });
 }
 // Monday of a week key, and the Sunday that closes it.
 function _wmRange(wk, weeks){
@@ -10599,13 +10631,13 @@ function _wmTopicCount(wk,c){
 async function _wmTopicTick(wk,pid,key,want){
   if(_blockIfReadOnly()) return;
   const target=(want==='ready')?'ready':'done';
-  const m=Object.assign({}, _wmTopicMap(wk));
   const k=pid+'::'+key;
   // Pressing the pill you are already on puts the topic back on the list, so there is
   // always a way out without hunting for an undo.
-  if(_wmTopicStateIn(m,pid,key)===target) delete m[k];
-  else m[k]={at:new Date().toISOString(), by:_miWho(), state:target};
-  if(!(await _wmSetMeta(wk,'team','__topic',m))) return;
+  const already=_wmTopicStateIn(_wmTopicMap(wk),pid,key)===target;
+  if(!(await _wmSetMetaAt(wk,'team','__topic',k, already?undefined:{at:new Date().toISOString(), by:_miWho(), state:target}))) return;
+  // Read the roll-up off what the record NOW says, not off this browser's old copy.
+  const m=_wmTopicMap(wk);
   const c=(typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===pid; });
   if(c){
     const ts=_wmTopicsFor(c);
@@ -10615,21 +10647,17 @@ async function _wmTopicTick(wk,pid,key,want){
     // Every topic closed rolls the house up to green; every topic at least prepared
     // rolls it up to blue. Only roll-ups this code made get taken back - if somebody
     // pressed the house button themselves, that stands.
-    const cov=Object.assign({}, _wmMeta(wk,'team','__covered'));
+    const cov=_wmMeta(wk,'team','__covered')||{};
     if(allDone && !cov[pid]){
-      cov[pid]={at:new Date().toISOString(), by:_miWho(), auto:true};
-      await _wmSetMeta(wk,'team','__covered',cov);
+      await _wmSetMetaAt(wk,'team','__covered',pid,{at:new Date().toISOString(), by:_miWho(), auto:true});
     } else if(!allDone && cov[pid] && cov[pid].auto){
-      delete cov[pid];
-      await _wmSetMeta(wk,'team','__covered',cov);
+      await _wmSetMetaAt(wk,'team','__covered',pid,undefined);
     }
-    const rdy=Object.assign({}, _wmMeta(wk,'team','__ready'));
+    const rdy=_wmMeta(wk,'team','__ready')||{};
     if(allReady && !allDone && !rdy[pid]){
-      rdy[pid]={at:new Date().toISOString(), by:_miWho(), auto:true};
-      await _wmSetMeta(wk,'team','__ready',rdy);
+      await _wmSetMetaAt(wk,'team','__ready',pid,{at:new Date().toISOString(), by:_miWho(), auto:true});
     } else if((!allReady || allDone) && rdy[pid] && rdy[pid].auto){
-      delete rdy[pid];
-      await _wmSetMeta(wk,'team','__ready',rdy);
+      await _wmSetMetaAt(wk,'team','__ready',pid,undefined);
     }
   }
   openWeeklyMeeting('team', window.__wmLastWeek||undefined);
@@ -10684,31 +10712,37 @@ function _wmCarryLines(txt){
 }
 async function _wmCarryTick(wk,pid,id){
   if(_blockIfReadOnly()) return;
-  const m=Object.assign({}, _wmCarryMap(wk));
-  const list=(Array.isArray(m[pid])?m[pid]:[]).map(function(x){
-    if(x.id!==id) return x;
-    const y=Object.assign({}, x);
-    if(y.done){ delete y.done; delete y.doneBy; delete y.doneAt; }
-    else { y.done=true; y.doneBy=_miWho(); y.doneAt=new Date().toISOString(); }
-    return y;
+  // The toggle is worked out against the line as it stands in the live record, so two
+  // people ticking different houses - or different lines on the same house - both keep
+  // their tick. Only this one house's list is written.
+  const who=_miWho(), at=new Date().toISOString();
+  let found=false;
+  const ok=await _wmSetMetaAt(wk,'team','__carry',pid, function(cur){
+    const list=(Array.isArray(cur)?cur:[]).map(function(x){
+      if(!x || x.id!==id) return x;
+      found=true;
+      const y=Object.assign({}, x);
+      if(y.done){ delete y.done; delete y.doneBy; delete y.doneAt; }
+      else { y.done=true; y.doneBy=who; y.doneAt=at; }
+      return y;
+    });
+    return list;
   });
-  m[pid]=list;
-  if(await _wmSetMeta(wk,'team','__carry',m)) openWeeklyMeeting('team', window.__wmLastWeek||undefined);
+  if(!ok) return;
+  if(!found) alert("That line is no longer on this week's list \u2014 somebody else removed it while this page was open. The sheet has been refreshed.");
+  openWeeklyMeeting('team', window.__wmLastWeek||undefined);
 }
 async function _wmCarryAdd(wk,pid,inputId){
   if(_blockIfReadOnly()) return;
   const el=document.getElementById(inputId);
   const txt=(el&&el.value?el.value:'').trim();
   if(!txt){ if(el) el.focus(); return; }
-  const m=Object.assign({}, _wmCarryMap(wk));
-  const list=(Array.isArray(m[pid])?m[pid]:[]).slice();
-  list.push({ id:'k'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), text:txt, from:wk, by:_miWho() });
-  m[pid]=list;
+  const row={ id:'k'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), text:txt, from:wk, by:_miWho() };
   // Clearing el.value is not enough: what you typed is also held in __wmDirty so a
   // re-render does not eat it mid-sentence, and _wmUnsnap was putting it straight
   // back into the fresh empty box. It read as if Add had failed, so people pressed
   // Add again and got the item twice. _miAdd and _sqAdd already do this.
-  if(await _wmSetMeta(wk,'team','__carry',m)){
+  if(await _wmSetMetaAt(wk,'team','__carry',pid, function(cur){ return (Array.isArray(cur)?cur:[]).concat([row]); })){
     if(el) el.value='';
     if(typeof _wmDraftClear==='function') _wmDraftClear(inputId);
     openWeeklyMeeting('team', window.__wmLastWeek||undefined);
@@ -11604,6 +11638,7 @@ async function _wmPrefillWeek(wk){
   // moment the week rolls, so the list is waiting before anybody sits down.
   const prevCarry=((d[_wmPrevWeek(wk)]||{}).team||{})['__carry']||{};
   const curCarry=(cur['__carry']&&typeof cur['__carry']==='object')?cur['__carry']:{};
+  let carryFix=null;
   const carry={};
   const seen={};
   // Bruce, 3 Oct: "send drawings to Jesus this week and go to print them off of roll
@@ -11660,7 +11695,11 @@ async function _wmPrefillWeek(wk){
         });
         if(keep.length) cleaned[pid]=keep;
       });
-      if(dropped) patch['__carry']=cleaned;
+      // NOT part of the patch below. That patch lays whole maps onto the record, and
+      // the carry map is the one map several people are ticking at the same time -
+      // writing it wholesale is exactly what lost Andrew's ticks. The clean-up is
+      // applied house by house afterwards instead, each onto a freshly read record.
+      if(dropped) carryFix=cleaned;
     }
   }
   // Same clean-up for the money box: a week already built the old way is still holding
@@ -11674,16 +11713,42 @@ async function _wmPrefillWeek(wk){
     patch[k]='';
   });
 
-  if(!Object.keys(patch).length) return 0;
+  if(!Object.keys(patch).length && !carryFix) return 0;
   _wmPrefilling=true;
   try{
-    d[wk]=d[wk]||{}; d[wk].team=Object.assign({}, d[wk].team||{}, patch);
-    window._wmData=d;
-    const _r=await _pmMergeWrite('meeting_notes', d, Object.keys(patch).map(function(k){ return [wk,'team',k]; }));
-    const err=_r.err;
-    if(err){ delete d[wk].team; return 0; }
-    window._wmData=_r.base;
-    const n=Object.keys(patch).length;
+    let n=0;
+    if(Object.keys(patch).length){
+      d[wk]=d[wk]||{}; d[wk].team=Object.assign({}, d[wk].team||{}, patch);
+      window._wmData=d;
+      const _r=await _pmMergeWrite('meeting_notes', d, Object.keys(patch).map(function(k){ return [wk,'team',k]; }));
+      const err=_r.err;
+      if(err){ delete d[wk].team; return 0; }
+      window._wmData=_r.base;
+      n=Object.keys(patch).length;
+    }
+    // Never pop a permission alert at somebody who only opened the meeting to read it.
+    if(carryFix && !(typeof isReadOnly==='function' && isReadOnly())){
+      const pids={};
+      Object.keys(curCarry).forEach(function(p){ pids[p]=true; });
+      Object.keys(carryFix).forEach(function(p){ pids[p]=true; });
+      for(const p of Object.keys(pids)){
+        const want=Array.isArray(carryFix[p])?carryFix[p]:[];
+        const had=Array.isArray(curCarry[p])?curCarry[p]:[];
+        if(want.length===had.length) continue;
+        const keepIds={}; want.forEach(function(x){ if(x&&x.id) keepIds[x.id]=true; });
+        // Drop only the lines this clean-up decided about. Anything added or ticked
+        // since this browser read the record is left exactly as it is.
+        await _wmSetMetaAt(wk,'team','__carry',p, function(cur){
+          return (Array.isArray(cur)?cur:[]).filter(function(x){
+            if(!x) return false;
+            if(!had.some(function(y){ return y && y.id===x.id; })) return true;  // new since we read
+            return !!keepIds[x.id];
+          });
+        });
+        n++;
+      }
+    }
+    if(!n) return 0;
     if(typeof _logAudit==='function') _logAudit('updated','settings','Project team meeting',
       'Prefilled '+n+' answer'+(n===1?'':'s')+' for the week of '+wk+
       ' from the week before, so the sheet is ready before Monday.');
@@ -28642,10 +28707,9 @@ function _prioPack(person, wk){
   return { kind:kind, role:_prioRoleOf(person), groups:groups, recaps:recaps, notes:notes };
 }
 async function _prioSetNote(wk, person, pid, val){
-  const m=Object.assign({}, _prioNotes(wk));
   const k=_prioKey(person,pid);
-  if(String(val||'').trim()) m[k]=val; else delete m[k];
-  return _wmSetMeta(wk,'team','__prio_notes',m);
+  const keep=String(val||'').trim();
+  return _wmSetMetaAt(wk,'team','__prio_notes',k, keep?val:undefined);
 }
 async function _prioAdd(wk, person, pid, inputId, dueId){
   if(_blockIfReadOnly()) return;
@@ -28654,12 +28718,9 @@ async function _prioAdd(wk, person, pid, inputId, dueId){
   if(!text){ alert("Type what the job is first."); if(el) el.focus(); return; }
   const dEl=dueId?document.getElementById(dueId):null;
   const due=(dEl&&dEl.value)?dEl.value:'';
-  const m=Object.assign({}, _wmMeta(wk,'team','__prio_extra'));
-  const list=Array.isArray(m[person])?m[person].slice():[];
-  list.push({ id:'x'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
-              text:text, due:due, pid:pid||'', by:_miWho(), at:new Date().toISOString() });
-  m[person]=list;
-  if(await _wmSetMeta(wk,'team','__prio_extra',m)){
+  const row={ id:'x'+Date.now().toString(36)+Math.random().toString(36).slice(2,5),
+              text:text, due:due, pid:pid||'', by:_miWho(), at:new Date().toISOString() };
+  if(await _wmSetMetaAt(wk,'team','__prio_extra',person, function(cur){ return (Array.isArray(cur)?cur:[]).concat([row]); })){
     if(el) el.value=''; if(dEl) dEl.value='';
     if(typeof _wmDraftClear==='function'){ _wmDraftClear(inputId); if(dueId) _wmDraftClear(dueId); }
     openWeeklyMeeting('team', window.__wmLastWeek||undefined);
@@ -28667,10 +28728,9 @@ async function _prioAdd(wk, person, pid, inputId, dueId){
 }
 async function _prioDrop(wk, person, id){
   if(_blockIfReadOnly()) return;
-  const m=Object.assign({}, _wmMeta(wk,'team','__prio_extra'));
-  const list=(Array.isArray(m[person])?m[person]:[]).filter(function(x){ return x.id!==id; });
-  m[person]=list;
-  if(await _wmSetMeta(wk,'team','__prio_extra',m)) openWeeklyMeeting('team', window.__wmLastWeek||undefined);
+  if(await _wmSetMetaAt(wk,'team','__prio_extra',person, function(cur){
+       return (Array.isArray(cur)?cur:[]).filter(function(x){ return x && x.id!==id; });
+     })) openWeeklyMeeting('team', window.__wmLastWeek||undefined);
 }
 // The tile lights up the moment you tick it, so the picker reads like a selection
 // and not a form you have to submit before you can see what you picked.
@@ -29227,4 +29287,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-05a va-dashboard-w9-names-trackers-route-48h-bell -->
+<!-- build: 2026-10-05b meeting-ticks-merge-not-overwrite -->
