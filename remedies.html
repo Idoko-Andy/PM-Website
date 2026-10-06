@@ -1,436 +1,295 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Remedies · Legacy Ohio Homes</title>
-<script src="https://accounts.google.com/gsi/client" async defer></script>
-<script src="https://unpkg.com/@supabase/supabase-js@2.39.7/dist/umd/supabase.js"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Remedies — Legacy Homes PM</title>
+<meta name="theme-color" content="#111111">
+<link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.7"></script>
 <style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{background:#0d0d0d;color:#e8eaed;font-family:-apple-system,"Segoe UI",Roboto,sans-serif;font-size:14px;min-height:100vh}
-a{color:#7aabf0;text-decoration:none}
-a:hover{text-decoration:underline}
-
-.topbar{background:#1a1a1a;border-bottom:1px solid #2a2a2a;padding:0 20px;display:flex;align-items:center;gap:16px;height:46px;position:sticky;top:0;z-index:100}
-.topbar-back{font-size:12px;color:#888;cursor:pointer}
-.topbar-back:hover{color:#fff}
-.topbar-title{font-size:13px;color:#ccc;flex:1}
-.topbar-right{font-size:12px;color:#555}
-
-.page{max-width:1100px;margin:0 auto;padding:22px 20px 60px}
-.hdr{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:18px}
-.hdr h1{font-size:22px;font-weight:700;color:#fff}
-.hdr-sub{font-size:13px;color:#666;margin-top:3px}
-
-.filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
-.filter-chip{background:none;border:1px solid #333;color:#999;border-radius:999px;padding:4px 13px;font-size:12px;cursor:pointer;transition:all .12s}
-.filter-chip:hover{border-color:#555;color:#ccc}
-.filter-chip.on{border-color:#7aabf0;color:#7aabf0;background:#0d1e38}
-.filter-chip.warn.on{border-color:#e6a817;color:#e6a817;background:#241a04}
-.search{background:#1a1a1a;border:1px solid #2a2a2a;color:#e8eaed;border-radius:8px;padding:5px 11px;font-size:13px;width:210px;outline:none}
-.search:focus{border-color:#555}
-.sort-sel{background:#1a1a1a;border:1px solid #2a2a2a;color:#aaa;border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer;outline:none}
-
-.prop-group{margin-bottom:22px}
-.prop-head{background:#181818;border:1px solid #2a2a2a;border-radius:10px 10px 0 0;padding:11px 15px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.prop-name{font-size:15px;font-weight:700;color:#fff}
-.prop-phase{font-size:11px;font-weight:700;padding:2px 9px;border-radius:99px}
-.prop-phase.rtr{background:#3d2900;color:#e6a817}
-.prop-phase.ctc{background:#1e1a44;color:#9d95e8}
-.prop-phase.ic{background:#0a2a1a;color:#5bc484}
-.prop-pm{font-size:12px;color:#666}
-.prop-cc{margin-left:auto}
-.prop-items{border:1px solid #2a2a2a;border-top:none;border-radius:0 0 10px 10px;overflow:hidden}
-
-.item-row{background:#111;border-bottom:1px solid #1e1e1e;padding:10px 15px;display:grid;grid-template-columns:28px 1fr auto;gap:10px;align-items:start;cursor:pointer;transition:background .1s}
-.item-row:last-child{border-bottom:none}
-.item-row:hover{background:#161616}
-.item-row.expanded{background:#141414}
-.item-num{font-size:11px;color:#555;font-weight:700;padding-top:2px}
-.item-desc{font-size:13.5px;color:#ddd;line-height:1.45;margin-bottom:4px}
-.item-meta{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.trade-tag{font-size:11px;font-weight:600;padding:1px 8px;border-radius:4px;background:#1e2a1e;color:#6fc484}
-.status-tag{font-size:11px;font-weight:700;padding:1px 8px;border-radius:4px;text-transform:uppercase}
-.st-new{background:#1e1a04;color:#d4a017}
-.st-verified{background:#0d2040;color:#7aabf0}
-.st-awarded{background:#0d2a1a;color:#5bc484}
-.st-done{background:#1a1a1a;color:#555}
-.item-right{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
-.deadline-tag{font-size:11px;font-weight:600;white-space:nowrap}
-.deadline-ok{color:#5bc484}
-.deadline-warn{color:#e6a817}
-.deadline-over{color:#e05c4a}
-
-.item-detail{background:#0e0e0e;border-top:1px solid #1e1e1e;padding:12px 15px 14px 53px;display:none}
-.item-row.expanded + .item-detail{display:block}
-.detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px 18px;margin-bottom:12px}
-.detail-kv dt{font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:#555;margin-bottom:2px}
-.detail-kv dd{font-size:13px;color:#ccc}
-.detail-actions{display:flex;gap:8px;flex-wrap:wrap}
-.btn{padding:6px 13px;border-radius:7px;font-size:12.5px;cursor:pointer;border:none;font-weight:600}
-.btn-ghost{background:none;border:1px solid #333;color:#aaa}
-.btn-ghost:hover{background:#1e1e1e;color:#fff;border-color:#555}
-.dispatch-rows{margin-top:10px;display:flex;flex-direction:column;gap:6px}
-.dispatch-row{background:#161616;border:1px solid #222;border-radius:7px;padding:8px 11px;font-size:12px;color:#999;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px}
-.dispatch-row b{color:#ccc}
-
-.stats{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px}
-.stat{background:#181818;border:1px solid #2a2a2a;border-radius:9px;padding:10px 16px;min-width:100px}
-.stat-n{font-size:22px;font-weight:700;color:#fff;line-height:1}
-.stat-l{font-size:11px;color:#666;margin-top:3px;text-transform:uppercase;letter-spacing:.05em}
-.stat.warn .stat-n{color:#e6a817}
-.stat.good .stat-n{color:#5bc484}
-.stat.blue .stat-n{color:#7aabf0}
-
-/* sign-in wall */
-#signin-wall{display:none;flex-direction:column;align-items:center;justify-content:center;min-height:70vh;gap:16px;text-align:center;padding:24px}
-#signin-wall h2{font-size:20px;color:#fff}
-#signin-wall p{font-size:13px;color:#666;max-width:340px;line-height:1.6}
-#gsi-btn-wrap{display:flex;justify-content:center;margin:4px 0}
-#signin-err{font-size:12px;color:#e05c4a;min-height:16px}
-
-#loading{padding:60px;text-align:center;color:#555;font-size:14px}
-@media(max-width:640px){
-  .detail-grid{grid-template-columns:1fr}
-  .item-row{grid-template-columns:28px 1fr}
-  .item-right{display:none}
+*{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+:root{
+  --bg:#1a1a1a;--bar:#111;--line:#2a2a2a;--line2:#333;--panel:#1e1e1e;--panel2:#232323;
+  --fg:#fff;--mute:#b4bcc8;--dim:#6b7280;
+  --ok:#5fcf80;--warn:#f0b35a;--bad:#ef6f6f;--info:#7cb7ff;
 }
-@keyframes spin{to{transform:rotate(360deg)}}
+body{background:var(--bg);color:var(--fg);min-height:100vh}
+a{color:inherit}
+button{font:inherit;cursor:pointer}
+
+.util-bar{background:var(--bar);border-bottom:1px solid var(--line);padding:6px 20px;display:flex;align-items:center;justify-content:space-between;min-height:36px}
+.site-title{font-size:13px;font-weight:500}
+.util-right{display:flex;gap:6px;align-items:center}
+.ubtn{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;font-size:12px;border-radius:6px;border:1px solid #444;background:transparent;color:#fff;white-space:nowrap}
+.ubtn:hover{background:var(--line)}
+.ubtn.primary{background:#fff;color:#111;border-color:#fff;font-weight:500}
+.ubtn.primary:hover{background:#e8e8e8}
+.ubtn:disabled{opacity:.45;cursor:default}
+.ubtn.small{padding:3px 8px;font-size:11.5px;border-radius:5px}
+
+.brand-bar{background:var(--bar);padding:10px 20px;display:flex;align-items:center;border-bottom:1px solid var(--line)}
+.brand-main{font-size:18px;font-weight:500}
+.brand-sub{font-size:13px;color:var(--mute);margin-top:2px}
+
+.wrap{padding:16px 20px 60px;max-width:1400px}
+
+/* summary strip */
+.strip{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 14px;min-width:150px;flex:1}
+.stat b{display:block;font-size:22px;font-weight:600;line-height:1.1}
+.stat span{font-size:12px;color:var(--mute)}
+.stat.warn b{color:var(--warn)}
+.stat.bad b{color:var(--bad)}
+.stat.ok b{color:var(--ok)}
+
+.controls{display:flex;gap:10px;align-items:center;margin-bottom:12px;font-size:12.5px;color:var(--mute);flex-wrap:wrap}
+.controls label{display:flex;gap:6px;align-items:center;cursor:pointer}
+.controls .sp{flex:1}
+.controls .synced{font-size:11.5px;color:var(--dim)}
+
+/* property block */
+.prop{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin-bottom:12px;overflow:hidden}
+.prop-h{display:flex;align-items:baseline;gap:14px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--panel2);flex-wrap:wrap}
+.prop-h .addr{font-size:15px;font-weight:600}
+.prop-h .meta{font-size:12px;color:var(--mute)}
+.prop-h .meta.red{color:var(--bad)}
+.prop-h .sp{flex:1}
+.prop-h a{font-size:12px;color:var(--info);text-decoration:none}
+.prop-h .done-frac{font-size:12px;color:var(--mute)}
+.prop-h .done-frac b{color:var(--fg)}
+
+table{width:100%;border-collapse:collapse}
+th{font-size:11px;color:var(--dim);font-weight:500;text-align:left;padding:6px 10px;border-bottom:1px solid var(--line)}
+td{padding:9px 10px;font-size:13px;vertical-align:top;border-bottom:1px solid var(--line)}
+tr:last-child td{border-bottom:none}
+tr.done td{opacity:.55}
+td.no{width:34px;color:var(--mute);white-space:nowrap}
+td.desc{max-width:520px;line-height:1.35}
+td.desc .trade{display:inline-block;margin-top:4px;font-size:11px;color:var(--dim);border:1px solid var(--line2);border-radius:4px;padding:1px 6px}
+td.desc .trade.ask{border-style:dashed;color:var(--warn);cursor:pointer}
+
+/* the truth line */
+.truth{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;min-width:280px}
+.truth .k{font-size:11px;color:var(--dim);white-space:nowrap;padding-top:2px}
+.truth .v{font-size:12.5px}
+.cc{display:inline-flex;align-items:center;gap:6px}
+.box{width:14px;height:14px;border:1.5px solid var(--mute);border-radius:3px;display:inline-grid;place-items:center;font-size:11px;line-height:1}
+.box.on{background:var(--ok);border-color:var(--ok);color:#111}
+.cc .photos{color:var(--dim);font-size:11.5px}
+.said{color:var(--fg)}
+.said .when{color:var(--dim);font-size:11.5px;margin-left:6px}
+.said.none{color:var(--dim);font-style:italic}
+.said.stale{color:var(--warn)}
+
+td.who{width:260px}
+.who select,.who input{width:100%;background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:6px 8px;font-size:12.5px}
+.who select:focus,.who input:focus{outline:none;border-color:#666}
+.who .cctext{font-size:11.5px;color:var(--dim);margin-top:4px}
+.who .cctext b{color:var(--mute);font-weight:500}
+.who .unmatched{color:var(--warn)}
+
+td.act{width:150px;white-space:nowrap;text-align:right}
+td.act .ubtn{margin-left:4px}
+.pill{display:inline-block;font-size:11px;padding:2px 7px;border-radius:10px;border:1px solid var(--line2);color:var(--mute);margin-bottom:4px}
+.pill.bids{border-color:#4a6b8a;color:var(--info)}
+.pill.chase{border-color:#6b5a3a;color:var(--warn)}
+.pill.walk{border-color:#3a6b4a;color:var(--ok)}
+
+.empty{padding:40px;text-align:center;color:var(--mute);font-size:13px}
+.toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#fff;color:#111;padding:9px 14px;border-radius:8px;font-size:13px;box-shadow:0 6px 24px rgba(0,0,0,.5);display:none}
+.toast.show{display:block}
+
+@media (max-width:600px){
+  .strip{gap:6px}.stat{min-width:0;padding:6px 8px;flex:1 1 30%}.stat b{font-size:16px}.stat span{font-size:10.5px}
+}
+@media (max-width:900px){
+  td.who{width:auto}.truth{min-width:0}.act{text-align:left}
+  table,thead,tbody,tr,td{display:block}
+  thead{display:none}
+  tr{padding:10px;border-bottom:1px solid var(--line)}
+  td{border:none;padding:4px 0}
+  td.no{display:inline;margin-right:6px}td.desc{display:inline}
+}
 </style>
 </head>
 <body>
-
-<div class="topbar">
-  <span class="topbar-back" onclick="window.location='/'">← Dashboard</span>
-  <span class="topbar-title">🛠 Remedies — Request to Remedy tracker</span>
-  <div class="topbar-right" id="user-label"></div>
-</div>
-
-<!-- sign-in wall (shown when no session) -->
-<div id="signin-wall">
-  <h2>Sign in to view Remedies</h2>
-  <p>Use the same Google account you use for the Legacy Homes dashboard.</p>
-  <div id="gsi-btn-wrap"></div>
-  <div id="signin-err"></div>
-</div>
-
-<!-- main content (shown when signed in) -->
-<div id="main" style="display:none">
-<div class="page">
-  <div class="hdr">
-    <div>
-      <h1>Remedies</h1>
-      <div class="hdr-sub">Request-to-Remedy items, contractor status, and CompanyCam links.</div>
-    </div>
-    <a href="https://app.companycam.com" target="_blank" class="btn btn-ghost" style="text-decoration:none;align-self:flex-start">📷 CompanyCam ↗</a>
+<div class="util-bar">
+  <div class="site-title">Legacy Homes PM Dashboard</div>
+  <div class="util-right">
+    <a class="ubtn" href="/">Dashboard</a>
+    <button class="ubtn" id="btn-sync">Pull from CompanyCam</button>
   </div>
-
-  <div class="stats" id="stats-bar"></div>
-
-  <div class="filters">
-    <input class="search" id="search" placeholder="Search address or description…" oninput="render()">
-    <button class="filter-chip on" data-f="all"     onclick="setFilter('all')">All</button>
-    <button class="filter-chip"    data-f="new"     onclick="setFilter('new')">New</button>
-    <button class="filter-chip"    data-f="verified"onclick="setFilter('verified')">Verified</button>
-    <button class="filter-chip"    data-f="awarded" onclick="setFilter('awarded')">Awarded</button>
-    <button class="filter-chip warn" data-f="overdue" onclick="setFilter('overdue')">⚠ Overdue</button>
-    <select class="sort-sel" id="sort-sel" onchange="render()">
-      <option value="addr">Group by address</option>
-      <option value="deadline">Sort by deadline</option>
-      <option value="status">Sort by status</option>
-    </select>
+</div>
+<div class="brand-bar">
+  <div>
+    <div class="brand-main">Request to Remedy</div>
+    <div class="brand-sub">What CompanyCam says, who's on it, and the last word from the contractor — every text goes out on (740) 639-2741.</div>
   </div>
+</div>
 
-  <div id="loading">Loading remedies…</div>
-  <div id="items-list"></div>
+<div class="wrap">
+  <div class="strip" id="strip"></div>
+  <div class="controls">
+    <label><input type="checkbox" id="show-done"> Show completed items</label>
+    <span class="sp"></span>
+    <span class="synced" id="synced"></span>
+  </div>
+  <div id="list"><div class="empty">Loading…</div></div>
 </div>
-</div>
+<div class="toast" id="toast"></div>
 
 <script>
-const SB_URL = "https://kwhgymympuhfvqbedwpd.supabase.co";
-const SB_KEY = "sb_publishable__DNUtcdM8SqCMzTZM4gtXw_1wf9IWa9";
-const GOOGLE_CLIENT_ID = "894060704626-6fc5c51jofbq6a6fl6632ahfl5nfn3mi.apps.googleusercontent.com";
+const SUPABASE_URL = "https://kwhgymympuhfvqbedwpd.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable__DNUtcdM8SqCMzTZM4gtXw_1wf9IWa9";
+const ANON_JWT = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3aGd5bXltcHVoZnZxYmVkd3BkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcwNjI5MDAsImV4cCI6MjA5MjYzODkwMH0.5LL4H-kaX0F6jzM_1BBXpvxe-Zc-mN_zFH6tZExXrUI";
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 
-const sb = window.supabase.createClient(SB_URL, SB_KEY, {
-  auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true }
-});
+let ITEMS = [], CONTRACTORS = [], TRADES = []; const SHOW_ALL = {};
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const today = new Date(); today.setHours(0,0,0,0);
+const fmt = d => d ? new Date(d + "T12:00:00").toLocaleDateString("en-US",{month:"numeric",day:"numeric"}) : "";
+const ago = iso => { if(!iso) return ""; const h = (Date.now()-new Date(iso))/36e5; return h<1?"just now":h<24?Math.round(h)+"h ago":Math.round(h/24)+"d ago"; };
+function toast(m){ const t=$("#toast"); t.textContent=m; t.classList.add("show"); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove("show"),2600); }
 
-// ── Auth ────────────────────────────────────────────────────────────────────
-async function getActiveSession(){
-  try {
-    const { data } = await sb.auth.getSession();
-    return data?.session || null;
-  } catch(_){ return null; }
-}
-
-async function boot(){
-  const session = await getActiveSession();
-  if(session){
-    const email = session.user?.email || '';
-    document.getElementById('user-label').textContent = email;
-    document.getElementById('signin-wall').style.display = 'none';
-    document.getElementById('main').style.display = 'block';
-    loadData();
-  } else {
-    document.getElementById('signin-wall').style.display = 'flex';
-    document.getElementById('main').style.display = 'none';
-    initGSI();
-  }
-}
-
-// Listen for auth state changes (e.g. after Google sign-in completes)
-sb.auth.onAuthStateChange((event, session) => {
-  if(session && (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED')){
-    document.getElementById('user-label').textContent = session.user?.email || '';
-    document.getElementById('signin-wall').style.display = 'none';
-    document.getElementById('main').style.display = 'block';
-    if(!_loaded) loadData();
-  }
-});
-
-async function initGSI(){
-  const wait = () => new Promise(r => setTimeout(r, 250));
-  let tries = 0;
-  while(!window.google?.accounts?.id && tries < 40){ await wait(); tries++; }
-  if(!window.google?.accounts?.id){
-    document.getElementById('signin-err').textContent =
-      "Google sign-in didn't load on this connection. Try refreshing, or use the main dashboard.";
-    return;
-  }
-  const nonce = crypto.randomUUID();
-  const hashBuf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(nonce));
-  const hashedNonce = Array.from(new Uint8Array(hashBuf)).map(b=>b.toString(16).padStart(2,'0')).join('');
-
-  window.google.accounts.id.initialize({
-    client_id: GOOGLE_CLIENT_ID,
-    nonce: hashedNonce,
-    auto_select: false,
-    use_fedcm_for_prompt: true,
-    cancel_on_tap_outside: true,
-    callback: async (resp) => {
-      const errEl = document.getElementById('signin-err');
-      errEl.textContent = 'Signing you in…';
-      const { error } = await sb.auth.signInWithIdToken({
-        provider: 'google', token: resp.credential, nonce
-      });
-      if(error){
-        errEl.textContent = error.message || 'Sign-in failed. Please try again.';
-      } else {
-        errEl.textContent = '';
-        // onAuthStateChange will handle the rest
-      }
-    }
-  });
-
-  const wrap = document.getElementById('gsi-btn-wrap');
-  window.google.accounts.id.renderButton(wrap, {
-    theme: 'filled_white', size: 'large', text: 'signin_with',
-    logo_alignment: 'left', width: 280
-  });
-}
-
-// ── Data ────────────────────────────────────────────────────────────────────
-let _items = [], _dispatches = {}, _props = {}, _filter = 'all', _loaded = false;
-
-async function loadData(){
-  _loaded = true;
-  document.getElementById('loading').style.display = 'block';
-  document.getElementById('items-list').innerHTML = '';
-
-  const { data: items, error } = await sb
-    .from('rtr_items')
-    .select('*')
-    .neq('status', 'cancelled')
-    .order('address').order('item_no');
-
-  if(error || !items){
-    document.getElementById('loading').textContent = 'Failed to load: ' + (error?.message||'unknown error');
-    return;
-  }
-  _items = items;
-
-  // Dispatches
-  if(items.length){
-    const ids = items.map(i=>i.id);
-    const { data: disps } = await sb.from('rtr_dispatches').select('*').in('item_id', ids);
-    _dispatches = {};
-    (disps||[]).forEach(d=>{ (_dispatches[d.item_id]=_dispatches[d.item_id]||[]).push(d); });
-  }
-
-  // Property info
-  const addrs = [...new Set(items.map(i=>i.address).filter(Boolean))];
-  _props = {};
-  for(const addr of addrs){
-    const street = addr.split(/[,\n]/)[0].trim();
-    const { data: rows } = await sb.from('pm_properties')
-      .select('id,addr,phase,pm,closing_date_sell,company_cam')
-      .ilike('addr', '%' + street + '%')
-      .eq('archived', false)
-      .limit(1);
-    if(rows?.[0]) _props[addr] = rows[0];
-  }
-
-  document.getElementById('loading').style.display = 'none';
-  renderStats();
+async function load(){
+  const [a,b] = await Promise.all([
+    sb.from("v_rtr_tracker").select("*").not("cc_task_id","is",null).neq("status","cancelled").order("address").order("item_no"),
+    sb.from("contractor_directory").select("id,name,trade,phone,vetting_tier,jobs_done_n").eq("is_archived",false).eq("active",true).order("trade").order("vetting_tier").order("jobs_done_n",{ascending:false,nullsFirst:false}),
+  ]);
+  if(a.error){ $("#list").innerHTML=`<div class="empty">Couldn't load remedies: ${esc(a.error.message)}</div>`; return; }
+  ITEMS = a.data||[]; CONTRACTORS = b.data||[];
+  TRADES = [...new Set(CONTRACTORS.map(c=>c.trade))].filter(Boolean).sort();
+  const last = ITEMS.map(i=>i.cc_synced_at||"").sort().pop();
+  $("#synced").textContent = last ? "CompanyCam last pulled " + ago(last) : "";
   render();
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
-const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-const today = () => new Date().toISOString().slice(0,10);
-function daysUntil(d){ if(!d) return null; return Math.ceil((new Date(d+'T00:00:00')-new Date(today()+'T00:00:00'))/86400000); }
-function fmt(d){ if(!d) return '—'; const [y,m,dd]=d.slice(0,10).split('-'); return m+'/'+dd+'/'+y; }
-
-function deadlineTag(dl){
-  if(!dl) return '';
-  const n = daysUntil(dl);
-  const cls = n < 0 ? 'deadline-over' : n <= 3 ? 'deadline-warn' : 'deadline-ok';
-  const lbl = n < 0 ? Math.abs(n)+'d overdue' : n === 0 ? 'Due today' : n+'d left';
-  return `<span class="deadline-tag ${cls}">${lbl} · ${fmt(dl)}</span>`;
+function stateOf(i){
+  if(i.cc_done) return {key:"done", pill:""};
+  if(!i.contractor_id && !i.cc_contractor_text){
+    if(i.dispatched_n>0 && i.bids_n>=1) return {key:"bids", pill:`<span class="pill bids">${i.bids_n} of ${i.dispatched_n} bids in</span>`};
+    if(i.dispatched_n>0) return {key:"waiting", pill:`<span class="pill bids">waiting on ${i.dispatched_n} bids</span>`};
+    return {key:"unassigned", pill:""};
+  }
+  if(i.status==="done") return {key:"walk", pill:`<span class="pill walk">says done — walk it</span>`};
+  return {key:"chase", pill:`<span class="pill chase">in progress</span>`};
 }
 
-function statusTag(s){
-  const m={new:'st-new',verified:'st-verified',awarded:'st-awarded',done:'st-done'};
-  return `<span class="status-tag ${m[s]||'st-new'}">${esc(s)}</span>`;
-}
-
-function phaseTag(ph){
-  if(!ph) return '';
-  const cls = /RTR In Process/i.test(ph)?'rtr':/Cleared|Completed/i.test(ph)?'ctc':'ic';
-  const short = ph.replace('RTR Completed (Pending Closing)','Cleared to Close');
-  return `<span class="prop-phase ${cls}">${esc(short)}</span>`;
-}
-
-// ── Filter / sort ───────────────────────────────────────────────────────────
-function setFilter(f){
-  _filter = f;
-  document.querySelectorAll('.filter-chip').forEach(c=>c.classList.toggle('on',c.dataset.f===f));
-  render();
-}
-
-function visible(){
-  const q = (document.getElementById('search').value||'').trim().toLowerCase();
-  return _items.filter(it=>{
-    if(_filter==='new'      && it.status!=='new')      return false;
-    if(_filter==='verified' && it.status!=='verified') return false;
-    if(_filter==='awarded'  && it.status!=='awarded')  return false;
-    if(_filter==='overdue'  && (!it.deadline||daysUntil(it.deadline)>=0)) return false;
-    if(q && !(it.address||'').toLowerCase().includes(q) && !(it.description||'').toLowerCase().includes(q)) return false;
-    return true;
-  });
-}
-
-// ── Stats ───────────────────────────────────────────────────────────────────
-function renderStats(){
-  const all = _items;
-  const over = all.filter(i=>i.deadline&&daysUntil(i.deadline)<0).length;
-  document.getElementById('stats-bar').innerHTML =
-    st(new Set(all.map(i=>i.address)).size,'Properties','')
-    +st(all.length,'Open items','blue')
-    +st(all.filter(i=>i.status==='new').length,'New','')
-    +st(all.filter(i=>i.status==='verified').length,'Verified','good')
-    +st(all.filter(i=>i.status==='awarded').length,'Awarded','good')
-    +(over?st(over,'Overdue','warn'):'');
-}
-function st(n,l,c){ return `<div class="stat ${c}"><div class="stat-n">${n}</div><div class="stat-l">${l}</div></div>`; }
-
-// ── Render ───────────────────────────────────────────────────────────────────
 function render(){
-  const sort = document.getElementById('sort-sel').value;
-  let items = visible();
-  const list = document.getElementById('items-list');
-  if(!items.length){ list.innerHTML='<div style="padding:50px;text-align:center;color:#555">No items match your filter.</div>'; return; }
-
-  if(sort==='addr'){
-    const byAddr={};
-    items.forEach(it=>{ (byAddr[it.address]=byAddr[it.address]||[]).push(it); });
-    list.innerHTML = Object.keys(byAddr).sort().map(a=>group(a,byAddr[a])).join('');
-  } else if(sort==='deadline'){
-    items.sort((a,b)=>{ if(!a.deadline&&!b.deadline) return 0; if(!a.deadline) return 1; if(!b.deadline) return -1; return a.deadline<b.deadline?-1:1; });
-    list.innerHTML = items.map(it=>group(it.address,[it])).join('');
-  } else {
-    const p={new:0,verified:1,awarded:2};
-    items.sort((a,b)=>(p[a.status]||3)-(p[b.status]||3));
-    list.innerHTML = items.map(it=>group(it.address,[it])).join('');
-  }
-
-  document.querySelectorAll('.item-row').forEach(row=>{
-    row.addEventListener('click',()=>row.classList.toggle('expanded'));
-  });
-}
-
-function group(addr, items){
-  const prop = _props[addr]||null;
-  const ccUrl = prop?.company_cam||'';
-  const close = prop?.closing_date_sell||'';
-  return `<div class="prop-group">
-    <div class="prop-head">
-      <span class="prop-name">${esc(addr)}</span>
-      ${phaseTag(prop?.phase||'')}
-      ${prop?.pm?`<span class="prop-pm">PM: ${esc(prop.pm)}</span>`:''}
-      ${close?`<span style="font-size:12px;color:#666;margin-left:4px">Close: ${fmt(close)}</span>`:''}
-      ${ccUrl?`<span class="prop-cc"><a href="${esc(ccUrl)}" target="_blank" class="btn btn-ghost" style="text-decoration:none;font-size:11.5px;padding:4px 9px">📷 CompanyCam ↗</a></span>`:''}
-    </div>
-    <div class="prop-items">${items.map(itemRow).join('')}</div>
-  </div>`;
-}
-
-function itemRow(it){
-  const done = !!it.cc_completed_at;
-  const disp = _dispatches[it.id]||[];
-  const photos = it.cc_photo_count||0;
-  return `
-  <div class="item-row${done?' st-done':''}" data-id="${esc(it.id)}">
-    <span class="item-num">${esc(it.item_no)}</span>
-    <div>
-      <div class="item-desc">${esc(it.description||'(no description)')}</div>
-      <div class="item-meta">
-        ${it.trade?`<span class="trade-tag">${esc(it.trade)}</span>`:''}
-        ${statusTag(done?'done':it.status)}
-        ${disp.length?`<span style="font-size:11px;color:#555">📨 ${disp.length} dispatch${disp.length>1?'es':''}</span>`:''}
-        ${photos?`<span style="font-size:11px;color:#888">📷 ${photos}</span>`:''}
-        ${it.cc_contractor_text?`<span style="font-size:11px;color:#888">${esc(it.cc_contractor_text)}</span>`:''}
+  const showDone = $("#show-done").checked, onlyActive = true;
+  const byAddr = {};
+  for(const i of ITEMS){ (byAddr[i.address] = byAddr[i.address]||[]).push(i); }
+  let open=0, unassigned=0, chase=0, walk=0, bids=0;
+  const blocks=[];
+  for(const [addr, items] of Object.entries(byAddr)){
+    const wt = items[0].walkthrough_date, close = items[0].closing_date_sell;
+    const openItems = items.filter(i=>!i.cc_done);
+    const activeProp = (wt && new Date(wt+"T12:00:00")>=today) || (close && new Date(close+"T12:00:00")>=today) || openItems.some(i=>i.contractor_id||i.dispatched_n>0);
+    if(onlyActive && !activeProp && openItems.length) continue;
+    if(!openItems.length && !showDone) continue;
+    for(const i of openItems){ open++; const s=stateOf(i).key; if(s==="unassigned")unassigned++; else if(s==="chase")chase++; else if(s==="walk")walk++; else bids++; }
+    const rows = items.filter(i=>showDone||!i.cc_done).map(row).join("");
+    if(!rows) continue;
+    const daysTo = wt ? Math.round((new Date(wt+"T12:00:00")-today)/864e5) : null;
+    blocks.push(`<div class="prop">
+      <div class="prop-h">
+        <span class="addr">${esc(addr)}</span>
+        ${items[0].rtr_owner?`<span class="meta">owner ${esc(items[0].rtr_owner)}</span>`:""}
+        ${wt?`<span class="meta ${daysTo!==null&&daysTo<3?'red':''}">walk-through ${fmt(wt)}${daysTo!==null?` (${daysTo<0?'past':daysTo+' days'})`:''}</span>`:""}
+        ${close?`<span class="meta">closes ${fmt(close)}</span>`:""}
+        <span class="sp"></span>
+        <span class="done-frac"><b>${items.length-openItems.length}</b> of ${items.length} done</span>
+        <a href="${esc(items[0].companycam_todo_url)}" target="_blank" rel="noopener">Open in CompanyCam</a>
       </div>
-    </div>
-    <div class="item-right">
-      ${deadlineTag(it.deadline)}
-      ${it.companycam_todo_url?`<a href="${esc(it.companycam_todo_url)}" target="_blank" onclick="event.stopPropagation()" style="font-size:11px;color:#7aabf0">CC task ↗</a>`:''}
-    </div>
-  </div>
-  ${itemDetail(it, disp)}`;
+      <table><thead><tr><th>#</th><th>Remedy</th><th>CompanyCam · contractor · last word</th><th>Assigned to</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+    </div>`);
+  }
+  $("#strip").innerHTML = `
+    <div class="stat"><b>${open}</b><span>open remedy items</span></div>
+    <div class="stat ${unassigned?'bad':''}"><b>${unassigned}</b><span>no contractor yet</span></div>
+    <div class="stat"><b>${bids}</b><span>out for bids</span></div>
+    <div class="stat ${chase?'warn':''}"><b>${chase}</b><span>contractor on it</span></div>
+    <div class="stat ${walk?'ok':''}"><b>${walk}</b><span>need a walk-through</span></div>`;
+  $("#list").innerHTML = blocks.join("") || `<div class="empty">Nothing open. Pull from CompanyCam to refresh.</div>`;
 }
 
-function itemDetail(it, disp){
-  const dispHtml = disp.map(d=>`
-    <div class="dispatch-row">
-      <span><b>${esc(d.status||'sent')}</b> · ${esc(d.to_phone||'')} · ${d.sent_at?fmt(d.sent_at.slice(0,10)):''}</span>
-      ${d.nudge_count?`<span style="color:#666">${d.nudge_count} nudge${d.nudge_count>1?'s':''}</span>`:''}
-      ${d.error?`<span style="color:#e05c4a">⚠ ${esc(d.error)}</span>`:''}
-    </div>`).join('');
-  return `<div class="item-detail">
-    <div class="detail-grid">
-      <dl class="detail-kv"><dt>Status</dt><dd>${esc(it.status||'new')}</dd></dl>
-      <dl class="detail-kv"><dt>Trade</dt><dd>${esc(it.trade||'—')}</dd></dl>
-      <dl class="detail-kv"><dt>Deadline</dt><dd>${fmt(it.deadline)}</dd></dl>
-      <dl class="detail-kv"><dt>Walkthrough</dt><dd>${fmt(it.walkthrough_date)}</dd></dl>
-      <dl class="detail-kv"><dt>Owner</dt><dd>${esc(it.rtr_owner||'—')}</dd></dl>
-      <dl class="detail-kv"><dt>Scheduled start</dt><dd>${fmt(it.scheduled_start)}</dd></dl>
-      ${it.cc_price_text?`<dl class="detail-kv"><dt>CC Price</dt><dd>${esc(it.cc_price_text)}</dd></dl>`:''}
-      ${it.cc_finish_date_text?`<dl class="detail-kv"><dt>CC Finish</dt><dd>${esc(it.cc_finish_date_text)}</dd></dl>`:''}
-      ${it.cc_completed_at?`<dl class="detail-kv"><dt>Completed</dt><dd>${fmt(it.cc_completed_at.slice(0,10))}</dd></dl>`:''}
-      ${it.next_followup_at?`<dl class="detail-kv"><dt>Next follow-up</dt><dd>${fmt(it.next_followup_at.slice(0,10))}</dd></dl>`:''}
-    </div>
-    ${it.notes?`<div style="font-size:12.5px;color:#888;margin-bottom:10px;line-height:1.5"><b style="color:#666">Notes:</b> ${esc(it.notes)}</div>`:''}
-    ${it.last_contact_summary?`<div style="font-size:12.5px;color:#888;margin-bottom:10px;line-height:1.5"><b style="color:#666">Last contact:</b> ${esc(it.last_contact_summary)}</div>`:''}
-    <div class="detail-actions">
-      ${it.companycam_todo_url?`<a href="${esc(it.companycam_todo_url)}" target="_blank" class="btn btn-ghost" style="text-decoration:none;font-size:12px">📋 Open in CompanyCam ↗</a>`:''}
-    </div>
-    ${disp.length?`<div class="dispatch-rows"><div style="font-size:11px;color:#555;margin:10px 0 4px;text-transform:uppercase;letter-spacing:.06em">Dispatches</div>${dispHtml}</div>`:''}
-  </div>`;
+function row(i){
+  const st = stateOf(i);
+  const stale = i.last_contact_at && (Date.now()-new Date(i.last_contact_at))/36e5 > 48;
+  const said = i.cc_done
+    ? `<span class="said">Checked off in CompanyCam ${i.cc_completed_at?ago(i.cc_completed_at):""}</span>`
+    : i.last_contact_summary
+      ? `<span class="said ${stale?'stale':''}">${esc(i.last_contact_summary)}<span class="when">${ago(i.last_contact_at)}</span></span>`
+      : (i.contractor_id||i.cc_contractor_text) ? `<span class="said none">No word from contractor yet</span>` : `<span class="said none">—</span>`;
+  const ccFields = [i.cc_price_text?`price ${esc(i.cc_price_text)}`:null, i.cc_finish_date_text?`finish ${esc(i.cc_finish_date_text)}`:null, i.cc_has_been_done?`done? ${esc(i.cc_has_been_done)}`:null].filter(Boolean).join(" · ");
+  const inTrade = CONTRACTORS.filter(c=>c.trade===i.trade || c.id===i.contractor_id);
+  const pool = (SHOW_ALL[i.id] || !i.trade || inTrade.length===0) ? CONTRACTORS : inTrade;
+  const opts = pool.map(c=>`<option value="${c.id}" ${c.id===i.contractor_id?'selected':''}>${esc(c.name)}${pool===CONTRACTORS?' — '+esc(c.trade):''}${c.phone?'':' (no phone)'}</option>`).join("")
+    + (pool!==CONTRACTORS ? `<option value="__all__">Show everyone…</option>` : "");
+  const unmatched = i.cc_contractor_text && !i.contractor_id;
+  return `<tr class="${i.cc_done?'done':''}" data-id="${i.id}">
+    <td class="no">#${i.item_no??""}</td>
+    <td class="desc">${esc(i.description)}<br>
+      ${i.trade?`<span class="trade" onclick="askTrade('${i.id}')" title="Change trade" style="cursor:pointer">${esc(i.trade)}</span>`:`<span class="trade ask" onclick="askTrade('${i.id}')">set trade</span>`}
+    </td>
+    <td><div class="truth">
+      <span class="k">CompanyCam</span><span class="v cc"><span class="box ${i.cc_done?'on':''}">${i.cc_done?'✓':''}</span>${i.cc_done?'done':'not done'}${i.cc_photo_count?`<span class="photos">· ${i.cc_photo_count} photo${i.cc_photo_count===1?'':'s'}</span>`:''}${ccFields?`<span class="photos">· ${ccFields}</span>`:''}</span>
+      <span class="k">Last word</span><span class="v">${said}</span>
+    </div></td>
+    <td class="who">
+      ${st.pill}
+      <select onchange="assign('${i.id}', this.value)" ${i.cc_done?'disabled':''}>
+        <option value="">— pick a contractor —</option>${opts}
+      </select>
+      ${i.cc_contractor_text?`<div class="cctext ${unmatched?'unmatched':''}">CompanyCam says: <b>${esc(i.cc_contractor_text)}</b>${unmatched?' — not in directory':''}</div>`:""}
+    </td>
+    <td class="act">
+      ${i.cc_done?'' : (i.contractor_id
+        ? `<button class="ubtn small" onclick="chase('${i.id}')">Text for status</button>`
+        : `<button class="ubtn small primary" onclick="bids('${i.id}')" ${i.dispatched_n>0?'disabled':''}>${i.dispatched_n>0?'Bids requested':'Get 3 bids'}</button>`)}
+    </td>
+  </tr>`;
 }
 
-boot();
+async function assign(id, contractor_id){
+  if(contractor_id==="__all__"){ SHOW_ALL[id]=true; render(); return; }
+  const { error } = await sb.from("rtr_items").update({ contractor_id: contractor_id||null, status: contractor_id?"awarded":"new" }).eq("id", id);
+  if(error) return toast("Couldn't save: "+error.message);
+  toast(contractor_id ? "Assigned" : "Unassigned"); await load();
+}
+async function askTrade(id){
+  const cur = ITEMS.find(x=>x.id===id)?.trade || "";
+  const t = prompt("Trade for this item (type one):\n" + TRADES.join(" · "), cur);
+  if(!t) return;
+  const { error } = await sb.from("rtr_items").update({ trade: t }).eq("id", id);
+  if(error) return toast("Couldn't save: "+error.message);
+  await load();
+}
+async function fn(name, body){
+  const r = await fetch(`${SUPABASE_URL}/functions/v1/${name}`, { method:"POST", headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+ANON_JWT }, body: JSON.stringify(body) });
+  return r.json();
+}
+async function bids(id){
+  const i = ITEMS.find(x=>x.id===id);
+  if(!i.trade){ toast("Set the trade first so it knows who to text"); return; }
+  if(!confirm(`Text the top 3 ${i.trade} contractors for a bid on:\n\n${i.description}\n\nat ${i.address}?`)) return;
+  toast("Sending…");
+  const r = await fn("rtr-dispatch", { action:"dispatch", item_id:id });
+  if(r.error) return toast(r.error);
+  toast(r.sent?.length ? `Sent to ${r.sent.join(", ")}` : `Couldn't send — ${(r.failed||[])[0]||"no contractors"}`);
+  await load();
+}
+async function chase(id){
+  toast("Sending…");
+  const r = await fn("rtr-dispatch", { action:"chase", item_id:id });
+  toast(r.error ? r.error : "Status request sent");
+  await load();
+}
+$("#btn-sync").onclick = async () => { $("#btn-sync").disabled=true; $("#btn-sync").textContent="Pulling…"; const r = await fn("cc-rtr",{action:"sync"}); $("#btn-sync").disabled=false; $("#btn-sync").textContent="Pull from CompanyCam"; toast(r.ok?`Pulled ${r.synced} properties`:(r.error||"Pull failed")); await load(); };
+$("#show-done").onchange = render;
+load();
 </script>
 </body>
 </html>
