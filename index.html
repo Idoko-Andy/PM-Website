@@ -445,6 +445,9 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="window.open('https://zombie-tv-dashboard.vercel.app/','_blank')">📺 Legacy TV ↗</div>
       <div class="ddi" onclick="window.open('https://conventus-draw-desk.vercel.app/','_blank')">🏦 Draw Desk ↗</div>
       <div class="ddi" onclick="window.open('https://renovation-pricing.vercel.app/','_blank')">💲 Renovation Pricing ↗</div>
+      <div class="ddl">Process</div>
+      <a class="ddi" href="/process.html" style="text-decoration:none">🗺 Flip Process</a>
+      <a class="ddi" href="/remedies.html" style="text-decoration:none">🛠 Remedies</a>
     </div>
   </div>
 </div>
@@ -2541,6 +2544,7 @@ const PROP_TYPES = [
   "Full Rehab No Permit",
   "Full Rehab Permit",
   "Luxury Rehab",
+  "Full Gut / High-End",
 ];
 
 let SUB_PHASES = [
@@ -2830,6 +2834,7 @@ const PROP_TYPE_STYLE = {
   "Full Rehab No Permit":  "background:#FCEBEB;color:#791F1F",
   "Full Rehab Permit":     "background:#CECBF6;color:#26215C",
   "Luxury Rehab":          "background:#F3E6F6;color:#5B2A6B",
+  "Full Gut / High-End":   "background:#E8D5C4;color:#5C3D2E",
 };
 
 // propCards is populated from Supabase (table public.pm_properties) by
@@ -6772,8 +6777,46 @@ function _pdOpenTasks(pid){
 }
 function _pdEvents(pid){
   return (typeof _calEventsCache!=='undefined'?_calEventsCache:[])
-    .filter(e=>e.property_id===pid)
+    .filter(e=>e.property_id===pid && e.kind!=='baseline')
     .sort((a,b)=>String(b.event_date||'').localeCompare(String(a.event_date||'')));
+}
+// Baseline schedule (kind='baseline'): notes is a JSON string carrying the untouched
+// plan (plan_start/plan_end/late_after/step/…). "behind by N d" = event_date - plan_start.
+function _baselineNotes(e){ if(!e||e.kind!=='baseline') return null; try{ return JSON.parse(e.notes||'null')||null; }catch(_){ return null; } }
+function _pdBaseline(pid){
+  return (typeof _calEventsCache!=='undefined'?_calEventsCache:[])
+    .filter(e=>e.property_id===pid && e.kind==='baseline')
+    .map(function(e){ return {e:e, n:_baselineNotes(e)||{}}; })
+    .sort(function(a,b){ return String(a.n.plan_start||a.e.event_date||'').localeCompare(String(b.n.plan_start||b.e.event_date||'')); });
+}
+function _daysBetween(a,b){ if(!a||!b) return 0; return Math.round((new Date(a+'T00:00:00')-new Date(b+'T00:00:00'))/86400000); }
+function _pdBaselineRows(pid){
+  const today=_ymd(new Date());
+  const items=_pdBaseline(pid);
+  if(!items.length) return '';
+  return items.map(function(o){
+    const e=o.e, n=o.n;
+    const start=e.event_date||n.plan_start||'';
+    const end=e.end_date||e.event_date||n.plan_end||'';
+    const done=!!e.completed;
+    const overdue=!done && end && today>end;
+    const veryLate=!done && n.late_after && today>n.late_after;
+    const behind=(!done && start && e.event_date && e.event_date>start)?_daysBetween(e.event_date,start):0;
+    const col=done?'#0F7B54':(overdue?'#B42318':'#636b7a');
+    const dates=(start&&end&&start!==end)?(start+' → '+end):(start||end||'');
+    const flags=[];
+    if(behind>0) flags.push('behind baseline by '+behind+' d');
+    if(veryLate) flags.push('past 75th‑pct');
+    if(n.proposed) flags.push('proposed');
+    return '<div style="display:flex;align-items:baseline;gap:9px;padding:6px 0;border-bottom:0.5px dashed #e0e4ec">'
+      + '<span style="flex-shrink:0;color:'+col+'">'+(done?'&#9745;':'&#9744;')+'</span>'
+      + '<div style="flex:1;min-width:0">'
+      + '<div style="font-size:13px;color:'+(done?'#566070':'#111')+';'+(done?'text-decoration:line-through':'')+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+_calEsc(n.step||e.title||'Step')+'</div>'
+      + (flags.length?('<div style="font-size:11px;color:'+((overdue||veryLate)?'#B42318':'#8A5A10')+'">'+_calEsc(flags.join(' · '))+'</div>'):'')
+      + '</div>'
+      + '<div style="font-size:11.5px;color:'+(overdue?'#B42318':'#566070')+';flex-shrink:0;white-space:nowrap">'+_calEsc(dates)+'</div>'
+      + '</div>';
+  }).join('');
 }
 function _pdPermits(pid){
   if(typeof _permitList!=='function') return [];
@@ -6833,6 +6876,14 @@ function _pdLinked(c, which){
     'Nothing booked on the construction calendar for this house.',
     evRows + (evs.length>8?`<div style="padding:7px 0;font-size:11.5px;color:#566070">+ ${evs.length-8} more</div>`:''),
     `openProjectDashboard('calendar')`);
+
+  // --- baseline schedule ------------------------------------------------------
+  const baseItems=_pdBaseline(c.id);
+  const baseRows=_pdBaselineRows(c.id);
+  const baseDone=baseItems.filter(function(x){return x.e.completed;}).length;
+  const basePanel=baseRows?wrap('&#128467; Baseline schedule',
+    '&mdash; '+baseDone+'/'+baseItems.length+' done',
+    '', baseRows, `openProjectDashboard('calendar')`):'';
 
   // --- permits ----------------------------------------------------------------
   const pers=_pdPermits(c.id);
@@ -6917,14 +6968,14 @@ function _pdLinked(c, which){
   //   'work'    the work on this house  -> the Sub Phases / Tasks tab
   //   'permits' the permit block        -> the Permits tab (only on a permitted house)
   //   'info'    trackers and checklists -> the Project Info tab
-  if(which==='work')    return `${taskPanel}${evPanel}`;
+  if(which==='work')    return `${taskPanel}${basePanel}${evPanel}`;
   if(which==='permits') return perPanel;
   if(which==='info')    return `${trkPanel}${chkPanel}`;
   return `<div style="margin-top:16px">
     <div style="font-size:12px;color:#566070;text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">Everything on this house</div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
       <div>${taskPanel}${perPanel}</div>
-      <div>${evPanel}${trkPanel}</div>
+      <div>${basePanel}${evPanel}${trkPanel}</div>
     </div>
     ${chkPanel}
   </div>`;
@@ -7886,7 +7937,7 @@ function _pdFivePanels(cards){
   const today=new Date(); const todayStr=_ymd(today);
   const end=new Date(); end.setDate(end.getDate()+5); const endStr=_ymd(end);
   const evs=(typeof _calEventsCache!=='undefined'?_calEventsCache:[])
-    .filter(e=>ids.has(e.property_id) && !e.completed && e.event_date && e.event_date>=todayStr && e.event_date<=endStr)
+    .filter(e=>ids.has(e.property_id) && e.kind!=='baseline' && !e.completed && e.event_date && e.event_date>=todayStr && e.event_date<=endStr)
     .sort((a,b)=>a.event_date<b.event_date?-1:1);
   const tks=(typeof _tasksCache!=='undefined'?_tasksCache:[])
     .filter(t=>ids.has(t.property_id) && t.status==='open' && t.due_date && t.due_date<=endStr)
@@ -10279,12 +10330,13 @@ function _wmItems(pid, from, to){
     // not worth a line in the meeting.
     let enote=String(e.notes||'').trim();
     if(/^auto-added from the/i.test(enote)) enote='';
+    const isB=e.kind==='baseline'; const bstep=isB?((_baselineNotes(e)||{}).step||e.title||'Baseline step'):'';
     out.push({key:'e:'+e.id, id:e.id, type:'event', date:d, endDate:(e.end_date||''), running:running,
               when:_wmSpan(d, e.end_date||''),
-              title:isC?(_contractorName(e.contractor_id)||'Contractor'):(e.title||(e.kind==='material'?'Material':'Event')),
-              sub:isC?(trade?('Contractor \u00b7 '+trade):'Contractor booking'):(e.kind==='material'?'Material / delivery':'Scheduled'),
+              title:isC?(_contractorName(e.contractor_id)||'Contractor'):(isB?bstep:(e.title||(e.kind==='material'?'Material':'Event'))),
+              sub:isC?(trade?('Contractor \u00b7 '+trade):'Contractor booking'):(isB?'Baseline schedule':(e.kind==='material'?'Material / delivery':'Scheduled')),
               note:enote,
-              done:!!e.completed, kind:isC?'c':'m', kindLabel:isC?'Contractor':(e.kind==='material'?'Material':'Scheduled')});
+              done:!!e.completed, kind:isC?'c':'m', kindLabel:isC?'Contractor':(isB?'Baseline':(e.kind==='material'?'Material':'Scheduled'))});
   });
   return out.sort((a,b)=>a.date<b.date?-1:(a.date>b.date?1:String(a.title).localeCompare(String(b.title))));
 }
@@ -25134,12 +25186,15 @@ function renderConstructionCalendar(){
   };
   const evChip=(e)=>{
     const done=!!e.completed; const deco=done?"text-decoration:line-through;opacity:0.55;":"";
+    const isBase=e.kind==="baseline"; const bn=isBase?(_baselineNotes(e)||{}):null;
     const lbl = e.kind==="contractor" ? ("★ "+_contractorName(e.contractor_id))
               : e.kind==="custom" ? ("• "+(e.title||'Event'))
+              : isBase ? ("🗓 "+(bn.step||e.title||'Baseline'))
               : ("📦 "+(e.title||'Material'));
-    const bg = e.kind==="contractor"?"#1a2744":e.kind==="custom"?"#EEEDFE":"#E6F1FB";
-    const col= e.kind==="contractor"?"#fff":e.kind==="custom"?"#3C3489":"#0C447C";
-    return `<div onclick="event.stopPropagation();openCalEventDetail('${e.id}')" title="Click to open / edit / delete: ${_calEsc(e.title||lbl)}" style="cursor:pointer;font-size:11px;background:${bg};color:${col};border-radius:4px;padding:2px 5px;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${deco}">${done?'✓ ':''}${_calEsc(lbl)}</div>`;
+    const bg = e.kind==="contractor"?"#1a2744":e.kind==="custom"?"#EEEDFE":isBase?"#F1F3F0":"#E6F1FB";
+    const col= e.kind==="contractor"?"#fff":e.kind==="custom"?"#3C3489":isBase?"#4E5E5C":"#0C447C";
+    const bord= isBase?"border:1px dashed #9FB0AB;":"";
+    return `<div onclick="event.stopPropagation();openCalEventDetail('${e.id}')" title="Click to open / edit / delete: ${_calEsc(e.title||lbl)}" style="cursor:pointer;font-size:11px;background:${bg};color:${col};${bord}border-radius:4px;padding:2px 5px;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${deco}">${done?'✓ ':''}${_calEsc(lbl)}</div>`;
   };
   const cells=[];
   for(let i=0;i<startDow;i++){ cells.push(`<div style="background:#fafbfc;min-height:92px;border:0.5px solid #edf0f4"></div>`); }
@@ -25166,7 +25221,7 @@ function renderConstructionCalendar(){
     const evs=_calEventsCache.filter(e=> e.event_date===dayStr && (st.prop==="all"||e.property_id===st.prop) && (st.pm==="all"||_sameAssignee(_propPM(e.property_id),st.pm)) && _matchFilter(e)).sort((a,b)=>(a.completed?1:0)-(b.completed?1:0));
     const isToday=dayStr===todayStr;
     const rowFor=(e)=>{ const done=!!e.completed;
-      const lbl = e.kind==="contractor" ? ("★ Contractor start — "+_contractorName(e.contractor_id)) : e.kind==="custom" ? ("• "+(e.title||'Event')) : ("📦 Material delivery — "+(e.title||'Material'));
+      const lbl = e.kind==="contractor" ? ("★ Contractor start — "+_contractorName(e.contractor_id)) : e.kind==="custom" ? ("• "+(e.title||'Event')) : e.kind==="baseline" ? ("🗓 Baseline — "+((_baselineNotes(e)||{}).step||e.title||'Step')) : ("📦 Material delivery — "+(e.title||'Material'));
       return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:0.5px solid #f1f3f7;${done?'opacity:0.6;':''}"><div onclick="event.stopPropagation();toggleCalEventDone('${e.id}')" title="Mark ${done?'not done':'done'}" style="font-size:21px;cursor:pointer;line-height:1">${done?'✅':'⬜'}</div><div onclick="openCalEventDetail('${e.id}')" style="cursor:pointer;min-width:0;flex:1"><div style="font-size:15px;font-weight:500;color:#111;${done?'text-decoration:line-through;':''}">${_calEsc(lbl)}</div><div style="font-size:13px;color:#566070;margin-top:2px">${_calEsc(_locLabel(e)||'—')}</div></div><div onclick="openCalEventDetail('${e.id}')" style="font-size:12px;color:#566070;white-space:nowrap;cursor:pointer">Edit ›</div></div>`; };
     const dayBody=evs.length?`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">${evs.map(rowFor).join("")}</div>`:`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:34px;text-align:center;color:#636b7a;font-size:14px">Nothing scheduled for this day.</div>`;
     return `<div style="padding:20px;max-width:760px;margin:0 auto">
@@ -27400,7 +27455,7 @@ function _mBuildTab(){
   const rows=evs.length?evs.map(_mEventRow).join(""):`<div class="m-card" style="text-align:center;color:#566070;padding:30px">No construction items this day.</div>`;
   return sel+_mDayBar()+rows;
 }
-function _mKindLabel(k){ return ({material:"📦 Material delivery",contractor:"★ Contractor start",custom:"• Custom"})[k]||("• "+(k||"Item")); }
+function _mKindLabel(k){ return ({material:"📦 Material delivery",contractor:"★ Contractor start",baseline:"🗓 Baseline",custom:"• Custom"})[k]||("• "+(k||"Item")); }
 function _mEventRow(e){
   const done=!!e.completed, ro=isReadOnly();
   const label=e.title||_mKindLabel(e.kind);

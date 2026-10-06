@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Remedies · Legacy Ohio Homes</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0d0d0d;color:#e8eaed;font-family:-apple-system,"Segoe UI",Roboto,sans-serif;font-size:14px;min-height:100vh}
+a{color:#7aabf0;text-decoration:none}
+a:hover{text-decoration:underline}
+
+/* ── layout ── */
+.topbar{background:#1a1a1a;border-bottom:1px solid #2a2a2a;padding:0 20px;display:flex;align-items:center;gap:16px;height:46px;position:sticky;top:0;z-index:100}
+.topbar-logo{font-size:13px;font-weight:700;color:#fff;letter-spacing:.04em;white-space:nowrap}
+.topbar-back{font-size:12px;color:#888;cursor:pointer;display:flex;align-items:center;gap:4px}
+.topbar-back:hover{color:#fff}
+.topbar-title{font-size:13px;color:#ccc;flex:1}
+.topbar-right{display:flex;align-items:center;gap:10px}
+#user-label{font-size:12px;color:#666}
+
+.page{max-width:1100px;margin:0 auto;padding:22px 20px 60px}
+
+/* ── header ── */
+.hdr{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:18px}
+.hdr h1{font-size:22px;font-weight:700;color:#fff;letter-spacing:.01em}
+.hdr-sub{font-size:13px;color:#666;margin-top:3px}
+.hdr-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+
+/* ── filter bar ── */
+.filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:16px}
+.filter-chip{background:none;border:1px solid #333;color:#999;border-radius:999px;padding:4px 13px;font-size:12px;cursor:pointer;transition:all .12s}
+.filter-chip:hover{border-color:#555;color:#ccc}
+.filter-chip.on{border-color:#7aabf0;color:#7aabf0;background:#0d1e38}
+.filter-chip.warn.on{border-color:#e6a817;color:#e6a817;background:#241a04}
+.search{background:#1a1a1a;border:1px solid #2a2a2a;color:#e8eaed;border-radius:8px;padding:5px 11px;font-size:13px;width:210px;outline:none}
+.search:focus{border-color:#555}
+.sort-sel{background:#1a1a1a;border:1px solid #2a2a2a;color:#aaa;border-radius:8px;padding:5px 10px;font-size:12px;cursor:pointer;outline:none}
+
+/* ── property group ── */
+.prop-group{margin-bottom:22px}
+.prop-head{background:#181818;border:1px solid #2a2a2a;border-radius:10px 10px 0 0;padding:11px 15px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.prop-name{font-size:15px;font-weight:700;color:#fff}
+.prop-phase{font-size:11px;font-weight:700;padding:2px 9px;border-radius:99px}
+.prop-phase.rtr{background:#3d2900;color:#e6a817}
+.prop-phase.ctc{background:#1e1a44;color:#9d95e8}
+.prop-phase.ic{background:#0a2a1a;color:#5bc484}
+.prop-pm{font-size:12px;color:#666;margin-left:auto}
+.prop-dates{font-size:12px;color:#666;display:flex;gap:10px;flex-wrap:wrap}
+.prop-dates span{white-space:nowrap}
+.prop-cc{margin-left:auto}
+.prop-items{border:1px solid #2a2a2a;border-top:none;border-radius:0 0 10px 10px;overflow:hidden}
+.empty-prop{padding:20px;text-align:center;color:#555;font-size:13px;background:#111;border:1px solid #2a2a2a;border-top:none;border-radius:0 0 10px 10px}
+
+/* ── item row ── */
+.item-row{background:#111;border-bottom:1px solid #1e1e1e;padding:10px 15px;display:grid;grid-template-columns:28px 1fr auto;gap:10px;align-items:start;cursor:pointer;transition:background .1s}
+.item-row:last-child{border-bottom:none}
+.item-row:hover{background:#161616}
+.item-row.expanded{background:#141414}
+.item-num{font-size:11px;color:#555;font-weight:700;padding-top:1px}
+.item-main{}
+.item-desc{font-size:13.5px;color:#ddd;line-height:1.45;margin-bottom:4px}
+.item-meta{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.trade-tag{font-size:11px;font-weight:600;padding:1px 8px;border-radius:4px;background:#1e2a1e;color:#6fc484}
+.status-tag{font-size:11px;font-weight:700;padding:1px 8px;border-radius:4px;letter-spacing:.03em;text-transform:uppercase}
+.st-new{background:#1e1a04;color:#d4a017}
+.st-verified{background:#0d2040;color:#7aabf0}
+.st-awarded{background:#0d2a1a;color:#5bc484}
+.st-done{background:#1a1a1a;color:#555}
+.item-cc-icon{font-size:11px;color:#555}
+.item-photos{font-size:11px;color:#888}
+.item-right{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+.deadline-tag{font-size:11px;font-weight:600;white-space:nowrap}
+.deadline-ok{color:#5bc484}
+.deadline-warn{color:#e6a817}
+.deadline-over{color:#e05c4a}
+.cc-thumb{width:32px;height:32px;border-radius:4px;object-fit:cover;border:1px solid #2a2a2a}
+
+/* ── expanded detail ── */
+.item-detail{background:#0e0e0e;border-top:1px solid #1e1e1e;padding:12px 15px 14px 53px;display:none}
+.item-row.expanded + .item-detail{display:block}
+.detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px 18px;margin-bottom:12px}
+.detail-kv dt{font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:#555;margin-bottom:2px}
+.detail-kv dd{font-size:13px;color:#ccc}
+.detail-actions{display:flex;gap:8px;flex-wrap:wrap}
+.btn{padding:6px 13px;border-radius:7px;font-size:12.5px;cursor:pointer;border:none;font-weight:600;transition:background .12s}
+.btn-ghost{background:none;border:1px solid #333;color:#aaa}
+.btn-ghost:hover{background:#1e1e1e;color:#fff;border-color:#555}
+.btn-primary{background:#1a3a6a;color:#7aabf0;border:1px solid #1e4080}
+.btn-primary:hover{background:#1e4488}
+.btn-warn{background:#2a1a04;color:#e6a817;border:1px solid #3a2506}
+.btn-warn:hover{background:#3a2408}
+.btn-green{background:#0a2a14;color:#5bc484;border:1px solid #0e3a1c}
+.btn-green:hover{background:#0e3820}
+.dispatch-rows{margin-top:10px;display:flex;flex-direction:column;gap:6px}
+.dispatch-row{background:#161616;border:1px solid #222;border-radius:7px;padding:8px 11px;font-size:12px;color:#999;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px}
+.dispatch-row b{color:#ccc}
+
+/* ── stat bar ── */
+.stats{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px}
+.stat{background:#181818;border:1px solid #2a2a2a;border-radius:9px;padding:10px 16px;min-width:100px}
+.stat-n{font-size:22px;font-weight:700;color:#fff;line-height:1}
+.stat-l{font-size:11px;color:#666;margin-top:3px;text-transform:uppercase;letter-spacing:.05em}
+.stat.warn .stat-n{color:#e6a817}
+.stat.good .stat-n{color:#5bc484}
+.stat.blue .stat-n{color:#7aabf0}
+
+/* ── auth wall ── */
+#auth-wall{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:70vh;gap:12px;text-align:center}
+#auth-wall h2{font-size:18px;color:#fff}
+#auth-wall p{font-size:13px;color:#666;max-width:340px}
+.pw-row{display:flex;gap:8px;margin-top:4px}
+.pw-input{background:#1a1a1a;border:1px solid #333;color:#e8eaed;border-radius:8px;padding:8px 13px;font-size:14px;width:220px;outline:none}
+.pw-input:focus{border-color:#555}
+#auth-err{font-size:12px;color:#e05c4a;min-height:16px}
+
+/* ── empty / loading ── */
+#loading{padding:60px;text-align:center;color:#555;font-size:14px}
+#empty-all{padding:60px;text-align:center;color:#555;font-size:14px;display:none}
+@media(max-width:640px){
+  .detail-grid{grid-template-columns:1fr}
+  .item-row{grid-template-columns:28px 1fr}
+  .item-right{display:none}
+}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <span class="topbar-back" onclick="window.location='/'">← Dashboard</span>
+  <span class="topbar-title">🛠 Remedies — Request to Remedy tracker</span>
+  <div class="topbar-right"><span id="user-label"></span></div>
+</div>
+
+<div id="auth-wall" style="display:none">
+  <h2>🔐 Sign in to view Remedies</h2>
+  <p>Enter your Legacy Ohio Homes password to access this page.</p>
+  <div class="pw-row">
+    <input class="pw-input" id="pw-in" type="password" placeholder="Password" onkeydown="if(event.key==='Enter')tryLogin()">
+    <button class="btn btn-primary" onclick="tryLogin()">Sign in</button>
+  </div>
+  <div id="auth-err"></div>
+</div>
+
+<div id="main-content" style="display:none">
+<div class="page">
+  <div class="hdr">
+    <div>
+      <h1>Remedies</h1>
+      <div class="hdr-sub">Request-to-Remedy items, contractor status, and CompanyCam links — all in one place.</div>
+    </div>
+    <div class="hdr-actions">
+      <a href="https://app.companycam.com" target="_blank" class="btn btn-ghost" style="text-decoration:none;font-size:12.5px;padding:6px 13px;border-radius:7px;border:1px solid #333;color:#aaa;background:none">📷 CompanyCam ↗</a>
+    </div>
+  </div>
+
+  <div class="stats" id="stats-bar"></div>
+
+  <div class="filters">
+    <input class="search" id="search" placeholder="Search address or description…" oninput="render()">
+    <button class="filter-chip on" data-f="all" onclick="setFilter('all')">All</button>
+    <button class="filter-chip" data-f="new" onclick="setFilter('new')">New</button>
+    <button class="filter-chip" data-f="verified" onclick="setFilter('verified')">Verified</button>
+    <button class="filter-chip" data-f="awarded" onclick="setFilter('awarded')">Awarded</button>
+    <button class="filter-chip warn" data-f="overdue" onclick="setFilter('overdue')">⚠ Overdue</button>
+    <select class="sort-sel" id="sort-sel" onchange="render()">
+      <option value="addr">Group by address</option>
+      <option value="deadline">Sort by deadline</option>
+      <option value="status">Sort by status</option>
+    </select>
+  </div>
+
+  <div id="loading">Loading remedies…</div>
+  <div id="empty-all">No items match your filter.</div>
+  <div id="items-list"></div>
+</div>
+</div>
+
+<script>
+// ─── Supabase ──────────────────────────────────────────────────────────────
+const SB_URL  = 'https://kwhgymympuhfvqbedwpd.supabase.co';
+const SB_KEY  = 'sb_publishable__DNUtcdM8SqCMzTZM4gtXw_1wf9IWa9';
+const SITE_PW_KEY = 'site_pw_v1';
+
+async function sbFetch(path, opts={}){
+  const r = await fetch(SB_URL + path, {
+    ...opts,
+    headers: { apikey: SB_KEY, Authorization: 'Bearer ' + (getToken()||SB_KEY),
+               'Content-Type': 'application/json', ...(opts.headers||{}) }
+  });
+  if(!r.ok){ const t=await r.text(); throw new Error(t); }
+  return r.json();
+}
+
+// ─── Auth ──────────────────────────────────────────────────────────────────
+const SESSION_KEY = 'rem_session';
+function getToken(){ try{ return JSON.parse(sessionStorage.getItem(SESSION_KEY)||'null')?.access_token||null; }catch(_){ return null; } }
+function saveSession(s){ sessionStorage.setItem(SESSION_KEY, JSON.stringify(s)); }
+function clearSession(){ sessionStorage.removeItem(SESSION_KEY); }
+
+async function tryLogin(){
+  const pw = document.getElementById('pw-in').value;
+  document.getElementById('auth-err').textContent = '';
+  try {
+    // Try to get site password from pm_settings via anon key
+    const rows = await sbFetch('/rest/v1/pm_settings?key=eq.site_password&select=data', { method:'GET' });
+    const storedPw = rows[0]?.data?.value || rows[0]?.data || null;
+    if (storedPw && pw === storedPw) {
+      // Password matched — use anon key as the access token (read-only public data)
+      saveSession({ access_token: SB_KEY, role: 'viewer' });
+      boot();
+      return;
+    }
+    // Fall back: try Supabase email/password auth if the PW looks like an email
+    document.getElementById('auth-err').textContent = 'Wrong password.';
+  } catch(e) {
+    document.getElementById('auth-err').textContent = 'Could not reach the server. Try again.';
+  }
+}
+
+// ─── Boot ──────────────────────────────────────────────────────────────────
+let _items = [], _dispatches = {}, _props = {}, _filterActive = 'all';
+
+async function boot(){
+  const token = getToken();
+  if(!token){ showAuthWall(); return; }
+  document.getElementById('auth-wall').style.display = 'none';
+  document.getElementById('main-content').style.display = 'block';
+  await loadData();
+}
+
+async function loadData(){
+  document.getElementById('loading').style.display = 'block';
+  document.getElementById('items-list').innerHTML = '';
+  try {
+    // Load all non-cancelled items
+    const items = await sbFetch(
+      '/rest/v1/rtr_items?status=neq.cancelled&order=address,item_no&select=*&limit=500'
+    );
+    _items = items;
+
+    // Load dispatches for those item ids
+    if(items.length){
+      const ids = items.map(i=>`"${i.id}"`).join(',');
+      const dispatches = await sbFetch(
+        `/rest/v1/rtr_dispatches?item_id=in.(${ids})&select=*`
+      );
+      _dispatches = {};
+      dispatches.forEach(d=>{ (_dispatches[d.item_id]=_dispatches[d.item_id]||[]).push(d); });
+    }
+
+    // Load property info (phase, pm, closing_date_sell, company_cam)
+    const addrs = [...new Set(items.map(i=>i.address).filter(Boolean))];
+    if(addrs.length){
+      const q = addrs.map(a=>`addr.ilike.${encodeURIComponent('%'+a+'%')}`).join(',');
+      const props = await sbFetch(
+        `/rest/v1/pm_properties?or=(${q})&archived=is.false&select=id,addr,phase,pm,closing_date_sell,company_cam`
+      );
+      _props = {};
+      props.forEach(p=>{ _props[p.id]=p; _props[p.addr]=p; });
+      // Also index by address substring for fuzzy lookup
+      items.forEach(it=>{
+        if(!_props[it.address]){
+          const match = props.find(p=>p.addr&&it.address&&(p.addr.includes(it.address)||it.address.includes(p.addr.split(' ')[0])));
+          if(match) _props[it.address]=match;
+        }
+      });
+    }
+
+    document.getElementById('loading').style.display = 'none';
+    renderStats();
+    render();
+  } catch(e){
+    document.getElementById('loading').textContent = 'Failed to load: ' + e.message;
+  }
+}
+
+// ─── Helpers ───────────────────────────────────────────────────────────────
+const esc = s => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const ymd = d => d ? d.slice(0,10) : null;
+const today = () => new Date().toISOString().slice(0,10);
+function daysUntil(d){ if(!d) return null; return Math.ceil((new Date(d+'T00:00:00')-new Date(today()+'T00:00:00'))/86400000); }
+function fmtDate(d){ if(!d) return '—'; const [y,m,dd]=d.slice(0,10).split('-'); return m+'/'+dd+'/'+y; }
+
+function deadlineTag(deadline){
+  if(!deadline) return '';
+  const n = daysUntil(deadline);
+  const cls = n < 0 ? 'deadline-over' : n <= 3 ? 'deadline-warn' : 'deadline-ok';
+  const lbl = n < 0 ? `${Math.abs(n)}d overdue` : n === 0 ? 'Due today' : `${n}d left`;
+  return `<span class="deadline-tag ${cls}">${lbl} · ${fmtDate(deadline)}</span>`;
+}
+
+function statusTag(s){
+  const map = { new:'st-new', verified:'st-verified', awarded:'st-awarded', done:'st-done' };
+  return `<span class="status-tag ${map[s]||'st-new'}">${esc(s)}</span>`;
+}
+
+function phaseTag(phase){
+  if(!phase) return '';
+  const cls = /RTR In Process/i.test(phase) ? 'rtr' : /Cleared|Completed/i.test(phase) ? 'ctc' : 'ic';
+  const short = phase.replace('RTR Completed (Pending Closing)','Cleared to Close').replace('RTR In Process','RTR In Process');
+  return `<span class="prop-phase ${cls}">${esc(short)}</span>`;
+}
+
+function ccLink(url, label){
+  if(!url) return '';
+  return `<a href="${esc(url)}" target="_blank" class="btn btn-ghost" style="font-size:11.5px;padding:4px 9px">📷 ${esc(label||'CompanyCam')} ↗</a>`;
+}
+
+function propFor(item){
+  return _props[item.address] || _props[item.property_id] || null;
+}
+
+// ─── Filter / Sort ─────────────────────────────────────────────────────────
+function setFilter(f){
+  _filterActive = f;
+  document.querySelectorAll('.filter-chip').forEach(c=>c.classList.toggle('on', c.dataset.f===f));
+  render();
+}
+
+function applyFilter(items){
+  const q = (document.getElementById('search').value||'').trim().toLowerCase();
+  const f = _filterActive;
+  return items.filter(item=>{
+    if(f==='new'      && item.status!=='new')      return false;
+    if(f==='verified' && item.status!=='verified') return false;
+    if(f==='awarded'  && item.status!=='awarded')  return false;
+    if(f==='overdue'  && (!item.deadline || daysUntil(item.deadline) >= 0)) return false;
+    if(q && !(item.address||'').toLowerCase().includes(q) && !(item.description||'').toLowerCase().includes(q)) return false;
+    return true;
+  });
+}
+
+// ─── Stats bar ─────────────────────────────────────────────────────────────
+function renderStats(){
+  const total   = _items.length;
+  const newN    = _items.filter(i=>i.status==='new').length;
+  const verified= _items.filter(i=>i.status==='verified').length;
+  const awarded = _items.filter(i=>i.status==='awarded').length;
+  const overdue = _items.filter(i=>i.deadline && daysUntil(i.deadline)<0).length;
+  const props   = new Set(_items.map(i=>i.address)).size;
+
+  document.getElementById('stats-bar').innerHTML = [
+    stat(props,   'Properties', ''),
+    stat(total,   'Open items', 'blue'),
+    stat(newN,    'New', ''),
+    stat(verified,'Verified', 'good'),
+    stat(awarded, 'Awarded', 'good'),
+    overdue ? stat(overdue, 'Overdue', 'warn') : ''
+  ].join('');
+}
+function stat(n, l, cls){ return `<div class="stat ${cls}"><div class="stat-n">${n}</div><div class="stat-l">${l}</div></div>`; }
+
+// ─── Main render ───────────────────────────────────────────────────────────
+function render(){
+  const sort = document.getElementById('sort-sel').value;
+  let visible = applyFilter(_items);
+
+  document.getElementById('empty-all').style.display = visible.length ? 'none' : 'block';
+  if(!visible.length){ document.getElementById('items-list').innerHTML=''; return; }
+
+  let html = '';
+
+  if(sort === 'addr'){
+    // Group by address
+    const byAddr = {};
+    visible.forEach(it=>{ (byAddr[it.address]=byAddr[it.address]||[]).push(it); });
+    Object.keys(byAddr).sort().forEach(addr=>{
+      html += renderGroup(addr, byAddr[addr]);
+    });
+  } else if(sort === 'deadline'){
+    // Sort by deadline (nulls last), ungrouped
+    visible.sort((a,b)=>{
+      if(!a.deadline && !b.deadline) return 0;
+      if(!a.deadline) return 1; if(!b.deadline) return -1;
+      return a.deadline < b.deadline ? -1 : 1;
+    });
+    html += renderFlat(visible);
+  } else {
+    // Sort by status priority
+    const pri = {new:0,verified:1,awarded:2,done:3};
+    visible.sort((a,b)=>(pri[a.status]||0)-(pri[b.status]||0));
+    html += renderFlat(visible);
+  }
+
+  document.getElementById('items-list').innerHTML = html;
+  // Bind toggle
+  document.querySelectorAll('.item-row').forEach(row=>{
+    row.addEventListener('click', ()=>{
+      row.classList.toggle('expanded');
+    });
+  });
+}
+
+function renderGroup(addr, items){
+  const prop = propFor(items[0]);
+  const phase = prop?.phase || '';
+  const pm    = prop?.pm || '';
+  const close = prop?.closing_date_sell || '';
+  const ccUrl = prop?.company_cam || '';
+
+  return `<div class="prop-group">
+    <div class="prop-head">
+      <span class="prop-name">${esc(addr)}</span>
+      ${phaseTag(phase)}
+      <span class="prop-dates">
+        ${close ? `<span>Close: ${esc(fmtDate(close))}</span>` : ''}
+      </span>
+      ${pm ? `<span class="prop-pm">PM: ${esc(pm)}</span>` : ''}
+      ${ccUrl ? `<span class="prop-cc">${ccLink(ccUrl,'Open project')}</span>` : ''}
+    </div>
+    <div class="prop-items">
+      ${items.length ? items.map(renderItem).join('') : '<div class="empty-prop">No items</div>'}
+    </div>
+  </div>`;
+}
+
+function renderFlat(items){
+  return items.map(item=>`<div class="prop-group">
+    <div class="prop-head">
+      <span class="prop-name">${esc(item.address)}</span>
+      ${phaseTag(propFor(item)?.phase||'')}
+    </div>
+    <div class="prop-items">${renderItem(item)}</div>
+  </div>`).join('');
+}
+
+function renderItem(item){
+  const disp   = (_dispatches[item.id]||[]);
+  const photos = item.cc_photo_count || 0;
+  const done   = !!item.cc_completed_at;
+
+  return `
+  <div class="item-row${done?' st-done':''}" data-id="${esc(item.id)}">
+    <span class="item-num">${esc(item.item_no)}</span>
+    <div class="item-main">
+      <div class="item-desc">${esc(item.description||'(no description)')}</div>
+      <div class="item-meta">
+        ${item.trade ? `<span class="trade-tag">${esc(item.trade)}</span>` : ''}
+        ${statusTag(done ? 'done' : item.status)}
+        ${disp.length ? `<span class="item-cc-icon">📨 ${disp.length} dispatch${disp.length>1?'es':''}</span>` : ''}
+        ${photos ? `<span class="item-photos">📷 ${photos} photo${photos>1?'s':''}</span>` : ''}
+        ${item.cc_contractor_text ? `<span style="font-size:11px;color:#888">Contractor: ${esc(item.cc_contractor_text)}</span>` : ''}
+      </div>
+    </div>
+    <div class="item-right">
+      ${deadlineTag(item.deadline)}
+      ${item.companycam_todo_url ? `<a href="${esc(item.companycam_todo_url)}" target="_blank" onclick="event.stopPropagation()" style="font-size:11px;color:#7aabf0">📋 CC task ↗</a>` : ''}
+    </div>
+  </div>
+  ${renderDetail(item, disp)}`;
+}
+
+function renderDetail(item, disp){
+  const notes   = item.notes   || '';
+  const summary = item.last_contact_summary || '';
+  const nextFU  = item.next_followup_at ? fmtDate(item.next_followup_at.slice(0,10)) : '';
+  const ccDone  = item.cc_completed_at ? fmtDate(item.cc_completed_at.slice(0,10)) : '';
+  const ccPrice = item.cc_price_text || '';
+  const ccFinish= item.cc_finish_date_text || '';
+
+  const dispRows = disp.map(d=>`
+    <div class="dispatch-row">
+      <span><b>${esc(d.status||'sent')}</b> · ${esc(d.to_phone||'')} · sent ${d.sent_at?fmtDate(d.sent_at.slice(0,10)):''}</span>
+      ${d.nudge_count ? `<span style="color:#666">${d.nudge_count} nudge${d.nudge_count>1?'s':''}</span>` : ''}
+      ${d.error ? `<span style="color:#e05c4a">⚠ ${esc(d.error)}</span>` : ''}
+    </div>`).join('');
+
+  return `<div class="item-detail">
+    <div class="detail-grid">
+      <dl class="detail-kv"><dt>Status</dt><dd>${esc(item.status||'new')}</dd></dl>
+      <dl class="detail-kv"><dt>Trade</dt><dd>${esc(item.trade||'—')}</dd></dl>
+      <dl class="detail-kv"><dt>Deadline</dt><dd>${esc(fmtDate(item.deadline))}</dd></dl>
+      <dl class="detail-kv"><dt>Walkthrough</dt><dd>${esc(fmtDate(item.walkthrough_date))}</dd></dl>
+      <dl class="detail-kv"><dt>Owner</dt><dd>${esc(item.rtr_owner||'—')}</dd></dl>
+      <dl class="detail-kv"><dt>Scheduled start</dt><dd>${esc(fmtDate(item.scheduled_start))}</dd></dl>
+      ${ccPrice  ? `<dl class="detail-kv"><dt>CC Price</dt><dd>${esc(ccPrice)}</dd></dl>` : ''}
+      ${ccFinish ? `<dl class="detail-kv"><dt>CC Finish date</dt><dd>${esc(ccFinish)}</dd></dl>` : ''}
+      ${ccDone   ? `<dl class="detail-kv"><dt>Completed</dt><dd>${esc(ccDone)}</dd></dl>` : ''}
+      ${nextFU   ? `<dl class="detail-kv"><dt>Next follow-up</dt><dd>${esc(nextFU)}</dd></dl>` : ''}
+    </div>
+    ${notes   ? `<div style="font-size:12.5px;color:#888;margin-bottom:10px;line-height:1.5"><b style="color:#666">Notes:</b> ${esc(notes)}</div>` : ''}
+    ${summary ? `<div style="font-size:12.5px;color:#888;margin-bottom:10px;line-height:1.5"><b style="color:#666">Last contact:</b> ${esc(summary)}</div>` : ''}
+    <div class="detail-actions">
+      ${item.companycam_todo_url ? `<a href="${esc(item.companycam_todo_url)}" target="_blank" class="btn btn-ghost" style="text-decoration:none;font-size:12px">📋 Open in CompanyCam ↗</a>` : ''}
+    </div>
+    ${disp.length ? `<div class="dispatch-rows"><div style="font-size:11px;color:#555;margin-top:10px;margin-bottom:4px;text-transform:uppercase;letter-spacing:.06em">Dispatches</div>${dispRows}</div>` : ''}
+  </div>`;
+}
+
+// ─── Auth wall ─────────────────────────────────────────────────────────────
+function showAuthWall(){
+  document.getElementById('auth-wall').style.display = 'flex';
+  document.getElementById('main-content').style.display = 'none';
+}
+
+// ─── Init ──────────────────────────────────────────────────────────────────
+(async ()=>{
+  // Check if there's a shared session cookie from the main site
+  const cookies = Object.fromEntries(document.cookie.split(';').map(c=>{
+    const [k,...v]=c.trim().split('='); return [k, decodeURIComponent(v.join('='))];
+  }));
+  // The main site sets a session cookie named 'legacy_session'
+  const legacySession = cookies['legacy_session'] || cookies['rem_session'];
+  if(legacySession){
+    try{
+      const s = JSON.parse(legacySession);
+      if(s.access_token){ saveSession(s); }
+    } catch(_) {}
+  }
+  await boot();
+})();
+</script>
+</body>
+</html>
