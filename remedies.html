@@ -96,7 +96,43 @@ td.act .ubtn{margin-left:4px}
 .pill.chase{border-color:#6b5a3a;color:var(--warn)}
 .pill.walk{border-color:#3a6b4a;color:var(--ok)}
 
+/* access + schedule + bids */
+.access{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 14px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--mute)}
+.access .k{color:var(--dim);font-size:11px}
+.access .code{font-family:ui-monospace,Menlo,monospace;color:var(--fg);letter-spacing:.5px}
+.access.missing{color:var(--warn)}
+.access form{display:flex;gap:6px;flex-wrap:wrap;align-items:center;width:100%}
+.access input{background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:5px 8px;font-size:12.5px}
+.access input.loc{flex:2;min-width:160px}.access input.cd{width:110px}.access input.nt{flex:3;min-width:180px}
+.sched{background:var(--panel);border:1px solid var(--line);border-radius:8px;margin-bottom:14px}
+.sched-h{display:flex;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--line);background:var(--panel2);font-size:13px;font-weight:600}
+.sched-h .sp{flex:1}
+.sched-row{display:flex;gap:12px;padding:7px 14px;border-bottom:1px solid var(--line);font-size:12.5px;align-items:baseline}
+.sched-row:last-child{border-bottom:none}
+.sched-row .d{width:86px;color:var(--fg);font-weight:500;white-space:nowrap}
+.sched-row .w{flex:1;color:var(--mute)}
+.sched-row .w b{color:var(--fg);font-weight:500}
+.sched-empty{padding:10px 14px;font-size:12.5px;color:var(--dim)}
+.bidlist{margin-top:6px;display:flex;flex-direction:column;gap:4px}
+.bid{display:flex;gap:8px;align-items:center;font-size:12px;color:var(--mute)}
+.bid b{color:var(--fg);font-weight:600}
+.pill.yes{border-color:#3a6b4a;color:var(--ok)}
 .empty{padding:40px;text-align:center;color:var(--mute);font-size:13px}
+/* contractor picker */
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;z-index:50;overflow:auto}
+.modal{background:var(--panel);border:1px solid var(--line2);border-radius:10px;width:100%;max-width:560px;box-shadow:0 12px 40px rgba(0,0,0,.6)}
+.modal-h{padding:14px 16px;border-bottom:1px solid var(--line)}
+.modal-h b{font-size:15px}.modal-h p{font-size:12.5px;color:var(--mute);margin-top:4px;line-height:1.35}
+.modal-b{max-height:55vh;overflow:auto}
+.pick{display:flex;gap:10px;align-items:center;padding:8px 16px;border-bottom:1px solid var(--line);font-size:13px;cursor:pointer}
+.pick:hover{background:var(--panel2)}
+.pick.off{opacity:.45;cursor:default}
+.pick .nm{flex:1}.pick .nm small{display:block;color:var(--dim);font-size:11.5px;margin-top:1px}
+.pick .tier{font-size:11px;border:1px solid var(--line2);border-radius:10px;padding:1px 7px;color:var(--mute);white-space:nowrap}
+.pick .tier.t1{border-color:#3a6b4a;color:var(--ok)}.pick .tier.t2{border-color:#4a6b8a;color:var(--info)}
+.pick .rec{font-size:10.5px;color:var(--ok);margin-left:6px}
+.modal-f{display:flex;gap:8px;align-items:center;padding:12px 16px;border-top:1px solid var(--line);flex-wrap:wrap}
+.modal-f .sp{flex:1}.modal-f .cnt{font-size:12px;color:var(--mute)}
 .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#fff;color:#111;padding:9px 14px;border-radius:8px;font-size:13px;box-shadow:0 6px 24px rgba(0,0,0,.5);display:none}
 .toast.show{display:block}
 
@@ -130,6 +166,7 @@ td.act .ubtn{margin-left:4px}
 
 <div class="wrap">
   <div class="strip" id="strip"></div>
+  <div class="sched" id="sched"></div>
   <div class="controls">
     <label><input type="checkbox" id="show-done"> Show completed items</label>
     <span class="sp"></span>
@@ -138,12 +175,17 @@ td.act .ubtn{margin-left:4px}
   <div id="list"><div class="empty">Loading…</div></div>
 </div>
 <div class="toast" id="toast"></div>
+<div id="picker"></div>
 
 <script>
 const SUPABASE_URL = "https://kwhgymympuhfvqbedwpd.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable__DNUtcdM8SqCMzTZM4gtXw_1wf9IWa9";
 const ANON_JWT = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3aGd5bXltcHVoZnZxYmVkd3BkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcwNjI5MDAsImV4cCI6MjA5MjYzODkwMH0.5LL4H-kaX0F6jzM_1BBXpvxe-Zc-mN_zFH6tZExXrUI";
-const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+// anonymous client for the tracker (works without signing in)
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, { auth: { persistSession: false, autoRefreshToken: false, storageKey: "rtr-anon" } });
+// signed-in client: shares the dashboard's Google sign-in (same site). Lockbox codes only load through this.
+const authSb = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+let SESSION = null, ACCESS = {}, EDIT_ACCESS = null, CAL_URL = "";
 
 let ITEMS = [], CONTRACTORS = [], TRADES = []; const SHOW_ALL = {};
 const $ = s => document.querySelector(s);
@@ -161,6 +203,14 @@ async function load(){
   if(a.error){ $("#list").innerHTML=`<div class="empty">Couldn't load remedies: ${esc(a.error.message)}</div>`; return; }
   ITEMS = a.data||[]; CONTRACTORS = b.data||[];
   TRADES = [...new Set(CONTRACTORS.map(c=>c.trade))].filter(Boolean).sort();
+  try { SESSION = (await authSb.auth.getSession()).data.session; } catch { SESSION = null; }
+  ACCESS = {};
+  const pids = [...new Set(ITEMS.map(i=>i.property_id).filter(Boolean))];
+  if (SESSION && pids.length) {
+    const r = await authSb.from("pm_properties").select("id,access_lockbox_location,access_code,access_notes,access_updated_at,access_updated_by").in("id", pids);
+    for (const p of r.data||[]) ACCESS[p.id] = p;
+    if (!CAL_URL) { const t = await authSb.from("pm_settings").select("data").eq("key","rtr_calendar_token").maybeSingle(); if (t.data?.data?.token) CAL_URL = `${SUPABASE_URL}/functions/v1/rtr-calendar?token=${t.data.data.token}`; }
+  }
   const last = ITEMS.map(i=>i.cc_synced_at||"").sort().pop();
   $("#synced").textContent = last ? "CompanyCam last pulled " + ago(last) : "";
   render();
@@ -174,6 +224,8 @@ function stateOf(i){
     return {key:"unassigned", pill:""};
   }
   if(i.status==="done") return {key:"walk", pill:`<span class="pill walk">says done — walk it</span>`};
+  if(i.awarded_bid_id && !i.award_confirmed_at) return {key:"chase", pill:`<span class="pill chase">awarded — waiting on their YES</span>`};
+  if(i.award_confirmed_at && i.scheduled_start) return {key:"chase", pill:`<span class="pill yes">confirmed · starts ${fmt(i.scheduled_start)}</span>`};
   return {key:"chase", pill:`<span class="pill chase">in progress</span>`};
 }
 
@@ -203,6 +255,7 @@ function render(){
         <span class="done-frac"><b>${items.length-openItems.length}</b> of ${items.length} done</span>
         <a href="${esc(items[0].companycam_todo_url)}" target="_blank" rel="noopener">Open in CompanyCam</a>
       </div>
+      ${accessRow(items[0])}
       <table><thead><tr><th>#</th><th>Remedy</th><th>CompanyCam · contractor · last word</th><th>Assigned to</th><th></th></tr></thead><tbody>${rows}</tbody></table>
     </div>`);
   }
@@ -213,6 +266,55 @@ function render(){
     <div class="stat ${chase?'warn':''}"><b>${chase}</b><span>contractor on it</span></div>
     <div class="stat ${walk?'ok':''}"><b>${walk}</b><span>need a walk-through</span></div>`;
   $("#list").innerHTML = blocks.join("") || `<div class="empty">Nothing open. Pull from CompanyCam to refresh.</div>`;
+  renderSchedule();
+}
+
+function renderSchedule(){
+  const y = new Date(today); y.setDate(y.getDate()-1);
+  const rows = ITEMS.filter(i=>i.scheduled_start && !i.cc_done && new Date(i.scheduled_start+"T12:00:00")>=y)
+    .sort((a,b)=>a.scheduled_start.localeCompare(b.scheduled_start));
+  const day = d => new Date(d+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"numeric",day:"numeric"});
+  const cal = CAL_URL ? `<button class="ubtn small" onclick="copyCal()">Copy calendar link for Google Calendar</button>` : (SESSION ? "" : `<span class="k" style="font-size:11.5px;color:var(--dim);font-weight:400">Sign in on the Dashboard to get the Google Calendar link</span>`);
+  $("#sched").innerHTML = `<div class="sched-h">Schedule — contractor start dates<span class="sp"></span>${cal}</div>` + (rows.length
+    ? rows.map(i=>`<div class="sched-row"><span class="d">${day(i.scheduled_start)}</span><span class="w"><b>${esc(i.contractor_name||"Contractor")}</b> · ${esc(i.address)} #${i.item_no??""} ${esc((i.description||"").slice(0,70))}</span>${i.award_confirmed_at?'<span class="pill yes">confirmed</span>':'<span class="pill chase">waiting on YES</span>'}</div>`).join("")
+    : `<div class="sched-empty">No start dates yet. They show up here (and on Gabe's Google Calendar) once a job is awarded with a start date.</div>`);
+}
+async function copyCal(){
+  try { await navigator.clipboard.writeText(CAL_URL); toast("Copied. In Google Calendar: Other calendars → + → From URL → paste"); }
+  catch { prompt("Copy this link, then in Google Calendar: Other calendars → + → From URL", CAL_URL); }
+}
+
+function accessRow(it){
+  const pid = it.property_id; if(!pid) return "";
+  const a = ACCESS[pid];
+  if (EDIT_ACCESS === pid) {
+    return `<div class="access"><form onsubmit="saveAccess(event,'${pid}')">
+      <span class="k">Lockbox</span>
+      <input class="loc" name="loc" placeholder="Where is it? e.g. front door handle" value="${esc(a?.access_lockbox_location)}">
+      <input class="cd" name="code" placeholder="Code" value="${esc(a?.access_code)}" autocomplete="off">
+      <input class="nt" name="notes" placeholder="Notes: alarm, pets, which door…" value="${esc(a?.access_notes)}">
+      <button class="ubtn small primary" type="submit">Save</button>
+      <button class="ubtn small" type="button" onclick="EDIT_ACCESS=null;render()">Cancel</button>
+    </form></div>`;
+  }
+  if (!SESSION) {
+    return `<div class="access ${it.access_on_file?'':'missing'}"><span class="k">Access</span>${it.access_on_file?'Lockbox code on file':'No lockbox code on file — contractors will be told to text for access'}<span style="color:var(--dim)">· sign in on the <a href="/" style="color:var(--info)">Dashboard</a> to view or edit</span></div>`;
+  }
+  if (!a?.access_code) {
+    return `<div class="access missing"><span class="k">Access</span>No lockbox code on file — contractors will be told to text for access <button class="ubtn small" onclick="EDIT_ACCESS='${pid}';render()">Add lockbox</button></div>`;
+  }
+  return `<div class="access"><span class="k">Access</span>Lockbox ${esc(a.access_lockbox_location||"")} · code <span class="code">${esc(a.access_code)}</span>${a.access_notes?` · ${esc(a.access_notes)}`:""}
+    <span style="color:var(--dim);font-size:11.5px">${a.access_updated_at?`updated ${ago(a.access_updated_at)}${a.access_updated_by?" by "+esc(a.access_updated_by.split("@")[0]):""}`:""}</span>
+    <button class="ubtn small" onclick="EDIT_ACCESS='${pid}';render()">Edit</button></div>`;
+}
+async function saveAccess(e, pid){
+  e.preventDefault();
+  const f = e.target;
+  const row = { access_lockbox_location: f.loc.value.trim()||null, access_code: f.code.value.trim()||null, access_notes: f.notes.value.trim()||null,
+    access_updated_at: new Date().toISOString(), access_updated_by: SESSION?.user?.email || null };
+  const { error } = await authSb.from("pm_properties").update(row).eq("id", pid);
+  if (error) return toast("Couldn't save: " + error.message);
+  EDIT_ACCESS = null; toast("Lockbox saved"); await load();
 }
 
 function row(i){
@@ -244,6 +346,7 @@ function row(i){
         <option value="">— pick a contractor —</option>${opts}
       </select>
       ${i.cc_contractor_text?`<div class="cctext ${unmatched?'unmatched':''}">CompanyCam says: <b>${esc(i.cc_contractor_text)}</b>${unmatched?' — not in directory':''}</div>`:""}
+      ${bidList(i)}
     </td>
     <td class="act">
       ${i.cc_done?'' : (i.contractor_id
@@ -253,6 +356,21 @@ function row(i){
   </tr>`;
 }
 
+function bidList(i){
+  const b = (i.bids||[]); if(!b.length || i.cc_done) return "";
+  return `<div class="bidlist">` + b.map(x=>`<div class="bid"><b>$${Number(x.price).toLocaleString()}</b> ${esc(x.contractor||"")}${x.start_date?` · can start ${fmt(x.start_date)}`:""}
+    ${x.awarded?'<span class="pill yes">awarded</span>':(i.awarded_bid_id?'':`<button class="ubtn small primary" onclick="awardBid('${i.id}','${x.id}')">Award</button>`)}</div>`).join("") + `</div>`;
+}
+async function awardBid(itemId, bidId){
+  const i = ITEMS.find(x=>x.id===itemId); const b = (i.bids||[]).find(x=>x.id===bidId);
+  const start = prompt(`Award ${i.address} #${i.item_no} to ${b.contractor} for $${Number(b.price).toLocaleString()}.\n\nStart date (YYYY-MM-DD)? Leave blank to ask them for one.`, b.start_date||"");
+  if (start === null) return;
+  if (start && !/^\d{4}-\d{2}-\d{2}$/.test(start.trim())) return toast("Use a date like 2026-10-14");
+  toast("Sending…");
+  const r = await fn("rtr-dispatch", { action:"award", bid_id:bidId, start_date: start.trim()||undefined });
+  toast(r.error ? r.error : `Awarded to ${r.contractor} — waiting on their YES`);
+  await load();
+}
 async function assign(id, contractor_id){
   if(contractor_id==="__all__"){ SHOW_ALL[id]=true; render(); return; }
   const { error } = await sb.from("rtr_items").update({ contractor_id: contractor_id||null, status: contractor_id?"awarded":"new" }).eq("id", id);
@@ -271,14 +389,54 @@ async function fn(name, body){
   const r = await fetch(`${SUPABASE_URL}/functions/v1/${name}`, { method:"POST", headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+ANON_JWT }, body: JSON.stringify(body) });
   return r.json();
 }
-async function bids(id){
+// ---- pick who gets the bid request (Tom 10/8: Gabe chooses; the top 3 are pre-checked) ----
+const NO_USE = ["4 - Do not use","Stay Away"];
+const tierShort = t => !t ? "unrated" : /^1/.test(t) ? "Best" : /^2/.test(t) ? "Good" : /^3/.test(t) ? "Only if needed" : /^5/.test(t) ? "Unsure" : "Unrated";
+const tierRank = t => /^1/.test(t||"") ? 1 : /^2/.test(t||"") ? 2 : /^3/.test(t||"") ? 3 : /^5/.test(t||"") ? 5 : 6;
+let PICK = null;
+function ranked(trade){
+  return CONTRACTORS.filter(c=>(!trade || c.trade===trade) && !NO_USE.includes(c.vetting_tier))
+    .sort((a,b)=> tierRank(a.vetting_tier)-tierRank(b.vetting_tier) || (b.jobs_done_n||0)-(a.jobs_done_n||0) || a.name.localeCompare(b.name));
+}
+// Tom 10/8: "Get 3 bids" opens the list and Gabe picks Choice 1, 2, 3 himself. Nothing is pre-picked.
+function bids(id){
   const i = ITEMS.find(x=>x.id===id);
-  if(!i.trade){ toast("Set the trade first so it knows who to text"); return; }
-  if(!confirm(`Text the top 3 ${i.trade} contractors for a bid on:\n\n${i.description}\n\nat ${i.address}?`)) return;
-  toast("Sending…");
-  const r = await fn("rtr-dispatch", { action:"dispatch", item_id:id });
+  if(!i.trade){ toast("Set the trade first so it knows which contractors to show"); return; }
+  PICK = { id, slots: ["","",""], all: false };
+  renderPicker();
+}
+function renderPicker(){
+  if(!PICK){ $("#picker").innerHTML=""; return; }
+  const i = ITEMS.find(x=>x.id===PICK.id);
+  const list = PICK.all ? ranked(null) : ranked(i.trade);
+  const label = c => `${c.name}${PICK.all?' — '+c.trade:''} · ${tierShort(c.vetting_tier)} · ${c.jobs_done_n?c.jobs_done_n+' jobs with us':'no jobs logged'}${c.phone?'':' · NO PHONE'}`;
+  const slot = k => {
+    const taken = PICK.slots.filter((v,j)=>j!==k && v);
+    const opts = list.map(c=>`<option value="${c.id}" ${PICK.slots[k]===c.id?'selected':''} ${(!c.phone||taken.includes(c.id))?'disabled':''}>${esc(label(c))}</option>`).join("");
+    return `<div class="pick" style="cursor:default"><span class="tier t1" style="min-width:74px;text-align:center">Choice ${k+1}</span>
+      <select style="flex:1;background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:7px 8px;font-size:13px;min-width:0" onchange="PICK.slots[${k}]=this.value;renderPicker()">
+        <option value="">— pick a contractor —</option>${opts}</select></div>`;
+  };
+  const n = PICK.slots.filter(Boolean).length;
+  const need = Math.min(3, list.filter(c=>c.phone).length);
+  $("#picker").innerHTML = `<div class="modal-bg" onclick="if(event.target===this){PICK=null;renderPicker()}"><div class="modal">
+    <div class="modal-h"><b>Get 3 bids — who should we text?</b><p>${esc(i.address)} #${i.item_no??""} — ${esc(i.description.slice(0,140))}</p>
+      <p>Pick your first, second and third choice. The list shows each contractor's rating and how many jobs they've done with us.</p></div>
+    <div class="modal-b">${list.length ? [0,1,2].map(slot).join("") : `<div class="sched-empty">No ${esc(i.trade)} contractors in the directory. Tap "Show other trades".</div>`}</div>
+    <div class="modal-f"><button class="ubtn small" onclick="PICK.all=!PICK.all;renderPicker()">${PICK.all?'Only '+esc(i.trade):'Show other trades'}</button>
+      <span class="sp"></span><span class="cnt">${n} of 3 picked</span>
+      <button class="ubtn small" onclick="PICK=null;renderPicker()">Cancel</button>
+      <button class="ubtn small primary" ${n && n>=need?'':'disabled'} onclick="sendPicked()">Text ${n||3} for bids</button></div>
+  </div></div>`;
+}
+async function sendPicked(){
+  const ids = PICK.slots.filter(Boolean), id = PICK.id;
+  const names = ids.map((x,k)=>`${k+1}. ${CONTRACTORS.find(c=>c.id===x)?.name||""}`);
+  if(!confirm(`Text these ${ids.length} to ask if they want to bid?\n\n${names.join("\n")}`)) return;
+  PICK=null; renderPicker(); toast("Sending…");
+  const r = await fn("rtr-dispatch", { action:"dispatch", item_id:id, contractor_ids: ids });
   if(r.error) return toast(r.error);
-  toast(r.sent?.length ? `Sent to ${r.sent.join(", ")}` : `Couldn't send — ${(r.failed||[])[0]||"no contractors"}`);
+  toast(r.sent?.length ? `Sent to ${r.sent.join(", ")}${r.skipped?.length?` (skipped: ${r.skipped.join("; ")})`:""}` : `Couldn't send — ${(r.failed||r.skipped||[])[0]||"nobody picked"}`);
   await load();
 }
 async function chase(id){
