@@ -4933,7 +4933,7 @@ function _sqBody(c, compact){
       ${ro?`<span style="font-size:14px;flex-shrink:0">${x.done?'&#9989;':'&#11036;'}</span>`
          :`<span onclick="_sqToggle('${c.id}','${x.id}')" title="${x.done?'Put it back on the list':'Mark it handled'}" style="cursor:pointer;font-size:14px;flex-shrink:0">${x.done?'&#9989;':'&#11036;'}</span>`}
       <div style="flex:1;min-width:0">
-        <div style="font-size:13px;color:${x.done?'#9aa3b2':'#111'};${x.done?'text-decoration:line-through':''};white-space:pre-wrap">${_calEsc(x.t||'')}</div>
+        <div style="font-size:13px;color:${x.done?'#9aa3b2':(_hldOn(x)?'#7A4E00':'#111')};${x.done?'text-decoration:line-through':''};white-space:pre-wrap">${_calEsc(x.t||'')}${_hldOn(x)?(' '+_hldPill(x)):''}</div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:2px">
           ${due?'<span style="font-size:10px;font-weight:700;color:#8A5A10;background:#FBF3E2;padding:1px 6px;border-radius:99px">READY TO LOOK AT</span>':''}
           ${ro
@@ -4943,7 +4943,9 @@ function _sqBody(c, compact){
             ? _sqWhoChip(_sqWhoOf(x))
             : `<span style="font-size:11px;color:#566070">for</span><select onchange="_sqSetWho('${c.id}','${x.id}',this.value)" style="padding:2px 5px;border:0.5px solid #e2e6ee;border-radius:5px;font-size:11px;color:#185FA5;max-width:150px">${_sqWhoOpts(_sqWhoOf(x))}</select>`}
           ${x.by?`<span style="font-size:11px;color:#636b7a">added by ${_calEsc(x.by)}</span>`:''}
+          ${x.done?'':_hldBtn('s',c.id,x.id,_hldOn(x))}
         </div>
+        ${_hldOn(x)?`<div style="font-size:11.5px;color:#7A4E00;margin-top:3px">&#9208; ${_calEsc(_hldWhy(x)||'No reason written down')}${_hldSince(x)?(' &middot; '+_calEsc(_hldSince(x))):''}</div>`:''}
       </div>
       ${ro?'':`<span onclick="_sqDel('${c.id}','${x.id}')" title="Remove" style="cursor:pointer;font-size:11px;color:#ddd;flex-shrink:0">&#10005;</span>`}
     </div>`;
@@ -9531,18 +9533,20 @@ function _wmSideTasks(c, wk, roNow){
   if(!show.length) return '';
   const today=_ymd(new Date());
   const row=(x)=>{
-    const late=!x.done && x.at && x.at<today;
+    const late=!x.done && !_hldOn(x) && x.at && x.at<today;
     const who=String(x.who||'').trim();
     return `<div style="display:flex;gap:9px;align-items:flex-start;padding:5px 0;border-bottom:0.5px solid #f4f5f7">
       ${roNow?`<span style="font-size:14px;flex-shrink:0">${x.done?'\u2705':'\u2B1C'}</span>`
              :`<span onclick="_sqToggle('${c.id}','${x.id}')" title="${x.done?'Put it back on the list':'Mark it handled'}" style="cursor:pointer;font-size:14px;flex-shrink:0">${x.done?'\u2705':'\u2B1C'}</span>`}
       <div style="flex:1;min-width:0">
-        <div style="font-size:13px;color:${x.done?'#9aa3b2':'#111'};${x.done?'text-decoration:line-through':''};white-space:pre-wrap">${_calEsc(x.t||'')}</div>
+        <div style="font-size:13px;color:${x.done?'#9aa3b2':(_hldOn(x)?'#7A4E00':'#111')};${x.done?'text-decoration:line-through':''};white-space:pre-wrap">${_calEsc(x.t||'')}${_hldOn(x)?(' '+_hldPill(x)):''}</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:2px">
           ${who?`<span style="font-size:10.5px;font-weight:600;color:#185FA5;background:#EAF1FA;padding:1px 7px;border-radius:99px">\uD83D\uDC64 ${_calEsc(who)}</span>`:''}
           ${x.at?`<span style="font-size:10.5px;color:${late?'#B42318':'#566070'};font-weight:${late?'700':'400'}">${late?'overdue \u00b7 ':''}${_calEsc(x.at)}</span>`
                 :`<span style="font-size:10.5px;color:#636b7a">no date</span>`}
           ${x.done&&x.doneAt?`<span style="font-size:10.5px;color:#0F7B54">done ${_calEsc(x.doneAt)}</span>`:''}
+          ${(x.done||roNow)?'':_hldBtn('s',c.id,x.id,_hldOn(x))}
+          ${_hldOn(x)?`<span style="font-size:10.5px;color:#7A4E00">&#9208; ${_calEsc(_hldWhy(x)||'no reason written down')}</span>`:''}
           ${x.tid?'<span style="font-size:10.5px;color:#185FA5">on the task calendar</span>'
                  :'<span style="font-size:10.5px;color:#8A5A10" title="It has no task behind it, so it only lives on this card and here.">card only</span>'}
         </div>
@@ -10307,6 +10311,7 @@ function _wmItems(pid, from, to){
     out.push({key:'t:'+t.id, id:t.id, type:'task', date:d, endDate:'', running:false, when:d, title:t.title||'Task',
               sub:(taskAssignees(t).join(', ')||'Unassigned')+(t.category?(' · '+t.category):''),
               note:String(t.notes||'').trim(),
+              hold:_hldOn(t), holdWhy:_hldWhy(t), holdSince:_hldSince(t),
               done:t.status==='done', kind:'t', kindLabel:'Task'});
   });
   (typeof _calEventsCache!=='undefined'?_calEventsCache:[]).forEach(e=>{
@@ -10621,7 +10626,12 @@ const WM_TOPICS = [
   {key:'last',    icon:'\u{1F4C5}', title:'Last week',                        sub:'what was scheduled, and what went right'},
   {key:'next',    icon:'\u{1F5D3}', title:'This week & next week',            sub:'what is booked'},
   {key:'lag',     icon:'\u{23F3}',  title:'Lag time & questions',             sub:'carried until somebody closes them'},
-  {key:'money',   icon:'\u{1F4B0}', title:'Timeline & budget',                sub:'dates, money, vacancy, closing'}
+  {key:'money',   icon:'\u{1F4B0}', title:'Timeline & budget',                sub:'dates, money, vacancy, closing'},
+  // Bruce, 9 Oct: "when stuff's on hold, we need to have an on hold section for each
+  // property in the full project team meeting." It only appears on a house that
+  // actually has something parked - a row of empty On hold headings on 21 houses is
+  // noise, and the roll-up would need one more tick on every one of them for nothing.
+  {key:'hold',    icon:'\u23F8',  title:'On hold',                          sub:'parked on purpose, with the reason', when:function(c){ return (typeof _hldAnyFor==='function') && _hldAnyFor(c.id).length>0; }}
 ];
 // Bruce, 22 Sept: "set up the upcoming takedown properties the same way as the
 // construction tab properties, because Marlo and Patience will be the ones putting
@@ -10645,7 +10655,8 @@ const WM_TD_TOPICS = [
   {key:'access', icon:'\u{1F511}', title:'Vacancy',                     sub:'when it empties, and the access, tenants and utilities behind that'},
   {key:'last',   icon:'\u{1F4C5}', title:'Last week',                   sub:'what was scheduled, and what went right'},
   {key:'next',   icon:'\u{1F5D3}', title:'This week & next week',       sub:'what is booked'},
-  {key:'lag',    icon:'\u{23F3}',  title:'Recap',                       sub:'closing, vacancy and anything still unanswered'}
+  {key:'lag',    icon:'\u{23F3}',  title:'Recap',                       sub:'closing, vacancy and anything still unanswered'},
+  {key:'hold',   icon:'\u23F8',  title:'On hold',                     sub:'parked on purpose, with the reason', when:function(c){ return (typeof _hldAnyFor==='function') && _hldAnyFor(c.id).length>0; }}
 ];
 function _wmIsTakedown(c){ return !!(c && WM_TAKEDOWN_PHASES.indexOf(c.phase)>=0); }
 function _wmTopicsFor(c){
@@ -13539,6 +13550,9 @@ function _wmTdTopics(wk, c, roNow, ta2, kn){
     + _sub('Questions for Bruce / Tommy &middot; carried until answered')
     + _miBlock('q', c, roNow);
 
+  body.hold = _sub('&#9208; On hold &middot; parked until the thing it is waiting on happens')
+    + _hldPanel(c.id, roNow);
+
   return _wmTopicsFor(c).map(function(t){ return _wmTopicWrap(wk, c, t, body[t.key]||'', roNow); }).join('');
 }
 function secWrapTd(title, inner){
@@ -14183,9 +14197,9 @@ function openWeeklyMeeting(kind, week){
         return `<div style="display:flex;gap:10px;align-items:flex-start;padding:${it.done?'5px':'7px'} 0;border-bottom:0.5px solid #f4f5f7;${it.done?'opacity:.62':''}">
           <div style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:#566070;width:88px;flex-shrink:0;padding-top:2px">${dayLbl(it.date)}${it.endDate&&it.endDate!==it.date?`<div style="font-size:11px;color:#636b7a">to ${dayLbl(it.endDate)}</div>`:''}${it.running?'<div style="font-size:11px;color:#8A5A10;font-weight:600">already on site</div>':''}</div>
           <div style="flex:1;min-width:0">
-            <div style="font-size:15px;color:${it.done?'#0F7B54':'#111'}">${kindPill(it.kind,it.kindLabel)}${_calEsc(it.title)}</div>
-            <div style="font-size:12.5px;color:#566070;margin-top:2px">${_calEsc(it.sub)}</div>${it.note?`<div style="font-size:13.5px;color:#333;margin-top:3px;line-height:1.45">${_calEsc(it.note)}</div>`:''}
-            <div style="display:flex;gap:13px;flex-wrap:wrap;align-items:center;margin-top:${it.done?'3px':'5px'}">${tick('yes','Completed','#0F7B54')}${it.done?'':tick('no','Not completed','#B42318')+rsBtn(it)}</div>
+            <div style="font-size:15px;color:${it.done?'#0F7B54':'#111'}">${kindPill(it.kind,it.kindLabel)}${_calEsc(it.title)}${it.hold?(' '+_hldPill({on_hold:true,hold_reason:it.holdWhy})):''}</div>
+            <div style="font-size:12.5px;color:#566070;margin-top:2px">${_calEsc(it.sub)}</div>${it.note?`<div style="font-size:13.5px;color:#333;margin-top:3px;line-height:1.45">${_calEsc(it.note)}</div>`:''}${it.hold?`<div style="font-size:12.5px;color:#7A4E00;margin-top:3px">&#9208; ${_calEsc(it.holdWhy||'No reason written down')}${it.holdSince?(' &middot; '+_calEsc(it.holdSince)):''}</div>`:''}
+            <div style="display:flex;gap:13px;flex-wrap:wrap;align-items:center;margin-top:${it.done?'3px':'5px'}">${tick('yes','Completed','#0F7B54')}${it.done?'':tick('no','Not completed','#B42318')+rsBtn(it)}${(it.kind==='t'&&!it.done)?_hldBtn('t',it.id,'',!!it.hold):''}</div>
           </div></div>`;
       }).join(''):'<div style="font-size:12.5px;color:#636b7a;padding:8px 0">Nothing was scheduled on this property last week.</div>';
 
@@ -14205,11 +14219,11 @@ function openWeeklyMeeting(kind, week){
         return `<div style="display:flex;gap:10px;align-items:flex-start;padding:${it.done?'5px':'7px'} 0;border-bottom:0.5px solid #f4f5f7;${it.done?'opacity:.62':''}">
           <div style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:#566070;width:88px;flex-shrink:0;padding-top:2px">${dayLbl(it.date)}${it.endDate&&it.endDate!==it.date?`<div style="font-size:11px;color:#636b7a">to ${dayLbl(it.endDate)}</div>`:''}${it.running?'<div style="font-size:11px;color:#8A5A10;font-weight:600">already on site</div>':''}</div>
           <div style="flex:1;min-width:0">
-            <div style="font-size:15px;color:${it.done?'#0F7B54':'#111'}">${kindPill(it.kind,it.kindLabel)}${_calEsc(it.title)}${it.done?' <span style="font-size:9.5px;font-weight:700;color:#0F7B54;background:#E6F4ED;padding:1px 6px;border-radius:99px;vertical-align:middle">DONE</span>':''}</div>
-            <div style="font-size:12.5px;color:#566070;margin-top:2px">${_calEsc(it.sub)}</div>${it.note?`<div style="font-size:13.5px;color:#333;margin-top:3px;line-height:1.45">${_calEsc(it.note)}</div>`:''}
+            <div style="font-size:15px;color:${it.done?'#0F7B54':'#111'}">${kindPill(it.kind,it.kindLabel)}${_calEsc(it.title)}${it.done?' <span style="font-size:9.5px;font-weight:700;color:#0F7B54;background:#E6F4ED;padding:1px 6px;border-radius:99px;vertical-align:middle">DONE</span>':''}${it.hold?(' '+_hldPill({on_hold:true,hold_reason:it.holdWhy})):''}</div>
+            <div style="font-size:12.5px;color:#566070;margin-top:2px">${_calEsc(it.sub)}</div>${it.note?`<div style="font-size:13.5px;color:#333;margin-top:3px;line-height:1.45">${_calEsc(it.note)}</div>`:''}${it.hold?`<div style="font-size:12.5px;color:#7A4E00;margin-top:3px">&#9208; ${_calEsc(it.holdWhy||'No reason written down')}${it.holdSince?(' &middot; '+_calEsc(it.holdSince)):''}</div>`:''}
             ${it.done
               ? `<div style="display:flex;gap:13px;flex-wrap:wrap;align-items:center;margin-top:4px">${doneBox(it)}${note?`<span style="font-size:11.5px;color:#566070">&middot; ${_calEsc(note)}</span>`:''}</div>`
-              : `<div style="display:flex;gap:13px;flex-wrap:wrap;align-items:center;margin-top:5px">${doneBox(it)}${box('c','Confirmed starting?')}${box('f','Followed up?')}${box('e','They have everything they need')}${rsBtn(it)}</div>
+              : `<div style="display:flex;gap:13px;flex-wrap:wrap;align-items:center;margin-top:5px">${doneBox(it)}${box('c','Confirmed starting?')}${box('f','Followed up?')}${box('e','They have everything they need')}${rsBtn(it)}${it.kind==='t'?_hldBtn('t',it.id,'',!!it.hold):''}</div>
             ${roNow?(note?`<div style="font-size:12px;color:#555;margin-top:5px;background:#F7F8FB;border-radius:6px;padding:6px 9px">${_calEsc(note)}</div>`:'')
               :`<textarea onchange="_miItemNote('${it.key}',this.value)" placeholder="What are we waiting on?" style="width:100%;min-height:30px;margin-top:5px;padding:5px 8px;border:0.5px solid #e6e8ee;border-radius:6px;font-size:12.5px;resize:vertical;font-family:inherit">${_calEsc(note)}</textarea>`}`}
           </div></div>`;
@@ -14340,6 +14354,9 @@ function openWeeklyMeeting(kind, week){
             + ta2(c.id+'::money','On or off budget, and why?')
             + _sqBody(c, true)
             + _bar(_roleBtn(_mar,'Task for '+String(_mar).split(' ')[0])+_anyBtn);
+
+          body.hold = _sub('&#9208; On hold &middot; parked until the thing it is waiting on happens')
+            + _hldPanel(c.id, roNow);
 
           return _wmTopicsFor(c).map(function(t){ return _wmTopicWrap(wk, c, t, body[t.key]||'', roNow); }).join('');
         })()}
@@ -15794,7 +15811,7 @@ function threeCalendarWidgets(u){
       <div onclick="window.open('https://calendar.google.com','_blank')" style="display:inline-block;font-size:12px;color:#111;background:#fff;border-radius:6px;padding:6px 12px;cursor:pointer;font-weight:500">Open Google Calendar</div>
     </div>`;
   // ---- Overdue tasks strip (this person's, or everyone's for directors/super) ----
-  const overdue=(_tasksCache||[]).filter(t=>_taskOpenFor(t,myName) && t.due_date && t.due_date<todayStr && _taskHasAssignee(t,myName)).sort((a,b)=>a.due_date<b.due_date?-1:1);
+  const overdue=(_tasksCache||[]).filter(t=>_taskOpenFor(t,myName) && !_hldOn(t) && t.due_date && t.due_date<todayStr && _taskHasAssignee(t,myName)).sort((a,b)=>a.due_date<b.due_date?-1:1);
   const overdueRows=overdue.length
     ? overdue.slice(0,8).map(t=>`<div onclick="openTaskDetail('${t.id}')" style="display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-bottom:0.5px solid #2e1c1c;cursor:pointer"><div style="min-width:0"><div style="font-size:13px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${t.category?`<span style="font-size:10px;background:#4a2020;color:#ffb4a8;padding:1px 6px;border-radius:99px;margin-right:5px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div><div style="font-size:11px;color:#b98a82">${taskAssignees(t).length?_calEsc(taskAssignees(t).join(", ")):"Unassigned"}${_locLabel(t)?" · "+_calEsc(_locLabel(t)):""}</div></div><div style="font-size:11px;color:#ff8a7a;white-space:nowrap">Due ${_calEsc(t.due_date)}</div></div>`).join("")
     : `<div style="text-align:center;color:#666;font-size:13px;padding:14px 0">🎉 Nothing overdue</div>`;
@@ -17726,7 +17743,7 @@ function pmAssistantRoleContent(key){
 function _assistantOpenTasks(name){
   const today=(()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;})();
   return (_tasksCache||[]).filter(t=>_taskOpenFor(t,name) && _taskHasAssignee(t,name))
-    .map(t=>({...t, overdue: t.due_date && t.due_date<today}))
+    .map(t=>({...t, overdue: !_hldOn(t) && t.due_date && t.due_date<today}))
     .sort((a,b)=> (a.due_date||'9999')<(b.due_date||'9999')?-1:1);
 }
 function pmAssistantTabContent(name){
@@ -18235,7 +18252,7 @@ function _pDrill(kind, back){
 function _personDashView(name, title){
   const today=new Date(); today.setHours(0,0,0,0); const todayStr=_ymd(today);
   const mine=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>_taskOpenFor(t,name) && _taskHasAssignee(t,name));
-  const overdue=mine.filter(t=>t.due_date && t.due_date<todayStr);
+  const overdue=mine.filter(t=>!_hldOn(t) && t.due_date && t.due_date<todayStr);
   const dueToday=mine.filter(t=>t.due_date===todayStr);
   const rows=mine.slice().sort((a,b)=>(a.due_date||'zzz')<(b.due_date||'zzz')?-1:1).map(_pmaTaskRow).join('');
   const initial=(name||'?').trim()[0]||'?';
@@ -18379,7 +18396,7 @@ function _marloTab(){
   const _in48=_ymd(new Date(today.getTime()+2*86400000));
   const _due48=_tasksAll.filter(t=>_taskOpenFor(t,_mName) && _taskHasAssignee(t,_mName) && t.due_date && t.due_date>=todayStr && t.due_date<=_in48)
     .sort((a,b)=>(a.due_date||'')<(b.due_date||'')?-1:1);
-  const _overdue=_tasksAll.filter(t=>_taskOpenFor(t,_mName) && _taskHasAssignee(t,_mName) && t.due_date && t.due_date<todayStr).length;
+  const _overdue=_tasksAll.filter(t=>_taskOpenFor(t,_mName) && !_hldOn(t) && _taskHasAssignee(t,_mName) && t.due_date && t.due_date<todayStr).length;
   const wkEnd=new Date(today);wkEnd.setDate(today.getDate()+7);const wkEndStr=_ymd(wkEnd);
   const tasks=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status!=='done'&&t.due_date&&t.due_date>=todayStr&&t.due_date<=wkEndStr).sort((a,b)=>(a.due_date||'')<(b.due_date||'')?-1:1);
   const mats=(typeof _calEventsCache!=='undefined'?_calEventsCache:[]).filter(e=>e.kind==='material'&&e.event_date>=todayStr&&e.event_date<=wkEndStr).sort((a,b)=>a.event_date<b.event_date?-1:1);
@@ -18958,6 +18975,7 @@ function _nfItems(){
       // 48 hours of being due." Before this a task appeared the morning it was due and
       // not a moment earlier, so anything needing a call the day before was already late
       // by the time the bell knew about it. Two days ahead, and everything already past.
+      if(_hldOn(t)) return;        // parked on purpose, with a reason - do not ring
       if(!t.due_date || t.due_date>_nfHorizon()) return;
       const who=(typeof taskAssignees==='function')?taskAssignees(t):[];
       // This was the one assignee test in the app still done by exact string, so a
@@ -19145,7 +19163,7 @@ function _dirCollect(){
   const sellDue=cards.filter(c=>c.closingDateSell&&c.closingDateSell<=today&&!c.closeApproved&&c.phase!=='Closed');
   const upPurch=cards.filter(c=>c.closingDate&&c.closingDate>today&&!c.purchaseConfirmed);
   const upSale=cards.filter(c=>c.closingDateSell&&c.closingDateSell>today&&!c.closeApproved);
-  const overdue=tasks.filter(t=>t.status!=='done'&&t.due_date&&t.due_date<today);
+  const overdue=tasks.filter(t=>t.status!=='done'&&!_hldOn(t)&&t.due_date&&t.due_date<today);
   const approvals=[];
   cards.forEach(c=>(c.subPhases||[]).forEach(s=>{
     const pure=isAppr(s.name)&&!/creat/i.test(s.name||"");
@@ -19782,8 +19800,9 @@ function _vaTaskSplit(vaName){
   const dt=t=>{ const v=t&&(t.due_date||t.dueDate); if(!v) return null; const d=new Date(v+'T00:00:00'); return isNaN(d)?null:d; };
   return {
     all:mine,
-    over:mine.filter(t=>{const d=dt(t); return d && d<today;}).sort((a,b)=>String(a.due_date||'').localeCompare(String(b.due_date||''))),
-    today:mine.filter(t=>{const d=dt(t); return d && d.getTime()===today.getTime();})
+    held:mine.filter(_hldOn),
+    over:mine.filter(t=>!_hldOn(t)).filter(t=>{const d=dt(t); return d && d<today;}).sort((a,b)=>String(a.due_date||'').localeCompare(String(b.due_date||''))),
+    today:mine.filter(t=>!_hldOn(t)).filter(t=>{const d=dt(t); return d && d.getTime()===today.getTime();})
   };
 }
 function _vaGo(sec,cat){
@@ -22802,7 +22821,7 @@ function _architectMainDashboard(){
   const todayStr=_ymd(new Date());
   const in48=hers.filter(t=>t.status!=="done" && t.due_date && t.due_date>=todayStr && t.due_date<=_ymd(new Date(Date.now()+2*86400000)))
                  .sort((a,b)=>String(a.due_date).localeCompare(String(b.due_date)));
-  const overdue=hers.filter(t=>t.status!=="done" && t.due_date && t.due_date<todayStr);
+  const overdue=hers.filter(t=>t.status!=="done" && !_hldOn(t) && t.due_date && t.due_date<todayStr);
 
   const notLoaded=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:18px;color:#566070;font-size:13px">Loading the permit tracker…</div>`;
 
@@ -22861,7 +22880,7 @@ function _jennTab(){
   const _in48=_ymd(new Date(today.getTime()+2*86400000));
   const _due48=tasksAll.filter(t=>t.status!=='done' && mine(t) && t.due_date && t.due_date>=todayStr && t.due_date<=_in48)
     .sort((a,b)=>(a.due_date||'')<(b.due_date||'')?-1:1);
-  const _overdue=tasksAll.filter(t=>t.status!=='done' && mine(t) && t.due_date && t.due_date<todayStr).length;
+  const _overdue=tasksAll.filter(t=>t.status!=='done' && !_hldOn(t) && mine(t) && t.due_date && t.due_date<todayStr).length;
 
   const permits=(typeof _permitList==='function')?_permitList():[];
   const open=permits.filter(r=>_permitOpen(r));
@@ -23896,6 +23915,177 @@ let _calEventsCache = [];
 // Same one-line helper, declared where it is actually global. The copy inside the property
 // renderer is left alone - it shadows this one there, and behaves identically.
 function _baselineNotes(e){ if(!e||e.kind!=='baseline') return null; try{ return JSON.parse(e.notes||'null')||null; }catch(_){ return null; } }
+
+// ===================== ON HOLD =====================
+// Bruce, 9 Oct: "one function we need to add for tasks across the board, whether it's
+// side tasks or regular tasks, is ... move something to on hold. And then when stuff's
+// on hold, we need to have an on hold section for each property in the full project
+// team meeting ... 994-996 Livingston's scope of work creation, that is technically on
+// hold until the permits are approved or at least under review for us to not keep doing
+// revisions and then going and changing the scope of work over and over again."
+//
+// On hold is NOT done and it is NOT late. It is parked, on purpose, with the reason
+// written down. So a held job keeps its due date and stays on the property, but it
+// stops counting as overdue, stops ringing the bell, and stops being chased - until
+// somebody takes it off hold. The reason is required: "on hold" with no reason is how
+// work disappears for a month and nobody can say why.
+//
+// A task carries it in its own row (on_hold / hold_reason / hold_since / hold_by).
+// A side task carries the same four fields inside the card's own list. Same words,
+// same colour, same button, wherever you are looking at it.
+function _hldOn(t){ return !!(t && (t.on_hold===true || t.on_hold==='true' || t.hold===true)); }
+function _hldWhy(t){ return String((t&&(t.hold_reason||t.holdWhy))||'').trim(); }
+function _hldWho(t){ return String((t&&(t.hold_by||t.holdBy))||'').trim(); }
+function _hldAt(t){ return String((t&&(t.hold_since||t.holdAt))||''); }
+function _hldDays(t){
+  const a=_hldAt(t); if(!a) return null;
+  const d=new Date(a); if(isNaN(d)) return null;
+  const t0=new Date(); t0.setHours(0,0,0,0); const d0=new Date(d); d0.setHours(0,0,0,0);
+  return Math.max(0, Math.round((t0-d0)/86400000));
+}
+function _hldSince(t){
+  const n=_hldDays(t);
+  if(n===null) return '';
+  return n===0 ? 'held since today' : ('held '+n+' day'+(n===1?'':'s'));
+}
+// The badge. Same everywhere, so it reads as one thing and not five.
+function _hldPill(t, withWhy){
+  if(!_hldOn(t)) return '';
+  const why=_hldWhy(t);
+  return `<span title="${_calEsc(why||'No reason written down')}" style="font-size:9.5px;font-weight:700;color:#7A4E00;background:#FBF0DC;border:0.5px solid #EBD3A5;padding:1px 7px;border-radius:99px;vertical-align:middle;white-space:nowrap">&#9208; ON HOLD</span>`
+    + (withWhy&&why?`<span style="font-size:11.5px;color:#7A4E00;margin-left:6px">${_calEsc(why)}</span>`:'');
+}
+// The control. `kind` is 't' for a real task or 's' for a side task.
+function _hldBtn(kind, a, b, on){
+  if(typeof isReadOnly==='function' && isReadOnly()) return '';
+  const call = kind==='s' ? `_hldSide('${a}','${b}')` : `_hldTask('${a}')`;
+  return `<span onclick="${call}" title="${on?'Take it off hold and put it back on the list':'Park it, with the reason why'}" style="display:inline-flex;align-items:center;gap:4px;font-size:11.5px;font-weight:600;color:${on?'#0F7B54':'#7A4E00'};cursor:pointer;white-space:nowrap">${on?'&#9654; Take off hold':'&#9208; Put on hold'}</span>`;
+}
+function _hldAsk(current){
+  const why=prompt("What is this waiting on?\n\nWrite it plainly - the room reads this on Monday. For example:\n  waiting on the permit to be approved\n  waiting on the survey back from Scott\n\nOn hold with no reason is how work goes missing, so this is required.", current||'');
+  if(why===null) return null;                 // cancelled
+  const v=String(why).trim();
+  if(!v){ alert("It needs a reason. Nothing was changed."); return null; }
+  return v;
+}
+// ---- a real task ----
+async function _hldTask(id){
+  if(_blockIfReadOnly()) return;
+  const t=(typeof _tasksCache!=='undefined'?_tasksCache:[]).find(x=>x.id===id);
+  if(!t){ alert("That task is no longer on this screen. Refresh and try again."); return; }
+  const on=_hldOn(t);
+  let patch;
+  if(on){
+    if(!confirm('Take "'+(t.title||'this task')+'" off hold?\n\nIt goes back on the list and starts counting as late again if its due date has passed.')) return;
+    patch={on_hold:false, hold_reason:null, hold_since:null, hold_by:null};
+  } else {
+    const why=_hldAsk(''); if(why===null) return;
+    patch={on_hold:true, hold_reason:why, hold_since:new Date().toISOString(), hold_by:_miWho()};
+  }
+  const { error } = await supabase.from("pm_tasks").update(patch).eq("id",id).select();
+  if(error){
+    const m=String(error.message||'');
+    if(/on_hold|hold_reason|hold_since|hold_by|column/i.test(m)){
+      alert("On hold could not be saved — the database has not been given the four hold columns yet.\n\nNothing was changed. Tell Bruce and it is a one-line fix.");
+    } else {
+      alert("That was NOT saved — "+m);
+    }
+    return;
+  }
+  if(typeof _logAudit==='function'){
+    _logAudit(on?'reopened':'updated','task', t.title||'',
+      on ? 'Taken off hold' : ('Put on hold — '+patch.hold_reason));
+  }
+  if(typeof loadTasks==='function') await loadTasks();
+  _hldRedraw(t.property_id);
+}
+// ---- a side task ----
+async function _hldSide(pid, id){
+  if(_blockIfReadOnly()) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
+  const cur=(typeof _sqList==='function'?_sqList(c):[]).find(y=>y.id===id);
+  if(!cur){ alert("That side task is no longer on this card. Refresh and try again."); return; }
+  const on=_hldOn(cur);
+  let why='';
+  if(on){
+    if(!confirm('Take "'+(cur.t||'this side task')+'" off hold?')) return;
+  } else {
+    const v=_hldAsk(''); if(v===null) return; why=v;
+  }
+  const ok=await _sqWrite(pid, arr=>{
+    const x=arr.find(y=>y.id===id); if(!x) return;
+    if(on){ delete x.hold; delete x.holdWhy; delete x.holdAt; delete x.holdBy; }
+    else { x.hold=true; x.holdWhy=why; x.holdAt=new Date().toISOString(); x.holdBy=_miWho(); }
+  });
+  if(!ok) return;
+  if(typeof _logAudit==='function'){
+    _logAudit(on?'reopened':'updated','property',(c&&c.addr)||'',
+      'Side task '+(on?'taken off hold':'put on hold — '+why)+': '+(cur.t||''));
+  }
+  _hldRedraw(pid);
+}
+// Redraw wherever you happen to be standing, rather than throwing you somewhere else.
+function _hldRedraw(pid){
+  try{
+    if(typeof _sqInMeeting==='function' && _sqInMeeting()){
+      openWeeklyMeeting(window.__wmLastKind||'team', window.__wmLastWeek||undefined); return;
+    }
+  }catch(e){}
+  try{ if(typeof _taskRerender==='function'){ _taskRerender(); } }catch(e){}
+  try{
+    const m=document.getElementById('task-modal');
+    if(m && m.style.display!=='none' && typeof openTaskDetail==='function'){
+      const idEl=document.getElementById('task-edit-id');
+      if(idEl && idEl.value) openTaskDetail(idEl.value);
+    }
+  }catch(e){}
+  try{ if(pid && typeof _sqRerender==='function' && !(typeof _sqInMeeting==='function' && _sqInMeeting())) return; }catch(e){}
+}
+// ---- everything held on one property, tasks and side tasks together ----
+function _hldForProperty(pid){
+  const out=[];
+  (typeof _tasksCache!=='undefined'?_tasksCache:[]).forEach(function(t){
+    if(t.property_id!==pid) return;
+    if(t.status==='done') return;
+    if(!_hldOn(t)) return;
+    out.push({ kind:'t', id:t.id, pid:pid, title:t.title||'Task',
+               who:(typeof taskAssignees==='function'?taskAssignees(t).join(', '):'')||'Unassigned',
+               due:t.due_date||'', why:_hldWhy(t), since:_hldSince(t), days:_hldDays(t), raw:t });
+  });
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===pid; });
+  (typeof _sqList==='function'?_sqList(c):[]).forEach(function(x){
+    if(!x || x.done || !_hldOn(x)) return;
+    out.push({ kind:'s', id:x.id, pid:pid, title:x.t||'Side task',
+               who:(typeof _sqWhoOf==='function'?_sqWhoOf(x):'')||'Unassigned',
+               due:x.at||'', why:_hldWhy(x), since:_hldSince(x), days:_hldDays(x), raw:x });
+  });
+  return out.sort(function(a,b){ return (b.days||0)-(a.days||0) || String(a.title).localeCompare(String(b.title)); });
+}
+function _hldAnyFor(pid){ return _hldForProperty(pid); }
+// The section the room reads on Monday.
+function _hldPanel(pid, roNow){
+  const rows=_hldForProperty(pid);
+  if(!rows.length){
+    return '<div style="font-size:12.5px;color:#636b7a;padding:8px 0">Nothing is on hold for this property. Anything parked from a task or a side task shows up here, with the reason and how long it has been sitting.</div>';
+  }
+  const row=function(r){
+    const open = r.kind==='t'
+      ? `<span onclick="openTaskDetail('${r.id}')" style="cursor:pointer;color:#185FA5">${_calEsc(r.title)}</span>`
+      : `<span>${_calEsc(r.title)}</span>`;
+    const stale = (r.days!=null && r.days>=21);
+    return `<div style="display:flex;gap:10px;align-items:flex-start;padding:8px 0;border-bottom:0.5px solid #f4f5f7">
+      <div style="width:88px;flex-shrink:0;font-size:11.5px;color:#7A4E00;font-weight:600;padding-top:2px">${_calEsc(r.since||'on hold')}${stale?'<div style="font-size:10.5px;color:#B42318;font-weight:700">three weeks &mdash; still right?</div>':''}</div>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:14.5px;color:#111">${r.kind==='s'?'<span style="font-size:9.5px;font-weight:700;color:#3C3489;background:#EEEDFE;padding:1px 6px;border-radius:99px;margin-right:6px">SIDE TASK</span>':''}${open}</div>
+        <div style="font-size:12px;color:#566070;margin-top:2px">${_calEsc(r.who)}${r.due?(' &middot; was due '+_calEsc(r.due)):''}</div>
+        <div style="font-size:13px;color:#7A4E00;margin-top:3px;line-height:1.45">${r.why?('&#9208; '+_calEsc(r.why)):'<span style="color:#B42318">No reason written down &mdash; put one on it.</span>'}</div>
+        ${roNow?'':`<div style="margin-top:5px">${_hldBtn(r.kind, r.kind==='s'?r.pid:r.id, r.kind==='s'?r.id:'', true)}</div>`}
+      </div></div>`;
+  };
+  return '<div>'+rows.map(row).join('')+'</div>'
+    + `<div style="font-size:11.5px;color:#636b7a;margin-top:8px">Held work keeps its date but is not counted late and does not ring anybody's bell. Take it off hold and it goes straight back on the list.</div>`;
+}
+
 function _calEsc(s){ return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
 async function loadContractorsFromSupabase(){
@@ -26467,7 +26657,11 @@ function openTaskDetail(id){
     <h2>${ro?'Task':'Edit task'}</h2>
     <input type="hidden" id="task-edit-id" value="${t.id}" />
     <div class="error-msg" id="task-err"></div>
-    ${ro?'':`<button onclick="toggleTaskDone('${t.id}');closeModal('task-modal')" style="width:100%;padding:11px;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;margin-bottom:16px;background:${done?'#fff':'#0E7460'};color:${done?'#333':'#fff'};${done?'border:1px solid #ccc;':''}">${done?'↩ Reopen task':'✓ Mark done'}</button>`}
+    ${_hldOn(t)?`<div style="background:#FBF0DC;border:0.5px solid #EBD3A5;border-radius:8px;padding:10px 13px;margin-bottom:12px"><div style="font-size:12.5px;font-weight:700;color:#7A4E00">&#9208; ON HOLD${_hldSince(t)?(' &middot; '+_calEsc(_hldSince(t))):''}${_hldWho(t)?(' &middot; by '+_calEsc(_hldWho(t))):''}</div><div style="font-size:13.5px;color:#5C3B00;margin-top:3px;line-height:1.45">${_hldWhy(t)?_calEsc(_hldWhy(t)):'No reason written down.'}</div><div style="font-size:11.5px;color:#7A4E00;margin-top:5px">It keeps its date, but it is not counted late and it is not in anybody's notifications.</div></div>`:''}
+    ${ro?'':`<div style="display:flex;gap:9px;margin-bottom:16px;flex-wrap:wrap">
+      <button onclick="toggleTaskDone('${t.id}');closeModal('task-modal')" style="flex:1;min-width:150px;padding:11px;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;background:${done?'#fff':'#0E7460'};color:${done?'#333':'#fff'};${done?'border:1px solid #ccc;':''}">${done?'↩ Reopen task':'✓ Mark done'}</button>
+      <button onclick="_hldTask('${t.id}')" style="flex:0 0 auto;padding:11px 15px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;background:${_hldOn(t)?'#0E7460':'#fff'};color:${_hldOn(t)?'#fff':'#7A4E00'};border:1px solid ${_hldOn(t)?'#0E7460':'#EBD3A5'}">${_hldOn(t)?'▶ Take off hold':'⏸ Put on hold'}</button>
+    </div>`}
     <div class="tm-cols">
     <div>
     <div class="form-row"><label>Task</label><input type="text" id="task-title" value="${_calEsc(t.title||'')}" ${dis} /></div>
@@ -29357,4 +29551,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-09a baseline-helper-global-meeting-and-calendar-draw-again -->
+<!-- build: 2026-10-09b on-hold-for-tasks-and-side-tasks -->
