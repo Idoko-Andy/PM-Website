@@ -25838,7 +25838,11 @@ async function deleteCalEvent(id){
 let _tasksCache = [];
 async function loadTasks(){
   // Same thousand-row trap as the calendar. Tasks are at 597 and climb every week.
-  const cols=["id,title,assignee,assignees,due_date,due_time,start_date,category,refer_to,status,property_id,notes,comments,subtasks,location,reschedule_count,last_rescheduled_at,reschedule_reasons,completed_at",
+  // The four hold columns go on the FIRST list only. If a database has not been given
+  // them yet the select fails and the cascade below falls back to a list without them,
+  // so nobody is locked out - On hold simply does not appear until the columns exist.
+  const cols=["id,title,assignee,assignees,due_date,due_time,start_date,category,refer_to,status,property_id,notes,comments,subtasks,location,reschedule_count,last_rescheduled_at,reschedule_reasons,completed_at,on_hold,hold_reason,hold_since,hold_by",
+              "id,title,assignee,assignees,due_date,due_time,start_date,category,refer_to,status,property_id,notes,comments,subtasks,location,reschedule_count,last_rescheduled_at,reschedule_reasons,completed_at",
               // subtasks is the newest column - drop it before giving up entirely
               "id,title,assignee,assignees,due_date,due_time,start_date,category,refer_to,status,property_id,notes,comments,location,reschedule_count,last_rescheduled_at,reschedule_reasons,completed_at",
               // some columns may not exist yet on older DBs — fall back gracefully
@@ -29551,4 +29555,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-09b on-hold-for-tasks-and-side-tasks -->
+<!-- build: 2026-10-09c on-hold-columns-actually-loaded -->
