@@ -369,11 +369,10 @@ function bidList(i){
 }
 async function awardBid(itemId, bidId){
   const i = ITEMS.find(x=>x.id===itemId); const b = (i.bids||[]).find(x=>x.id===bidId);
-  const start = prompt(`Award ${i.address} #${i.item_no} to ${b.contractor} for $${Number(b.price).toLocaleString()}.\n\nStart date (YYYY-MM-DD)? Leave blank to ask them for one.`, b.start_date||"");
-  if (start === null) return;
-  if (start && !/^\d{4}-\d{2}-\d{2}$/.test(start.trim())) return toast("Use a date like 2026-10-14");
+  // Tom 10/8: Gabe never types a date. The contractor's date (from their bid, or their reply) sets the schedule.
+  if (!confirm(`Award ${i.address} #${i.item_no} to ${b.contractor} for $${Number(b.price).toLocaleString()}?\n\n${b.start_date ? `They said they can start ${fmt(b.start_date)}. They'll be asked to reply YES.` : `They'll be asked to reply YES with their start date.`}`)) return;
   toast("Sending…");
-  const r = await fn("rtr-dispatch", { action:"award", bid_id:bidId, start_date: start.trim()||undefined });
+  const r = await fn("rtr-dispatch", { action:"award", bid_id:bidId });
   toast(r.error ? r.error : `Awarded to ${r.contractor} — waiting on their YES`);
   await load();
 }
