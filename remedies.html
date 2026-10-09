@@ -352,12 +352,7 @@ function row(i){
       ${invoiceLine(i)}
       ${i.report_excerpt_url?`<div class="cctext"><a href="${esc(i.report_excerpt_url)}" target="_blank" rel="noopener" style="color:var(--info)">Inspection report${i.report_section?" "+esc(i.report_section):""} (highlighted)</a></div>`:""}
     </td>
-    <td class="act">
-      ${i.cc_done?'' : (i.contractor_id
-        ? `<button class="ubtn small" onclick="chase('${i.id}')">Text for status</button>`
-        : internalFor(i.trade)
-          ? `<button class="ubtn small primary" onclick="sendInternal('${i.id}')" ${i.dispatched_n>0?'disabled':''}>${i.dispatched_n>0?'Sent to maintenance':'Send to maintenance'}</button>`
-          : `<button class="ubtn small primary" onclick="bids('${i.id}')" ${i.dispatched_n>0?'disabled':''}>${i.dispatched_n>0?'Bids requested':'Get 3 bids'}</button>`)}
+    <td class="act">${actionCell(i)}
     </td>
   </tr>`;
 }
@@ -382,13 +377,50 @@ async function assign(id, contractor_id){
   if(error) return toast("Couldn't save: "+error.message);
   toast(contractor_id ? "Assigned" : "Unassigned"); await load();
 }
-async function askTrade(id){
-  const cur = ITEMS.find(x=>x.id===id)?.trade || "";
-  const t = prompt("Trade for this item (type one):\n" + TRADES.join(" · "), cur);
+const isHold = i => /^HOLD\b/i.test(i.description||"");
+function actionCell(i){
+  if(i.cc_done) return "";
+  if(isHold(i)) return `<span class="pill chase">on hold</span> <button class="ubtn small" onclick="releaseHold('${i.id}')">Release hold</button>`;
+  if(i.maint_status){ const p = MAINT_PILL[i.maint_status]||["chase","maint: "+i.maint_status]; return `<span class="pill ${p[0]}">${esc(p[1])}${i.maint_start?' '+esc(String(i.maint_start).slice(5).replace('-','/')):''}</span>`; }
+  if(i.contractor_id) return `<button class="ubtn small" onclick="chase('${i.id}')">Text for status</button>`;
+  const sent = i.dispatched_n>0;
+  if(internalFor(i.trade)) return `<button class="ubtn small primary" onclick="sendInternal('${i.id}')" ${sent?'disabled':''}>${sent?'Sent to maintenance (Slack)':'Send to maintenance'}</button>`;
+  return `<button class="ubtn small primary" onclick="bids('${i.id}')" ${sent?'disabled':''}>${sent?'Bids requested':'Get 3 bids'}</button>`;
+}
+// Tom 10/8: items loaded as "HOLD until <reason>: ..." sit until Gabe releases them (e.g. the buyer's chimney report came in).
+async function releaseHold(id){
+  const i = ITEMS.find(x=>x.id===id);
+  const clean = (i.description||"").replace(/^HOLD[^:]*:\s*/i, "");
+  const t = prompt(`Release this item for bids?\n\n${clean}\n\nTrade (type one):\n${TRADES.join(" · ")}`, i.trade || "");
   if(!t) return;
+  const { error } = await sb.from("rtr_items").update({ description: clean, trade: t, desc_locked: true }).eq("id", id);
+  if(error) return toast("Couldn't save: "+error.message);
+  toast("Released — now pick bidders"); await load();
+}
+// Tom 10/9: clicking the trade opens a clickable list of trades (with how many contractors each has);
+// picking one saves it and goes straight into the Choice 1/2/3 contractor picker.
+function askTrade(id){
+  const i = ITEMS.find(x=>x.id===id); if(!i) return;
+  const counts = {}; CONTRACTORS.forEach(c=>{ if(c.trade && !c.is_internal && !NO_USE.includes(c.vetting_tier)) counts[c.trade]=(counts[c.trade]||0)+1; });
+  const internal = t => CONTRACTORS.some(c=>c.is_internal && c.trade===t);
+  const rows = TRADES.map(t=>`<div class="pick" onclick="setTrade('${id}', this.dataset.t)" data-t="${esc(t)}">
+      <span class="nm">${esc(t)}<small>${internal(t) ? 'our maintenance team (Robbie)' : (counts[t]||0)+' contractor'+((counts[t]||0)===1?'':'s')+' we can text'}</small></span>
+      ${i.trade===t?'<span class="tier t1">current</span>':''}</div>`).join("");
+  $("#picker").innerHTML = `<div class="modal-bg" onclick="if(event.target===this){$('#picker').innerHTML=''}"><div class="modal">
+    <div class="modal-h"><b>Who does this kind of work?</b><p>#${i.item_no??""} — ${esc((i.description||"").slice(0,140))}</p><p>Tap a trade. Then you'll pick Choice 1, 2, 3.</p></div>
+    <div class="modal-b">${rows}</div>
+    <div class="modal-f"><span class="sp"></span><button class="ubtn small" onclick="$('#picker').innerHTML=''">Cancel</button></div>
+  </div></div>`;
+}
+async function setTrade(id, t){
+  $("#picker").innerHTML = "";
   const { error } = await sb.from("rtr_items").update({ trade: t }).eq("id", id);
   if(error) return toast("Couldn't save: "+error.message);
   await load();
+  const i = ITEMS.find(x=>x.id===id);
+  if(i && !i.cc_done && !i.contractor_id && !(i.dispatched_n>0) && !isHold(i)){
+    if(internalFor(t)) toast(`${t} → tap "Send to maintenance"`); else bids(id);
+  }
 }
 async function fn(name, body){
   const r = await fetch(`${SUPABASE_URL}/functions/v1/${name}`, { method:"POST", headers:{ "Content-Type":"application/json", "Authorization":"Bearer "+ANON_JWT }, body: JSON.stringify(body) });
@@ -446,23 +478,17 @@ async function sendPicked(){
 }
 // ---- maintenance (Tom 10/8): Handyman / General goes to the internal team, same texts, no bid ----
 const internalFor = trade => CONTRACTORS.find(c=>c.is_internal && c.trade===trade);
+// Tom 10/9: no texting Robbie. The job (same wording a contractor gets) is posted in Slack #project-maint-requests
+// tagging Jeriel, who writes the work order. The robot watches that thread for his ✅ / "on it", the date, "done" and the cost.
 async function sendInternal(id){
-  const i = ITEMS.find(x=>x.id===id); const m = internalFor(i.trade);
-  if(!m.phone){
-    const ph = prompt(`What's ${m.name}'s cell number? (saved for next time)`, "");
-    if(!ph) return;
-    const d = ph.replace(/\D/g,"").replace(/^1(?=\d{10}$)/,"");
-    if(d.length!==10) return toast("That doesn't look like a 10-digit number");
-    const { error } = await sb.from("contractor_directory").update({ phone: `${d.slice(0,3)}-${d.slice(3,6)}-${d.slice(6)}` }).eq("id", m.id);
-    if(error) return toast("Couldn't save the number: "+error.message);
-    m.phone = d;
-  }
-  if(!confirm(`Text ${m.name} this job?\n\n${i.description}\n\nat ${i.address}`)) return;
+  const i = ITEMS.find(x=>x.id===id);
+  if(!confirm(`Send this to maintenance?\n\nIt posts in Slack #project-maint-requests and tags Jeriel for a work order.\n\n${i.description}\n\nat ${i.address}`)) return;
   toast("Sending…");
   const r = await fn("rtr-dispatch", { action:"dispatch", item_id:id });
-  toast(r.error ? r.error : `Sent to ${(r.sent||[]).join(", ")}`);
+  toast(r.error ? r.error : "Queued — posts in #project-maint-requests within the hour");
   await load();
 }
+const MAINT_PILL = { queued:["chase","maint: posting…"], posted:["chase","maint: waiting on Jeriel"], acked:["t2","maint: Jeriel on it"], scheduled:["t1","maint: scheduled"], done:["t1","maint: done"], cancelled:["chase","maint: cancelled"] };
 
 // ---- invoices made for the contractor (Tom 10/8) ----
 function invoiceLine(i){
