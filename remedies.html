@@ -224,6 +224,7 @@ function stateOf(i){
     return {key:"unassigned", pill:""};
   }
   if(i.status==="done") return {key:"walk", pill:`<span class="pill walk">says done — walk it</span>`};
+  if(i.warranty) return {key:"chase", pill:`<span class="pill yes">warranty · ${i.rehab_contractor_name||i.contractor_name||"rehab contractor"}${i.scheduled_start?" on "+fmt(i.scheduled_start):" — waiting on their date"}</span>`};
   if(i.contractor_internal) return {key:"chase", pill:`<span class="pill yes">maintenance on it</span>`};
   if(i.awarded_bid_id && !i.award_confirmed_at) return {key:"chase", pill:`<span class="pill chase">awarded — waiting on their YES</span>`};
   if(i.award_confirmed_at && i.scheduled_start) return {key:"chase", pill:`<span class="pill yes">confirmed · starts ${fmt(i.scheduled_start)}</span>`};
@@ -381,6 +382,7 @@ const isHold = i => /^HOLD\b/i.test(i.description||"");
 function actionCell(i){
   if(i.cc_done) return "";
   if(isHold(i)) return `<span class="pill chase">on hold</span> <button class="ubtn small" onclick="releaseHold('${i.id}')">Release hold</button>`;
+  if(i.scope_check==="pending" && !i.contractor_id && !(i.dispatched_n>0)) return `<button class="ubtn small primary" onclick="scopeCheck('${i.id}')">Was this on the old scope?</button>`;
   if(i.maint_status){ const p = MAINT_PILL[i.maint_status]||["chase","maint: "+i.maint_status]; return `<span class="pill ${p[0]}">${esc(p[1])}${i.maint_start?' '+esc(String(i.maint_start).slice(5).replace('-','/')):''}</span>`; }
   if(i.contractor_id) return `<button class="ubtn small" onclick="chase('${i.id}')">Text for status</button>`;
   const sent = i.dispatched_n>0;
@@ -419,7 +421,8 @@ async function setTrade(id, t){
   await load();
   const i = ITEMS.find(x=>x.id===id);
   if(i && !i.cc_done && !i.contractor_id && !(i.dispatched_n>0) && !isHold(i)){
-    if(internalFor(t)) toast(`${t} → tap "Send to maintenance"`); else bids(id);
+    if(i.scope_check==="pending") scopeCheck(id);
+    else if(internalFor(t)) toast(`${t} → tap "Send to maintenance"`); else bids(id);
   }
 }
 async function fn(name, body){
@@ -474,6 +477,60 @@ async function sendPicked(){
   const r = await fn("rtr-dispatch", { action:"dispatch", item_id:id, contractor_ids: ids });
   if(r.error) return toast(r.error);
   toast(r.sent?.length ? `Sent to ${r.sent.join(", ")}${r.skipped?.length?` (skipped: ${r.skipped.join("; ")})`:""}` : `Couldn't send — ${(r.failed||r.skipped||[])[0]||"nobody picked"}`);
+  await load();
+}
+// ---- scope check (Tom 10/9): first step on every item. If it was on the rehab contractor's scope it goes back to them
+// under warranty, no charge, no bid. If not, the normal Get 3 bids / Send to maintenance flow appears.
+let SCOPE = null;
+const words = t => (t||"").toLowerCase().replace(/[^a-z0-9 ]/g," ").split(/\s+/).filter(w=>w.length>3 && !STOP.has(w));
+const STOP = new Set(["with","that","this","from","have","been","were","will","shall","need","needs","needed","repair","replace","install","properly","correct","area","areas","inspection","report","item","items","recommend","recommended","licensed","contractor","qualified","should","there","their","where","which","missing","present","observed","noted","page","section"]);
+async function scopeCheck(id){
+  const i = ITEMS.find(x=>x.id===id); if(!i) return;
+  SCOPE = { id, lines: [], loading: true, pick: null, gc: i.rehab_contractor_id || "" };
+  renderScope();
+  const r = await sb.rpc("rtr_sow_lines", { p_item_id: id });
+  const iw = new Set(words(i.description));
+  const score = l => { const lw = words([l.section,l.location,l.description,l.notes].join(" ")); let n=0; for(const w of new Set(lw)) if(iw.has(w)) n++; return n; };
+  SCOPE.lines = (r.data||[]).map(l=>({...l, score: score(l)})).sort((a,b)=>b.score-a.score).slice(0, 8);
+  SCOPE.hasSow = (r.data||[]).length>0; SCOPE.loading = false;
+  renderScope();
+}
+function renderScope(){
+  if(!SCOPE){ $("#picker").innerHTML=""; return; }
+  const i = ITEMS.find(x=>x.id===SCOPE.id);
+  const gcs = CONTRACTORS.filter(c=>!c.is_internal).sort((a,b)=>a.name.localeCompare(b.name));
+  const gcOpts = gcs.map(c=>`<option value="${c.id}" ${SCOPE.gc===c.id?'selected':''} ${c.phone?'':'disabled'}>${esc(c.name)}${c.phone?'':' (no phone)'}</option>`).join("");
+  const lines = SCOPE.loading ? `<div class="sched-empty">Looking up the scope of work…</div>`
+    : !SCOPE.hasSow ? `<div class="sched-empty">No scope of work in the system for this house.${i.rehab_scope_url?` <a href="${esc(i.rehab_scope_url)}" target="_blank" style="color:var(--info)">Open the scope document</a> and decide.`:' Check the signed scope and decide.'}</div>`
+    : SCOPE.lines.map(l=>`<div class="pick" onclick="SCOPE.pick=SCOPE.pick==='${l.line_id}'?null:'${l.line_id}';renderScope()" style="${SCOPE.pick===l.line_id?'background:rgba(80,160,100,.18)':''}">
+        <span class="tier ${l.score>=2?'t1':l.score?'t2':''}" style="min-width:60px;text-align:center">${l.score>=2?'likely':l.score?'maybe':'—'}</span>
+        <span class="nm">${esc(l.description)}<small>${esc([l.section,l.location].filter(Boolean).join(" · "))}${l.amount?' · $'+Number(l.amount).toLocaleString():''}</small></span></div>`).join("");
+  const picked = SCOPE.lines.find(l=>l.line_id===SCOPE.pick);
+  $("#picker").innerHTML = `<div class="modal-bg" onclick="if(event.target===this){SCOPE=null;renderScope()}"><div class="modal">
+    <div class="modal-h"><b>Was this on the old scope of work?</b><p>#${i.item_no??""} ${esc(i.address)} — ${esc((i.description||"").slice(0,160))}</p>
+      <p>If the rehab contractor was already paid to do this, it goes back to them to fix for free. Tap the matching scope line if you see it (optional), then answer.</p></div>
+    <div class="modal-b">${lines}</div>
+    <div class="modal-f" style="flex-wrap:wrap;gap:8px">
+      <label style="font-size:12.5px;color:var(--mute)">Who did the rehab? <select style="background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:5px 6px;font-size:12.5px;max-width:220px" onchange="SCOPE.gc=this.value"><option value="">— pick —</option>${gcOpts}</select></label>
+      <span class="sp"></span>
+      <button class="ubtn small" onclick="SCOPE=null;renderScope()">Cancel</button>
+      <button class="ubtn small" onclick="scopeNo()">NO — not on scope</button>
+      <button class="ubtn small primary" ${SCOPE.gc?'':'disabled'} onclick="scopeYes()">YES — send back to them, no charge</button></div>
+  </div></div>`;
+}
+async function scopeNo(){
+  const id = SCOPE.id; SCOPE=null; renderScope();
+  const { error } = await sb.from("rtr_items").update({ scope_check: "not_on_scope", scope_checked_at: new Date().toISOString(), scope_checked_by: "Remedies page" }).eq("id", id);
+  if(error) return toast("Couldn't save: "+error.message);
+  toast("Not on the old scope — now pick bidders or send to maintenance"); await load();
+}
+async function scopeYes(){
+  const i = ITEMS.find(x=>x.id===SCOPE.id); const gc = CONTRACTORS.find(c=>c.id===SCOPE.gc); const picked = SCOPE.lines.find(l=>l.line_id===SCOPE.pick);
+  if(!confirm(`Text ${gc.name} that this was on their scope and they need to fix it at no charge?\n\n${i.description}\n\nat ${i.address}`)) return;
+  const body = { action:"warranty", item_id: SCOPE.id, contractor_id: SCOPE.gc, scope_match: picked ? [picked.section, picked.description].filter(Boolean).join(": ") : "" };
+  SCOPE=null; renderScope(); toast("Sending…");
+  const r = await fn("rtr-dispatch", body);
+  toast(r.error ? r.error : `Sent to ${(r.sent||[]).join(", ")} — waiting on their date`);
   await load();
 }
 // ---- maintenance (Tom 10/8): Handyman / General goes to the internal team, same texts, no bid ----
