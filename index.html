@@ -23881,6 +23881,21 @@ function propDrop(event, targetPhase) {
 // ===================== CONTRACTORS + CONSTRUCTION CALENDAR =====================
 let _contractorsCache = [];
 let _calEventsCache = [];
+// ---- Baseline schedule helper, where everything that calls it can actually see it ----
+// Bruce, 9 Oct: "the full project meeting. I'm clicking on it and it just gives me a
+// loading page and then it won't let me even click on the construction calendar anymore."
+//
+// The baseline-schedule work added a `_baselineNotes` helper, but it went in INSIDE the
+// property-detail renderer - a function several thousand lines long - so it is a local,
+// visible only to its neighbours. Three call sites sit outside that function: the Monday
+// meeting's item list (_wmItems), the construction calendar's event chips, and the
+// calendar's day list. Every one of them threw ReferenceError the moment a baseline event
+// was in range, which killed the render half way: the meeting never got past "Loading
+// meeting...", and the construction calendar never drew at all, so it looked dead.
+//
+// Same one-line helper, declared where it is actually global. The copy inside the property
+// renderer is left alone - it shadows this one there, and behaves identically.
+function _baselineNotes(e){ if(!e||e.kind!=='baseline') return null; try{ return JSON.parse(e.notes||'null')||null; }catch(_){ return null; } }
 function _calEsc(s){ return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
 
 async function loadContractorsFromSupabase(){
@@ -29342,4 +29357,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-05b meeting-ticks-merge-not-overwrite -->
+<!-- build: 2026-10-09a baseline-helper-global-meeting-and-calendar-draw-again -->
