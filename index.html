@@ -2851,6 +2851,7 @@ let propEditingId = null;
 
 function _propRowToCard(r) {
   return {
+    createdAt:  r.created_at || "",
     id:         r.id,
     addr:       r.addr || "",
     phase:      r.phase || "",
@@ -2909,7 +2910,10 @@ function _propCardToRow(p) {
   };
 }
 
-const PROP_SELECT_COLS = "id,addr,phase,type,pm,budget,spent,start_date,end_date,company_cam,drive_url,notes,sub_phases,checklist_market_last,checklists,is_rental,closing_date,vacancy_date,closing_date_sell,closed_date,archived,close_approved,purchase_confirmed,jv_deal,est_profit,goal_arv,listing_agent,start_owner,target_list_date,nicknames";
+// created_at is here for Patience's Upcoming Takedowns checklist. Bruce, 10 Oct: three
+// of her five steps are "after the property card is one week old" / "after two weeks",
+// and the card could not say how old it was because this list never asked for it.
+const PROP_SELECT_COLS = "id,addr,phase,type,pm,budget,spent,start_date,end_date,company_cam,drive_url,notes,sub_phases,checklist_market_last,checklists,is_rental,closing_date,vacancy_date,closing_date_sell,closed_date,archived,close_approved,purchase_confirmed,jv_deal,est_profit,goal_arv,listing_agent,start_owner,target_list_date,nicknames,created_at";
 async function loadPropertiesFromSupabase() {
   const { data, error } = await supabase
     .from("pm_properties")
@@ -3021,8 +3025,11 @@ async function savePropertyToSupabase(id, data, owns) {
       await loadPropertiesFromSupabase();
       await updatePropertyPhaseInSupabase(_newId, data.phase);
       await loadPropertiesFromSupabase();
+      // Close the Upcoming Takedowns row this card answers, and tick step 1 on it.
+      if(typeof _tdOnCardCreated==='function') await _tdOnCardCreated(_newId, data.addr||"");
       return true;
     }
+    if(_newId && typeof _tdOnCardCreated==='function') await _tdOnCardCreated(_newId, data.addr||"");
   }
   _logAudit(id?"updated":"created","property", data.addr||"", id?"Edited property details":"Added a new property");
   await loadPropertiesFromSupabase();
@@ -13543,6 +13550,133 @@ async function _unmDismiss(key){
 }
 // Open the normal Add Property form with what Slack told us already filled in. The
 // person still presses Save, so nothing reaches the board without somebody looking.
+// ===================== UPCOMING TAKEDOWN QUEUE =====================
+// Bruce, 10 Oct: "under Patience's pre-construction for the upcoming takedowns, we need
+// to be able to add a property in there that's NOT adding a property card, because we
+// want Patience to manually create the property cards. It'll just add a property in
+// there, but ... when she does create the property card, it automatically links and
+// checks in her checklist that she created the property card."
+//
+// The queue is the merge of TWO records, on purpose:
+//   unmatched_addresses  - written by the 8am Slack check and by the takedown-email bot.
+//                          Not on the list of records ordinary staff may write.
+//   trackers.tdq         - written from this screen. 'trackers' IS on that list, so
+//                          Patience can add a row and clear a row without waiting for a
+//                          database permission change she does not control.
+// A tdq row with the same key OVERRIDES the automation's row, which is how she dismisses
+// something a bot put there. Same shape in both, same slug rule, so the two read as one
+// list and the bot's contract does not change.
+function _tdKey(addr){
+  return String(addr||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,60);
+}
+// House number plus street name, with the city, the directionals and the street-type
+// suffix thrown away - so "6888 Harlem Rd" and "6888 Harlem Road, Columbus OH" are one
+// house. Used to decide whether a queued address already has a card.
+const _TD_SUFFIX=/\b(rd|road|dr|drive|ave|avenue|st|street|ln|lane|blvd|boulevard|ct|court|cir|circle|way|pl|place|ter|terrace|pkwy|parkway|hwy|highway|sq|square|trl|trail)\b/g;
+const _TD_DIR=/\b(n|s|e|w|ne|nw|se|sw|north|south|east|west)\b/g;
+function _tdNorm(addr){
+  let t=String(addr||'').toLowerCase().split(',')[0];
+  t=t.replace(/[^a-z0-9\s]/g,' ');
+  t=t.replace(_TD_SUFFIX,' ').replace(_TD_DIR,' ');
+  return t.replace(/\s+/g,' ').trim();
+}
+function _tdSame(a,b){ const x=_tdNorm(a), y=_tdNorm(b); return !!x && x===y; }
+function _tdCardFor(addr){
+  return (typeof propCards!=='undefined'?propCards:[]).find(function(c){
+    return !c.archived && _tdSame(c.addr, addr);
+  }) || null;
+}
+function _tdLocal(){ const d=(window._trkData||{}).tdq; return (d&&typeof d==='object')?d:{}; }
+// One list, newest sighting first. A row drops off when it is done, when somebody marked
+// it not ours, or when a card for it actually exists.
+// Every row still waiting, WITHOUT asking whether a card exists yet. _tdOnCardCreated
+// needs this: by the time it runs the new card is already in propCards, so the row it is
+// trying to close has just been filtered out of _tdList and it would find nothing - the
+// row would vanish from the screen but never actually be closed in the record.
+function _tdAll(){
+  const auto=(window._unmData && typeof window._unmData==='object')?window._unmData:{};
+  const mine=_tdLocal();
+  const keys={};
+  Object.keys(auto).forEach(function(k){ keys[k]=1; });
+  Object.keys(mine).forEach(function(k){ keys[k]=1; });
+  return Object.keys(keys).map(function(k){
+      return Object.assign({key:k}, auto[k]||{}, mine[k]||{});
+    })
+    .filter(function(x){ return x.addr && !x.done; })
+    .filter(function(x){ return !(typeof _unmNotOurs==='function' && _unmNotOurs(x)); })
+    .sort(function(a,b){ return String(b.last_seen||b.added||'').localeCompare(String(a.last_seen||a.added||'')); });
+}
+// What the screen shows: the same list, minus anything that now has a card.
+function _tdList(){
+  return _tdAll().filter(function(x){ return !_tdCardFor(x.addr); });
+}
+// Everything this screen writes goes into trackers.tdq, which ordinary staff may write.
+async function _tdSet(key, patch){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return false;
+  const d=window._trkData||{}; d.tdq=Object.assign({}, d.tdq||{});
+  d.tdq[key]=Object.assign({}, d.tdq[key]||{}, patch);
+  window._trkData=d;
+  return await _trkSave();
+}
+async function _tdAdd(){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
+  const g=function(id){ const e=document.getElementById(id); return e?String(e.value||'').trim():''; };
+  const addr=g('td-addr');
+  if(!addr){ alert("Put the address in.\n\nThis does not create a property card - it puts the address on the list so you can create one."); return; }
+  const have=_tdCardFor(addr);
+  if(have){ alert("There is already a property card for that.\n\n"+have.addr+" - "+(have.phase||'')+"\n\nNothing was added."); return; }
+  const key=_tdKey(addr);
+  const today=(typeof _ymd==='function')?_ymd(new Date()):new Date().toISOString().slice(0,10);
+  const ok=await _tdSet(key, { addr:addr, deal:g('td-deal'), closing:g('td-close'), vacancy:g('td-vac'),
+    note:g('td-note'), channel:'added by hand', source:(typeof _miWho==='function')?_miWho():'',
+    first_seen:today, last_seen:today, added:today, done:false });
+  if(!ok) return;
+  if(typeof _logAudit==='function') _logAudit('created','property', addr, 'Added to the Upcoming Takedowns list - needs a property card');
+  ['td-addr','td-close','td-vac','td-note'].forEach(function(id){ const e=document.getElementById(id); if(e) e.value=''; });
+  (window._trkRerender||function(){ openVAAdminDashboard('va'); })();
+}
+async function _tdDismiss(key){
+  const x=_tdAll().find(function(y){ return y.key===key; }) || {};
+  if(!confirm("Take “"+(x.addr||'this address')+"” off the list?\n\nUse this when it is not one of ours, or the card already exists under another spelling.")) return;
+  const ok=await _tdSet(key, { done:true, doneBy:(typeof _miWho==='function')?_miWho():'', doneAt:new Date().toISOString(), doneWhy:'not ours' });
+  if(!ok) return;
+  if(typeof _logAudit==='function') _logAudit('updated','property', x.addr||key, 'Taken off the Upcoming Takedowns list');
+  (window._trkRerender||function(){ openVAAdminDashboard('va'); })();
+}
+// Open the normal Add Property form with what we know already filled in. The person
+// still presses Save, so nothing reaches the board without somebody looking at it.
+function _tdMakeCard(key){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
+  const x=_tdAll().find(function(y){ return y.key===key; }) || {};
+  openPropModal('edit', null);
+  setTimeout(function(){
+    const put=function(id,v){ const e=document.getElementById(id); if(e && v) e.value=v; };
+    put('pm-addr', x.addr); put('pm-closing', x.closing); put('pm-vacancy', x.vacancy);
+    const ph=document.getElementById('pm-phase');
+    if(ph){ const want = x.vacancy ? 'Vacant / On Standby' : 'Upcoming Takedowns';
+            const opt=[].slice.call(ph.options).find(function(o){ return o.value===want; }); if(opt) ph.value=want; }
+    const a=document.getElementById('pm-addr'); if(a) a.focus();
+  }, 60);
+}
+// THE LINK Bruce asked for. Called after a brand-new property card is saved. If that
+// address was sitting on the queue, the row closes itself and step 1 of her Upcoming
+// Takedowns checklist - create the property card - ticks on the new card. She does not
+// have to tell the system something it just watched her do.
+async function _tdOnCardCreated(newId, addr){
+  try{
+    if(!newId || !addr) return;
+    const row=_tdAll().find(function(x){ return _tdSame(x.addr, addr) || x.key===_tdKey(addr); });
+    const first=(typeof _vaTpl==='function') ? (_vaTpl('pre1')||[])[0] : null;
+    if(first && typeof _trkSet==='function'){
+      await _trkSet('va_chk', newId, 'pre1|'+_vaSlug(first), true, false);
+    }
+    if(row){
+      await _tdSet(row.key, { done:true, doneBy:(typeof _miWho==='function')?_miWho():'',
+                              doneAt:new Date().toISOString(), doneWhy:'property card created', cardId:newId });
+      if(typeof _logAudit==='function') _logAudit('created','property', addr, 'Property card created from the Upcoming Takedowns list - step 1 ticked');
+    }
+  }catch(e){ /* the card is saved either way - never fail a save over the tidy-up */ }
+}
 function _unmMakeCard(key){
   if(_blockIfReadOnly()) return;
   const x=(window._unmData||{})[key]||{};
@@ -20064,7 +20198,15 @@ const VA_SECS = {
 // make it live" - so these are a first draft he overwrites, not a rule. The template lives
 // in the trackers row, which ordinary approved staff are allowed to write.
 const VA_TPL_SEED = {
-  pre1:["Property card created and the address double-checked","CompanyCam folder created","Closing / takedown date on the card","Utilities ordered in our name","Lockbox on and the code logged"],
+  // Bruce, 10 Oct, dictated these five in order. "@7d" / "@14d" means the step does not
+  // open until the property card is that old - he asked for "after the property card is
+  // one week old" and "after two weeks old", and a step that cannot be done yet should
+  // not sit there looking undone. The marker is stripped before the words are shown.
+  pre1:["Create the property card",
+        "Find out who the project manager is @7d",
+        "Vacancy info, lockbox info and any other comments up to date @7d",
+        "Fill out as much of the property card as possible",
+        "Chase the assigned project manager to get it done @14d"],
   pre2:["Purchase confirmed on the card","Occupancy checked - who is still in it","Keys and access confirmed","Utilities transferred to us","CompanyCam folder started"],
   pre3:["Lockbox on and the code logged","Electric, water and gas all on","Added to the mowing route","Property secured and photographed"],
   pre4:["Scope of work uploaded to the card","Budget created and approved","Permits applied for","Start date agreed with the PM","Contractors lined up for week one"],
@@ -20091,6 +20233,28 @@ function _vaTpl(cat){
 function _vaSop(sec){
   const raw=_trkVal('va_sop',sec,'text');
   return (raw && String(raw).trim()) ? String(raw) : (VA_SOP_SEED[sec]||'');
+}
+// A checklist line may carry "@7d" or "@14d" on the end, meaning it does not open until
+// the property card is that many days old. The marker is part of the stored line (so the
+// template stays one editable box of plain text) and is stripped for display.
+function _vaItemDays(item){ const m=String(item||'').match(/@(\d+)d\s*$/); return m?parseInt(m[1],10):0; }
+function _vaItemLabel(item){ return String(item||'').replace(/@\d+d\s*$/,'').trim(); }
+function _vaCardAgeDays(c){
+  const t=Date.parse((c&&c.createdAt)||'');
+  if(!t) return null;                      // no creation date: never gate, never guess
+  return Math.floor((Date.now()-t)/86400000);
+}
+// Open means she can do it now. A step with no marker is always open; one with a marker
+// opens on the day the card reaches that age.
+function _vaItemOpen(c,item){
+  const d=_vaItemDays(item); if(!d) return true;
+  const age=_vaCardAgeDays(c); if(age===null) return true;
+  return age>=d;
+}
+function _vaItemOpensIn(c,item){
+  const d=_vaItemDays(item); if(!d) return 0;
+  const age=_vaCardAgeDays(c); if(age===null) return 0;
+  return Math.max(0, d-age);
 }
 function _vaChkOn(propId,cat,item){ return _trkOn('va_chk',propId,cat+'|'+_vaSlug(item)); }
 async function _vaChkToggle(propId,cat,itemSlug){
@@ -20232,15 +20396,21 @@ function _vaSectionView(vaName,sec){
   const d=VA_SECS[sec];
   const cat=window._vaCat && VA_CATS[window._vaCat] && VA_CATS[window._vaCat].sec===sec ? window._vaCat : 'sop';
   const ro=isReadOnly();
-  const railBtn=(key,label,num,count,on)=>`<div onclick="_vaGo('${sec}','${key==='sop'?'':key}')" style="display:flex;align-items:center;gap:9px;padding:9px;border-radius:8px;cursor:pointer;font-size:13.5px;color:${on?'#111':'#566070'};background:${on?'#E6F1FB':'transparent'};font-weight:${on?'600':'400'}">
+  // Bruce, 10 Oct: "you got the checklist as a little up and down rectangle on the left
+  // side of the screen. I want to stretch that out." The categories were a 250px column
+  // squeezing the checklist into what was left. They are a strip across the top now and
+  // the checklist gets the whole width.
+  const railBtn=(key,label,num,count,on)=>`<div onclick="_vaGo('${sec}','${key==='sop'?'':key}')" style="display:inline-flex;align-items:center;gap:8px;padding:8px 13px;border-radius:9px;cursor:pointer;font-size:13.5px;white-space:nowrap;color:${on?'#111':'#566070'};background:${on?'#E6F1FB':'#fff'};border:0.5px solid ${on?'#B7D4F0':'#e0e4ec'};font-weight:${on?'600':'400'}">
       <span style="width:18px;height:18px;border-radius:5px;font-size:10.5px;font-weight:700;display:grid;place-items:center;flex:none;${key==='sop'?'background:#FBEFDF;border:0.5px solid #F0D5AE;color:#D4760A':(on?'background:#185FA5;border:0.5px solid #185FA5;color:#fff':'background:#f5f6f9;border:0.5px solid #e0e4ec;color:#8A94A6')}">${num}</span>
-      <span style="flex:1;min-width:0">${_calEsc(label)}</span>
-      <span style="font-size:12px;color:#8A94A6">${count}</span></div>`;
-  const rail=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:8px;min-width:0">
-      <div style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8A94A6;padding:6px 9px 7px">Categories, in order</div>
-      ${railBtn('sop','SOP / Order of Operations','&#9776;','',cat==='sop')}
-      ${d.cats.map(c=>railBtn(c,VA_CATS[c].name,VA_CATS[c].n,_vaCards(c).length,cat===c)).join('')}
-      ${sec==='post'?`<div onclick="window.open('/remedies.html','_blank')" style="display:flex;align-items:center;gap:9px;padding:9px;border-radius:8px;cursor:pointer;font-size:13.5px;color:#7A3FA8"><span style="width:18px;height:18px;border-radius:5px;background:#F3E8FB;border:0.5px solid #D9BCF0;font-size:10.5px;display:grid;place-items:center;flex:none">&#8599;</span><span style="flex:1">Request Remedy</span><span style="font-size:11px;color:#8A94A6">open &rsaquo;</span></div>`:''}
+      <span>${_calEsc(label)}</span>
+      ${count===''?'':`<span style="font-size:12px;color:#8A94A6;font-weight:400">${count}</span>`}</div>`;
+  const rail=`<div style="margin:16px 0 13px">
+      <div style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8A94A6;margin-bottom:6px">Categories, in order</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        ${railBtn('sop','SOP / Order of Operations','&#9776;','',cat==='sop')}
+        ${d.cats.map(c=>railBtn(c,VA_CATS[c].name,VA_CATS[c].n,_vaCards(c).length,cat===c)).join('')}
+        ${sec==='post'?`<div onclick="window.open('/remedies.html','_blank')" style="display:inline-flex;align-items:center;gap:8px;padding:8px 13px;border-radius:9px;cursor:pointer;font-size:13.5px;white-space:nowrap;color:#7A3FA8;background:#fff;border:0.5px solid #D9BCF0"><span style="width:18px;height:18px;border-radius:5px;background:#F3E8FB;border:0.5px solid #D9BCF0;font-size:10.5px;display:grid;place-items:center;flex:none">&#8599;</span><span>Request Remedy</span><span style="font-size:11px;color:#8A94A6">open &rsaquo;</span></div>`:''}
+      </div>
     </div>`;
   let body;
   if(cat==='sop'){
@@ -20257,34 +20427,79 @@ function _vaSectionView(vaName,sec){
   } else {
     const items=_vaTpl(cat);
     const cards=_vaCards(cat);
+    // One column per step, with the step named at the top - the boxes used to be an
+    // anonymous row you had to decode from a legend at the foot of the page. A step that
+    // is not open yet says when it opens instead of sitting there looking undone.
     const prow=c=>{
       const [done,total]=_vaChkCount(c.id,cat);
-      const boxes=items.map(it=>{
+      const age=_vaCardAgeDays(c);
+      const cells=items.map(it=>{
         const sl=_vaSlug(it), on=_vaChkOn(c.id,cat,it);
-        return ro?`<span title="${_calEsc(it)}" style="font-size:15px">${on?'✅':'⬜'}</span>`
-                 :`<span onclick="_vaChkToggle('${c.id}','${cat}','${sl}')" title="${_calEsc(it)}" style="cursor:pointer;font-size:15px">${on?'✅':'⬜'}</span>`;
-      }).join(' ');
+        const open=_vaItemOpen(c,it), inDays=_vaItemOpensIn(c,it);
+        const box = ro ? `<span style="font-size:16px">${on?'\u2705':'\u2b1c'}</span>`
+                       : `<span onclick="_vaChkToggle('${c.id}','${cat}','${sl}')" style="cursor:pointer;font-size:16px">${on?'\u2705':'\u2b1c'}</span>`;
+        const note = (!on && !open)
+          ? `<div style="font-size:10px;color:#8A94A6;margin-top:2px;white-space:nowrap">opens in ${inDays}d</div>` : '';
+        return `<td style="padding:9px 8px;text-align:center;vertical-align:top;${(!on&&!open)?'background:#FBFBFD;':''}">${box}${note}</td>`;
+      }).join('');
       return `<tr style="border-top:0.5px solid #eef0f6">
-        <td style="padding:9px 12px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span>
-          <div style="font-size:11px;color:#8A94A6">${_calEsc(_phLabel(c.phase))}${c.pm?(' &middot; '+_calEsc(c.pm)):''}</div></td>
-        <td style="padding:9px 12px;white-space:nowrap">${boxes}</td>
+        <td style="padding:9px 12px;min-width:170px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span>
+          <div style="font-size:11px;color:#8A94A6">${_calEsc(_phLabel(c.phase))}${c.pm?(' &middot; '+_calEsc(c.pm)):'<span style="color:#B42318"> &middot; no PM</span>'}</div></td>
+        <td style="padding:9px 10px;white-space:nowrap;font-size:12px;color:${age===null?'#8A94A6':(age>=14?'#B42318':(age>=7?'#8A5A10':'#566070'))}">${age===null?'&mdash;':(age===0?'today':(age+' day'+(age===1?'':'s')))}</td>
+        ${cells}
         <td style="padding:9px 12px;white-space:nowrap;font-weight:600;color:${done===total&&total?'#2E7D32':'#8A5A10'}">${done}/${total}</td></tr>`;
     };
     // Upcoming Takedowns also carries the addresses the Slack check found with no card.
     // It never creates one by itself - it flags, and a person presses Save.
+    // ---- the Upcoming Takedowns queue -------------------------------------------
+    // Bruce, 10 Oct: "we need to be able to add a property in there that's not adding a
+    // property card, because we want Patience to manually create the property cards."
+    // Two sources, one list: what the Slack check and the takedown-email bot found, and
+    // whatever anybody typed in here by hand. A row leaves the list when a card for it
+    // exists - whoever makes that card first - or when somebody says it is not ours.
     let unm='';
     if(cat==='pre1'){
-      const list=(typeof _unmList==='function'?_unmList():[]);
-      unm=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid #AF2C2B;border-radius:11px;margin-bottom:12px;overflow:hidden">
-        <div style="padding:12px 16px;border-bottom:0.5px solid #e0e4ec;background:#FCEBEB">
-          <div style="font-size:14px;font-weight:600;color:#791F1F">Needs a property card (${list.length})</div>
-          <div style="font-size:12px;color:#72243E">Addresses the scheduled check found in the closings and vacancy channels that have no card on the board. Nothing is created automatically &mdash; open it, look at it, and press Save.</div></div>
-        ${list.length?list.map(x=>`<div style="display:flex;align-items:center;gap:10px;padding:10px 16px;border-top:0.5px solid #eef0f6;flex-wrap:wrap">
-            <div style="flex:1;min-width:160px"><div style="font-weight:600;font-size:13.5px">${_calEsc(x.addr||'')}</div>
-            <div style="font-size:11.5px;color:#8A94A6">${_calEsc([x.kind,x.deal,x.vacancy?('vacant '+x.vacancy):'',x.closing?('closing '+x.closing):''].filter(Boolean).join(' · '))}</div></div>
-            ${ro?'':`<div onclick="_unmMakeCard('${x.key}')" style="font-size:12px;background:#111;color:#fff;border-radius:6px;padding:5px 11px;cursor:pointer">Create the card</div>
-            <div onclick="_unmDismiss('${x.key}')" style="font-size:12px;background:#fff;border:0.5px solid #e0e4ec;border-radius:6px;padding:5px 11px;cursor:pointer;color:#566070">Not ours</div>`}
-          </div>`).join(''):'<div style="padding:14px 16px;font-size:13px;color:#636b7a">Nothing waiting. Every address Slack has mentioned already has a card.</div>'}
+      const list=(typeof _tdList==='function'?_tdList():[]);
+      const inp='padding:8px 10px;border:0.5px solid #d8dce6;border-radius:8px;font-size:13px;font-family:inherit;box-sizing:border-box';
+      const row=function(x){
+        const bits=[x.deal, x.closing?('closing '+x.closing):'', x.vacancy?('vacant '+x.vacancy):'',
+                    x.channel, x.source?('via '+x.source):''].filter(Boolean).join(' · ');
+        return `<div style="display:flex;align-items:flex-start;gap:10px;padding:11px 16px;border-top:0.5px solid #eef0f6;flex-wrap:wrap">
+          <div style="flex:1;min-width:190px">
+            <div style="font-weight:600;font-size:13.5px">${_calEsc(x.addr||'')}</div>
+            <div style="font-size:11.5px;color:#8A94A6;margin-top:1px">${_calEsc(bits)||'no detail given'}</div>
+            ${x.note?`<div style="font-size:12px;color:#566070;margin-top:3px;white-space:pre-wrap">${_calEsc(x.note)}</div>`:''}
+            ${x.permalink?`<a href="${_calEsc(x.permalink)}" target="_blank" style="font-size:11.5px;color:#185FA5;text-decoration:none">where it came from &rsaquo;</a>`:''}
+          </div>
+          ${ro?'':`<div onclick="_tdMakeCard('${_argEsc(x.key)}')" style="font-size:12.5px;background:#111;color:#fff;border-radius:7px;padding:7px 13px;cursor:pointer;white-space:nowrap">Create the card</div>
+          <div onclick="_tdDismiss('${_argEsc(x.key)}')" style="font-size:12.5px;background:#fff;border:0.5px solid #e0e4ec;border-radius:7px;padding:7px 13px;cursor:pointer;color:#566070;white-space:nowrap">Not ours</div>`}
+        </div>`; };
+      unm=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${list.length?'#AF2C2B':'#0F7B54'};border-radius:11px;margin-bottom:13px;overflow:hidden">
+        <div style="padding:12px 16px;border-bottom:0.5px solid #e0e4ec;background:${list.length?'#FCEBEB':'#EFF8F3'};display:flex;align-items:center;gap:11px;flex-wrap:wrap">
+          <div style="font-size:26px;font-weight:700;line-height:1;color:${list.length?'#791F1F':'#0F7B54'};font-variant-numeric:tabular-nums">${list.length}</div>
+          <div style="flex:1;min-width:200px">
+            <div style="font-size:14.5px;font-weight:600;color:${list.length?'#791F1F':'#0F7B54'}">Needs a property card</div>
+            <div style="font-size:12px;color:${list.length?'#72243E':'#2E6B52'};line-height:1.45">${list.length?'Addresses that are ours and have no card on the board. Nothing is created automatically &mdash; open one, look at it, and press Save.':'Every address we know about has a card. Nothing waiting.'}</div>
+          </div>
+          ${ro?'':`<div onclick="window.__tdAddOpen=!window.__tdAddOpen;_vaGo('${sec}','${cat}')" style="font-size:12.5px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;padding:7px 13px;cursor:pointer;color:#185FA5;font-weight:600;white-space:nowrap">${window.__tdAddOpen?'Close':'＋ Add a property'}</div>`}
+        </div>
+        ${(!ro&&window.__tdAddOpen)?`<div style="padding:13px 16px;background:#F7F8FB;border-bottom:0.5px solid #e0e4ec">
+          <div style="font-size:12px;color:#566070;margin-bottom:9px"><b>This does not create a property card.</b> It puts the address on the list above so you can create the card yourself when you are ready. Ticking step 1 happens by itself the moment the card is saved.</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:9px">
+            <div style="grid-column:1/-1"><label style="display:block;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#566070;margin-bottom:3px">Address</label>
+              <input id="td-addr" placeholder="4521 Saint Margaret Lane" style="${inp};width:100%"/></div>
+            <div><label style="display:block;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#566070;margin-bottom:3px">Deal type</label>
+              <select id="td-deal" style="${inp};width:100%"><option value="Takedown">Takedown &mdash; we are buying it</option><option value="Flip">Flip &mdash; we own it, we are selling</option><option value="">Not sure yet</option></select></div>
+            <div><label style="display:block;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#566070;margin-bottom:3px">Closing date</label>
+              <input type="date" id="td-close" style="${inp};width:100%"/></div>
+            <div><label style="display:block;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#566070;margin-bottom:3px">Vacancy date</label>
+              <input type="date" id="td-vac" style="${inp};width:100%"/></div>
+            <div style="grid-column:1/-1"><label style="display:block;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#566070;margin-bottom:3px">Anything worth noting</label>
+              <input id="td-note" placeholder="Where it came from, who mentioned it…" style="${inp};width:100%"/></div>
+          </div>
+          <div style="margin-top:10px"><div onclick="_tdAdd()" style="display:inline-block;font-size:13px;background:#111;color:#fff;border-radius:8px;padding:9px 17px;cursor:pointer;font-weight:600">Add it to the list</div></div>
+        </div>`:''}
+        ${list.length?list.map(row).join(''):''}
       </div>`;
     }
     body=`${unm}
@@ -20302,22 +20517,28 @@ function _vaSectionView(vaName,sec){
           <div onclick="_vaTplReset('${cat}')" style="font-size:12.5px;background:#fff;border:0.5px solid #e0e4ec;border-radius:6px;padding:7px 14px;cursor:pointer;color:#566070">Back to the starting version</div></div>
       </div>`:''}
       <div style="overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13.5px">
-        <thead><tr style="background:#122A4A;color:#fff"><th style="padding:9px 12px;text-align:left">Property</th><th style="padding:9px 12px;text-align:left">Her checklist</th><th style="padding:9px 12px;text-align:left">Done</th></tr></thead>
-        <tbody>${cards.map(prow).join('')||'<tr><td colspan="3" style="padding:22px;text-align:center;color:#636b7a">No properties in this category right now.</td></tr>'}</tbody>
+        <thead><tr style="background:#122A4A;color:#fff">
+          <th style="padding:9px 12px;text-align:left">Property</th>
+          <th style="padding:9px 10px;text-align:left;white-space:nowrap">Card age</th>
+          ${items.map(function(it,i){ const d=_vaItemDays(it);
+            return `<th style="padding:8px 8px;text-align:center;font-weight:600;min-width:96px;max-width:150px">
+              <div style="font-size:10px;opacity:.6;letter-spacing:.05em">STEP ${i+1}</div>
+              <div style="font-size:11.5px;line-height:1.3;white-space:normal">${_calEsc(_vaItemLabel(it))}</div>
+              ${d?`<div style="font-size:9.5px;opacity:.65;margin-top:2px">after ${d} days</div>`:''}</th>`; }).join('')}
+          <th style="padding:9px 12px;text-align:left">Done</th></tr></thead>
+        <tbody>${cards.map(prow).join('')||`<tr><td colspan="${items.length+3}" style="padding:22px;text-align:center;color:#636b7a">No properties in this category right now.</td></tr>`}</tbody>
       </table></div>
-      ${items.length?`<div style="padding:11px 16px;border-top:0.5px solid #eef0f6;font-size:12px;color:#8A94A6">Boxes read left to right: ${items.map(_calEsc).join(' &middot; ')}</div>`:''}
     </div>`;
   }
-  return `<div style="padding:18px 20px 30px;max-width:1060px;margin:0 auto;color:#111">
+  return `<div style="padding:18px 20px 30px;max-width:1320px;margin:0 auto;color:#111">
     ${_vaSaveBar()}
     <div onclick="_vaGo(null,null)" style="display:inline-block;font-size:12.5px;background:#fff;border:0.5px solid #e0e4ec;border-radius:7px;padding:5px 11px;cursor:pointer;color:#566070">&larr; Back to her dashboard</div>
     <div style="display:flex;align-items:center;gap:11px;flex-wrap:wrap;margin:14px 0 2px">
       <div style="font-size:21px;font-weight:600">${d.name}</div>
       <div style="font-size:11.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:${d.col};background:#fff;border:0.5px solid ${d.col}33;border-radius:999px;padding:3px 10px">${_vaSecCount(sec)} properties</div>
     </div>
-    <div style="display:grid;grid-template-columns:250px 1fr;gap:14px;align-items:start;margin-top:14px" class="va-split">
-      ${rail}${body}
-    </div>
+    ${rail}
+    ${body}
   </div>`;
 }
 function _vaDeskView(vaName){
@@ -30093,4 +30314,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-10e stay-on-the-property-card -->
+<!-- build: 2026-10-10f upcoming-takedown-queue-and-five-step-checklist -->
