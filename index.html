@@ -11528,19 +11528,27 @@ function _wmSummaryHtml(wk){
       ['<span class="red">'+_wmMoneyShort(x.m.left)+'</span>','num'],[esc(x.note)||'<span class="q">nothing written</span>']])).join('')+
     '</tbody></table></div>':none('Nothing is over budget.');
 
+  // Bruce, 10 Oct, option C: these rows become cards, the age becomes a chip you can
+  // find without reading, and whatever was written about the item hangs underneath it
+  // as its own bubble instead of being run onto the end of the sub-line, where nobody
+  // saw it.
   const lagList=D.lag.length?'<div class="items">'+D.lag.map(x=>{
     const c=(typeof propCards!=='undefined'?propCards:[]).find(p=>p.id===x.pid);
-    return `<div class="item"><div class="age" style="color:${_miAgeColor(x.raised)}">${_miAgeLabel(x.raised)}</div>
-      <div class="ib"><div class="t">${c?('<b>'+esc(c.addr||'')+'</b> &mdash; '):''}${esc(x.text)}</div>
-      <div class="s">Raised ${esc(x.raised||'')} by ${esc(x.by||'')}${x.note?(' &middot; '+esc(x.note)):''}</div></div></div>`;
+    return `<div class="item"><div class="ib">
+      <div class="t">${c?('<b>'+esc(c.addr||'')+'</b> &mdash; '):''}${esc(x.text)}<span class="agechip" style="color:${_miAgeColor(x.raised)};border-color:${_miAgeColor(x.raised)}33">${esc(_miAgeLabel(x.raised))}</span></div>
+      <div class="s">Raised ${esc(x.raised||'')} by ${esc(x.by||'')}</div>
+      ${x.note?`<div class="bub"><div class="bh">Said in the meeting</div><div class="bb">${esc(x.note)}</div></div>`:''}
+      </div></div>`;
   }).join('')+'</div>':none('Nothing on a long lead is open.');
 
   // Bruce's replacement for the full property table: what actually needs a person.
   const qList=D.qs.length?'<div class="items">'+D.qs.map(x=>{
     const c=(typeof propCards!=='undefined'?propCards:[]).find(p=>p.id===x.pid);
-    return `<div class="item"><div class="age" style="color:${_miAgeColor(x.raised)}">${_miAgeLabel(x.raised)}</div>
-      <div class="ib"><div class="t">${c?('<b>'+esc(c.addr||'')+'</b> &mdash; '):''}${esc(x.text)}</div>
-      <div class="s">Needs <b>${esc(x.who||'an answer')}</b> &middot; asked by ${esc(x.by||'')} on ${esc(x.raised||'')}</div></div></div>`;
+    return `<div class="item ask"><div class="ib">
+      <div class="t">${c?('<b>'+esc(c.addr||'')+'</b> &mdash; '):''}${esc(x.text)}<span class="agechip" style="color:${_miAgeColor(x.raised)};border-color:${_miAgeColor(x.raised)}33">${esc(_miAgeLabel(x.raised))}</span></div>
+      <div class="s">Needs <b>${esc(x.who||'an answer')}</b> &middot; asked by ${esc(x.by||'')} on ${esc(x.raised||'')}</div>
+      ${x.note?`<div class="bub"><div class="bh">Said in the meeting</div><div class="bb">${esc(x.note)}</div></div>`:''}
+      </div></div>`;
   }).join('')+'</div>':none('Nothing is waiting on Bruce or Tommy.');
 
   const unTbl=D.unassigned.length?`<div class="scroller"><table><thead><tr><th>Task</th><th>Property</th><th class="num">Due</th></tr></thead><tbody>`+
@@ -11589,10 +11597,25 @@ function _wmSummaryHtml(wk){
  .scroller{overflow-x:auto}
  .red{color:var(--bad)}.grn{color:var(--good)}.amb{color:var(--warn)}.q{color:var(--faint)}
  .none{font-size:12.5px;color:var(--faint);padding:6px 0}
- .items{display:flex;flex-direction:column;gap:8px}
- .item{display:flex;gap:11px;align-items:flex-start;padding-bottom:8px;border-bottom:1px solid var(--hair)}
+ .items{display:flex;flex-direction:column;gap:9px}
+ /* Bruce, 10 Oct: the same card-and-bubble language as the job role PDFs, so the two
+    documents read as one set rather than two. */
+ .item{display:flex;gap:11px;align-items:flex-start;background:#fff;
+       border:1px solid var(--rule);border-radius:14px;border-bottom-left-radius:5px;
+       padding:11px 14px;break-inside:avoid;page-break-inside:avoid}
+ .item.ask{box-shadow:inset 3px 0 0 var(--warn)}
+ .agechip{display:inline-block;font-size:9px;font-weight:800;letter-spacing:.05em;
+          text-transform:uppercase;padding:2px 7px;border-radius:99px;margin-left:7px;
+          border:1px solid var(--rule);white-space:nowrap;vertical-align:1.5px}
+ .bub{position:relative;margin:8px 0 1px 10px;background:#F1F4F9;border:1px solid var(--rule);
+      border-radius:14px;border-top-left-radius:5px;padding:9px 12px}
+ .bub:before{content:"";position:absolute;left:-7px;top:10px;width:12px;height:12px;
+             background:#F1F4F9;border-left:1px solid var(--rule);border-bottom:1px solid var(--rule);
+             transform:rotate(45deg);border-radius:0 0 0 3px}
+ .bh{font-size:9px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;
+     color:var(--faint);margin-bottom:2px}
+ .bb{font-size:12px;line-height:1.55;white-space:pre-wrap;color:var(--ink)}
  .item:last-child{border-bottom:0;padding-bottom:0}
- .age{font-family:ui-monospace,Menlo,monospace;font-size:11px;flex-shrink:0;width:52px;padding-top:1px;font-weight:600}
  .ib{flex:1;min-width:0}.ib .t{font-size:12.5px}.ib .s{font-size:11.5px;color:var(--muted);margin-top:1px}
  .pill{font-size:9px;text-transform:uppercase;letter-spacing:.05em;padding:1px 6px;border-radius:99px;font-weight:600;white-space:nowrap;display:inline-block}
  .pill.on{background:var(--good-soft);color:var(--good)}.pill.off{background:var(--bad-soft);color:var(--bad)}
@@ -29165,6 +29188,40 @@ function _prioAllItems(person, wk){
   });
   return out;
 }
+// Bruce, 10 Oct, on the checklist PDFs: "as they complete stuff throughout the week in
+// a normal routine, it'll just update as it normally does." The sheet IS the week, so
+// what somebody has already ticked this week belongs on it - struck through with its
+// tick showing - and the meter on each house counts it. It is shown alongside the open
+// list and never mixed into the totals: every count, and the tally in the header, still
+// means work still to do.
+// Strictly off pm_tasks.completed_at. A task ticked before that column existed carries
+// no stamp at all and every one of those is months old, so "no stamp" is "not this week".
+function _prioDoneThisWeek(person, wk){
+  const R=_wmRange(wk,PRIO_WEEKS);
+  const out=[];
+  (typeof _tasksCache!=='undefined'?_tasksCache:[]).forEach(function(t){
+    const isDone = (t.status==='done')
+      || (typeof _taskStatusFor==='function' && _taskStatusFor(t,person)==='done');
+    if(!isDone) return;
+    const names=taskAssignees(t)||[];
+    if(!names.some(function(n){ return _sameAssignee(n,person); })) return;
+    const d=(typeof _pcDoneDay==='function')?_pcDoneDay(t):'';
+    if(!d || d<R.from || d>R.to) return;
+    out.push({ id:t.id, title:t.title||'Task', due:t.due_date||'', late:false,
+               cat:t.category||'', pid:t.property_id||'',
+               where:(t.property_id?(_propAddr(t.property_id)||''):(t.location||'')),
+               notes:t.notes||'', done:true, doneOn:d });
+  });
+  return out.sort(_prioByDue);
+}
+// The same key _prioGroup buckets an open item under, so a finished job lands in the
+// block its open siblings are already in.
+function _prioGroupKey(t){
+  const run=_prioRunOf(t);
+  if(run) return 'run:'+run.k;
+  if(t.pid) return t.pid;
+  return String((t&&t.cat)||'other').toLowerCase();
+}
 function _prioSections(person, wk){
   const all=_prioAllItems(person, wk);
   const late=all.filter(function(t){ return t.late; });
@@ -29544,29 +29601,117 @@ function _prioPreview(person, wk){
       return lbl;
     }catch(e){ return d; }
   };
-  const line=(it, showWhere)=>`<div class="job${it.late?' late':''}">
-      <span class="box"></span>
+  // Bruce, 10 Oct, picking option C off the mockup: every job is its own card with the
+  // tick box inside it, each house is one boxed block carrying its address, where it is
+  // and how far down the list you are, the meeting note hangs underneath the jobs it is
+  // about instead of being stranded at the foot of the page, and each block ends with a
+  // line to sign, so a sheet handed back is a record.
+  const shortDay=(d)=>{ if(!d) return ''; try{ return new Date(d+'T00:00:00').toLocaleDateString(undefined,{weekday:'short'}); }catch(e){ return ''; } };
+  // A chip you can find without reading the line - the date at a glance.
+  const chip=(it)=>{
+    if(it.done) return `<span class="chip ok">Done${shortDay(it.doneOn)?(' '+esc(shortDay(it.doneOn))):''}</span>`;
+    if(!it.due) return '<span class="chip nil">No date</span>';
+    const t=_ymd(new Date());
+    if(it.due===t) return '<span class="chip due">Today</span>';
+    if(it.due<t){ const n=Math.max(1,Math.round((_dParse(t)-_dParse(it.due))/86400000));
+      return `<span class="chip late">${n} day${n===1?'':'s'} late</span>`; }
+    return `<span class="chip due">${esc(shortDay(it.due))}</span>`;
+  };
+  // "Late" means two things on this sheet and they must not disagree. The SECTION split
+  // is about which week the work belongs to - past due means it was due before this
+  // Monday. The CARD is about where it stands today: a job due Wednesday and still open
+  // on Friday is late, whatever section it sits in. So the red spine follows the chip.
+  const overdue=(it)=>{ if(it.done) return false; if(it.late) return true;
+    return !!(it.due && it.due<_ymd(new Date())); };
+  const line=(it, showWhere)=>`<div class="job${it.done?' done':(overdue(it)?' late':'')}">
+      <span class="box">${it.done?'&#10003;':''}</span>
       <span class="what">
-        <span class="t">${esc(it.title)}</span>
-        <span class="sub">${esc(dayWord(it.due))}${showWhere&&it.where?(' \u00b7 '+esc(it.where)):''}${it.cat&&!showWhere?(' \u00b7 '+esc(it.cat)):''}</span>
+        <span class="t">${esc(it.title)}${chip(it)}</span>
+        <span class="sub">${it.done?('done '+esc(dayWord(it.doneOn))):esc(dayWord(it.due))}${showWhere&&it.where?(' \u00b7 '+esc(it.where)):''}${it.cat&&!showWhere?(' \u00b7 '+esc(it.cat)):''}</span>
       </span>
     </div>`;
+
+  // What this house is actually doing right now, for the pill beside its address.
+  const phaseOf=(pid)=>{ if(!pid) return '';
+    const c=(typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===pid; });
+    if(!c) return '';
+    try{ return String((typeof _phLabel==='function'?_phLabel(c.phase):c.phase)||''); }catch(e){ return String(c.phase||''); } };
+  // Whatever the room wrote about a house, indexed by house so it can sit against that
+  // house's jobs. Anything left over still gets printed at the foot of the page.
+  // Read straight off what the room wrote, not off the groups. Taking it off the groups
+  // meant a note could only print if that house still had OPEN work this week - so a
+  // note about a house somebody had already cleared, or about the work tied to no house
+  // at all, printed nowhere. Everything written is accounted for below, either against
+  // its own jobs or at the foot of the page.
+  const rawNotes=(typeof _prioNotes==='function')?_prioNotes(wk):{};
+  const noteByPid={};
+  Object.keys(rawNotes||{}).forEach(function(k){
+    const ix=String(k).indexOf('||'); if(ix<0) return;
+    if(!_sameAssignee(String(k).slice(0,ix), person)) return;
+    const v=String(rawNotes[k]||'').trim(); if(!v) return;
+    noteByPid[String(k).slice(ix+2)||'_none']=v;
+  });
+  const noteShown={}, usedDone={};
+  const doneThis=_prioDoneThisWeek(person, wk);
+  const doneByGroup={};
+  doneThis.forEach(function(it){ const k=_prioGroupKey(it); (doneByGroup[k]=doneByGroup[k]||[]).push(it); });
+
   // A group is either a house, or one run of the same checklist across houses. When it
-  // is the run, every line names its house - that IS the list.
-  const groupBlock=(g)=>`<div class="grp">
-      <div class="gh">${esc(g.label)}<span class="gn">${g.items.length}</span></div>
-      ${g.items.map(function(it){ return line(it, g.run); }).join('')}
+  // is the run, every line names its house - that IS the list, so it gets no phase pill
+  // and no single signature line.
+  const groupBlock=(g, doneOnly)=>{
+    const dn = doneOnly ? g.items.slice() : (doneByGroup[g.key]||[]);
+    const op = doneOnly ? [] : g.items;
+    if(!doneOnly) usedDone[g.key]=true;
+    const tot=op.length+dn.length;
+    const pct=tot?Math.round((dn.length/tot)*100):0;
+    const seed=op[0]||dn[0]||null;
+    const pid=(!g.run && seed && seed.pid) ? seed.pid : '';
+    const ph=phaseOf(pid);
+    // A checklist run spans several houses, so no single note belongs to it; its houses'
+    // notes fall through to the foot of the page instead.
+    const nkey=g.run ? '' : (pid || '_none');
+    const note=nkey?String(noteByPid[nkey]||'').trim():'';
+    if(note) noteShown[nkey]=true;
+    return `<div class="house${g.run?' run':''}">
+      <div class="hh">
+        <span class="addr">${esc(g.label)}</span>
+        ${ph?`<span class="phase">${esc(ph)}</span>`:''}
+        <span class="meter"><span class="bar"><i style="width:${pct}%"></i></span>${dn.length} of ${tot}</span>
+      </div>
+      <div class="stack">${dn.map(function(it){ return line(it, g.run); }).join('')}${op.map(function(it){ return line(it, g.run); }).join('')}</div>
+      ${note?`<div class="note"><div class="nh">Said in the meeting</div><div class="nb">${esc(note)}</div></div>`:''}
+      ${g.run?'':`<div class="sign"><span>Done by</span><span class="rule"></span><span>Date</span><span class="rule"></span></div>`}
     </div>`;
+  };
+  // NOTE: never `S.groups.map(groupBlock)` - map hands the index in as the second
+  // argument, so every group after the first would render as done-only.
   const secBlock=(S)=>`<section class="sec${S.key==='late'?' late':''}">
       <div class="sh"><span class="sl">${esc(S.label)}</span><span class="ss">${esc(S.sub)}</span><span class="sn">${S.n}</span></div>
-      ${S.groups.length?S.groups.map(groupBlock).join('')
+      ${S.groups.length?S.groups.map(function(g){ return groupBlock(g); }).join('')
         :`<div class="none">Nothing ${S.key==='late'?'past due \u2014 all caught up':'on the list for this week'}.</div>`}
     </section>`;
 
-  // Whatever the room wrote about a house, kept out of the checklist so the checklist
-  // stays a checklist. It sits underneath, once, per house.
-  const notes=pack.groups.filter(function(g){ return String(g.note||'').trim(); })
-    .map(function(g){ return `<div class="note"><div class="nh">${esc(g.label)}</div><div class="nb">${esc(g.note)}</div></div>`; }).join('');
+  // The sections are rendered FIRST, because rendering them is what records which house
+  // notes have already been shown against their own jobs and which finished work has
+  // already been counted into a block.
+  const secsHtml = nJobs ? secs.map(secBlock).join('')
+    : (pack.recaps.length ? '' : `<div class="empty">Nothing on ${esc(first)}&rsquo;s list this week.</div>`);
+  // A house somebody cleared outright this week has no open jobs left, so it never made
+  // a block above. It still gets its credit, in a section of its own at the end.
+  const leftoverDone=doneThis.filter(function(it){ return !usedDone[_prioGroupKey(it)]; });
+  const clearedHtml = leftoverDone.length ? `<section class="sec cleared">
+      <div class="sh ok"><span class="sl">Cleared this week</span><span class="ss">already ticked off &mdash; nothing to do here</span><span class="sn">${leftoverDone.length}</span></div>
+      ${_prioGroup(leftoverDone).map(function(g){ return groupBlock(g, true); }).join('')}
+    </section>` : '';
+  // Whatever the room wrote about a house that did NOT end up beside its own jobs -
+  // because the house has no jobs this week, or its work sits in a checklist run that
+  // spans several houses. Nothing the room said is ever dropped.
+  const notes=Object.keys(noteByPid).filter(function(k){ return !noteShown[k]; })
+    .map(function(k){
+      const label = (k==='_none') ? 'Not tied to a property' : (_propAddr(k)||'A property');
+      return `<div class="note loose"><div class="nh">${esc(label)}</div><div class="nb">${esc(noteByPid[k])}</div></div>`;
+    }).join('');
 
   // The recap half, for the roles whose job is to know where the houses are.
   const money=(m)=>{ if(!m) return ''; const f=(v)=>v==null?'—':('$'+Math.round(v).toLocaleString());
@@ -29621,39 +29766,89 @@ function _prioPreview(person, wk){
     section.sec.late .sh{border-left-color:#B42318;background:#FDF2F1}
     section.sec.late .sl{color:#B42318}
 
-    .grp{margin-top:14px;break-inside:avoid;page-break-inside:avoid}
-    .gh{display:flex;align-items:baseline;gap:9px;font-size:13px;font-weight:800;
-        letter-spacing:.06em;text-transform:uppercase;color:#185FA5;
-        padding:0 0 5px 2px;border-bottom:1.5px solid #E3E7EE}
-    section.sec.late .gh{color:#B42318}
-    .gn{margin-left:auto;font-size:12px;font-weight:700;color:#9AA3B2;
-        letter-spacing:0;text-transform:none}
+    section.sec.cleared .sh.ok{border-left-color:#0F7B54;background:#F1F8F4}
+    section.sec.cleared .sl{color:#0F7B54}
 
-    /* One job, one tick box, one full line of space after it. */
-    .job{display:flex;gap:14px;align-items:flex-start;
-         padding:14px 4px 14px 2px;border-bottom:1px solid #EDF0F5}
-    .box{flex:0 0 auto;width:20px;height:20px;margin-top:1px;
-         border:2px solid #8A94A6;border-radius:4px;background:#fff}
+    /* Bruce, 10 Oct, option C. One house, one block: the address, where it is, and how
+       far down the list you are. It never splits across a page break, so a house is
+       always read whole. */
+    .house{margin-top:14px;border:1px solid #E3E7EE;border-radius:14px;overflow:hidden;
+           background:#fff;break-inside:avoid;page-break-inside:avoid}
+    .hh{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+        background:#F7F9FC;border-bottom:1px solid #E3E7EE;padding:10px 15px}
+    .addr{font-size:15px;font-weight:800;letter-spacing:-.1px}
+    section.sec.late .addr{color:#B42318}
+    .phase{font-size:9.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;
+           color:#4A1D6E;background:#F3E8FB;border:1px solid #E3D2F2;padding:2px 8px;border-radius:99px}
+    .meter{margin-left:auto;display:flex;align-items:center;gap:8px;
+           font-size:11.5px;color:#5B6472;font-weight:700;white-space:nowrap}
+    .bar{width:76px;height:6px;border-radius:99px;background:#E3E7EE;overflow:hidden;display:block}
+    .bar i{display:block;height:100%;background:#0F7B54;border-radius:99px}
+
+    /* One job, one card, the tick box inside it. 17px type and a 21px box, because it
+       is read one-handed standing on a job site. */
+    .stack{display:flex;flex-direction:column;gap:8px;padding:12px 15px 6px}
+    .job{display:flex;gap:13px;align-items:flex-start;background:#fff;
+         border:1px solid #E7EAF1;border-radius:14px;border-bottom-left-radius:5px;
+         padding:12px 14px;break-inside:avoid;page-break-inside:avoid}
+    .job.late{border-color:#F1C7C2;background:#FFFAF9;box-shadow:inset 3px 0 0 #B42318}
+    .job.done{background:#F7F9F8;border-color:#DCE8E3}
+    .box{flex:0 0 auto;width:21px;height:21px;margin-top:1px;
+         border:2px solid #8A94A6;border-radius:6px;background:#fff;
+         display:grid;place-items:center;font-size:13px;line-height:1;
+         color:#0F7B54;font-weight:800}
+    .job.late .box{border-color:#B42318}
+    .job.done .box{border-color:#0F7B54;background:#E6F4ED}
     .what{flex:1 1 auto;min-width:0}
-    .t{display:block;font-size:17px;line-height:1.55;font-weight:600}
-    .sub{display:block;font-size:13px;line-height:1.55;color:#5B6472;margin-top:3px}
+    .t{display:block;font-size:17px;line-height:1.5;font-weight:600}
+    .job.done .t{color:#5B6472;text-decoration:line-through}
+    .sub{display:block;font-size:13px;line-height:1.5;color:#5B6472;margin-top:3px}
     .job.late .t{color:#14171C}
     .job.late .sub{color:#B42318;font-weight:700}
+    .chip{display:inline-block;font-size:9.5px;font-weight:800;letter-spacing:.05em;
+          text-transform:uppercase;padding:2px 7px;border-radius:99px;margin-left:7px;
+          vertical-align:1.5px;white-space:nowrap}
+    .chip.due{color:#8A5A10;background:#FFF7E0;border:1px solid #EAD9A8}
+    .chip.late{color:#B42318;background:#FDF2F1;border:1px solid #F1C7C2}
+    .chip.ok{color:#0F7B54;background:#E6F4ED;border:1px solid #BFE0CF}
+    .chip.nil{color:#5B6472;background:#F1F2F6;border:1px solid #E1E4EC}
+
+    /* A line to sign, so a sheet handed back is a record of who did it and when. */
+    .sign{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+          border-top:1px dashed #DDE2EA;margin-top:10px;padding:10px 15px 12px;
+          font-size:10.5px;color:#9AA3B2;letter-spacing:.04em;text-transform:uppercase;font-weight:800}
+    .rule{flex:1 1 110px;min-width:80px;height:1px;background:#E3E7EE}
+
     .none{font-size:14px;color:#5B6472;padding:14px 4px}
 
     @media(max-width:620px){
-      .t{font-size:17px}
       .sh{padding:9px 12px}
-      .job{padding:13px 2px}
+      .hh{padding:9px 12px}
+      .stack{padding:11px 12px 5px}
+      .job{padding:11px 12px}
+      .meter{margin-left:0}
     }
 
     h2.sec{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
            color:#5B6472;margin:30px 0 0;padding-bottom:5px;border-bottom:1px solid #E3E7EE}
-    .note{margin-top:11px;break-inside:avoid}
-    .nh{font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#185FA5}
-    .nb{font-size:13.5px;line-height:1.5;white-space:pre-wrap;margin-top:2px;
-        background:#F5F8FC;border-left:3px solid #CFE0F2;padding:8px 11px;border-radius:0 6px 6px 0}
+    /* The meeting note hangs under the jobs it is about, indented, with a tail - so it
+       reads as the room talking about THOSE jobs rather than a block of text at the
+       bottom of the page you have stopped connecting to anything. */
+    .note{position:relative;margin:4px 15px 0 48px;background:#F1F4F9;border:1px solid #E3E7EE;
+          border-radius:15px;border-top-left-radius:5px;padding:10px 14px;break-inside:avoid}
+    .note:before{content:"";position:absolute;left:-7px;top:11px;width:12px;height:12px;
+                 background:#F1F4F9;border-left:1px solid #E3E7EE;border-bottom:1px solid #E3E7EE;
+                 transform:rotate(45deg);border-radius:0 0 0 3px}
+    .note.loose{margin:11px 0 0}
+    .note.loose:before{display:none}
+    .nh{font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;
+        color:#5B6472;margin-bottom:3px}
+    .note.loose .nh{color:#185FA5}
+    .nb{font-size:13.5px;line-height:1.55;white-space:pre-wrap}
 
+    /* The recap half reuses .job for its "still carrying" rows. They have no .stack
+       around them, so they carry their own gap. */
+    section.rec .job{margin-top:7px}
     section.rec{margin-top:14px;break-inside:avoid}
     .rh{font-size:14.5px;font-weight:700;border-bottom:1px solid #E3E7EE;padding-bottom:4px}
     .rp{font-size:11px;font-weight:600;color:#5B6472;margin-left:7px;text-transform:none;letter-spacing:0}
@@ -29667,7 +29862,15 @@ function _prioPreview(person, wk){
     .foot{margin-top:26px;font-size:11.5px;color:#9AA3B2;text-align:center}
     .noprint button{font:inherit;font-size:13px;font-weight:600;color:#fff;background:#14171C;
                     border:0;border-radius:8px;padding:9px 16px;cursor:pointer}
-    @media print{ .noprint{display:none!important} body{padding:0} }
+    @media print{
+      .noprint{display:none!important} body{padding:0}
+      .house{box-shadow:none}
+      .job{box-shadow:none}
+      .job.late{box-shadow:none;border-left:3px solid #B42318}
+      /* Backgrounds are a nicety on screen and a liability on a mono printer - the
+         borders and the strike-through carry the meaning on paper. */
+      .job.done{background:#fff}
+    }
   </style></head><body><div class="sheet">
   <header>
     <h1>${esc(first)}&rsquo;s week</h1>
@@ -29676,9 +29879,8 @@ function _prioPreview(person, wk){
     <div class="tally">${nJobs} job${nJobs===1?'':'s'}${nLate?` &middot; <span class="lt">${nLate} late</span>`:''}</div>
   </header>
   ${pack.notes.length?`<div class="warn">${pack.notes.map(esc).join('<br/>')}</div>`:''}
-  ${nJobs ? secs.map(secBlock).join('')
-    : (pack.recaps.length ? '' : `<div class="empty">Nothing on ${esc(first)}&rsquo;s list this week.</div>`)}
-  ${notes?`<h2 class="sec">From the meeting</h2>${notes}`:''}
+  ${secsHtml}${clearedHtml}
+  ${notes?`<h2 class="sec">Also said in the meeting</h2>${notes}`:''}
   ${pack.recaps.length?`<h2 class="sec">${pack.kind==='realtor'?'Coming ready':'Where the houses are'}</h2>${recaps}`:''}
   <div class="foot">Legacy Homes &middot; week of ${esc(R.from)}</div>
   <div class="noprint" style="text-align:center;margin-top:18px">
@@ -29852,4 +30054,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-10b property-card-batch-change-order-tracker -->
+<!-- build: 2026-10-10c checklist-pdfs-option-c-cards-and-bubbles -->
