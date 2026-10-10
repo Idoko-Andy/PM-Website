@@ -2444,11 +2444,16 @@ function openProjectDashboard(activeTab) {
   const tabs = [
     { id: 'main',   label: 'Main Dashboard',   icon: '📊' },
     ...pmTabs,
-    { id: 'sow',    label: 'Scope of Work Center', icon: '📐' },
     { id: 'trello', label: 'Property Dashboard',icon: '🏗' },
     { id: 'construction', label: 'Construction Calendar', icon: '📅' },
     { id: 'taskcal',      label: 'Task Calendar',               icon: '🗓' },
     { id: 'sidetasks',    label: 'Side Tasks',                  icon: '🧩' },
+    // Bruce, 10 Oct: "the scope of work center ... I would like to move that to between
+    // accounts payable and side tasks and leave it there." It used to sit second, right
+    // after Main Dashboard. Only the position in this list changed - the tab id is still
+    // 'sow', so every link that opens it, including the back link inside the scope
+    // builder itself, still lands in the same place.
+    { id: 'sow',    label: 'Scope of Work Center', icon: '📐' },
     // Bruce, 27 Sept: "on the project dashboard, it needs to have a tab accounts payable
     // dashboard as well like it does for the admin manager ... just make sure it's broke
     // off by, you know, property cards."
@@ -4222,13 +4227,20 @@ async function _coField(pid, id, field, val){
 }
 function _coRerender(pid){
   if(window.__coModal===pid){ _coOpen(pid); return; }
+  // On the Change Order Tracker, stay on the tracker. Re-rendering the property card
+  // would throw whoever is working down the list straight out of it.
+  if(window._trkView==='co' && typeof window._trkRerender==='function'){ window._trkRerender(); return; }
   if(typeof openPropDetail==='function') openPropDetail(pid);
 }
 function _coClose(){ window.__coModal=null; const h=document.getElementById('co-modal'); if(h) h.remove(); }
 // The per-property change order dashboard. Opened from the Spent to Date box.
-function _coOpen(pid){
-  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return;
-  window.__coModal=pid;
+// The change order panel for one property: the tiles, the table and the form.
+// Bruce, 10 Oct: "where are the change orders housed? Because I'm not seeing that
+// dashboard." They were only ever reachable from a one-line link under Spent to Date.
+// The body is its own function now so the SAME panel is both the Change Orders tab on
+// the property card and this modal - one copy of the code, one set of records.
+function _coBody(pid){
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return '';
   const ro=(typeof isReadOnly==='function')?isReadOnly():false;
   const list=_coList(c).slice().sort((a,b)=>String(b.d||'').localeCompare(String(a.d||'')));
   const budget=parseFloat(String(c.budget||'').replace(/[^0-9.\-]/g,''));
@@ -4298,18 +4310,7 @@ function _coOpen(pid){
     </div>
     <div style="font-size:11.5px;color:#566070;margin-top:8px"><b>Total actual cost</b> is filled in on the row above, later &mdash; usually at the end of the project, in the End of Project report. Until then the estimate is what the budget is judged against.</div>
   </div>`;
-  const host=document.createElement('div');
-  host.id='co-modal';
-  host.style.cssText='position:fixed;inset:0;background:rgba(17,17,17,.45);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px;overflow:auto';
-  host.onclick=(e)=>{ if(e.target===host) _coClose(); };
-  host.innerHTML=`<div style="background:#fff;border-radius:12px;max-width:920px;width:100%;box-shadow:0 18px 50px rgba(0,0,0,.25);margin:auto">
-    <div style="padding:15px 20px;border-bottom:0.5px solid #e7eaf0;display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
-      <div>
-        <div style="font-size:17px;font-weight:600;color:#111">&#128209; Change orders &mdash; ${_calEsc(c.addr||'')}</div>
-        <div style="font-size:12.5px;color:#566070;margin-top:2px">Work added after the budget was set. <b>Spent to Date never changes</b> &mdash; these come off it when on-budget is worked out at close. Fill the actual cost in when you know it; until then the estimate stands in.</div>
-      </div>
-      <span onclick="_coClose()" style="cursor:pointer;font-size:24px;color:#566070;line-height:1">&times;</span>
-    </div>
+  return `
     <div style="padding:14px 20px;display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px">
       ${tile('Budget', isNaN(budget)||budget<=0?'—':_coMoney(budget), '#111', 'incl. contingency')}
       ${tile('Spent to date', spent==null?'—':_coMoney(spent), rawOver!=null&&rawOver>0?'#B42318':'#111', rawOver!=null?(rawOver>0?(_coMoney(rawOver)+' over the raw number'):(_coMoney(-rawOver)+' under')):'')}
@@ -4330,8 +4331,118 @@ function _coOpen(pid){
       </table>
     </div>
     ${adder}
+`;
+}
+// The modal. Still used from the closing page and from anywhere that is not the
+// property card itself, which now has the panel on a tab of its own.
+function _coOpen(pid){
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return;
+  window.__coModal=pid;
+  const host=document.createElement('div');
+  host.id='co-modal';
+  host.style.cssText='position:fixed;inset:0;background:rgba(17,17,17,.45);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:24px;overflow:auto';
+  host.onclick=(e)=>{ if(e.target===host) _coClose(); };
+  host.innerHTML=`<div style="background:#fff;border-radius:12px;max-width:920px;width:100%;box-shadow:0 18px 50px rgba(0,0,0,.25);margin:auto">
+    <div style="padding:15px 20px;border-bottom:0.5px solid #e7eaf0;display:flex;justify-content:space-between;align-items:flex-start;gap:12px">
+      <div>
+        <div style="font-size:17px;font-weight:600;color:#111">&#128209; Change orders &mdash; ${_calEsc(c.addr||'')}</div>
+        <div style="font-size:12.5px;color:#566070;margin-top:2px">Work added after the budget was set. <b>Spent to Date never changes</b> &mdash; these come off it when on-budget is worked out at close. Fill the actual cost in when you know it; until then the estimate stands in.</div>
+      </div>
+      <span onclick="_coClose()" style="cursor:pointer;font-size:24px;color:#566070;line-height:1">&times;</span>
+    </div>
+    ${_coBody(pid)}
   </div>`;
   document.body.appendChild(host);
+}
+
+// ===================== CHANGE ORDER TRACKER =====================
+// Bruce, 10 Oct: "I like that you have the change orders tracked per property, but I
+// would like to now create and add in a home base for all of that - a dashboard that
+// shows all of them ... under trackers ... add change order tracker ... but still keep
+// the option of where it is on the property card now as well."
+// Same records as the property card reads. Nothing is copied anywhere: this walks every
+// property card and lays its change orders out in one list. Editing a figure here edits
+// the property it belongs to, and the tracker redraws in place.
+function _coAllRows(includeArchived){
+  const cards=(typeof propCards!=='undefined'?propCards:[]);
+  const out=[];
+  cards.forEach(function(c){
+    if(!includeArchived && c.archived) return;
+    if(includeArchived && !c.archived) return;
+    _coList(c).forEach(function(x){ out.push({c:c, x:x}); });
+  });
+  out.sort(function(a,b){ return String(b.x.d||'').localeCompare(String(a.x.d||'')); });
+  return out;
+}
+function _coTrackerRow(r, ro){
+  const c=r.c, x=r.x, pid=c.id;
+  const est=_coEst(x), act=_coAct(x), hasAct=_coHasAct(x);
+  const drift = hasAct ? (act-est) : null;
+  const find=[c.addr, x.t, x.cause, _coPM(c,x), x.appr||x.who, x.d].filter(Boolean).join(' ');
+  return '<tr data-trk="'+_calEsc(find)+'" style="border-top:0.5px solid #eef0f6">'
+   + '<td style="padding:9px 11px;min-width:150px"><span onclick="openPropDetail(\''+pid+'\')" style="cursor:pointer;font-size:13px;font-weight:600;color:#185FA5">'+_calEsc(c.addr||'')+'</span>'
+     + (c.pm?'<div style="font-size:11px;color:#566070">PM '+_calEsc(c.pm)+'</div>':'') + '</td>'
+   + '<td style="padding:9px 11px;white-space:nowrap;font-size:12.5px;color:#666">'
+     + (ro?_calEsc(x.d||''):'<input type="date" value="'+_calEsc(x.d||'')+'" onchange="_coField(\''+pid+'\',\''+x.id+'\',\'d\',this.value)" style="padding:3px 5px;border:0.5px solid #d8dce6;border-radius:5px;font-size:12px;color:#555"/>')
+     + '</td>'
+   + '<td style="padding:9px 11px;min-width:190px"><div style="font-size:13.5px;color:#111;white-space:pre-wrap;font-weight:600">'+_calEsc(x.t||'')+'</div>'
+     + (x.why?'<div style="font-size:11.5px;color:#566070;margin-top:2px;white-space:pre-wrap">'+_calEsc(x.why)+'</div>':'') + '</td>'
+   + '<td style="padding:9px 11px;font-size:12.5px;color:#555">'
+     + (ro?(_calEsc(x.cause||'')||'<span style="color:#636b7a">&mdash;</span>'):'<input value="'+_calEsc(x.cause||'')+'" placeholder="What caused it" onchange="_coField(\''+pid+'\',\''+x.id+'\',\'cause\',this.value)" style="width:126px;padding:3px 6px;border:0.5px solid #d8dce6;border-radius:5px;font-size:12px"/>')
+     + '</td>'
+   + '<td style="padding:9px 11px;font-size:12.5px;color:#555;white-space:nowrap">'+(_calEsc(_coPM(c,x))||'<span style="color:#636b7a">&mdash;</span>')+'</td>'
+   + '<td style="padding:9px 11px;font-size:12.5px;color:#555">'
+     + (ro?(_calEsc(x.appr||x.who||'')||'<span style="color:#636b7a">&mdash;</span>'):'<input value="'+_calEsc(x.appr||x.who||'')+'" placeholder="Who approved" onchange="_coField(\''+pid+'\',\''+x.id+'\',\'appr\',this.value)" style="width:112px;padding:3px 6px;border:0.5px solid #d8dce6;border-radius:5px;font-size:12px"/>')
+     + '</td>'
+   + '<td style="padding:9px 11px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums">'
+     + (ro?'<span style="font-size:13px;color:#666">'+_coMoney(est)+'</span>':'<input value="'+_calEsc(x.est!=null?x.est:(x.amt||''))+'" placeholder="$0" onchange="_coField(\''+pid+'\',\''+x.id+'\',\'est\',this.value)" style="width:78px;text-align:right;padding:3px 6px;border:0.5px solid #d8dce6;border-radius:5px;font-size:12.5px"/>')
+     + '</td>'
+   + '<td style="padding:9px 11px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums;background:'+(hasAct?'transparent':'#FFFDF7')+'">'
+     + (ro?(hasAct?'<span style="font-size:13.5px;font-weight:700;color:#111">'+_coMoney(act)+'</span>':'<span style="font-size:11.5px;color:#8a6d1a">not yet</span>')
+          :'<input value="'+_calEsc(x.act||'')+'" placeholder="fill in later" onchange="_coField(\''+pid+'\',\''+x.id+'\',\'act\',this.value)" style="width:88px;text-align:right;padding:3px 6px;border:0.5px solid '+(hasAct?'#d8dce6':'#EAD9A8')+';border-radius:5px;font-size:12.5px;background:'+(hasAct?'#fff':'#FFFBF2')+'"/>')
+     + ((drift!=null&&drift!==0)?('<div style="font-size:10px;font-weight:700;color:'+(drift>0?'#B42318':'#0F7B54')+'">'+(drift>0?'+':'−')+_coMoney(drift)+' vs estimate</div>'):'')
+     + '</td></tr>';
+}
+function _coTrackerBody(){
+  const ro=(typeof isReadOnly==='function')?isReadOnly():false;
+  const all=_coAllRows(false);
+  const arch=_coAllRows(true);
+  const estT=all.reduce(function(a,r){ return a+_coEst(r.x); },0);
+  const actT=all.filter(function(r){ return _coHasAct(r.x); }).reduce(function(a,r){ return a+_coAct(r.x); },0);
+  const cntT=all.reduce(function(a,r){ return a+_coAmt(r.x); },0);
+  const waiting=all.filter(function(r){ return !_coHasAct(r.x); });
+  const houses={}; all.forEach(function(r){ (houses[r.c.id]=houses[r.c.id]||{c:r.c,n:0,t:0}); houses[r.c.id].n++; houses[r.c.id].t+=_coAmt(r.x); });
+  const byHouse=Object.keys(houses).map(function(k){ return houses[k]; }).sort(function(a,b){ return b.t-a.t; });
+  const tile=function(l,v,col,sub){ return '<div style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid '+(col||'#111')+';border-radius:10px;padding:12px 15px">'
+    + '<div style="font-size:11px;color:#566070;text-transform:uppercase;letter-spacing:.05em">'+l+'</div>'
+    + '<div style="font-size:22px;font-weight:700;color:'+(col||'#111')+';margin-top:3px;font-variant-numeric:tabular-nums">'+v+'</div>'
+    + (sub?'<div style="font-size:11px;color:#566070;margin-top:1px">'+sub+'</div>':'') + '</div>'; };
+  const tiles='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:14px">'
+    + tile('Change orders', String(all.length), '#4A1D6E', byHouse.length+' propert'+(byHouse.length===1?'y':'ies'))
+    + tile('Counting against budgets', _coMoney(cntT), '#B42318', 'actual where we have it, estimate where we do not')
+    + tile('Actual cost confirmed', _coMoney(actT), '#0F7B54', 'of '+_coMoney(estT)+' estimated')
+    + tile('Still an estimate', String(waiting.length), waiting.length?'#8A5A10':'#0F7B54', waiting.length?(_coMoney(waiting.reduce(function(a,r){return a+_coEst(r.x);},0))+' not yet confirmed'):'every cost is confirmed')
+    + '</div>';
+  const note='<div style="background:#F7F8FB;border:0.5px solid #e4e7ee;border-radius:9px;padding:10px 14px;margin-bottom:12px;font-size:12.5px;color:#444;line-height:1.55">'
+    + 'Every change order in the company, newest first. <b>Spent to Date never changes</b> &mdash; these come off it when on-budget is worked out at close, so a project can be over its raw number and still be in budget. '
+    + 'Edit a figure here and it saves to that property; the property card shows the same record. Click an address to open the house.'
+    + (waiting.length?(' <b>'+waiting.length+'</b> order'+(waiting.length===1?' is':'s are')+' still carrying an estimate rather than a real cost &mdash; those usually get filled in at the End of Project report.'):'')
+    + '</div>';
+  const roll=byHouse.length?('<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:13px">'
+    + byHouse.map(function(h){ return '<div onclick="openPropDetail(\''+h.c.id+'\')" style="cursor:pointer;background:#fff;border:0.5px solid #e0e4ec;border-radius:9px;padding:8px 12px">'
+      + '<div style="font-size:12.5px;font-weight:600;color:#185FA5">'+_calEsc(h.c.addr||'')+'</div>'
+      + '<div style="font-size:12px;color:#4A1D6E;font-weight:700;font-variant-numeric:tabular-nums">'+_coMoney(h.t)+'<span style="color:#566070;font-weight:400"> &middot; '+h.n+' order'+(h.n===1?'':'s')+'</span></div></div>'; }).join('')
+    + '</div>'):'';
+  const head='<th style="padding:9px 11px;text-align:left">Property</th><th style="padding:9px 11px;text-align:left">Date</th>'
+    + '<th style="padding:9px 11px;text-align:left">What changed</th><th style="padding:9px 11px;text-align:left">Caused by</th>'
+    + '<th style="padding:9px 11px;text-align:left">PM</th><th style="padding:9px 11px;text-align:left">Approved by</th>'
+    + '<th style="padding:9px 11px;text-align:right">Estimated</th><th style="padding:9px 11px;text-align:right">Actual</th>';
+  const rows=all.length?all.map(function(r){ return _coTrackerRow(r,ro); }).join('')
+    : '<tr><td colspan="8" style="padding:26px;text-align:center;color:#636b7a;font-size:13.5px">No change orders anywhere yet. They are raised on a property card, or from the field app.</td></tr>';
+  const archBlock=arch.length?('<details style="margin-top:4px"><summary style="cursor:pointer;padding:8px 0;font-size:12.5px;font-weight:600;color:#185FA5">\u{1F4C1} On archived properties · '+arch.length+'</summary>'
+    + _trkTable('\u{1F4D1} Archived properties','#636b7a',head, arch.map(function(r){ return _coTrackerRow(r,true); }).join(''))
+    + '</details>'):'';
+  return tiles+note+roll+_trkTable('\u{1F4D1} Change Order Tracker','#4A1D6E',head,rows)+archBlock;
 }
 function _spentNow(c){ const v=parseFloat(String(c.spent||"").replace(/[^0-9.\-]/g,"")); return isNaN(v)?null:v; }
 // Average $/day across a set of properties for any window. Returns null when there is
@@ -6461,6 +6572,13 @@ function _ppBody(c, name){
   const tasks=_ppTasksOn(c.id).filter(function(t){ return _taskHasAssignee(t,name); });
   const open=tasks.filter(function(t){ return _taskStatusFor(t,name)!=='done'; });
   const done=tasks.filter(function(t){ return _taskStatusFor(t,name)==='done'; });
+  // Bruce, 10 Oct: "already done, I would like that to be shrunk down and only show
+  // completed tasks in the last seven days. Once it's past that seven days, it'll go
+  // into its little folder, which you will click open if you want to see all of them."
+  // A task finished before pm_tasks.completed_at existed carries no stamp at all, and
+  // every one of those is months old, so it belongs in the folder too.
+  const doneRecent=done.filter(function(t){ return _pcDoneRecently(t,7); });
+  const doneOlder =done.filter(function(t){ return !_pcDoneRecently(t,7); });
   const evs=_ppEventsOn(c.id).filter(function(e){
     return _sameAssignee(e.assignee||'',name) || _sameAssignee(e.contractor_name||'',name);
   });
@@ -6499,7 +6617,10 @@ function _ppBody(c, name){
     <div style="font-size:12.5px;color:#566070;margin-bottom:11px">Everything on <b>${_calEsc(c.addr||'this property')}</b> with ${_calEsc(name)}&rsquo;s name on it. Nothing here belongs to another house.</div>
     ${panel('To do on this property', open.map(row).join(''), 'Nothing outstanding on this house.')}
     ${panel('Scheduled work on this property', evs.map(evRow).join(''), 'Nothing booked on the construction calendar.')}
-    ${done.length?panel('Already done', done.map(row).join(''), ''):''}
+    ${doneRecent.length||doneOlder.length?panel('Already done'+(doneRecent.length?' &middot; last 7 days':''),
+        (doneRecent.length?doneRecent.map(row).join('')
+          :'<div style="font-size:12.5px;color:#636b7a;padding:7px 0">Nothing finished in the last seven days.</div>')
+        + _pcFold('Everything finished before that', doneOlder.length, doneOlder.map(row).join('')), ''):''}
   </div>`;
 }
 async function _ppTick(pid, name, taskId){
@@ -6513,6 +6634,117 @@ async function _ppTick(pid, name, taskId){
   else { await toggleTaskDone(taskId); }
   if(typeof openPropDetail==='function') openPropDetail(pid);
 }
+// Bruce, 10 Oct: "I only want to see open tasks or past due tasks under this tab. Any
+// completed task, I only want to see if I click the open tab ... already done, I would
+// like that to be shrunk down ... once it's past that seven days, it'll go into its
+// little folder, which you will click open if you want to see all of them."
+// One folder, used everywhere finished work is tucked away. Plain <details>, so it
+// costs no state and survives the card re-rendering itself after every tick.
+function _pcFold(label, n, inner){
+  if(!n || !inner) return '';
+  return '<details style="margin-top:3px"><summary style="cursor:pointer;padding:7px 0;font-size:12px;font-weight:600;color:#185FA5">\u{1F4C1} '
+    + _calEsc(label) + ' · ' + n
+    + '</summary><div style="padding-top:2px;opacity:.78">' + inner + '</div></details>';
+}
+// The day a task was finished, as YYYY-MM-DD, or '' when nothing recorded it. Tasks
+// ticked before pm_tasks.completed_at existed carry no stamp - they are all months old,
+// so "no stamp" and "older than a week" are the same answer here.
+function _pcDoneDay(t){
+  const v=(t&&t.completed_at)?String(t.completed_at).slice(0,10):'';
+  return /^\d{4}-\d{2}-\d{2}$/.test(v)?v:'';
+}
+function _pcDoneRecently(t, days){
+  const d=_pcDoneDay(t); if(!d) return false;
+  const cut=_ymd(new Date(Date.now()-(days||7)*86400000));
+  return d>=cut;
+}
+// ===================== PROPERTY CARD NOTES =====================
+// Bruce, 10 Oct: "under project info tab I'm looking at the notes, and you got Sammy,
+// you know, the dates and who they're from ... I would like those to be a little more
+// boxed off within that section. So the stuff just looks cleaner. Like it almost looks
+// like a text message, like on an iPhone kind of ... something that's visually pleasing
+// and noticeable, so you can keep up on things."
+// The notes field is ONE block of text that people have been typing into for months, in
+// three different shapes: "[2026-07-27 Sami] ..." from the office, "[2026-08-16] ..."
+// from the automations, and "8/17 - ..." from whoever was quickest. Nothing is
+// rewritten and nothing is reordered - this reads that block, works out where one entry
+// ends and the next begins, and draws each one as its own bubble with the name and the
+// date on it. Edit notes still opens the same raw text, so the record is untouched and
+// what you see here is in the same order the box shows you.
+const PC_MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function _pcNoteWhen(raw){
+  const t=String(raw==null?'':raw).trim(); if(!t) return '';
+  const now=new Date().getFullYear();
+  let m=t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if(m){ const mo=parseInt(m[2],10); if(mo>=1&&mo<=12) return PC_MONTHS[mo-1]+' '+parseInt(m[3],10)+(parseInt(m[1],10)!==now?(', '+m[1]):''); }
+  m=t.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/);
+  if(m){ const mo=parseInt(m[1],10); if(mo>=1&&mo<=12){
+    let y=m[3]?parseInt(m[3],10):null; if(y!=null&&y<100) y+=2000;
+    return PC_MONTHS[mo-1]+' '+parseInt(m[2],10)+((y!=null&&y!==now)?(', '+y):''); } }
+  return t;
+}
+// A sortable key for an entry's date. Nothing on screen is reordered with it - it is
+// here so anything later that DOES want time order has one way of reading these dates.
+function _pcNoteKey(raw){
+  const t=String(raw==null?'':raw).trim();
+  const pad=function(v){ return String(parseInt(v,10)).length<2?('0'+parseInt(v,10)):String(parseInt(v,10)); };
+  let m=t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if(m) return m[1]+'-'+pad(m[2])+'-'+pad(m[3]);
+  m=t.match(/^(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?$/);
+  if(m){ let y=m[3]?parseInt(m[3],10):new Date().getFullYear(); if(y<100) y+=2000;
+    return String(y)+'-'+pad(m[1])+'-'+pad(m[2]); }
+  return '';
+}
+// One entry per bubble. A line that does not open with a date is a continuation of the
+// entry above it, which is how the long paragraphs on the older cards stay in one piece.
+function _pcNoteParse(txt){
+  const raw=String(txt==null?'':txt).replace(/\r\n/g,'\n').replace(/\r/g,'\n');
+  if(!raw.trim()) return [];
+  const out=[];
+  raw.split('\n').forEach(function(ln){
+    if(!ln.trim()){ if(out.length) out[out.length-1].body+='\n'; return; }
+    let m=ln.match(/^\s*\[\s*(\d{4}-\d{1,2}-\d{1,2})\s*([^\]]*?)\s*\]\s*(.*)$/);
+    if(m){ out.push({d:m[1], who:m[2], body:m[3]}); return; }
+    m=ln.match(/^\s*(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)\s*(?:[–—-]+|:)\s+(.*)$/);
+    if(m){ out.push({d:m[1], who:'', body:m[2]}); return; }
+    if(out.length) out[out.length-1].body+='\n'+ln;
+    else out.push({d:'', who:'', body:ln});
+  });
+  return out.map(function(x){ return {d:x.d, who:String(x.who||'').trim(),
+             body:String(x.body||'').replace(/\n{3,}/g,'\n\n').trim()}; })
+            .filter(function(x){ return x.body!==''; });
+}
+function _pcNoteMine(who){
+  if(!who) return false;
+  const me=(typeof _sqMe==='function')?_sqMe():'';
+  if(!me) return false;
+  if(typeof _sameAssignee==='function'){ try{ return !!_sameAssignee(who,me); }catch(_){} }
+  return String(who).trim().toLowerCase()===String(me).trim().toLowerCase();
+}
+function _pcNoteBubbles(c){
+  const items=_pcNoteParse(c&&c.notes);
+  if(!items.length) return '<div style="padding:13px 14px;font-size:13.5px;color:#636b7a">No notes added yet.</div>';
+  let prev='';
+  const rows=items.map(function(x){
+    const mine=_pcNoteMine(x.who);
+    const sys=!x.who;
+    const stamp=_pcNoteWhen(x.d);
+    const head=(mine?'You':(x.who||'Logged'))+' · '+(stamp||'no date');
+    const showHead=(head!==prev); prev=head;
+    const bg = mine?'#185FA5':(sys?'#FBFBFD':'#F1F2F6');
+    const fg = mine?'#ffffff':'#15181D';
+    const bd = mine?'#185FA5':(sys?'#E3E6EE':'#E7E9F0');
+    const dash = sys?'border-style:dashed;':'';
+    const side = mine?'flex-end':'flex-start';
+    const corner = mine?'border-bottom-right-radius:5px':'border-bottom-left-radius:5px';
+    return '<div style="display:flex;flex-direction:column;align-items:'+side+';gap:3px">'
+      + (showHead?('<div style="font-size:10.5px;font-weight:700;letter-spacing:.03em;color:#7A8294;text-transform:uppercase;padding:0 5px">'+_calEsc(head)+'</div>'):'')
+      + '<div style="max-width:88%;box-sizing:border-box;background:'+bg+';color:'+fg+';border:0.5px solid '+bd+';'+dash
+      + 'border-radius:15px;'+corner+';padding:8px 12px;font-size:13.5px;line-height:1.5;white-space:pre-wrap;overflow-wrap:anywhere">'
+      + _calEsc(x.body) + '</div></div>';
+  }).join('');
+  return '<div style="padding:12px 14px;display:flex;flex-direction:column;gap:9px;max-height:470px;overflow-y:auto">'+rows+'</div>';
+}
 function _pcTabs(c){
   const t=[{key:'info', label:'\u{1F4CB} Project Info'},
            {key:'work', label:'\u{1F528} Sub Phases / Tasks'}];
@@ -6521,13 +6753,23 @@ function _pcTabs(c){
   // property card." The count on the tab is what is still owed on this house.
   const owed=(typeof _apOpenCount==='function')?_apOpenCount(c.id):0;
   t.push({key:'ap', label:'\u{1F4B0} Accounts Payable'+(owed?(' \u00b7 '+owed):'')});
-  t.push({key:'history', label:'\u{1F553} History'});
+  // Bruce, 10 Oct: "one tab I want to add under the property card is the change order
+  // tab ... where are change orders being housed? Because I'm not seeing that dashboard."
+  // They were housed here all along, behind a one-line link under Spent to Date. Same
+  // records, same panel - it just has a door with its own name on it now, next to the
+  // other money tab.
+  const coN=(typeof _coList==='function')?_coList(c).length:0;
+  t.push({key:'co', label:'\u{1F4D1} Change Orders'+(coN?(' \u00b7 '+coN):'')});
   // One tab per person with work on this house. The number is what is still on their
   // list HERE, so a glance at the row says who this property is waiting on.
   _ppNames(c).forEach(function(n){
     const open=_ppOpenCount(c,n);
     t.push({key:_ppKey(n), label:'\u{1F464} '+n+(open?(' \u00b7 '+open):''), person:n});
   });
+  // Bruce, 10 Oct: "keep the history tab always furthest to the right as you're
+  // populating new people with those assigned tasks." So it is pushed LAST, after the
+  // person tabs, and it stays last however many people pick work up on this house.
+  t.push({key:'history', label:'\u{1F553} History'});
   return t;
 }
 function _pcTab(c){
@@ -6792,9 +7034,13 @@ function _pdBaseline(pid){
     .sort(function(a,b){ return String(a.n.plan_start||a.e.event_date||'').localeCompare(String(b.n.plan_start||b.e.event_date||'')); });
 }
 function _daysBetween(a,b){ if(!a||!b) return 0; return Math.round((new Date(a+'T00:00:00')-new Date(b+'T00:00:00'))/86400000); }
-function _pdBaselineRows(pid){
+function _pdBaselineRows(pid, only){
   const today=_ymd(new Date());
-  const items=_pdBaseline(pid);
+  let items=_pdBaseline(pid);
+  // only: 'open' drops finished steps, 'done' keeps only those, nothing = all of
+  // them, which is what every older caller still gets.
+  if(only==='open') items=items.filter(function(o){ return !o.e.completed; });
+  else if(only==='done') items=items.filter(function(o){ return !!o.e.completed; });
   if(!items.length) return '';
   return items.map(function(o){
     const e=o.e, n=o.n;
@@ -6840,9 +7086,15 @@ function _pdLinked(c, which){
 
   // --- tasks -----------------------------------------------------------------
   const tasks=_ppTasksOn(c.id);
-  const openN=tasks.filter(t=>t.status!=='done').length;
-  const lateN=tasks.filter(t=>t.status!=='done' && t.due_date && t.due_date<today).length;
-  const taskRows=tasks.slice(0,12).map(t=>{
+  // Bruce, 10 Oct: "under the subphases slash tasks tab, I'm looking at tasks on this
+  // house. I only want to see open tasks or past due tasks under this tab. Any completed
+  // task, I only want to see if I click the open tab." So the panel IS the open list;
+  // finished work folds away and is still one click from here.
+  const tOpen=tasks.filter(function(t){ return t.status!=='done'; });
+  const tDone=tasks.filter(function(t){ return t.status==='done'; });
+  const openN=tOpen.length;
+  const lateN=tOpen.filter(function(t){ return t.due_date && t.due_date<today; }).length;
+  const taskRow=(t)=>{
     const done=t.status==='done';
     const late=!done && t.due_date && t.due_date<today;
     const who=(typeof taskAssignees==='function'?taskAssignees(t):[]).join(', ');
@@ -6854,16 +7106,25 @@ function _pdLinked(c, which){
       </div>
       <div style="font-size:11.5px;flex-shrink:0;color:${late?'#B42318':'#566070'};font-weight:${late?'600':'400'}">${_calEsc(t.due_date||'')}${late?' late':''}</div>
     </div>`;
-  }).join('');
+  };
+  const taskRows=tOpen.slice(0,12).map(taskRow).join('')
+    + (tOpen.length>12?`<div style="padding:7px 0;font-size:11.5px;color:#566070">+ ${tOpen.length-12} more &mdash; open the task calendar to see them all</div>`:'');
   const taskPanel=wrap('&#9989; Tasks on this house',
     tasks.length?`&mdash; ${openN} open${lateN?(', '+lateN+' late'):''}`:'',
     'Nothing on the task calendar for this house yet.',
-    taskRows + (tasks.length>12?`<div style="padding:7px 0;font-size:11.5px;color:#566070">+ ${tasks.length-12} more &mdash; open the task calendar to see them all</div>`:''),
+    (tOpen.length?taskRows:(tDone.length?'<div style="padding:9px 0;font-size:12.5px;color:#0F7B54">Nothing open on this house &mdash; everything on it is finished.</div>':''))
+      + _pcFold('Completed', tDone.length,
+          tDone.slice(0,25).map(taskRow).join('')
+          + (tDone.length>25?`<div style="padding:7px 0;font-size:11.5px;color:#566070">+ ${tDone.length-25} more</div>`:'')),
     `openProjectDashboard('tasks')`);
 
   // --- construction calendar --------------------------------------------------
   const evs=_ppEventsOn(c.id);
-  const evRows=evs.slice(0,8).map(e=>{
+  // Same rule as the tasks above: what is still to happen stays on the panel, what is
+  // finished goes in the folder.
+  const eOpen=evs.filter(function(e){ return !e.completed; });
+  const eDone=evs.filter(function(e){ return !!e.completed; });
+  const evRow=(e)=>{
     const con=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).find(x=>x.id===e.contractor_id);
     const label=con?(con.business_name||con.name):(e.title||'');
     const icon=e.kind==='material'?'&#128230;':(e.kind==='contractor'?'&#9733;':'&bull;');
@@ -6872,20 +7133,31 @@ function _pdLinked(c, which){
       <div style="flex:1;min-width:0;font-size:13px;color:${e.completed?'#566070':'#111'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(label)||'&mdash;'}</div>
       <div style="font-size:11.5px;color:#566070;flex-shrink:0">${_calEsc(e.event_date||'')}</div>
     </div>`;
-  }).join('');
+  };
   const evPanel=wrap('&#128197; Construction calendar',
-    evs.length?`&mdash; ${evs.length} booking${evs.length===1?'':'s'}`:'',
+    evs.length?`&mdash; ${eOpen.length} still booked${eDone.length?(', '+eDone.length+' done'):''}`:'',
     'Nothing booked on the construction calendar for this house.',
-    evRows + (evs.length>8?`<div style="padding:7px 0;font-size:11.5px;color:#566070">+ ${evs.length-8} more</div>`:''),
+    (eOpen.length?(eOpen.slice(0,8).map(evRow).join('')
+        + (eOpen.length>8?`<div style="padding:7px 0;font-size:11.5px;color:#566070">+ ${eOpen.length-8} more</div>`:''))
+      :(eDone.length?'<div style="padding:9px 0;font-size:12.5px;color:#0F7B54">Nothing still booked &mdash; every booking on this house is done.</div>':''))
+      + _pcFold('Done', eDone.length,
+          eDone.slice(0,20).map(evRow).join('')
+          + (eDone.length>20?`<div style="padding:7px 0;font-size:11.5px;color:#566070">+ ${eDone.length-20} more</div>`:'')),
     `openProjectDashboard('calendar')`);
 
   // --- baseline schedule ------------------------------------------------------
   const baseItems=_pdBaseline(c.id);
-  const baseRows=_pdBaselineRows(c.id);
   const baseDone=baseItems.filter(function(x){return x.e.completed;}).length;
-  const basePanel=baseRows?wrap('&#128467; Baseline schedule',
+  // "Baseline schedule, set it up the same way" - open steps on the panel, the steps
+  // that are already signed off in the folder underneath.
+  const baseOpenRows=_pdBaselineRows(c.id,'open');
+  const baseDoneRows=_pdBaselineRows(c.id,'done');
+  const basePanel=baseItems.length?wrap('&#128467; Baseline schedule',
     '&mdash; '+baseDone+'/'+baseItems.length+' done',
-    '', baseRows, `openProjectDashboard('calendar')`):'';
+    '',
+    (baseOpenRows||'<div style="padding:9px 0;font-size:12.5px;color:#0F7B54">Every step on the baseline is done.</div>')
+      + _pcFold('Completed steps', baseDone, baseDoneRows),
+    `openProjectDashboard('calendar')`):'';
 
   // --- permits ----------------------------------------------------------------
   const pers=_pdPermits(c.id);
@@ -6988,8 +7260,12 @@ function _pdLinked(c, which){
   const _qaBtn = "padding:8px;background:#111;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer";
   const _qaTaskCats = (typeof _taskCategories==='function'?_taskCategories():[]).map(x=>`<option>${_calEsc(x)}</option>`).join('');
   const _qaTeam = (typeof teamMembers==='function'?teamMembers():[]).map(x=>`<option>${_calEsc(x)}</option>`).join('');
+  // Bruce, 10 Oct: "add construction event and add task - just move those underneath on
+  // the left side of that tab, underneath subphases, so that way you can actually see
+  // them more." They sit in the left column now, one above the other rather than side by
+  // side, because that column is narrower than the full width they used to have.
   const quickAddForms = _ro_sp ? '' : `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+    <div style="display:grid;grid-template-columns:1fr;gap:12px;margin-top:12px">
       <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden">
         <div style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;font-size:13px;font-weight:500;color:#111">📅 Add Construction Event</div>
         <div style="padding:12px 14px;display:flex;flex-direction:column;gap:8px">
@@ -7087,7 +7363,7 @@ function _pdLinked(c, which){
             <div style="font-size:13px;font-weight:700;color:${progColor};margin-top:2px">${_budSay(_bv.over)}</div>
             <div style="font-size:11px;color:#636b7a">${_bv.budget!=null?(_bv.left>=0?(_budMoney(_bv.left)+' still in hand'):(_budMoney(-_bv.left)+' past it'))+' &middot; against '+_budMoney(_bv.budget)+' with contingency':'no budget set'}${_bv.unsure?' &middot; <span style="color:#B42318">figures disagree</span>':''}</div>
             ${(()=>{ const n=_coList(c).length, t=_coTotal(c), pn=_coPending(c).length;
-              return `<div onclick="_coOpen('${c.id}')" style="cursor:pointer;font-size:12px;color:#185FA5;font-weight:600;margin-top:6px;padding-top:6px;border-top:0.5px solid #e3e6ec">&#128209; Change orders${n?` &middot; <span style="color:#4A1D6E">${_coMoney(t)}</span>`:''} &rsaquo;${pn?`<div style="font-size:10.5px;font-weight:600;color:#8a6d1a;margin-top:1px">${pn} actual cost${pn===1?'':'s'} still to confirm</div>`:''}${n?'':`<div style="font-size:10.5px;color:#636b7a;font-weight:400;margin-top:1px">none yet &mdash; add one here</div>`}</div>`; })()}
+              return `<div onclick="_pcTabTo('${c.id}','co')" style="cursor:pointer;font-size:12px;color:#185FA5;font-weight:600;margin-top:6px;padding-top:6px;border-top:0.5px solid #e3e6ec">&#128209; Change orders${n?` &middot; <span style="color:#4A1D6E">${_coMoney(t)}</span>`:''} &rsaquo;${pn?`<div style="font-size:10.5px;font-weight:600;color:#8a6d1a;margin-top:1px">${pn} actual cost${pn===1?'':'s'} still to confirm</div>`:''}${n?'':`<div style="font-size:10.5px;color:#636b7a;font-weight:400;margin-top:1px">none yet &mdash; add one here</div>`}</div>`; })()}
           </div>
           <div style="background:#f4f5f7;border-radius:8px;padding:10px 12px;border:1.5px solid #e6f1fb">
             ${_accumBox(c)}
@@ -7176,12 +7452,13 @@ function _pdLinked(c, which){
           <div>
             <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden">
               <div style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;font-size:13px;font-weight:500;color:#111;display:flex;align-items:center;justify-content:space-between">Notes${_ro_sp?'':`<button onclick="openPropModal('edit','${c.id}')" style="font-size:12px;padding:3px 10px;border-radius:4px;background:#fff;color:#185FA5;border:0.5px solid #cdd7e6;cursor:pointer">Edit notes</button>`}</div>
-              <div style="padding:10px 14px;font-size:14px;color:${c.notes?'#222':'#636b7a'};line-height:1.6;white-space:pre-wrap">${c.notes||'No notes added yet.'}</div>
+              ${_pcNoteBubbles(c)}
             </div>
             ${_pdLinked(c,'info')}
           </div>
         </div>
         <div style="display:${_pcTab(c)==='work'?'grid':'none'};grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:12px;align-items:start">
+          <div>
           <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden">
             <div style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;font-size:13px;font-weight:500;color:#111;display:flex;align-items:center;justify-content:space-between">
               Sub Phases
@@ -7190,10 +7467,19 @@ function _pdLinked(c, which){
             <div style="padding:10px 14px">${subPhaseRows}</div>
             ${_ro_sp?'':`<div style="padding:0 14px 10px;font-size:11px;color:#566070">Set a start &amp; finish date, then Save. Each scheduled subphase becomes a task for ${c.pm?_calEsc(c.pm):'this property\'s PM'} on the Task Calendar.</div>`}
           </div>
-          <div>${_sqBody(c)}${_pdLinked(c,'work')}${quickAddForms}</div>
+          ${quickAddForms}
+          </div>
+          <div>${_sqBody(c)}${_pdLinked(c,'work')}</div>
         </div>
         ${_pcTabs(c).some(function(t){return t.key==='permits';}) ? `<div style="display:${_pcTab(c)==='permits'?'block':'none'}">${_pdLinked(c,'permits')}${_pdPermitNudge(c)}</div>` : ''}
         <div style="display:${_pcTab(c)==='ap'?'block':'none'}">${_pcTab(c)==='ap'?_apBody(c):''}</div>
+        <div style="display:${_pcTab(c)==='co'?'block':'none'}">${_pcTab(c)==='co'?`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden;max-width:960px">
+          <div style="padding:11px 20px;border-bottom:0.5px solid #e7eaf0">
+            <div style="font-size:15.5px;font-weight:600;color:#111">&#128209; Change orders</div>
+            <div style="font-size:12.5px;color:#566070;margin-top:2px;line-height:1.5">Work added to this house after the budget was set. <b>Spent to Date never changes</b> &mdash; these come off it when on-budget is worked out at close. Fill the actual cost in when you know it; until then the estimate stands in.</div>
+          </div>
+          ${_coBody(c.id)}
+        </div>`:''}</div>
         <div style="display:${_pcTab(c)==='history'?'block':'none'};max-width:900px">${_pcTab(c)==='history'?_pdHistory(c):''}</div>
         ${_pcTabs(c).filter(function(t){return t.person;}).map(function(t){
           return `<div style="display:${_pcTab(c)===t.key?'block':'none'}">${_pcTab(c)===t.key?_ppBody(c,t.person):''}</div>`;
@@ -19913,7 +20199,7 @@ function _vaSectionView(vaName,sec){
       <div style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8A94A6;padding:6px 9px 7px">Categories, in order</div>
       ${railBtn('sop','SOP / Order of Operations','&#9776;','',cat==='sop')}
       ${d.cats.map(c=>railBtn(c,VA_CATS[c].name,VA_CATS[c].n,_vaCards(c).length,cat===c)).join('')}
-      ${sec==='post'?`<div onclick="alert('The Request Remedy dashboard is not built yet. It is next on the list - this button is where it will open from.')" style="display:flex;align-items:center;gap:9px;padding:9px;border-radius:8px;cursor:pointer;font-size:13.5px;color:#7A3FA8"><span style="width:18px;height:18px;border-radius:5px;background:#F3E8FB;border:0.5px solid #D9BCF0;font-size:10.5px;display:grid;place-items:center;flex:none">&#8599;</span><span style="flex:1">Request Remedy</span><span style="font-size:11px;color:#8A94A6">to build</span></div>`:''}
+      ${sec==='post'?`<div onclick="window.open('/remedies.html','_blank')" style="display:flex;align-items:center;gap:9px;padding:9px;border-radius:8px;cursor:pointer;font-size:13.5px;color:#7A3FA8"><span style="width:18px;height:18px;border-radius:5px;background:#F3E8FB;border:0.5px solid #D9BCF0;font-size:10.5px;display:grid;place-items:center;flex:none">&#8599;</span><span style="flex:1">Request Remedy</span><span style="font-size:11px;color:#8A94A6">open &rsaquo;</span></div>`:''}
     </div>`;
   let body;
   if(cat==='sop'){
@@ -22587,8 +22873,18 @@ function _vaTrackers(){
   // The Permit TRACKER is the sheet you fill in; the Permit DASHBOARD is the read-across
   // of where every permit stands. Both belong here, so taking the dashboard off the menu
   // does not take it away from anybody.
-  const permitDashTile=`<div onclick="openPermitDashboard()" title="Where every permit stands" style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid #7A3FA8;border-radius:10px;padding:13px 15px;cursor:pointer"><div style="display:flex;justify-content:space-between"><div style="font-size:13.5px;font-weight:600;color:#111">\u{1F4CA} Permit Dashboard</div><span style="color:#636b7a">\u203A</span></div><div style="font-size:15px;font-weight:600;color:#7A3FA8;margin-top:9px">Where they all stand</div><div style="font-size:11px;color:#566070">submitted \u2192 approved \u2192 inspections</div></div>`;
-  const tiles=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:16px">${tile('w9','🧾','W-9 Tracker',w9out,'#7A3FA8')}${tile('window','🪟','Window Tracker',winout,'#185FA5')}${tile('mow','🌱','Mowing Tracker',mowout,'#3B6D11')}${tile('checklist','✅','Checklist Tracker',clout,'#0B7285')}${tile('util','⚡','Utility Tracker',utilout,'#8A5A10')}${tile('permit','📄','Permit Tracker',permitout,'#B03A8B')}${permitDashTile}${drawTile}</div>`;
+  // Bruce, 10 Oct: "under trackers you have permit dashboard and permit tracker. You
+  // only need one of those. So just keep the permit tracker, and then add another one in
+  // there - that's change order tracker." The Permit Dashboard is NOT gone, it is still
+  // on every role's menu; it just no longer takes a tile here beside the tracker that
+  // feeds it.
+  const coOut=(typeof propCards!=='undefined'?propCards:[]).filter(function(x){ return !x.archived; })
+    .reduce(function(a,x){ return a+((typeof _coAwaitingActual==='function')?_coAwaitingActual(x).length:0); },0);
+  // The Permit Dashboard tile used to sit here beside the Permit Tracker tile. The
+  // tracker tile already forwards into that same dashboard, so the two were one door
+  // wearing two signs. The dashboard is still on every role's menu and still has the
+  // card at the foot of this page - only the duplicate tile is gone.
+  const tiles=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:16px">${tile('w9','🧾','W-9 Tracker',w9out,'#7A3FA8')}${tile('window','🪟','Window Tracker',winout,'#185FA5')}${tile('mow','🌱','Mowing Tracker',mowout,'#3B6D11')}${tile('checklist','✅','Checklist Tracker',clout,'#0B7285')}${tile('util','⚡','Utility Tracker',utilout,'#8A5A10')}${tile('permit','📄','Permit Tracker',permitout,'#B03A8B')}${tile('co','📑','Change Order Tracker',coOut,'#4A1D6E')}${drawTile}</div>`;
   const back=`<div onclick="window._trkView='summary';(window._trkRerender||function(){openVAAdminDashboard('trackers');})()" style="display:inline-flex;align-items:center;gap:5px;font-size:13px;color:#185FA5;cursor:pointer;margin-bottom:10px">‹ Back to Trackers</div>`;
   const shell=(inner)=>`<div style="padding:20px;max-width:1120px;margin:0 auto">
       <div style="position:sticky;top:0;z-index:20;background:#f4f5f7;padding:2px 0 8px;margin:-2px 0 2px;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
@@ -22599,6 +22895,7 @@ function _vaTrackers(){
   if(view==='w9') return shell(back+_trkSearchBox('Search a person, a business name or a trade…')
     +(w9flagged?`<div style="background:#FBE9E7;border:0.5px solid #F0C7C3;border-radius:9px;padding:10px 13px;margin-bottom:11px;font-size:12.5px;color:#72241F"><b>${w9flagged} ${w9flagged===1?'entry needs':'entries need'} fixing.</b> They are at the top of the list with the reason beside them. Nothing has been renamed or merged \u2014 fix them in the Contractor Directory, or type the right name into <i>Name on W-9</i>. Search <b>flagged</b> to see only these.</div>`:'')
     +_trkTable('🧾 W-9 Tracker','#7A3FA8','<th style="padding:9px 10px;text-align:left">Who the W-9 is under</th><th style="padding:9px;text-align:left">First name</th><th style="padding:9px;text-align:left">Last name</th><th style="padding:9px;text-align:left">Name on W-9</th><th style="padding:9px">On file</th><th style="padding:9px;text-align:left">Needs fixing</th><th style="padding:9px;text-align:left">Notes</th><th style="padding:9px;text-align:left">Email</th><th style="padding:9px;text-align:left">Phone</th>'+(ro?'':'<th></th>'),w9rows)+`<div style="font-size:12px;color:#566070">A contractor fills a W-9 in as <b>either himself or his company</b> — whichever it was, that is the name shown first, with the other underneath so you can still find him. Type it in "Name on W-9" if it differs from both. Ticking "On file" here also marks them in the Contractor Directory.${ro?'':' <b>Remove</b> deletes the whole contractor record — use it on duplicates.'}</div>`);
+  if(view==='co') return shell(back+_trkSearchBox('Search a property, what changed, who caused it or who approved it…')+_coTrackerBody());
   if(view==='mow') return shell(back+_trkSearchBox('Search a property…')+_trkTable('🌱 Mowing Tracker','#3B6D11','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px;text-align:left">Who is mowing</th><th style="padding:9px;text-align:left">How often</th><th style="padding:9px;text-align:left">Cost/mow</th><th style="padding:9px;text-align:left">Contact #</th><th style="padding:9px;text-align:left">PM</th><th style="padding:9px;text-align:left">Payment</th><th style="padding:9px">On route</th><th style="padding:9px">Removed after</th>',mowrows)+_trkClosedSimple(closed,'mowing history'));
   if(view==='window') return shell(back+winStageBar+winAdd+_trkSearchBox('Search a property…')+_trkTable('🪟 Window Tracker'+(_wf?' — '+_winStageMeta(_wf).label:''),'#185FA5','<th style="padding:9px 10px;text-align:left">Property / what’s being replaced</th><th style="padding:9px">Needed</th><th style="padding:9px">Measure</th><th style="padding:9px">Ordered</th><th style="padding:9px">Arrival</th><th style="padding:9px">Install &amp; confirm</th><th style="padding:9px;text-align:left">Notes &amp; comments</th>',winrows)+`<div style="font-size:12px;color:#566070;margin-top:-8px">This list is the window <b>queue</b> &mdash; only houses somebody has actually asked for windows or glass on. Use <b>Add to the window list</b> above for a one-off job. Each square is one stage: the number is how many houses are waiting on <i>that</i> step, and clicking a square filters the list to it. A house moves on when you tick the box, not when you set the date &mdash; a booked install is still an install to chase. Dates you set here land on that property’s construction calendar automatically, and Slack posts 48 hours before the measure and install dates — in <b>#Window-Tracker</b>, the same channel the scheduled alerts go to. Post there when you have asked for a measure and the request shows up on this list.${winFin.length?` <b>${winFin.length}</b> finished propert${winFin.length===1?'y is':'ies are'} in the completed folder below.`:''}</div>`+winFinished+winClosed);
   // ---------- Utility tracker, one rectangle per property ----------
@@ -29555,4 +29852,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-09c on-hold-columns-actually-loaded -->
+<!-- build: 2026-10-10b property-card-batch-change-order-tracker -->
