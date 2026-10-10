@@ -6294,7 +6294,16 @@ async function _apQuoteSave(btn){
 // by property. The tab picks the starting cut; anybody can flip it.
 function _apAllGo(v){ window._apAllView=v; _apRerender(); }
 function _apAllGroup(v){ window._apAllGroupBy=v; _apRerender(); }
+// Bruce, 10 Oct: saving a quote from the property card "took me to Marlo's admin
+// dashboard accounts payable tab for some reason". _apReturn is set by whichever AP
+// DASHBOARD was rendered last and never cleared, and the fallback was Marlo's page
+// outright - so a save from a property card always walked you off the card. If a card
+// is the screen that is open, redraw that; the dashboards still get their own return.
 function _apRerender(){
+  const s=window.__liveScreen;
+  if(s && s.fn==='openPropDetail' && s.args && s.args[0] && typeof openPropDetail==='function'){
+    openPropDetail(s.args[0]); return;
+  }
   const f=window._apReturn;
   if(typeof f==='function'){ f(); return; }
   if(typeof openAdminDashboard==='function') openAdminDashboard('payables');
@@ -6405,6 +6414,10 @@ function _apAllBody(groupDefault){
 // What the tab actually shows.
 function _apBody(c){
   const pid=c.id;
+  // The four AP dashboards each set this when they render. The property card's own AP
+  // tab never did, so after visiting any of them every later save walked you back to
+  // THEIR page instead of this card. Last AP surface rendered wins, which is this one.
+  window._apReturn=function(){ if(typeof openPropDetail==='function') openPropDetail(pid); };
   const ro=(typeof isReadOnly==='function') && isReadOnly();
   const rows=_apFor(pid);
   const T=_apTotals(pid);
@@ -29958,11 +29971,19 @@ document.addEventListener('visibilitychange', function(){ if(!document.hidden) s
 const LIVE_MS = 45000;
 // Screens that know how to redraw themselves from scratch. Each one records how it was
 // last called so it can be called the same way again.
+// Bruce, 10 Oct: "I was adding a quote in from the property card on 1060 Glendale and
+// as I was typing it just booted me out of it."
+// openPropDetail was NOT on this list, so while a property card was open __liveScreen
+// still pointed at the dashboard you had come FROM. The moment the background refresh
+// decided something had moved it redrew that dashboard - throwing you off the card and
+// out of whatever you were half way through filling in. The card is a screen like any
+// other and belongs here. Leaving it goes through openProjectDashboard, which re-registers
+// itself, so nothing gets stuck re-opening a card you have closed.
 const LIVE_SCREENS = ['openProjectDashboard','openAdminDashboard','openPMAssistantDashboard',
   'openRealtorDashboard','openDesignDashboard','openArchitectDashboard','openSeniorVADashboard',
   'openVAAdminDashboard','openPermitDashboard','openDirectorCEODashboard','openPMDashboard',
   'openClosedByYear','openDataSection','openTaskDataHousing','openDollarsDayHousing',
-  'openDesignPkgData'];
+  'openDesignPkgData','openPropDetail'];
 window.__liveScreen=null;
 LIVE_SCREENS.forEach(function(name){
   const fn=window[name];
@@ -29974,11 +29995,24 @@ LIVE_SCREENS.forEach(function(name){
 });
 document.addEventListener('input', function(){ window.__liveLastKeyAt=Date.now(); }, true);
 document.addEventListener('keydown', function(){ window.__liveLastKeyAt=Date.now(); }, true);
+// The old check only knew about the fixed .modal elements that live in the page and get
+// a .show class. The ones that matter most are CREATED when they open and removed when
+// they close - the Add-a-quote box and the change-order window - so the old check never
+// saw them, and a refresh could land while somebody was part way through filling one in.
+// Presence of those two means open; for the page's own modals, visible means open.
+const LIVE_DIALOG_SEL='.modal.show, .show[id$="-modal"], [id$="-ov"], [id$="-overlay"], #co-modal, #ap-quote-ov';
+function _liveDialogOpen(){
+  const n=document.querySelectorAll(LIVE_DIALOG_SEL);
+  for(let i=0;i<n.length;i++){
+    try{ if(getComputedStyle(n[i]).display!=='none') return true; }catch(e){ return true; }
+  }
+  return false;
+}
 function _liveBusy(){
   const a=document.activeElement;
   if(a && (a.tagName==='TEXTAREA'||a.tagName==='INPUT'||a.tagName==='SELECT'||a.isContentEditable)) return true;
   if(Date.now()-(window.__liveLastKeyAt||0) < 4000) return true;
-  if(document.querySelector('.modal.show, .show[id$="-modal"]')) return true;   // a dialog is open
+  if(_liveDialogOpen()) return true;                                           // a dialog is open
   if(window.getSelection && String(window.getSelection()||'').length>0) return true; // mid-copy
   return false;
 }
@@ -30059,4 +30093,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-10d side-task-mine-filter-name-aware -->
+<!-- build: 2026-10-10e stay-on-the-property-card -->
