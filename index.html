@@ -7816,9 +7816,14 @@ function _sqAllBody(){
   const today=_ymd(new Date());
   let items=_sqAllItems();
   if(!showDone) items=items.filter(o=>!o.x.done);
-  if(sel==='me')        items=items.filter(o=>o.who===me);
+  // NOT o.who===me. The side task stores whatever the dropdown held when it was written,
+  // and that list carries short forms - "Isaiah", "Marlo", "Tommy" - while _sqMe() comes
+  // off the profile as a full name. Compared with === the "mine" filter silently empties
+  // for anyone whose side task was saved under a short name, which is the same trap the
+  // PM-name comparison 90 lines below already warns about.
+  if(sel==='me')        items=items.filter(o=>o.who && _sameAssignee(o.who, me));
   else if(sel==='none') items=items.filter(o=>!o.who);
-  else if(sel!=='all')  items=items.filter(o=>o.who===sel);
+  else if(sel!=='all')  items=items.filter(o=>o.who && _sameAssignee(o.who, sel));
   // Dated ones first, soonest at the top; undated ones after, they are not waiting on a day.
   items.sort((a,b)=>{
     if(!!a.at!==!!b.at) return a.at?-1:1;
@@ -30054,4 +30059,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-10c checklist-pdfs-option-c-cards-and-bubbles -->
+<!-- build: 2026-10-10d side-task-mine-filter-name-aware -->
