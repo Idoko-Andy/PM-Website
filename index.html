@@ -20225,9 +20225,27 @@ const VA_SOP_SEED = {
   post:"1. LISTED ON THE MARKET - run the On the Market checklist every week, log agent feedback, take the price question to Bruce.\n2. IN CONTRACT - closing timeline on the card, inspection items logged, remedies opened, utility end-date set.\n3. RENTAL HANDOFF / RTR - packet sent, rent-ready walk, keys to property management, utilities out of our name.\n4. CLOSED - final spend reconciled, utilities removed, folder closed, end of project report filed. The house stays on this list four weeks after closing, then drops off."
 };
 function _vaSlug(s){ let h=0,t=String(s||''); for(let i=0;i<t.length;i++){ h=((h<<5)-h+t.charCodeAt(i))|0; } return 'i'+Math.abs(h).toString(36); }
+// A checklist that was never actually edited still gets SAVED the first time anybody
+// opens the "Edit the checklist" box and presses Save - so the record ends up holding a
+// word-for-word copy of the default. That copy then shadows the default forever, which
+// is why Bruce's new five-step Upcoming Takedowns list did not appear when it went live:
+// the old wording was sitting in the record carrying nobody's intention.
+// A saved template that exactly matches a RETIRED default is not a choice somebody made,
+// so it falls through to the current one. Anything genuinely typed is untouched.
+const VA_TPL_RETIRED = {
+  pre1:["Property card created and the address double-checked","CompanyCam folder created","Closing / takedown date on the card","Utilities ordered in our name","Lockbox on and the code logged"]
+};
+function _vaTplIsRetired(cat, lines){
+  const old=VA_TPL_RETIRED[cat];
+  if(!old || !lines || lines.length!==old.length) return false;
+  return lines.every(function(l,i){ return String(l).trim()===old[i]; });
+}
 function _vaTpl(cat){
   const raw=_trkVal('va_tpl',cat,'items');
-  if(raw && String(raw).trim()) return String(raw).split('\n').map(s=>s.trim()).filter(Boolean);
+  if(raw && String(raw).trim()){
+    const lines=String(raw).split('\n').map(s=>s.trim()).filter(Boolean);
+    if(!_vaTplIsRetired(cat, lines)) return lines;
+  }
   return (VA_TPL_SEED[cat]||[]).slice();
 }
 function _vaSop(sec){
@@ -30314,4 +30332,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-10f upcoming-takedown-queue-and-five-step-checklist -->
+<!-- build: 2026-10-10g retired-checklist-default-no-longer-shadows-the-new-one -->
