@@ -198,7 +198,7 @@ function toast(m){ const t=$("#toast"); t.textContent=m; t.classList.add("show")
 async function load(){
   const [a,b] = await Promise.all([
     sb.from("v_rtr_tracker").select("*").not("cc_task_id","is",null).neq("status","cancelled").order("address").order("item_no"),
-    sb.from("contractor_directory").select("id,name,trade,phone,vetting_tier,jobs_done_n,is_internal").eq("is_archived",false).eq("active",true).order("trade").order("vetting_tier").order("jobs_done_n",{ascending:false,nullsFirst:false}),
+    sb.from("contractor_directory").select("id,name,trade,phone,vetting_tier,jobs_done_n,is_internal,tracker_props_n,tracker_last_date,contact_name").eq("is_archived",false).eq("active",true).order("trade").order("vetting_tier").order("jobs_done_n",{ascending:false,nullsFirst:false}),
   ]);
   if(a.error){ $("#list").innerHTML=`<div class="empty">Couldn't load remedies: ${esc(a.error.message)}</div>`; return; }
   ITEMS = a.data||[]; CONTRACTORS = b.data||[];
@@ -434,10 +434,14 @@ const NO_USE = ["4 - Do not use","Stay Away"];
 const tierShort = t => !t ? "unrated" : /^1/.test(t) ? "Best" : /^2/.test(t) ? "Good" : /^3/.test(t) ? "Only if needed" : /^5/.test(t) ? "Unsure" : "Unrated";
 const tierRank = t => /^1/.test(t||"") ? 1 : /^2/.test(t||"") ? 2 : /^3/.test(t||"") ? 3 : /^5/.test(t||"") ? 5 : 6;
 let PICK = null;
+// Tom 10/9: the people we ACTUALLY use (from the project trackers) go first — most houses with us, most recent — then the old directory by rating.
 function ranked(trade){
+  const seen=new Set();
   return CONTRACTORS.filter(c=>(!trade || c.trade===trade) && !NO_USE.includes(c.vetting_tier) && !c.is_internal)
-    .sort((a,b)=> tierRank(a.vetting_tier)-tierRank(b.vetting_tier) || (b.jobs_done_n||0)-(a.jobs_done_n||0) || a.name.localeCompare(b.name));
+    .sort((a,b)=> (b.tracker_props_n||0)-(a.tracker_props_n||0) || (b.tracker_last_date||"").localeCompare(a.tracker_last_date||"") || tierRank(a.vetting_tier)-tierRank(b.vetting_tier) || (b.jobs_done_n||0)-(a.jobs_done_n||0) || a.name.localeCompare(b.name))
+    .filter(c=>{ const k=(c.name||"").toLowerCase()+"|"+(trade?"":c.trade); if(seen.has(k)) return false; seen.add(k); return true; });
 }
+const lastMon = d => d ? new Date(d+"T12:00:00").toLocaleDateString("en-US",{month:"short",year:"2-digit"}) : "";
 // Tom 10/8: "Get 3 bids" opens the list and Gabe picks Choice 1, 2, 3 himself. Nothing is pre-picked.
 function bids(id){
   const i = ITEMS.find(x=>x.id===id);
@@ -449,25 +453,41 @@ function renderPicker(){
   if(!PICK){ $("#picker").innerHTML=""; return; }
   const i = ITEMS.find(x=>x.id===PICK.id);
   const list = PICK.all ? ranked(null) : ranked(i.trade);
-  const label = c => `${c.name}${PICK.all?' — '+c.trade:''} · ${tierShort(c.vetting_tier)} · ${c.jobs_done_n?c.jobs_done_n+' jobs with us':'no jobs logged'}${c.phone?'':' · NO PHONE'}`;
+  const label = c => `${c.name}${PICK.all?' — '+c.trade:''} · ${c.tracker_props_n?c.tracker_props_n+' houses with us, last '+lastMon(c.tracker_last_date):tierShort(c.vetting_tier)+(c.jobs_done_n?' · '+c.jobs_done_n+' jobs':'')}${c.phone?'':' · NO PHONE (tap to add)'}`;
   const slot = k => {
     const taken = PICK.slots.filter((v,j)=>j!==k && v);
-    const opts = list.map(c=>`<option value="${c.id}" ${PICK.slots[k]===c.id?'selected':''} ${(!c.phone||taken.includes(c.id))?'disabled':''}>${esc(label(c))}</option>`).join("");
+    const opts = list.map(c=>`<option value="${c.id}" ${PICK.slots[k]===c.id?'selected':''} ${taken.includes(c.id)?'disabled':''}>${esc(label(c))}</option>`).join("");
     return `<div class="pick" style="cursor:default"><span class="tier t1" style="min-width:74px;text-align:center">Choice ${k+1}</span>
-      <select style="flex:1;background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:7px 8px;font-size:13px;min-width:0" onchange="PICK.slots[${k}]=this.value;renderPicker()">
+      <select style="flex:1;background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:7px 8px;font-size:13px;min-width:0" onchange="pickSlot(${k},this.value)">
         <option value="">— pick a contractor —</option>${opts}</select></div>`;
   };
   const n = PICK.slots.filter(Boolean).length;
-  const need = Math.min(3, list.filter(c=>c.phone).length);
+  const need = 1; // Tom 10/9: 3 is the goal, but 2 or even 1 is fine when that's who we have
   $("#picker").innerHTML = `<div class="modal-bg" onclick="if(event.target===this){PICK=null;renderPicker()}"><div class="modal">
     <div class="modal-h"><b>Get 3 bids — who should we text?</b><p>${esc(i.address)} #${i.item_no??""} — ${esc(i.description.slice(0,140))}</p>
-      <p>Pick your first, second and third choice. The list shows each contractor's rating and how many jobs they've done with us.</p></div>
+      <p>Pick your first, second and third choice. The list shows each contractor's rating and how many jobs they've done with us. Three is the goal — two or one is fine if that's who we have.</p></div>
     <div class="modal-b">${list.length ? [0,1,2].map(slot).join("") : `<div class="sched-empty">No ${esc(i.trade)} contractors in the directory. Tap "Show other trades".</div>`}</div>
     <div class="modal-f"><button class="ubtn small" onclick="PICK.all=!PICK.all;renderPicker()">${PICK.all?'Only '+esc(i.trade):'Show other trades'}</button>
       <span class="sp"></span><span class="cnt">${n} of 3 picked</span>
       <button class="ubtn small" onclick="PICK=null;renderPicker()">Cancel</button>
-      <button class="ubtn small primary" ${n && n>=need?'':'disabled'} onclick="sendPicked()">Text ${n||3} for bids</button></div>
+      <button class="ubtn small primary" ${n>=need?'':'disabled'} onclick="sendPicked()">Text ${n||3} for bids</button></div>
   </div></div>`;
+}
+// Tom 10/9: contractors we use but have no number for show up too; picking one asks for the cell and saves it to the directory
+async function pickSlot(k, id){
+  const c = CONTRACTORS.find(x=>x.id===id);
+  if(c && !c.phone){
+    const ph = prompt(`What's ${c.name}'s cell? (saved to the directory for next time)`, "");
+    if(!ph){ PICK.slots[k]=""; renderPicker(); return; }
+    const d = ph.replace(/\D/g,"").replace(/^1(?=\d{10}$)/,"");
+    if(d.length!==10){ toast("That doesn't look like a 10-digit number"); PICK.slots[k]=""; renderPicker(); return; }
+    const pretty = `${d.slice(0,3)}-${d.slice(3,6)}-${d.slice(6)}`;
+    const { error } = await sb.from("contractor_directory").update({ phone: pretty }).eq("name", c.name).is("phone", null);
+    if(error){ toast("Couldn't save the number: "+error.message); PICK.slots[k]=""; renderPicker(); return; }
+    CONTRACTORS.forEach(x=>{ if(x.name===c.name && !x.phone) x.phone = pretty; });
+    toast(`Saved ${c.name}: ${pretty}`);
+  }
+  PICK.slots[k]=id; renderPicker();
 }
 async function sendPicked(){
   const ids = PICK.slots.filter(Boolean), id = PICK.id;
@@ -498,7 +518,7 @@ async function scopeCheck(id){
 function renderScope(){
   if(!SCOPE){ $("#picker").innerHTML=""; return; }
   const i = ITEMS.find(x=>x.id===SCOPE.id);
-  const gcs = CONTRACTORS.filter(c=>!c.is_internal).sort((a,b)=>a.name.localeCompare(b.name));
+  const gcs = [...new Map(CONTRACTORS.filter(c=>!c.is_internal).map(c=>[c.name,c])).values()].sort((a,b)=>(b.tracker_props_n||0)-(a.tracker_props_n||0) || a.name.localeCompare(b.name));
   const gcOpts = gcs.map(c=>`<option value="${c.id}" ${SCOPE.gc===c.id?'selected':''} ${c.phone?'':'disabled'}>${esc(c.name)}${c.phone?'':' (no phone)'}</option>`).join("");
   const lines = SCOPE.loading ? `<div class="sched-empty">Looking up the scope of work…</div>`
     : !SCOPE.hasSow ? `<div class="sched-empty">No scope of work in the system for this house.${i.rehab_scope_url?` <a href="${esc(i.rehab_scope_url)}" target="_blank" style="color:var(--info)">Open the scope document</a> and decide.`:' Check the signed scope and decide.'}</div>`
@@ -508,7 +528,7 @@ function renderScope(){
   const picked = SCOPE.lines.find(l=>l.line_id===SCOPE.pick);
   $("#picker").innerHTML = `<div class="modal-bg" onclick="if(event.target===this){SCOPE=null;renderScope()}"><div class="modal">
     <div class="modal-h"><b>Was this on the old scope of work?</b><p>#${i.item_no??""} ${esc(i.address)} — ${esc((i.description||"").slice(0,160))}</p>
-      <p>If the rehab contractor was already paid to do this, it goes back to them to fix for free. Tap the matching scope line if you see it (optional), then answer.</p></div>
+      <p>If the rehab contractor was already paid to do this, it goes back to them to fix for free. Tap the matching scope line if you see it (optional), then answer.${i.rehab_scope_url?` <a href="${esc(i.rehab_scope_url)}" target="_blank" style="color:var(--info)">Open the full scope doc ↗</a>`:""}</p></div>
     <div class="modal-b">${lines}</div>
     <div class="modal-f" style="flex-wrap:wrap;gap:8px">
       <label style="font-size:12.5px;color:var(--mute)">Who did the rehab? <select style="background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:5px 6px;font-size:12.5px;max-width:220px" onchange="SCOPE.gc=this.value"><option value="">— pick —</option>${gcOpts}</select></label>
