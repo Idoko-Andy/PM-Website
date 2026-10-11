@@ -10094,9 +10094,12 @@ function _wmFlash(el, ok, msg){
 // is what will feed their own dashboard; a one-off agent can just be typed in.
 function _wmAgentField(c){
   if(isReadOnly()) return `<span style="font-size:13px;color:#111">${_calEsc(c.listingAgent||'')||'—'}</span>`;
-  const realtors=[...new Set((typeof getUsers==='function'?getUsers():[])
-    .filter(u=>u.status==="approved" && u.role==="Realtor")
-    .map(u=>((u.firstName||'')+' '+(u.lastName||'')).trim()).filter(Boolean))].sort();
+  // The roster, not just the logins - see _rltRoster. The off-book agents have to be
+  // in this list or they get typed by hand and the field drifts again.
+  const realtors=(typeof _rltRoster==='function') ? _rltRoster()
+    : [...new Set((typeof getUsers==='function'?getUsers():[])
+        .filter(u=>u.status==="approved" && u.role==="Realtor")
+        .map(u=>((u.firstName||'')+' '+(u.lastName||'')).trim()).filter(Boolean))].sort();
   const cur=c.listingAgent||'';
   const known=!cur || realtors.indexOf(cur)>=0;
   const selId='wm-ag-'+c.id, txtId='wm-agt-'+c.id;
@@ -10105,7 +10108,7 @@ function _wmAgentField(c){
     .concat([`<option value="__other" ${known?'':'selected'}>Other agent…</option>`]).join('');
   return `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
     <select id="${selId}" onchange="_wmAgentPick('${c.id}',this)" style="padding:5px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px;max-width:160px">${opts}</select>
-    <input id="${txtId}" value="${known?'':_calEsc(cur)}" placeholder="Agent name" onchange="_wmDeal('${c.id}','listing_agent',this.value,this)" style="display:${known?'none':'inline-block'};width:130px;padding:5px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px"/>
+    <input id="${txtId}" value="${known?'':_calEsc(cur)}" placeholder="Agent name" onchange="_wmAgentTyped('${c.id}',this)" style="display:${known?'none':'inline-block'};width:130px;padding:5px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px"/>
   </div>`;
 }
 function _wmAgentPick(pid, sel){
@@ -10113,6 +10116,13 @@ function _wmAgentPick(pid, sel){
   if(sel.value==='__other'){ if(txt){ txt.style.display='inline-block'; txt.focus(); } return; }
   if(txt){ txt.style.display='none'; txt.value=''; }
   _wmDeal(pid,'listing_agent',sel.value,sel);
+}
+// Typing a one-off agent puts them ON THE LIST, so the second house they list offers
+// their name instead of inviting a second spelling of it. That is the whole fix.
+async function _wmAgentTyped(pid, el){
+  const name=String((el&&el.value)||'').trim();
+  _wmDeal(pid,'listing_agent',name,el);
+  if(name && typeof _rltOffbookAdd==='function'){ try{ await _rltOffbookAdd(name); }catch(e){} }
 }
 function _wmAddTask(pid){ return _wmAddTaskFor(pid, ''); }
 // Bruce, 20 Sept: on permits "be able to assign tasks for Jen the architect", and on
@@ -12868,13 +12878,105 @@ function _mktFbSame(a,b){
   a.forEach(function(w){ if(b.indexOf(w)>=0) hit++; });
   return (hit/Math.min(a.length,b.length)) >= MKT_FB_OVERLAP;
 }
-// Typed lines and anything a Slack sync found, counted together.
-function _mktFeedback(pid, typed){
-  const items=[];
-  String(typed||'').split('\n').forEach(function(l){ const t=l.trim(); if(t) items.push({text:t, from:'typed'}); });
+// ---- What a person added by hand, kept FOREVER and per property ---------------
+// Bruce, 11 Oct: "we also need to make sure that there's a function in the website that
+// when the realtors are viewing that, they can add in and correct that number if needed
+// due to them not posting in that channel if there was a showing ... they need to be
+// able to add in feedback manually as well if needed."
+//
+// The meeting already had typed boxes, but those are PER WEEK - a realtor would have had
+// to retype the correction every Tuesday for ever. These live on the property instead,
+// in the trackers row (which ordinary staff are allowed to write), so a correction is
+// made once and stays made. They are kept SEPARATE from the synced data on purpose: a
+// re-sync can overwrite what Slack said, and must never be able to overwrite what a
+// person typed.
+function _mktShowExtra(pid){
+  const n=parseInt(String((typeof _trkVal==='function'?_trkVal('shw',pid,'extra'):'')||'').replace(/[^0-9-]/g,''),10);
+  return isNaN(n)?0:n;
+}
+function _mktShowExtraNote(pid){ return (typeof _trkVal==='function') ? String(_trkVal('shw',pid,'note')||'') : ''; }
+async function _mktShowExtraSet(pid, val, note){
+  try{ if(typeof _trkLoad==='function' && window._trkLoaded!==true) await _trkLoad(); }catch(e){}
+  const n=parseInt(String(val||'').replace(/[^0-9-]/g,''),10);
+  await _trkSet('shw', pid, 'extra', isNaN(n)?'':String(n), false);
+  if(note!==undefined) await _trkSet('shw', pid, 'note', String(note||''), false);
+}
+// Manually added feedback, stored as a JSON list so each entry keeps who said it and when.
+function _mktFbManual(pid){
+  const raw=(typeof _trkVal==='function') ? _trkVal('fbk',pid,'items') : '';
+  if(!raw) return [];
+  try{ const a=JSON.parse(raw); return Array.isArray(a)?a:[]; }catch(e){ return []; }
+}
+async function _mktFbManualAdd(pid, entry){
+  try{ if(typeof _trkLoad==='function' && window._trkLoaded!==true) await _trkLoad(); }catch(e){}
+  const list=_mktFbManual(pid);
+  list.unshift(Object.assign({ at:_ymd(new Date()), by:(typeof _miWho==='function'?_miWho():'') }, entry||{}));
+  await _trkSet('fbk', pid, 'items', JSON.stringify(list.slice(0,100)), false);
+}
+async function _mktFbManualRemove(pid, idx){
+  try{ if(typeof _trkLoad==='function' && window._trkLoaded!==true) await _trkLoad(); }catch(e){}
+  const list=_mktFbManual(pid);
+  if(idx<0 || idx>=list.length) return;
+  list.splice(idx,1);
+  await _trkSet('fbk', pid, 'items', JSON.stringify(list), false);
+}
+// The number the room should actually see: what Slack found, plus the showings that
+// never got posted there.
+function _mktShowTotal(pid){
+  const s=_mktShowings(pid);
+  const auto=(s && s.total!=null) ? (parseInt(s.total,10)||0) : 0;
+  return { auto:auto, extra:_mktShowExtra(pid), total:auto+_mktShowExtra(pid),
+           hasSync: !!(s && s.total!=null), asof:(s&&s.asof)||'' };
+}
+function _mktShowLast7(pid){
+  const s=_mktShowings(pid);
+  return (s && s.last7!=null) ? (parseInt(s.last7,10)||0) : null;
+}
+// ---- Sorting the feedback into the answers it already carries ------------------
+// Will's posts in #listings-feedback are a form, not prose: Interested, Experience,
+// Price opinion, Rating out of 5, then Comments. So the categorising Bruce asked for
+// does not need me to guess at themes for those fields - they are already answers.
+// Only the free-text Comments need grouping, which _mktFeedback does.
+const MKT_FB_FIELDS = [
+  { k:'price',      label:'Price opinion', order:['Too high','Just right','Too low'] },
+  { k:'interested', label:'Interest',      order:['Very','Somewhat','Not interested'] },
+  { k:'experience', label:'Experience',    order:['Excellent','Good','Fair','Poor'] }
+];
+function _mktFbAll(pid, typed){
+  const out=[];
+  String(typed||'').split('\n').forEach(function(l){ const t=l.trim(); if(t) out.push({text:t, from:'typed'}); });
+  _mktFbManual(pid).forEach(function(f){ out.push(Object.assign({}, f, {from:'added by hand'})); });
   const s=_mktShowings(pid);
   if(s && Array.isArray(s.feedback)) s.feedback.forEach(function(f){
-    const t=String((f&&f.text)||f||'').trim(); if(t) items.push({text:t, from:'Slack'});
+    if(f && typeof f==='object') out.push(Object.assign({}, f, {from:'Slack'}));
+    else { const t=String(f||'').trim(); if(t) out.push({text:t, from:'Slack'}); }
+  });
+  return out;
+}
+// Counts per answer, plus the average rating, over everything we hold for one house.
+function _mktFbBreakdown(pid, typed){
+  const all=_mktFbAll(pid, typed);
+  const out={ n:all.length, fields:{}, rating:null };
+  MKT_FB_FIELDS.forEach(function(f){ out.fields[f.k]={}; });
+  let rSum=0, rN=0;
+  all.forEach(function(x){
+    MKT_FB_FIELDS.forEach(function(f){
+      const v=String((x&&x[f.k])||'').trim();
+      if(!v || /^not given$/i.test(v)) return;
+      out.fields[f.k][v]=(out.fields[f.k][v]||0)+1;
+    });
+    const r=parseFloat(String((x&&x.rating)||'').replace(/\s*\/\s*5.*$/,''));
+    if(!isNaN(r) && r>=0 && r<=5){ rSum+=r; rN++; }
+  });
+  if(rN) out.rating={ avg:Math.round((rSum/rN)*10)/10, n:rN };
+  return out;
+}
+// Typed lines, hand-added entries, and anything the Slack sync found, counted together.
+function _mktFeedback(pid, typed){
+  const items=[];
+  _mktFbAll(pid, typed).forEach(function(x){
+    const t=String((x&&x.text)||'').trim();
+    if(t) items.push({text:t, from:x.from});
   });
   const groups=[];
   items.forEach(function(x){
@@ -13264,12 +13366,22 @@ function _mktMeetingBody(wk, kind, notes, prevNotes, roNow){
       const maint=_mktMaintItems(c);
       const zurl='https://www.zillow.com/homes/'+encodeURIComponent(String(c.addr||''))+'_rb/';
       // A number a sync found, with the typed answer always on top of it.
+      // The realtor dashboard lets a showing that never reached Slack be added ONCE and
+      // kept on the house; that correction has to be in this number too, or the meeting
+      // and the realtor's own screen disagree about the same house.
       const synced=(key,label)=>{
         const typed=V(c.id,key);
-        const found=shw && shw[key==='sh_total'?'total':'last7'];
+        const tot=_mktShowTotal(c.id);
+        const extra=(key==='sh_total') ? tot.extra : 0;
+        const base=shw && shw[key==='sh_total'?'total':'last7'];
+        const found=(key==='sh_total')
+          ? ((tot.hasSync||extra) ? tot.total : null)
+          : (base!=null ? base : null);
         const show=typed!==''?typed:(found!=null?String(found):'');
         const note=typed!==''?'typed in'
-                 :(found!=null?('from Slack'+(shw.asof?(' '+shw.asof):'')):'no Slack sync yet — type it');
+                 :(found!=null?((tot.hasSync?('from Slack'+(shw&&shw.asof?(' '+shw.asof):'')):'added by hand')
+                                +(extra&&tot.hasSync?(' + '+extra+' added by hand'):''))
+                             :'no Slack sync yet — type it');
         return metric(label, roNow?(_calEsc(show)||'—')
           :`<input id="${id(c.id,key)}" value="${_calEsc(typed)}" placeholder="${_calEsc(show)||'0'}" style="${box};width:64px"/>`,
           '#111', note);
@@ -18048,6 +18160,55 @@ function _rltSeesAll(){
   if(typeof _seesEveryone==='function') return _seesEveryone(u);
   return !!(isBruce(u) || u.role==='CEO' || u.role==='Project Director' || u.isSuperAdmin);
 }
+// Bruce, 11 Oct, naming the four real people behind eight spellings:
+//   "Katie Harr is one person. She has an account. Will Harr is another person. He has
+//    an account. Brad Clarizio is a third person. He does not have an account, but we
+//    still need to review his properties and organize everything the same way so we can
+//    review that stuff. And then Brad Winter is also another one. Those guys are more
+//    temporary realtors. They will randomly and occasionally list houses for us, so they
+//    are not going to have an account."
+//
+// So the roster is NOT "people with a Realtor login". It is logins PLUS a list of
+// off-book agents, and that list has to be editable from inside the app, because nobody
+// is going to create an account for a man who lists one house a year. Offering only
+// account-holders and a free-text box is exactly what produced "Katie", "Brad",
+// "Brad Clarizio" and "Brad Winter" as four separate agents on the board.
+const RLT_OFFBOOK_SEED = ['Brad Clarizio','Brad Winter'];
+function _rltOffbook(){
+  const raw=(typeof _trkVal==='function') ? _trkVal('rlt_offbook','list','names') : '';
+  if(raw && String(raw).trim()){
+    return String(raw).split('\n').map(function(x){ return x.trim(); }).filter(Boolean);
+  }
+  return RLT_OFFBOOK_SEED.slice();
+}
+function _rltSameName(a,b){
+  return String(a||'').trim().toLowerCase()===String(b||'').trim().toLowerCase();
+}
+// Add a name to the off-book list so the NEXT house offers it instead of inviting
+// somebody to type it again slightly differently. Accounts are never added here.
+async function _rltOffbookAdd(name){
+  const n=String(name||'').trim();
+  if(!n) return;
+  try{ if(typeof _trkLoad==='function' && window._trkLoaded!==true) await _trkLoad(); }catch(e){}
+  if(_rltAll().some(function(x){ return _rltSameName(x,n); })) return;   // they have a login
+  const cur=_rltOffbook();
+  if(cur.some(function(x){ return _rltSameName(x,n); })) return;         // already listed
+  cur.push(n); cur.sort();
+  try{ await _trkSet('rlt_offbook','list','names', cur.join('\n'), false); }catch(e){}
+}
+async function _rltOffbookRemove(name){
+  try{ if(typeof _trkLoad==='function' && window._trkLoaded!==true) await _trkLoad(); }catch(e){}
+  const cur=_rltOffbook().filter(function(x){ return !_rltSameName(x,name); });
+  try{ await _trkSet('rlt_offbook','list','names', cur.join('\n'), false); }catch(e){}
+}
+// Everyone who may hold a listing: the logins, then the off-book agents.
+function _rltRoster(){
+  const out=_rltAll().slice();
+  _rltOffbook().forEach(function(n){
+    if(!out.some(function(x){ return _rltSameName(x,n); })) out.push(n);
+  });
+  return out.sort();
+}
 // Every approved realtor, by full name.
 function _rltAll(){
   return [...new Set((typeof getUsers==='function'?getUsers():[])
@@ -18056,7 +18217,11 @@ function _rltAll(){
 }
 // The realtors THIS person is allowed to open a tab for.
 function _rltVisible(){
-  const all=_rltAll();
+  // Bruce: Brad Clarizio "does not have an account, but we still need to review his
+  // properties and organize everything the same way" - so anyone who sees the whole
+  // board gets a tab per ROSTER member, logins or not. A realtor signing in still
+  // only ever sees themselves.
+  const all=_rltSeesAll() ? _rltRoster() : _rltAll();
   if(_rltSeesAll()) return all;
   const me=(typeof _myFullName==='function')?_myFullName():'';
   const norm=x=>String(x||'').trim().toLowerCase();
@@ -18078,6 +18243,152 @@ function _rltKey(name){ return 'r:'+name; }
 // the main page still opens it, because that is where the inspection, remedy and notes
 // boxes live and nothing else holds them. _rltTab() therefore still accepts 'contract';
 // it is simply not somewhere you land by accident any more.
+// ===================== SHOWINGS AND FEEDBACK (realtor dashboard) =================
+// Bruce, 11 Oct: "the listings showings channel on Slack is the one that they put the
+// scheduled showings in, that's where you can track them. But we also need to make sure
+// that there's a function in the website that when the realtors are viewing that, they
+// can add in and correct that number if needed due to them not posting in that channel
+// if there was a showing ... and then listings feedback as well, they need to be able to
+// add in feedback manually as well if needed, but we need to create the functions to
+// automatically track and input that and sort it and organize it correctly and visually
+// on the realtor dashboard under the correct tabs and sections and on the listings
+// meeting doc."
+//
+// The synced half comes from the two Slack channels. This is the half a person touches,
+// and the two are kept apart so a re-sync can never wipe a correction.
+function _shwOpenRow(pid){ return window.__shwOpen===pid; }
+function _shwToggle(pid){ window.__shwOpen = (window.__shwOpen===pid) ? null : pid; openRealtorDashboard(); }
+async function _shwSaveExtra(pid, el){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
+  const note=(document.getElementById('shw-note-'+pid)||{}).value;
+  await _mktShowExtraSet(pid, el.value, note);
+  openRealtorDashboard();
+}
+async function _fbAdd(pid){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
+  const g=(k)=>((document.getElementById('fb-'+k+'-'+pid)||{}).value||'').trim();
+  const text=g('text');
+  if(!text){ alert('Write what they said first.'); return; }
+  await _mktFbManualAdd(pid, { text:text, price:g('price'), interested:g('int'),
+                               experience:g('exp'), rating:g('rate'), agent:g('agent') });
+  openRealtorDashboard();
+}
+async function _fbDel(pid, i){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
+  await _mktFbManualRemove(pid, i);
+  openRealtorDashboard();
+}
+function _shwChips(pid){
+  const b=_mktFbBreakdown(pid, '');
+  const bits=[];
+  MKT_FB_FIELDS.forEach(function(f){
+    const counts=b.fields[f.k]||{};
+    const keys=Object.keys(counts).sort(function(a,z){
+      const ia=f.order.indexOf(a), iz=f.order.indexOf(z);
+      return (ia<0?99:ia)-(iz<0?99:iz) || counts[z]-counts[a];
+    });
+    keys.forEach(function(k){
+      const bad=/too high|not interested|poor/i.test(k);
+      const good=/just right|very|excellent/i.test(k);
+      const bg=bad?'#FCEBEB':(good?'#E1F5EE':'#F1F2F6');
+      const fg=bad?'#791F1F':(good?'#0F7B54':'#566070');
+      bits.push('<span style="display:inline-block;padding:2px 9px;margin:0 5px 5px 0;border-radius:99px;font-size:11.5px;background:'+bg+';color:'+fg+'"><b>'+counts[k]+'</b> '+_calEsc(k.toLowerCase())+'</span>');
+    });
+  });
+  if(b.rating) bits.push('<span style="display:inline-block;padding:2px 9px;margin:0 5px 5px 0;border-radius:99px;font-size:11.5px;background:#EEF2F9;color:#2b3a51">avg '+b.rating.avg+'/5 over '+b.rating.n+'</span>');
+  return bits.join('');
+}
+// The headline numbers for the summary box on the front page.
+function _shwTotalFor(cards){
+  let n=0; (cards||[]).forEach(function(c){ n+=_mktShowTotal(c.id).total; });
+  return n;
+}
+function _shwHeadline(cards){
+  let fb=0, high=0;
+  (cards||[]).forEach(function(c){
+    const b=_mktFbBreakdown(c.id,'');
+    fb+=b.n;
+    high+=(b.fields.price&&b.fields.price['Too high'])||0;
+  });
+  if(!fb) return 'Showings come from #listings-showings and feedback from #listings-feedback. Nothing has come through yet \u2014 open this to add any by hand.';
+  return fb+' piece'+(fb===1?'':'s')+' of feedback across these houses'
+    + (high?(', and <b style="color:#B42318">'+high+'</b> of them said the price is too high'):'')
+    + '. Open it to correct a count or add something that never reached Slack.';
+}
+function _shwMini(cards){
+  const rows=(cards||[]).map(function(c){ return { c:c, t:_mktShowTotal(c.id).total, b:_mktFbBreakdown(c.id,'') }; })
+    .sort(function(a,b){ return b.t-a.t || String(a.c.addr||'').localeCompare(String(b.c.addr||'')); });
+  if(!rows.length) return '<div style="font-size:12.5px;color:#0F7B54;padding:4px 0">&#10003; Nothing is listed right now.</div>';
+  return rows.slice(0,5).map(function(r){
+    const high=(r.b.fields.price&&r.b.fields.price['Too high'])||0;
+    return '<div onclick="_rltGo(\'showings\')" style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;padding:7px 0;border-top:0.5px solid #f4f5f7;cursor:pointer">'
+      +'<div style="min-width:0"><div style="font-size:13.5px;font-weight:600;color:#185FA5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+_calEsc(r.c.addr||'')+'</div>'
+      +'<div style="font-size:11px;color:#566070">'+(r.b.n?(r.b.n+' piece'+(r.b.n===1?'':'s')+' of feedback'):'no feedback yet')+(high?(' \u00b7 '+high+' said too high'):'')+'</div></div>'
+      +'<div style="font-size:11.5px;white-space:nowrap;text-align:right"><span style="font-weight:700;color:'+(r.t?'#7A3FA8':'#B42318')+'">'+r.t+'</span>'
+      +'<div style="font-size:10.5px;color:#636b7a">showings</div></div></div>';
+  }).join('') + (rows.length>5?('<div style="font-size:11px;color:#566070;padding-top:6px">+ '+(rows.length-5)+' more</div>'):'');
+}
+function _shwPanel(cards){
+  const ro=(typeof isReadOnly==='function') && isReadOnly();
+  const synced=(typeof window!=='undefined' && window._shwData && Object.keys(window._shwData).length);
+  const head='<div style="font-size:13px;color:#566070;margin:-4px 0 10px">Showings come from <b>#listings-showings</b> and feedback from <b>#listings-feedback</b>. '
+    +(synced?'':'<b style="color:#8a5a10">Nothing has synced from Slack yet</b> \u2014 everything below is what people have added by hand. ')
+    +'If a showing never made it to Slack, add it here; the correction stays on the house and does not have to be retyped every week.</div>';
+  if(!cards.length) return head+'<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:16px;font-size:13px;color:#636b7a">Nothing is listed right now.</div>';
+  const rows=cards.map(function(c){
+    const t=_mktShowTotal(c.id), l7=_mktShowLast7(c.id);
+    const fb=_mktFeedback(c.id, '');
+    const open=_shwOpenRow(c.id);
+    const manual=_mktFbManual(c.id);
+    const chips=_shwChips(c.id);
+    const top=fb.slice(0,3).map(function(g){
+      return '<div style="font-size:12.5px;color:#444;padding:3px 0">'
+        +'<b style="color:#111">'+g.n+'\u00d7</b> '+_calEsc(g.text)+'</div>';
+    }).join('') || '<div style="font-size:12.5px;color:#9aa1ad;padding:3px 0">No feedback yet.</div>';
+    const box='padding:5px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px';
+    const editor = (open && !ro) ? ('<div style="border-top:0.5px solid #eef0f6;margin-top:9px;padding-top:10px">'
+      + '<div style="font-size:12px;font-weight:700;color:#111;margin-bottom:5px">Showings that never reached Slack</div>'
+      + '<div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-bottom:12px">'
+      +   '<input id="shw-extra-'+c.id+'" value="'+_calEsc(String(_mktShowExtra(c.id)||''))+'" placeholder="0" style="'+box+';width:64px"/>'
+      +   '<input id="shw-note-'+c.id+'" value="'+_calEsc(_mktShowExtraNote(c.id))+'" placeholder="why (optional)" style="'+box+';flex:1;min-width:160px"/>'
+      +   '<button onclick="_shwSaveExtra(\''+c.id+'\',document.getElementById(\'shw-extra-'+c.id+'\'))" style="padding:6px 13px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">Save</button>'
+      + '</div>'
+      + '<div style="font-size:12px;font-weight:700;color:#111;margin-bottom:5px">Add feedback by hand</div>'
+      + '<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:6px">'
+      +   '<select id="fb-price-'+c.id+'" style="'+box+'"><option value="">Price opinion…</option><option>Too high</option><option>Just right</option><option>Too low</option></select>'
+      +   '<select id="fb-int-'+c.id+'" style="'+box+'"><option value="">Interest…</option><option>Very</option><option>Somewhat</option><option>Not interested</option></select>'
+      +   '<select id="fb-exp-'+c.id+'" style="'+box+'"><option value="">Experience…</option><option>Excellent</option><option>Good</option><option>Fair</option><option>Poor</option></select>'
+      +   '<select id="fb-rate-'+c.id+'" style="'+box+'"><option value="">Rating…</option><option>5</option><option>4</option><option>3</option><option>2</option><option>1</option></select>'
+      +   '<input id="fb-agent-'+c.id+'" placeholder="buyer\u2019s agent (optional)" style="'+box+';flex:1;min-width:150px"/>'
+      + '</div>'
+      + '<textarea id="fb-text-'+c.id+'" placeholder="What they actually said" style="'+box+';width:100%;min-height:52px;font-family:inherit;resize:vertical"></textarea>'
+      + '<div style="margin-top:5px"><button onclick="_fbAdd(\''+c.id+'\')" style="padding:6px 13px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">Add this feedback</button></div>'
+      + (manual.length ? ('<div style="margin-top:11px"><div style="font-size:12px;font-weight:700;color:#111;margin-bottom:4px">Added by hand</div>'
+          + manual.map(function(m,i){
+              return '<div style="display:flex;justify-content:space-between;gap:9px;align-items:baseline;padding:5px 0;border-top:0.5px solid #f4f5f7">'
+                +'<div style="min-width:0"><div style="font-size:12.5px;color:#333">'+_calEsc(m.text||'')+'</div>'
+                +'<div style="font-size:11px;color:#8a93a3">'+_calEsc([m.at,m.by,m.price,m.interested].filter(Boolean).join(' \u00b7 '))+'</div></div>'
+                +'<span onclick="_fbDel(\''+c.id+'\','+i+')" title="Remove" style="cursor:pointer;color:#B42318;font-size:12px;white-space:nowrap">remove</span></div>';
+            }).join('') + '</div>') : '')
+      + '</div>') : '';
+    return '<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:12px 15px;margin-bottom:10px">'
+      + '<div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap">'
+      +   '<div style="min-width:0"><span onclick="openPropDetail(\''+c.id+'\')" style="font-size:14px;font-weight:600;color:#185FA5;cursor:pointer">'+_calEsc(c.addr||'')+'</span>'
+      +     '<div style="font-size:11.5px;color:#566070">'+(c.listingAgent?_calEsc(c.listingAgent):'no listing agent')+(t.asof?(' \u00b7 synced '+_calEsc(t.asof)):'')+'</div></div>'
+      +   '<div style="text-align:right;white-space:nowrap">'
+      +     '<span style="font-size:19px;font-weight:700;color:#111">'+t.total+'</span>'
+      +     '<span style="font-size:11.5px;color:#566070"> showings</span>'
+      +     '<div style="font-size:11px;color:#8a93a3">'+(t.hasSync?(t.auto+' from Slack'):'none from Slack')+(t.extra?(' + '+t.extra+' added'):'')+(l7!=null?(' \u00b7 '+l7+' in 7 days'):'')+'</div>'
+      +   '</div>'
+      + '</div>'
+      + (chips?('<div style="margin-top:7px">'+chips+'</div>'):'')
+      + '<div style="margin-top:5px">'+top+'</div>'
+      + (ro?'':'<div style="margin-top:7px"><span onclick="_shwToggle(\''+c.id+'\')" style="cursor:pointer;font-size:12px;color:#185FA5;font-weight:600">'+(open?'Close':'Correct the count or add feedback')+' \u203a</span></div>')
+      + editor
+      + '</div>';
+  }).join('');
+  return head+rows;
+}
 // Bruce, 11 Oct: "we also want to be able to add in where they can schedule tasks."
 // It opens the same Add-task window the rest of the app uses - one task list, one
 // calendar, no second kind of task that only realtors can see. If their own tab is
@@ -18122,6 +18433,9 @@ function _rltClosedYear(){
 function _rltTabs(){
   const t=[['main','\uD83D\uDD11 Main Dashboard','Listings, contracts and what is coming up']];
   _rltVisible().forEach(n=>t.push([_rltKey(n),'\uD83C\uDFE0 '+n,'Every house '+n+' is holding, by stage']));
+  // Bruce, 11 Oct: showings and feedback belong on the realtor dashboard, not only on
+  // the listings meeting - that is where the realtors actually are.
+  t.push(['showings','\uD83D\uDC63 Showings & feedback','Showings and buyer feedback, synced from Slack and correctable by hand']);
   // Bruce, 11 Oct: "add in another tab where it's closed on the year."
   t.push(['closed','\uD83C\uDFC5 Closed this year','Every house closed this year, newest first']);
   if(_rltSeesAll()) t.push(['stages','\uD83C\uDFC1 All houses','Every house on the market, by stage, whoever is listing it']);
@@ -18415,6 +18729,16 @@ function openRealtorDashboard(tab){
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
   if(tab) window._rltTabSel=tab;
+  // Showings and feedback live in two places: what the Slack sync wrote, and what a
+  // person corrected in the trackers row. Both are loaded lazily, once, and the page
+  // redraws itself when they land - so a realtor who opens this first does not see
+  // zeroes and conclude nobody has viewed the house.
+  if(window._shwData===undefined || window._trkLoaded!==true){
+    const jobs=[];
+    if(window._shwData===undefined){ window._shwData=null; jobs.push(_mktLoadShowings()); }
+    if(window._trkLoaded!==true && typeof _trkLoad==='function'){ jobs.push(_trkLoad()); }
+    if(jobs.length){ Promise.all(jobs).then(function(){ if(window.__rltOpen) openRealtorDashboard(); }); }
+  }
   const _rt=_rltTab();
   // Bruce, 11 Oct: "when I click on Katie Har and Will Har, I want their dashboard to
   // show five squares at the top." Their tab used to be the stage list and nothing else.
@@ -18551,6 +18875,7 @@ function openRealtorDashboard(tab){
     <div style="font-size:13px;font-weight:700;color:#111;margin-bottom:8px">What needs chasing</div>
     ${need('⏳ Pre-list / punch out', poOpen.length, '#8A5A10', 'Houses whose punch-out checklist is not finished. <b>The eight are:</b> '+PUNCH_ITEMS.map(x=>_calEsc(x[1])).join(' &middot; ')+'. So "0 of 8, not started" means nobody has opened a punch-out walk-through on that house at all. Patience fills it in from the NPI inspection report — click one to open it.', poBody, 'See every stage', "_rltGo('stages')")}
     ${need('🏡 Listed on the market', mktLate.length, '#185FA5', 'The on-the-market checklist is due every two weeks. These have run out.', mktBody, 'On the market meeting', "openWeeklyMeeting('market')")}
+    ${need('👣 Showings and feedback', _shwTotalFor(act), '#7A3FA8', _shwHeadline(act), _shwMini(act), 'Open showings and feedback', "_rltGo('showings')")}
     ${need('🤝 In contract', icNo.length, '#0E7460', 'No home inspection recorded yet. Open the in-contract board to answer inspection, remedy and notes on each one.', icBody, 'Open the in-contract board', "_rltGo('contract')")}
     ${need('🛠 Request a remedy', rtr.length, '#BA7517', 'Remedy lists being worked, and the next thing booked on each house.', rtrBody, 'Construction calendar', "openProjectDashboard('construction')")}
     ${need('✅ Cleared to close', ctc.length, '#534AB7', 'Remedies finished — these are waiting on a closing date.', ctcBody, 'See every stage', "_rltGo('stages')")}`;
@@ -18566,6 +18891,8 @@ function openRealtorDashboard(tab){
       ? `<div style="font-size:12.5px;color:#566070;margin-bottom:10px">Every house in contract. Pick one on the left; answer inspection, remedy and notes in the middle.</div><div id="ic-body">${_icBody()}</div>`
     : _rt==='stages'
       ? `<div style="font-size:12.5px;color:#566070;margin-bottom:10px">Every house on the board, in the order it moves: pre-list and punch out, on the market, in contract, request a remedy, cleared to close.</div>${stageBlock}`
+    : _rt==='showings'
+      ? _shwPanel(act.concat(ctr).sort(function(a,b){ return String(a.addr||'').localeCompare(String(b.addr||'')); }))
     : _rt==='closed'
       ? _rltClosedYear()
       : (_rt.indexOf('r:')===0
@@ -32129,4 +32456,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-11f listed-on-market-checklist meetings-dropdown va-monthly-rota ceo-trackers-takedown-checks realtor-rebuild -->
+<!-- build: 2026-10-11g permissions-fix listing-agent-roster showings-and-feedback -->
