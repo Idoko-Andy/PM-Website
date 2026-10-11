@@ -14887,8 +14887,37 @@ function _tdAll(){
     .sort(function(a,b){ return String(b.last_seen||b.added||'').localeCompare(String(a.last_seen||a.added||'')); });
 }
 // What the screen shows: the same list, minus anything that now has a card.
-function _tdList(){
-  return _tdAll().filter(function(x){ return !_tdCardFor(x.addr); });
+// Bruce, 11 Oct: "I would like to put 633 South Ohio and 3273 Shepherd Ave on hold and
+// not see them on my screen for another 14 days."
+// Hold already existed on a property CARD. These two are not cards - they are rows on
+// the "needs a property card" queue, which had no hold at all, so there was no way to
+// put them down. One of them even had the words ON HOLD typed into its note, which is a
+// person telling the software something it had no way to hear.
+// Same 14 days as the card-level hold, stored on the row itself.
+function _tdHeldUntil(x){ return String((x&&x.hold)||'').slice(0,10); }
+function _tdHeld(x){
+  const u=_tdHeldUntil(x);
+  return !!u && u > ((typeof _ymd==='function')?_ymd(new Date()):new Date().toISOString().slice(0,10));
+}
+function _tdNeedsCard(){ return _tdAll().filter(function(x){ return !_tdCardFor(x.addr); }); }
+function _tdList(){ return _tdNeedsCard().filter(function(x){ return !_tdHeld(x); }); }
+function _tdOnHold(){ return _tdNeedsCard().filter(_tdHeld)
+  .sort(function(a,b){ return _tdHeldUntil(a).localeCompare(_tdHeldUntil(b)); }); }
+async function _tdHold(key){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
+  const until=_dAddDays(_ymd(new Date()), VA_HOLD_DAYS);
+  const row=_tdAll().find(function(x){ return x.key===key; });
+  const ok=await _tdSet(key, { hold:until });
+  if(!ok) return;
+  if(typeof _logAudit==='function') _logAudit('updated','property',(row&&row.addr)||key,
+    'Put on hold on the Upcoming Takedowns queue until '+until+'. It comes back by itself.');
+  (window._trkRerender||function(){ openVAAdminDashboard('va'); })();
+}
+async function _tdUnhold(key){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
+  const ok=await _tdSet(key, { hold:'' });
+  if(!ok) return;
+  (window._trkRerender||function(){ openVAAdminDashboard('va'); })();
 }
 // Everything this screen writes goes into trackers.tdq, which ordinary staff may write.
 async function _tdSet(key, patch){
@@ -21927,8 +21956,13 @@ const VA_TPL_SEED = {
   // Bruce, 11 Oct, dictated these three in the same sitting as the revised pre1.
   // Anything left open on an earlier category follows the house in on top of these -
   // see _vaCarried - so these lists are only what is NEW at this stage.
+  // Bruce, 11 Oct: a house that went straight to vacant was never occupied, so step 2
+  // answers itself the moment the house reaches Vacant / On Standby. And "if applicable"
+  // stops applying there too - "once it's vacant, we're doing the utility transfer no
+  // matter what anyways" - so the N/A option disappears on a vacant house rather than
+  // offering a way to wave the transfer away. See _vaItemNAFor.
   pre2:["Please confirm it actually closed",
-        "Please confirm it is still occupied, and for how long",
+        "Please confirm it is still occupied, and for how long @auto:vacated",
         "Utilities transferred to us if applicable @na @auto:utilities",
         "Follow up on the kickoff meeting @14d @auto:kickoff"],
   // "These things will self tick. If she puts the utility information in for all the
@@ -21982,6 +22016,9 @@ function _vaSlug(s){ let h=0,t=String(s||''); for(let i=0;i<t.length;i++){ h=((h
 // Every wording this checklist has ever shipped with. A saved copy matching ANY of them
 // is a default nobody chose, so it falls through to the current one.
 const VA_TPL_RETIRED = {
+  pre2:[
+    ["Please confirm it actually closed","Please confirm it is still occupied, and for how long","Utilities transferred to us if applicable @na @auto:utilities","Follow up on the kickoff meeting @14d @auto:kickoff"]
+  ],
   post1:[
     ["On the Market checklist run this week","Photos live on the listing","Agent feedback logged","Price review with Bruce"]
   ],
@@ -22065,6 +22102,17 @@ const VA_AUTO = {
   access:   {label:'the First Time Access checklist is done',
              get:function(c){ const cl=(c&&c.checklists)||{};
                return String(cl.first_access_done||'').trim() || String(cl.vos_lockbox||'').trim(); }},
+  // Bruce, 11 Oct: "on the occupied slash closed, if it was never occupied and was
+  // already straight to vacant, like once it goes vacant, it needs to automatically
+  // check off the 'please confirm it's occupied'."
+  // A house cannot be at Vacant / On Standby or beyond AND still be occupied. The
+  // question has been answered by the house moving, so asking it again is noise.
+  vacated: {label:'the house has reached Vacant / On Standby or beyond',
+            get:function(c){ try{
+              const i=PROP_PHASES.findIndex(function(p){ return p.name===(c&&c.phase); });
+              const v=PROP_PHASES.findIndex(function(p){ return p.name==='Vacant / On Standby'; });
+              return (i>=0 && v>=0 && i>=v) ? 'no longer occupied' : '';
+            }catch(e){ return ''; } }},
   vacancy: {label:'vacancy or lockbox info is on the card',
             get:function(c){ const cl=(c&&c.checklists)||{};
                              return String((c&&c.vacancyDate)||'').trim() || String(cl.lockbox||'').trim(); }},
@@ -22116,6 +22164,20 @@ function _vaItemEvery(item){
 // "@na" means the honest answer may be "this does not apply here", and she should be
 // able to say so rather than leave a box open for ever on a house it was never about.
 function _vaItemNA(item){ return /@na\b/i.test(String(item||'')); }
+// "@na" says a step CAN be waved away. Whether it still can depends on the house.
+// Bruce, 11 Oct, on the utilities: "once it's vacant, we're doing the utility transfer
+// no matter what anyways." So on a vacant house the N/A button is gone - the only way
+// to answer it is to actually do it, or for the utility tracker to say it is done.
+const VA_NA_WITHDRAWN = {
+  utilities: function(c){ try{ return !!(VA_AUTO.vacated.get(c)); }catch(e){ return false; } }
+};
+function _vaItemNAFor(c, item){
+  if(!_vaItemNA(item)) return false;
+  const a=_vaItemAuto(item);
+  const gone=a && VA_NA_WITHDRAWN[a];
+  if(gone && c && gone(c)) return false;
+  return true;
+}
 function _vaItemLabel(item){ return String(item||'').replace(/@(?:every\d+d|\d+d|auto:[a-z][a-z0-9]*|na)(?![a-z0-9])/ig,'').replace(/\s+/g,' ').trim(); }
 // What the card itself already says. Nothing is written - if the information is later
 // removed the box opens again, which is the truth rather than a stale tick.
@@ -22213,7 +22275,10 @@ function _vaCardById(propId){ return (typeof propCards!=='undefined'?propCards:[
 function _vaStepDone(c,cat,item){
   if(!c) return false;
   if(_vaChkOn(c.id,cat,item)) return true;
-  if(_vaChkNA(c.id,cat,item)) return true;        // answered, just not with a yes
+  // An N/A set before the house went vacant is a stale answer, not an answer. Bruce,
+  // 11 Oct: once it is vacant the utility transfer happens no matter what - so the step
+  // reopens by itself rather than staying waved away on a house where it now applies.
+  if(_vaItemNAFor(c,item) && _vaChkNA(c.id,cat,item)) return true;
   return !!_vaAutoFound(c,item);
 }
 // A gated step she has not done yet. It falls due the day the card reaches the gate age,
@@ -22267,12 +22332,58 @@ function _vaCarryFrom(cat){
   return i>0 ? VA_CARRY_CHAIN.slice(0,i) : [];
 }
 // Everything still open on the categories this house has already passed through.
+// Bruce, 11 Oct: "make sure they're cleaning up the board as I'm checking them off
+// across the board."
+//
+// Two things were cluttering it. First, a carried step and a step on the CURRENT list
+// can be the same question: the utility transfer is asked on Occupied / Closed and
+// again on Vacant on Standby, both reading the same utility tracker, so a house that
+// moved along showed the same unanswered question twice and ticking one left the other
+// sitting there. A carried step whose answer comes from the same place as a step this
+// list already has is not carried - it is already on the board.
+function _vaDupKeys(cat){
+  const out={};
+  (_vaTpl(cat)||[]).forEach(function(it){
+    const a=_vaItemAuto(it); if(a) out['auto:'+a]=true;
+    out['slug:'+_vaSlug(it)]=true;
+  });
+  return out;
+}
+// Second: how far back the carry-over reaches. Bruce, 11 Oct: "we really want to just
+// use this for new properties coming in, starting in pre - ones that are in
+// pre-construction now, and any property before that."
+// A house that was already in construction before these lists existed never worked
+// through them, so dragging every pre-construction question onto its Finishes or
+// Listed-on-the-Market row is a wall of stale paperwork about a house that is nearly
+// sold. Pre-construction work follows a house into construction only if it ENTERED
+// construction under these rules. New houses carry normally, all the way through.
+const VA_PRE_CATS = ['pre1','pre2','pre3','pre4'];
+function _vaCarriesPreWork(c, cat){
+  if(VA_PRE_CATS.indexOf(cat)>=0) return true;          // still inside pre-construction
+  const started=String(((c&&c.checklists)||{}).construction_start||'').slice(0,10);
+  if(!started) return false;                            // nobody recorded it starting
+  return started >= VA_RULES_FROM.pre2;                 // the day these lists shipped
+}
 function _vaCarried(c, cat){
   if(!c || !c.id) return [];
   const out=[];
+  // Seeded with what THIS list already asks, then added to as each carried step is
+  // taken - so a question is asked once whether the duplicate comes from this list or
+  // from another list further back. Two earlier lists can ask the same thing: the
+  // vacancy information is wanted on Upcoming Takedowns AND on Vacant on Standby, and
+  // both read the same field, so a house that passed through both was showing it twice
+  // on Pre-Construction with no way to tick them together.
+  const seen=_vaDupKeys(cat);
+  const takesPre=_vaCarriesPreWork(c, cat);
   _vaCarryFrom(cat).forEach(function(from){
+    if(!takesPre && VA_PRE_CATS.indexOf(from)>=0) return;   // a house already past this
     (_vaTpl(from)||[]).forEach(function(it){
       if(_vaStepDone(c, from, it)) return;             // finished there, nothing to carry
+      const a=_vaItemAuto(it), sl='slug:'+_vaSlug(it);
+      if(a && seen['auto:'+a]) return;                 // already asked, here or earlier
+      if(seen[sl]) return;                             // word for word the same step
+      if(a) seen['auto:'+a]=true;
+      seen[sl]=true;
       out.push({ item:it, from:from, fromName:(VA_CATS[from]||{}).name||from });
     });
   });
@@ -22532,7 +22643,7 @@ function _vaSectionView(vaName,sec){
         const it=r.item, rc=r.cat;
         if(!mine[rc+'|'+_vaSlug(it)])
           return `<td style="padding:9px 8px;text-align:center;color:#D5D9E0;background:#FCFCFD">&middot;</td>`;
-        const sl=_vaSlug(it), ticked=_vaChkOn(c.id,rc,it), na=_vaChkNA(c.id,rc,it);
+        const sl=_vaSlug(it), ticked=_vaChkOn(c.id,rc,it), na=(_vaItemNAFor(c,it) && _vaChkNA(c.id,rc,it));
         const auto=_vaAutoFound(c,it);          // a tracker already answers this one
         const on=ticked||!!auto||na;
         const open=_vaItemOpen(c,it,rc), inDays=_vaItemOpensIn(c,it,rc);
@@ -22543,7 +22654,7 @@ function _vaSectionView(vaName,sec){
         const box = (ro||auto)
           ? `<span style="font-size:16px">${mark}</span>`
           : `<span onclick="_vaChkToggle('${c.id}','${rc}','${sl}')" style="cursor:pointer;font-size:16px">${mark}</span>`;
-        const naBtn = (!ro && !auto && _vaItemNA(it))
+        const naBtn = (!ro && !auto && _vaItemNAFor(c, it))
           ? `<div onclick="_vaChkNAToggle('${c.id}','${rc}','${sl}')" title="This one does not apply to this house" style="cursor:pointer;font-size:9.5px;color:${na?'#185FA5':'#8A94A6'};margin-top:2px">${na?'applies after all':'N/A'}</div>` : '';
         let note='';
         if(na)                note=`<div style="font-size:9.5px;color:#566070;margin-top:2px;white-space:nowrap">does not apply</div>`;
@@ -22590,6 +22701,7 @@ function _vaSectionView(vaName,sec){
             ${x.permalink?`<a href="${_calEsc(x.permalink)}" target="_blank" style="font-size:11.5px;color:#185FA5;text-decoration:none">where it came from &rsaquo;</a>`:''}
           </div>
           ${ro?'':`<div onclick="_tdMakeCard('${_argEsc(x.key)}')" style="font-size:12.5px;background:#111;color:#fff;border-radius:7px;padding:7px 13px;cursor:pointer;white-space:nowrap">Create the card</div>
+          <div onclick="_tdHold('${_argEsc(x.key)}')" title="Put it down for ${VA_HOLD_DAYS} days. It comes back by itself." style="font-size:12.5px;background:#fff;border:0.5px solid #e0e4ec;border-radius:7px;padding:7px 13px;cursor:pointer;color:#8A5A10;white-space:nowrap">Hold ${VA_HOLD_DAYS} days</div>
           <div onclick="_tdDismiss('${_argEsc(x.key)}')" style="font-size:12.5px;background:#fff;border:0.5px solid #e0e4ec;border-radius:7px;padding:7px 13px;cursor:pointer;color:#566070;white-space:nowrap">Not ours</div>`}
         </div>`; };
       unm=`<div style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${list.length?'#AF2C2B':'#0F7B54'};border-radius:11px;margin-bottom:13px;overflow:hidden">
@@ -22618,6 +22730,25 @@ function _vaSectionView(vaName,sec){
           <div style="margin-top:10px"><div onclick="_tdAdd()" style="display:inline-block;font-size:13px;background:#111;color:#fff;border-radius:8px;padding:9px 17px;cursor:pointer;font-weight:600">Add it to the list</div></div>
         </div>`:''}
         ${list.length?list.map(row).join(''):''}
+        ${(function(){
+          // Held rows are OUT of the way, not gone. The strip says how many and when the
+          // next one is back, and opens them on a click - so nothing is ever silently
+          // invisible, which is the whole difference between a hold and a delete.
+          const held=(typeof _tdOnHold==='function')?_tdOnHold():[];
+          if(!held.length) return '';
+          const open=!!window.__tdHeldOpen;
+          const rows=open?held.map(function(x){
+            return `<div style="display:flex;align-items:center;gap:10px;padding:9px 16px;border-top:0.5px solid #eef0f6;flex-wrap:wrap;background:#FBFAF7">
+              <div style="flex:1;min-width:180px">
+                <div style="font-size:13px;font-weight:600;color:#6b5310">${_calEsc(x.addr||'')}</div>
+                <div style="font-size:11.5px;color:#8A94A6">back on ${_calEsc(_tdHeldUntil(x))}</div>
+              </div>
+              ${ro?'':`<div onclick="_tdUnhold('${_argEsc(x.key)}')" style="font-size:12.5px;background:#fff;border:0.5px solid #e0e4ec;border-radius:7px;padding:6px 12px;cursor:pointer;color:#185FA5;white-space:nowrap">Bring it back now</div>`}
+            </div>`; }).join(''):'';
+          return `<div onclick="window.__tdHeldOpen=!window.__tdHeldOpen;_vaGo('${sec}','${cat}')" style="padding:9px 16px;border-top:0.5px solid #eef0f6;background:#FBFAF7;cursor:pointer;font-size:12.5px;color:#6b5310">
+              <b>${held.length}</b> on hold &mdash; next one back on ${_calEsc(_tdHeldUntil(held[0]))} ${open?'&#9652;':'&#9662;'}
+            </div>${rows}`;
+        })()}
       </div>`;
     }
     body=`${unm}
@@ -32456,4 +32587,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-11g permissions-fix listing-agent-roster showings-and-feedback -->
+<!-- build: 2026-10-11h pre2-occupancy-autotick carried-step-dedupe carry-scope queue-hold -->
