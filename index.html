@@ -17520,6 +17520,13 @@ let _pmaActiveTab=null;
 function _pmaRerender(){ const el=document.getElementById("pd-content"); if(el && _pmaActiveTab) el.innerHTML=getPMAContent(_pmaActiveTab); }
 async function pmaToggleTask(id){
   if(_blockIfReadOnly()) return;
+  // A checklist step shown as a task is not a row in the task table - it is the checklist
+  // telling her it is now due. Send her to the property rather than silently doing nothing.
+  if(String(id||'').indexOf('vachk:')===0){
+    const pid=String(id).split(':')[1];
+    if(pid && typeof openPropDetail==='function') openPropDetail(pid);
+    return;
+  }
   const t=(_tasksCache||[]).find(x=>x.id===id); if(!t) return;
   if(await _tkSharedToggle(t)){ await loadTasks(); _pmaRerender(); return; }
   const ns=t.status==="done"?"open":"done";
@@ -17825,7 +17832,7 @@ function _pmaWeekEvents(phases){
   return (_calEventsCache||[]).filter(e=>(e.end_date||e.event_date)>=todayStr && e.event_date<=weStr && phases.includes(_propPhase(e.property_id)))
     .sort((a,b)=>a.event_date<b.event_date?-1:1);
 }
-function _pmaTaskRow(t){ return `<div onclick="pmaToggleTask('${t.id}')" title="Click to mark completed" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:0.5px solid #f4f5f7"><div style="min-width:0;flex:1"><div style="font-size:14px;color:#111;font-weight:500">${t.category?`<span style="font-size:11px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:6px">${_calEsc(t.category)}</span>`:''}${_calEsc(t.title)}</div><div style="font-size:12px;color:#566070;margin-top:2px">${_locLabel(t)?_calEsc(_locLabel(t))+' · ':''}${_calEsc(taskAssignees(t).join(', '))}</div></div><div style="font-size:12px;font-weight:600;color:${t._today?'#c0392b':'#8A5A10'};white-space:nowrap">${t.due_date||''} ☐</div></div>`; }
+function _pmaTaskRow(t){ return `<div onclick="pmaToggleTask('${t.id}')" title="${t.derived?'From her checklist &mdash; open the property':'Click to mark completed'}" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:0.5px solid #f4f5f7"><div style="min-width:0;flex:1"><div style="font-size:14px;color:#111;font-weight:500">${t.derived?`<span style="font-size:11px;background:#FFF1E3;color:#8A5A10;padding:1px 6px;border-radius:99px;margin-right:6px">checklist</span>`:(t.category?`<span style="font-size:11px;background:#EEEDFE;color:#3C3489;padding:1px 6px;border-radius:99px;margin-right:6px">${_calEsc(t.category)}</span>`:'')}${_calEsc(t.title)}</div><div style="font-size:12px;color:#566070;margin-top:2px">${_locLabel(t)?_calEsc(_locLabel(t))+' · ':''}${_calEsc(t.derived?(t.source||''):taskAssignees(t).join(', '))}</div></div><div style="font-size:12px;font-weight:600;color:${t._today?'#c0392b':'#8A5A10'};white-space:nowrap">${t.due_date||''} ${t.derived?'›':'☐'}</div></div>`; }
 function _pmaEvRow(e){ const lbl=e.kind==='contractor'?('★ '+_contractorName(e.contractor_id)):(e.kind==='custom'?('• '+(e.title||'Event')):('📦 '+(e.title||'Material'))); const done=!!e.completed; return `<div onclick="pmaToggleEvent('${e.id}')" title="Click to mark completed" style="cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:0.5px solid #f4f5f7;${done?'opacity:0.55;':''}"><div style="min-width:0;flex:1"><div style="font-size:14px;color:#111;font-weight:500;${done?'text-decoration:line-through;':''}">${done?'✓ ':''}${_calEsc(lbl)}</div><div style="font-size:12px;color:#566070;margin-top:2px">${_calEsc(_locLabel(e))}</div></div><div style="font-size:12px;color:#185FA5;white-space:nowrap">${_calEsc(e.event_date)}</div></div>`; }
 function _pmaCard(title,rowsHtml,count,empty){ return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden"><div style="padding:10px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between"><div style="font-size:14px;font-weight:500;color:#111">${title}</div><span style="font-size:11px;background:#f4f5f7;color:#566070;padding:2px 8px;border-radius:99px">${count}</span></div><div style="padding:4px 14px 12px">${count?rowsHtml:`<div style="text-align:center;color:#636b7a;font-size:13px;padding:18px 0">${empty}</div>`}</div></div>`; }
 // Role landing: compact header + colored count boards (click to drill) + what's on their plate now.
@@ -18712,7 +18719,9 @@ function _pDrill(kind, back){
 }
 function _personDashView(name, title){
   const today=new Date(); today.setHours(0,0,0,0); const todayStr=_ymd(today);
-  const mine=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>_taskOpenFor(t,name) && _taskHasAssignee(t,name));
+  let mine=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>_taskOpenFor(t,name) && _taskHasAssignee(t,name));
+  // Checklist steps that have fallen due show on her own page alongside her real tasks.
+  if(typeof _vaDerivedTasks==='function') mine=mine.concat(_vaDerivedTasks(name));
   const overdue=mine.filter(t=>!_hldOn(t) && t.due_date && t.due_date<todayStr);
   const dueToday=mine.filter(t=>t.due_date===todayStr);
   const rows=mine.slice().sort((a,b)=>(a.due_date||'zzz')<(b.due_date||'zzz')?-1:1).map(_pmaTaskRow).join('');
@@ -20202,11 +20211,18 @@ const VA_TPL_SEED = {
   // open until the property card is that old - he asked for "after the property card is
   // one week old" and "after two weeks old", and a step that cannot be done yet should
   // not sit there looking undone. The marker is stripped before the words are shown.
+  // Bruce, 10 Oct (revised): CompanyCam folder is step 2; the project manager moves to
+  // 14 days; closing info is step 4 and vacancy/lockbox step 5, both at 14 days. "If
+  // we've already assigned a project manager prior to that, it needs to automatically
+  // check that box for Patience" - hence the @auto: markers. Each one names the field on
+  // the property card that answers the step, so a step she never has to chase is already
+  // ticked when she gets there. The Slack syncs write onto those same fields, which is
+  // how "if you get it from Slack it checks itself" actually happens.
   pre1:["Create the property card",
-        "Find out who the project manager is @7d",
-        "Vacancy info, lockbox info and any other comments up to date @7d",
-        "Fill out as much of the property card as possible",
-        "Chase the assigned project manager to get it done @14d"],
+        "Create the CompanyCam folder @auto:ccam",
+        "Find out who the project manager is @14d @auto:pm",
+        "Closing info and closing date on the card @14d @auto:closing",
+        "Vacancy date, vacancy info, lockbox and any other comments on the card @14d @auto:vacancy"],
   pre2:["Purchase confirmed on the card","Occupancy checked - who is still in it","Keys and access confirmed","Utilities transferred to us","CompanyCam folder started"],
   pre3:["Lockbox on and the code logged","Electric, water and gas all on","Added to the mowing route","Property secured and photographed"],
   pre4:["Scope of work uploaded to the card","Budget created and approved","Permits applied for","Start date agreed with the PM","Contractors lined up for week one"],
@@ -20220,7 +20236,7 @@ const VA_TPL_SEED = {
   post4:["Final spend reconciled","Utilities removed","CompanyCam folder closed out","End of project report filed"]
 };
 const VA_SOP_SEED = {
-  pre:"1. UPCOMING TAKEDOWNS - the card exists but we do not own it yet. Get the folder, the dates and the utilities ordered so nothing waits on day one.\n2. OCCUPIED / CLOSED - we own it, somebody may still be in it. Confirm the purchase on the card, find out who has keys, move the utilities to us.\n3. VACANT ON STANDBY - empty and waiting. Lockbox, utilities on, mowing route, photos. This is where houses quietly rot, so check it weekly.\n4. PRE-CONSTRUCTION - scope, budget, permits, start date. Nothing moves to Framing until all four are on the card.",
+  pre:"1. UPCOMING TAKEDOWNS - five steps, in this order.\n   1. Create the property card. Addresses waiting for one are listed at the top of the tab; nothing creates a card by itself.\n   2. Create the CompanyCam folder and put the link on the card. This one ticks itself once the link is there.\n   3. Find out who the project manager is. It opens at 14 days and ticks itself if a PM is already on the card.\n   4. Closing info and closing date on the card. Opens at 14 days, ticks itself if the date is already there.\n   5. Vacancy date, vacancy info, lockbox and any other comments on the card. Opens at 14 days, ticks itself if any of it is already there.\n   Steps 3, 4 and 5 fall due on your task calendar the day the card turns 14 days old, and come back every 7 days until they are dealt with. If Slack already gave us the answer the box is ticked for you - what you are chasing is only what is genuinely missing, and it goes on the property card when you get it.\n2. OCCUPIED / CLOSED - we own it, somebody may still be in it. Confirm the purchase on the card, find out who has keys, move the utilities to us.\n3. VACANT ON STANDBY - empty and waiting. Lockbox, utilities on, mowing route, photos. This is where houses quietly rot, so check it weekly.\n4. PRE-CONSTRUCTION - scope, budget, permits, start date. Nothing moves to Framing until all four are on the card.",
   act:"1. FRAMING, MEPs & EXTERIOR - rough-ins booked, photos going up, exterior scope agreed.\n2. INSULATION & DRYWALL - insulation inspection passed before drywall is scheduled. Check budget against spent here, not later.\n3. FINISH MEPs - trim-out scheduled, fixtures on site, paint and flooring dated. Open the punch list now.\n4. PUNCH OUT & PRE-LIST - NPI inspection, punch items assigned, final clean, photos booked. Photos booked is the finish date.",
   post:"1. LISTED ON THE MARKET - run the On the Market checklist every week, log agent feedback, take the price question to Bruce.\n2. IN CONTRACT - closing timeline on the card, inspection items logged, remedies opened, utility end-date set.\n3. RENTAL HANDOFF / RTR - packet sent, rent-ready walk, keys to property management, utilities out of our name.\n4. CLOSED - final spend reconciled, utilities removed, folder closed, end of project report filed. The house stays on this list four weeks after closing, then drops off."
 };
@@ -20232,13 +20248,20 @@ function _vaSlug(s){ let h=0,t=String(s||''); for(let i=0;i<t.length;i++){ h=((h
 // the old wording was sitting in the record carrying nobody's intention.
 // A saved template that exactly matches a RETIRED default is not a choice somebody made,
 // so it falls through to the current one. Anything genuinely typed is untouched.
+// Every wording this checklist has ever shipped with. A saved copy matching ANY of them
+// is a default nobody chose, so it falls through to the current one.
 const VA_TPL_RETIRED = {
-  pre1:["Property card created and the address double-checked","CompanyCam folder created","Closing / takedown date on the card","Utilities ordered in our name","Lockbox on and the code logged"]
+  pre1:[
+    ["Property card created and the address double-checked","CompanyCam folder created","Closing / takedown date on the card","Utilities ordered in our name","Lockbox on and the code logged"],
+    ["Create the property card","Find out who the project manager is @7d","Vacancy info, lockbox info and any other comments up to date @7d","Fill out as much of the property card as possible","Chase the assigned project manager to get it done @14d"]
+  ]
 };
 function _vaTplIsRetired(cat, lines){
-  const old=VA_TPL_RETIRED[cat];
-  if(!old || !lines || lines.length!==old.length) return false;
-  return lines.every(function(l,i){ return String(l).trim()===old[i]; });
+  const olds=VA_TPL_RETIRED[cat];
+  if(!olds || !lines) return false;
+  return olds.some(function(old){
+    return lines.length===old.length && lines.every(function(l,i){ return String(l).trim()===old[i]; });
+  });
 }
 function _vaTpl(cat){
   const raw=_trkVal('va_tpl',cat,'items');
@@ -20255,8 +20278,26 @@ function _vaSop(sec){
 // A checklist line may carry "@7d" or "@14d" on the end, meaning it does not open until
 // the property card is that many days old. The marker is part of the stored line (so the
 // template stays one editable box of plain text) and is stripped for display.
-function _vaItemDays(item){ const m=String(item||'').match(/@(\d+)d\s*$/); return m?parseInt(m[1],10):0; }
-function _vaItemLabel(item){ return String(item||'').replace(/@\d+d\s*$/,'').trim(); }
+// A line may also carry "@auto:pm", meaning the step answers itself once that
+// information is on the property card. Markers sit at the end in any order and are
+// stripped before the words are shown.
+const VA_AUTO = {
+  pm:      {label:'a project manager is on the card',  get:function(c){ return String((c&&c.pm)||'').trim(); }},
+  ccam:    {label:'the CompanyCam folder is linked',   get:function(c){ return String((c&&c.companyCam)||'').trim(); }},
+  closing: {label:'a closing date is on the card',     get:function(c){ return String((c&&(c.closingDate||c.closingDateSell))||'').trim(); }},
+  vacancy: {label:'vacancy or lockbox info is on the card',
+            get:function(c){ const cl=(c&&c.checklists)||{};
+                             return String((c&&c.vacancyDate)||'').trim() || String(cl.lockbox||'').trim(); }}
+};
+function _vaItemDays(item){ const m=String(item||'').match(/@(\d+)d\b/); return m?parseInt(m[1],10):0; }
+function _vaItemAuto(item){ const m=String(item||'').match(/@auto:([a-z]+)\b/i); return (m&&VA_AUTO[m[1].toLowerCase()])?m[1].toLowerCase():''; }
+function _vaItemLabel(item){ return String(item||'').replace(/@(?:\d+d|auto:[a-z]+)/ig,'').replace(/\s+/g,' ').trim(); }
+// What the card itself already says. Nothing is written - if the information is later
+// removed the box opens again, which is the truth rather than a stale tick.
+function _vaAutoFound(c,item){
+  const k=_vaItemAuto(item); if(!k) return '';
+  try{ return VA_AUTO[k].get(c) ? VA_AUTO[k].label : ''; }catch(e){ return ''; }
+}
 function _vaCardAgeDays(c){
   const t=Date.parse((c&&c.createdAt)||'');
   if(!t) return null;                      // no creation date: never gate, never guess
@@ -20275,6 +20316,29 @@ function _vaItemOpensIn(c,item){
   return Math.max(0, d-age);
 }
 function _vaChkOn(propId,cat,item){ return _trkOn('va_chk',propId,cat+'|'+_vaSlug(item)); }
+function _vaCardById(propId){ return (typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===propId; })||null; }
+// A step is done when somebody ticked it OR the card already answers it.
+function _vaStepDone(c,cat,item){
+  if(c && _vaChkOn(c.id,cat,item)) return true;
+  return !!(c && _vaAutoFound(c,item));
+}
+// A gated step she has not done yet. It falls due the day the card reaches the gate age,
+// and Bruce asked for a nudge "every seven days after that" until it is dealt with.
+const VA_FOLLOWUP_DAYS = 7;
+function _vaItemDue(c,item){
+  const d=_vaItemDays(item); if(!d) return '';
+  const t=Date.parse((c&&c.createdAt)||''); if(!t) return '';
+  return _ymd(new Date(t+d*86400000));
+}
+function _vaItemChase(c,cat,item){
+  const d=_vaItemDays(item); if(!d) return null;
+  if(_vaStepDone(c,cat,item)) return null;
+  const age=_vaCardAgeDays(c); if(age===null || age<d) return null;
+  const late=age-d;
+  return { due:_vaItemDue(c,item), late:late,
+           round:Math.floor(late/VA_FOLLOWUP_DAYS)+1,
+           dueAgain:(VA_FOLLOWUP_DAYS-(late%VA_FOLLOWUP_DAYS))%VA_FOLLOWUP_DAYS };
+}
 async function _vaChkToggle(propId,cat,itemSlug){
   if(_blockIfReadOnly()) return;
   const cur=_trkOn('va_chk',propId,cat+'|'+itemSlug);
@@ -20282,7 +20346,8 @@ async function _vaChkToggle(propId,cat,itemSlug){
 }
 function _vaChkCount(propId,cat){
   const items=_vaTpl(cat);
-  const done=items.filter(it=>_vaChkOn(propId,cat,it)).length;
+  const c=_vaCardById(propId);
+  const done=items.filter(it=>_vaStepDone(c||{id:propId},cat,it)).length;
   return [done,items.length];
 }
 // A card belongs to exactly one category. Closed houses fall off after four weeks, the
@@ -20301,7 +20366,47 @@ function _vaSecCount(sec){ return (VA_SECS[sec].cats||[]).reduce((n,c)=>n+_vaCar
 // tasks, it only needs to show her open tasks, not everybody's open tasks."
 function _vaMyTasks(vaName){
   return (typeof _tasksCache!=='undefined'?_tasksCache:[])
-    .filter(t=>_taskOpenFor(t,vaName) && _taskHasAssignee(t,vaName));
+    .filter(t=>_taskOpenFor(t,vaName) && _taskHasAssignee(t,vaName))
+    .concat(_vaDerivedTasks(vaName));
+}
+// Who currently holds the VA job. Bruce: "remember this is the settings for anybody that
+// has her job role too" - so nothing here is keyed to Patience by name.
+function _vaRoleName(){
+  try{
+    const u=(getUsers()||[]).find(function(x){ return x.status==='approved' && x.role==='Virtual Administrative Assistant'; });
+    return u ? (u.firstName||'') : 'Patience';
+  }catch(e){ return 'Patience'; }
+}
+// Bruce, 10 Oct: "once it's been 14 days since the upcoming takedown card has been
+// created ... that's when step three needs to flag as due on Patience's task calendar."
+//
+// These are worked out from the checklist every time the page draws - NOTHING is written
+// to the task table. That matters: a real row written by a background rule would go stale
+// the moment somebody ticked the box, would double up on the next run, and would be one
+// more thing nobody can explain. A derived task appears the day the step falls due and
+// disappears by itself the moment the step is ticked or the card answers it.
+function _vaDerivedTasks(vaName){
+  try{
+    if(!vaName || !_canonSame(vaName, _vaRoleName())) return [];
+    const out=[];
+    Object.keys(VA_CATS).forEach(function(cat){
+      const items=_vaTpl(cat);
+      if(!items.some(function(it){ return _vaItemDays(it); })) return;
+      _vaCards(cat).forEach(function(c){
+        items.forEach(function(it){
+          const ch=_vaItemChase(c,cat,it);
+          if(!ch) return;
+          out.push({ id:'vachk:'+c.id+':'+cat+':'+_vaSlug(it),
+                     derived:true, readOnly:true,
+                     title:_vaItemLabel(it)+(ch.round>1?(' \u2014 follow-up '+ch.round):''),
+                     property_id:c.id, due_date:ch.due, assignee:vaName,
+                     assignees:[vaName], status:'open',
+                     source:VA_CATS[cat].name+' checklist, step '+(items.indexOf(it)+1) });
+        });
+      });
+    });
+    return out;
+  }catch(e){ return []; }
 }
 function _vaTaskSplit(vaName){
   const today=new Date(); today.setHours(0,0,0,0);
@@ -20397,13 +20502,19 @@ function _vaTaskList(vaName,which){
       </table></div>
   </div>`;
 }
+function _vaNorm(t){ return String(t||'').split('\n').map(function(x){ return x.trim(); }).filter(Boolean).join('\n'); }
 async function _vaSopSave(sec){
   const e=document.getElementById('va-sop-box'); if(!e) return;
-  await _trkSet('va_sop',sec,'text',e.value,true);
+  // Saving a box nobody actually edited used to store a copy of the starting version,
+  // which then shadowed the starting version for ever - that is why two updates to this
+  // page went live and changed nothing anybody could see. Unchanged means store nothing.
+  const same=_vaNorm(e.value)===_vaNorm(VA_SOP_SEED[sec]||'');
+  await _trkSet('va_sop',sec,'text',same?'':e.value,true);
 }
 async function _vaTplSave(cat){
   const e=document.getElementById('va-tpl-box'); if(!e) return;
-  await _trkSet('va_tpl',cat,'items',e.value,true);
+  const same=_vaNorm(e.value)===_vaNorm((VA_TPL_SEED[cat]||[]).join('\n'));
+  await _trkSet('va_tpl',cat,'items',same?'':e.value,true);
 }
 async function _vaTplReset(cat){
   if(_blockIfReadOnly()) return;
@@ -20452,13 +20563,22 @@ function _vaSectionView(vaName,sec){
       const [done,total]=_vaChkCount(c.id,cat);
       const age=_vaCardAgeDays(c);
       const cells=items.map(it=>{
-        const sl=_vaSlug(it), on=_vaChkOn(c.id,cat,it);
+        const sl=_vaSlug(it), ticked=_vaChkOn(c.id,cat,it);
+        const auto=_vaAutoFound(c,it);          // the card already answers this one
+        const on=ticked||!!auto;
         const open=_vaItemOpen(c,it), inDays=_vaItemOpensIn(c,it);
-        const box = ro ? `<span style="font-size:16px">${on?'\u2705':'\u2b1c'}</span>`
-                       : `<span onclick="_vaChkToggle('${c.id}','${cat}','${sl}')" style="cursor:pointer;font-size:16px">${on?'\u2705':'\u2b1c'}</span>`;
-        const note = (!on && !open)
-          ? `<div style="font-size:10px;color:#8A94A6;margin-top:2px;white-space:nowrap">opens in ${inDays}d</div>` : '';
-        return `<td style="padding:9px 8px;text-align:center;vertical-align:top;${(!on&&!open)?'background:#FBFBFD;':''}">${box}${note}</td>`;
+        const chase=_vaItemChase(c,cat,it);
+        // An automatic tick is not hers to undo - it is what the card says. Hand her the
+        // property instead, so she can see why.
+        const box = (ro||auto)
+          ? `<span style="font-size:16px">${on?'\u2705':'\u2b1c'}</span>`
+          : `<span onclick="_vaChkToggle('${c.id}','${cat}','${sl}')" style="cursor:pointer;font-size:16px">${on?'\u2705':'\u2b1c'}</span>`;
+        let note='';
+        if(auto)              note=`<div title="${_calEsc(auto)}" style="font-size:9.5px;color:#2E7D32;margin-top:2px;white-space:nowrap">already done</div>`;
+        else if(!on && !open) note=`<div style="font-size:10px;color:#8A94A6;margin-top:2px;white-space:nowrap">opens in ${inDays}d</div>`;
+        else if(chase)        note=`<div style="font-size:9.5px;color:#B42318;font-weight:600;margin-top:2px;white-space:nowrap">${chase.late===0?'due today':('chase &middot; '+chase.late+'d late')}</div>`;
+        const bg = auto ? 'background:#F3FAF5;' : (chase ? 'background:#FDF4F3;' : ((!on&&!open)?'background:#FBFBFD;':''));
+        return `<td style="padding:9px 8px;text-align:center;vertical-align:top;${bg}">${box}${note}</td>`;
       }).join('');
       return `<tr style="border-top:0.5px solid #eef0f6">
         <td style="padding:9px 12px;min-width:170px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span>
@@ -20529,6 +20649,10 @@ function _vaSectionView(vaName,sec){
       </div>
       ${(!ro&&window._vaTplEdit)?`<div style="padding:13px 16px;background:#FBFAF7;border-bottom:0.5px solid #e0e4ec">
         <div style="font-size:12.5px;color:#566070;margin-bottom:7px">One line per item. This is the template for <b>${_calEsc(VA_CATS[cat].name)}</b> &mdash; it applies to every property in this category. Ticks already made stay with the wording they were made against, so changing a line resets that one box.</div>
+        <div style="font-size:12px;color:#566070;background:#fff;border:0.5px solid #e8e2d4;border-radius:7px;padding:9px 11px;margin-bottom:8px;line-height:1.6">
+          Put <b>@14d</b> on the end of a line and that step stays shut until the property card is 14 days old &mdash; then it falls due on the task calendar and comes back every ${VA_FOLLOWUP_DAYS} days until it is dealt with.<br>
+          Put <b>@auto:pm</b>, <b>@auto:ccam</b>, <b>@auto:closing</b> or <b>@auto:vacancy</b> on the end and the step ticks itself as soon as that information is on the property card &mdash; including when a Slack sync is what put it there. Neither marker is shown to anybody; they just change how the step behaves.
+        </div>
         <textarea id="va-tpl-box" style="width:100%;min-height:150px;font:inherit;font-size:13.5px;line-height:1.6;border:0.5px solid #e0e4ec;border-radius:8px;padding:10px 11px;resize:vertical">${_calEsc(items.join('\n'))}</textarea>
         <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
           <div onclick="_vaTplSave('${cat}')" style="font-size:12.5px;background:#111;color:#fff;border-radius:6px;padding:7px 14px;cursor:pointer">Save the checklist</div>
@@ -20538,11 +20662,12 @@ function _vaSectionView(vaName,sec){
         <thead><tr style="background:#122A4A;color:#fff">
           <th style="padding:9px 12px;text-align:left">Property</th>
           <th style="padding:9px 10px;text-align:left;white-space:nowrap">Card age</th>
-          ${items.map(function(it,i){ const d=_vaItemDays(it);
+          ${items.map(function(it,i){ const d=_vaItemDays(it), a=_vaItemAuto(it);
             return `<th style="padding:8px 8px;text-align:center;font-weight:600;min-width:96px;max-width:150px">
               <div style="font-size:10px;opacity:.6;letter-spacing:.05em">STEP ${i+1}</div>
               <div style="font-size:11.5px;line-height:1.3;white-space:normal">${_calEsc(_vaItemLabel(it))}</div>
-              ${d?`<div style="font-size:9.5px;opacity:.65;margin-top:2px">after ${d} days</div>`:''}</th>`; }).join('')}
+              ${d?`<div style="font-size:9.5px;opacity:.65;margin-top:2px">after ${d} days &middot; chase every ${VA_FOLLOWUP_DAYS}</div>`:''}
+              ${a?`<div style="font-size:9.5px;opacity:.65;margin-top:1px">ticks itself</div>`:''}</th>`; }).join('')}
           <th style="padding:9px 12px;text-align:left">Done</th></tr></thead>
         <tbody>${cards.map(prow).join('')||`<tr><td colspan="${items.length+3}" style="padding:22px;text-align:center;color:#636b7a">No properties in this category right now.</td></tr>`}</tbody>
       </table></div>
@@ -30332,4 +30457,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-10g retired-checklist-default-no-longer-shadows-the-new-one -->
+<!-- build: 2026-10-10h patience-pre1-revised-companycam-14d-autotick-chase -->
