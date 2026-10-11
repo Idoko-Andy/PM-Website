@@ -12282,6 +12282,167 @@ function _mktSendPanel(wk, roNow){
       Each preview opens in its own window. Use your browser&rsquo;s <b>Save as PDF</b> to save it, then attach it to the email. The site does not send mail itself.</div>`}
   </div>`;
 }
+// ===================== REQUEST TO REMEDY: APPROVALS FROM SLACK ==================
+// Bruce, 11 Oct: "when we have approved request to remedy ... that is when you need to
+// move the property card into the request remedy channel."
+//
+// The decision lives in #request-to-remedy as ordinary English written by Katie. Read
+// against the real channel, the phrasings are:
+//     APPROVED RTR FOR KINGSGATE:
+//     Approved and signed request to remedy for Main Street.
+//     TOMMY HAS APPROVED THIS RTR.              <- no address at all
+//     NOT APPROVED RTR FOR WILLOW RUN.
+//     NOT APPROVED RTR FOR COACH:
+//     Not approved yet!  GATES RTR.
+//     Has this RTR been approved ???            <- a question, not a decision
+//
+// Note what that list means: "NOT APPROVED RTR FOR WILLOW RUN" CONTAINS the word
+// "approved". Anything that just looks for "approved" moves Willow Run into Request a
+// Remedy - the exact opposite of what Katie said. Negation is the whole job here, so it
+// is checked first and the tests below are built from these real messages.
+//
+// Bruce also said the underlying test is a PDF signed by BOTH buyer and seller. Nothing
+// here reads a signature off a PDF, and it would be dishonest to pretend otherwise -
+// what this reads is Katie's word for it, which is the record the team actually keeps.
+const RTR_NEGATIONS = [
+  /\bnot\s+approv/i,          // NOT APPROVED, not approved yet
+  /\bun[\s-]*approv/i,        // unapproved, un-approved
+  /\bno[tn]e?\s+signed\b/i,
+  /\bdecline/i, /\breject/i,
+  /\bwait(ing)?\s+on\b.*\bapprov/i,
+  /\bnot\s+yet\b/i
+];
+const RTR_AFFIRMATIONS = [
+  /\bapproved\s+rtr\b/i,
+  /\brtr\b[^.!?]{0,30}\bapproved\b/i,
+  /\bapproved\s+(and\s+signed\s+)?request\s+to\s+remed/i,
+  /\brequest\s+to\s+remed[^.!?]{0,30}\bapproved\b/i,
+  /\bhas\s+approved\s+th(is|e)\s+rtr\b/i,
+  /\bapproved\b[^.!?]{0,20}\bsigned\b/i
+];
+// A question is somebody asking, not somebody deciding.
+function _rtrIsQuestion(t){
+  const s=String(t||'').trim();
+  if(/\?\s*$/.test(s)) return true;
+  return /^(has|have|did|is|are|any)\b[^.!]*\?/i.test(s);
+}
+function _rtrClassify(text){
+  const t=String(text||'').replace(/\s+/g,' ').trim();
+  if(!t) return {verdict:'unclear', why:'empty message'};
+  // Order matters, and the real channel proves it: "Not approved yet!  GATES RTR.
+  // seems pretty simple to me?" ends in a question mark but is plainly a refusal.
+  // An explicit no is a decision whatever the punctuation, so it is read first.
+  for(const re of RTR_NEGATIONS){
+    if(re.test(t)) return {verdict:'not approved', why:'says it is not approved'};
+  }
+  if(_rtrIsQuestion(t)) return {verdict:'unclear', why:'this is a question, not a decision'};
+  for(const re of RTR_AFFIRMATIONS){
+    if(re.test(t)) return {verdict:'approved', why:'says the RTR is approved'};
+  }
+  return {verdict:'unclear', why:'no clear approval either way'};
+}
+// ---- which house ---------------------------------------------------------------
+// Katie writes "KINGSGATE", "Main Street", "COACH" - never the full address. So match on
+// the distinctive words of each card's address and REQUIRE exactly one hit. "Main"
+// matches both 201 S Main and 88 S Main, and guessing between them is how an automation
+// moves the wrong house; two hits means a person looks at it.
+const RTR_STOPWORDS = ['st','street','rd','road','ave','avenue','dr','drive','ln','lane',
+  'ct','court','way','pl','place','blvd','cir','circle','sq','square','n','s','e','w',
+  'north','south','east','west','oh','ohio','columbus','the','and','for','rtr'];
+function _rtrAddrTokens(addr){
+  return String(addr||'').toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/)
+    .filter(function(w){ return w && w.length>2 && !/^\d+$/.test(w) && RTR_STOPWORDS.indexOf(w)<0; });
+}
+function _rtrMatchCards(text, cards){
+  const t=' '+String(text||'').toLowerCase().replace(/[^a-z0-9\s]/g,' ').replace(/\s+/g,' ')+' ';
+  const hits=[];
+  (cards||[]).forEach(function(c){
+    const toks=_rtrAddrTokens(c.addr);
+    if(!toks.length) return;
+    // every distinctive word of the address has to appear, so "Kingsgate" matches
+    // "1285 Kingsgate" but "Main" alone does not pick between two Mains by luck
+    const all=toks.every(function(w){ return t.indexOf(' '+w+' ')>=0 || t.indexOf(' '+w)>=0; });
+    if(all) hits.push(c);
+  });
+  return hits;
+}
+// The whole decision for one Slack message, with the reason spelled out either way.
+function _rtrDecide(text, cards){
+  const cls=_rtrClassify(text);
+  const hits=_rtrMatchCards(text, cards||[]);
+  const out={ verdict:cls.verdict, why:cls.why,
+              matches:hits.map(function(c){ return {id:c.id, addr:c.addr, phase:c.phase}; }) };
+  if(cls.verdict!=='approved'){ out.action='none'; return out; }
+  if(hits.length===0){ out.action='ask'; out.why='approved, but it does not name a house we have'; return out; }
+  if(hits.length>1){  out.action='ask'; out.why='approved, but it could be '+hits.map(c=>c.addr).join(' or '); return out; }
+  const c=hits[0];
+  if(c.phase==='RTR In Process' || c.phase==='RTR Completed (Pending Closing)'){
+    out.action='none'; out.why='already on the remedy list'; return out;
+  }
+  // A house that is not under contract has no buyer to agree remedies with, so an
+  // approval naming it is more likely a mis-read than a real instruction.
+  if(c.phase!=='In Contract'){
+    out.action='ask'; out.why='approved, but '+c.addr+' is in '+c.phase+', not In Contract';
+    return out;
+  }
+  out.action='move'; out.target='RTR In Process';
+  return out;
+}
+// ---- what the watcher found, where you can see it -------------------------------
+// The watcher runs outside the site (it needs Slack), and writes what it decided into
+// pm_settings key 'rtr_approvals', shaped:
+//   { seen:{ "<slack ts>": {...} },
+//     moved:[ {at, addr, propertyId, from, to, text, permalink, by} ],
+//     asks:[ {at, text, why, permalink, matches:[{id,addr}]} ],
+//     ranAt:"2026-10-11T12:00:00Z" }
+// Nothing here writes that record - this reads it, so the room can see what moved, why,
+// and what the watcher could not decide on its own.
+function _rtrData(){ const d=window._rtrApprovals; return (d && typeof d==='object') ? d : {}; }
+async function _rtrLoad(){
+  try{
+    const r=await supabase.from("pm_settings").select("data").eq("key","rtr_approvals").maybeSingle();
+    window._rtrApprovals=(r.error || !r.data) ? {} : ((r.data.data)||{});
+  }catch(e){ window._rtrApprovals={}; }
+}
+function _rtrAgo(iso){
+  try{ const d=Math.round((Date.now()-Date.parse(iso))/3600000);
+       return d<1?'just now':(d<24?(d+'h ago'):(Math.round(d/24)+'d ago')); }catch(e){ return ''; }
+}
+function _rtrPanel(){
+  const d=_rtrData();
+  const moved=Array.isArray(d.moved)?d.moved.slice().reverse():[];
+  const asks =Array.isArray(d.asks)?d.asks.slice().reverse():[];
+  const esc=_calEsc;
+  const never=!d.ranAt;
+  const row=(inner,bg,bd)=>`<div style="padding:9px 13px;border-top:0.5px solid #eef0f6;background:${bg||'#fff'};${bd?('border-left:3px solid '+bd+';'):''}">${inner}</div>`;
+  const movedRows=moved.slice(0,8).map(function(m){
+    return row(`<div style="font-size:13px;color:#111"><b>${esc(m.addr||'')}</b> moved to ${esc(m.to||'Request a Remedy')}</div>
+      <div style="font-size:11.5px;color:#566070">${esc(_rtrAgo(m.at))} &middot; from ${esc(m.from||'')}${m.by?(' &middot; '+esc(m.by)):''}</div>
+      ${m.text?`<div style="font-size:11.5px;color:#444;margin-top:3px;font-style:italic">&ldquo;${esc(String(m.text).slice(0,150))}&rdquo;</div>`:''}
+      ${m.permalink?`<a href="${esc(m.permalink)}" target="_blank" style="font-size:11.5px;color:#185FA5;text-decoration:none">the message that moved it &rsaquo;</a>`:''}`,
+      '#F3FAF5','#0F7B54');
+  }).join('');
+  const askRows=asks.slice(0,8).map(function(a){
+    return row(`<div style="font-size:13px;color:#111"><b>Needs a person</b> &mdash; ${esc(a.why||'could not decide')}</div>
+      ${a.text?`<div style="font-size:11.5px;color:#444;margin-top:3px;font-style:italic">&ldquo;${esc(String(a.text).slice(0,150))}&rdquo;</div>`:''}
+      ${(a.matches&&a.matches.length)?`<div style="font-size:11.5px;color:#566070;margin-top:3px">Could be: ${a.matches.map(x=>esc(x.addr)).join(' &middot; ')}</div>`:''}
+      <div style="font-size:11.5px;color:#8A94A6">${esc(_rtrAgo(a.at))}</div>
+      ${a.permalink?`<a href="${esc(a.permalink)}" target="_blank" style="font-size:11.5px;color:#185FA5;text-decoration:none">read it in Slack &rsaquo;</a>`:''}`,
+      '#FFFCF4','#8A5A10');
+  }).join('');
+  return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;overflow:hidden;margin-top:14px">
+    <div style="padding:12px 15px;border-bottom:0.5px solid #e0e4ec;background:#fafbfc">
+      <div style="font-size:14.5px;font-weight:600;color:#111">Approvals read from #request-to-remedy</div>
+      <div style="font-size:12px;color:#566070;line-height:1.5">When Katie says an RTR is approved, the house moves itself onto the remedy list. Anything it cannot read with certainty is left for a person rather than guessed at &mdash; and what it reads is her word, not a signature on a PDF.</div>
+    </div>
+    ${never
+      ? `<div style="padding:14px 15px;font-size:12.5px;color:#8A5A10;background:#FFFCF4">The watcher has not run yet, so nothing here has been read. Until it does, phases only move when somebody moves them.</div>`
+      : `<div style="padding:8px 15px;font-size:11.5px;color:#8A94A6;background:#FAFBFC">Last read ${esc(_rtrAgo(d.ranAt))}</div>`}
+    ${moved.length?`<div style="padding:8px 15px 2px;font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#0F7B54">Moved by itself &middot; ${moved.length}</div>${movedRows}`:''}
+    ${asks.length?`<div style="padding:9px 15px 2px;font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#8A5A10">Left for a person &middot; ${asks.length}</div>${askRows}`:''}
+    ${(!moved.length && !asks.length && !never)?`<div style="padding:14px 15px;font-size:12.5px;color:#636b7a">Nothing new in the channel since the last read.</div>`:''}
+  </div>`;
+}
 // ---- Where each listing stands, before the room gets to it ----------------------
 // Bruce, 11 Oct: "I want the listings meeting to have the same setup as the full
 // project team meeting in a sense of having the options of the color codes for the
@@ -13125,7 +13286,7 @@ function _mktMeetingBody(wk, kind, notes, prevNotes, roNow){
                     : tab==='ctc' ? 'Nothing is cleared to close right now.'
                     : 'Nothing is in contract right now.';
     const _intro = tab==='rtr'
-      ? `<div style="background:#FFF9EE;border:0.5px solid #EAD9A8;border-radius:10px;padding:11px 14px;margin-bottom:12px;font-size:13px;color:#633806">The full request-a-remedy process is being built here next &mdash; Bruce is sending the write-up we use today so it can be lifted onto this tab rather than retyped. For now this is the same card as In Contract with the remedy list front and centre.</div>`
+      ? _rtrPanel()+`<div style="background:#FFF9EE;border:0.5px solid #EAD9A8;border-radius:10px;padding:11px 14px;margin:12px 0;font-size:13px;color:#633806">This is the same card as In Contract with the remedy list front and centre. Contractors, dates and photos live on the Remedies page.</div>`
       : tab==='ctc'
       ? `<div style="background:#F4F3FE;border:0.5px solid #CECBF6;border-radius:10px;padding:11px 14px;margin-bottom:12px;font-size:13px;color:#26215C">Remedies are done on these. What is left is the closing table &mdash; keep the close date and the closing notes current.</div>`
       : '';
@@ -15470,7 +15631,7 @@ function openWeeklyMeeting(kind, week){
   // Hiding the menu item is not the same as closing the door - this screen can
   // also be reached from a restored nav state or a link, so check here too.
   if(!_canSeeMeeting(kind)){ document.getElementById("dash-body").innerHTML=_meetingDenied(kind); return; }
-  if(window._wmData===undefined||window._wmData===null){ if(window._wmData===undefined){ window._wmData=null; Promise.all([_wmLoad(), _miLoad(), _mktLoadShowings(), (window._pdnData===undefined?( (window._pdnData=null), _pdnLoad()):Promise.resolve())]).then(()=>openWeeklyMeeting(kind, week)); document.getElementById("dash-body").innerHTML='<div style="padding:40px;text-align:center;color:#566070">Loading meeting…</div>'; return; } }
+  if(window._wmData===undefined||window._wmData===null){ if(window._wmData===undefined){ window._wmData=null; Promise.all([_wmLoad(), _miLoad(), _mktLoadShowings(), _rtrLoad(), (window._pdnData===undefined?( (window._pdnData=null), _pdnLoad()):Promise.resolve())]).then(()=>openWeeklyMeeting(kind, week)); document.getElementById("dash-body").innerHTML='<div style="padding:40px;text-align:center;color:#566070">Loading meeting…</div>'; return; } }
   const titles={team:'🤝 Project Team Meeting',market:'🏡 Listings Meeting',kickoff:'🚀 Kickoff Meeting',eop:'🏁 End of Project Meeting',company:'🏢 Full Company Meeting',ceo:'👔 Director / CEO Meeting'};
   const liveWk=_wmWeekKeyFor(kind);
   const wk = week || liveWk;
@@ -31634,4 +31795,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-11d patience-four-checklists-carryover-selftick-na -->
+<!-- build: 2026-10-11e rtr-approvals-read-from-slack -->
