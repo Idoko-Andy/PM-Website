@@ -6549,9 +6549,15 @@ function _ppTasksOn(pid){
       return ad-bd || String(a.due_date||'9999').localeCompare(String(b.due_date||'9999'));
     });
 }
+// The baseline schedule is a PLAN, not a booking. It has its own panel directly above
+// this one, and _pdEvents has excluded it since the day it was written - this function
+// was added later and forgot to. The result: every house showed its whole 22-step plan
+// under "Construction calendar" as though somebody had booked it, which is how a target
+// date for selling a house ended up sitting there looking like a job. Found while
+// chasing Bruce's "Sold (target)" sighting on 1445 S High, 11 Oct.
 function _ppEventsOn(pid){
   return ((typeof _calEventsCache!=='undefined'?_calEventsCache:[])||[])
-    .filter(function(e){ return e && e.property_id===pid; })
+    .filter(function(e){ return e && e.property_id===pid && e.kind!=='baseline'; })
     .sort(function(a,b){ return String(a.event_date||'').localeCompare(String(b.event_date||'')); });
 }
 function _ppNames(c){
@@ -7047,10 +7053,18 @@ function _pdEvents(pid){
 // Baseline schedule (kind='baseline'): notes is a JSON string carrying the untouched
 // plan (plan_start/plan_end/late_after/step/…). "behind by N d" = event_date - plan_start.
 function _baselineNotes(e){ if(!e||e.kind!=='baseline') return null; try{ return JSON.parse(e.notes||'null')||null; }catch(_){ return null; } }
+// Bruce, 11 Oct: "just remove that baseline schedule task for sold ... in general for
+// the coding." The plan carries a "Sold (target)" step, and it is not a job anybody can
+// do - a house is sold when it closes, and nobody goes back to tick a target date. So on
+// all 45 houses that had one it sat open for ever, turned red, and made a finished
+// baseline read 21 of 22. It is filtered out of the panel rather than deleted: the row
+// stays in the calendar as the plan's own record of when we hoped to sell.
+const BASELINE_HIDE_STEPS = ['sold'];
 function _pdBaseline(pid){
   return (typeof _calEventsCache!=='undefined'?_calEventsCache:[])
     .filter(e=>e.property_id===pid && e.kind==='baseline')
     .map(function(e){ return {e:e, n:_baselineNotes(e)||{}}; })
+    .filter(function(x){ return BASELINE_HIDE_STEPS.indexOf(String(x.n.step||''))<0; })
     .sort(function(a,b){ return String(a.n.plan_start||a.e.event_date||'').localeCompare(String(b.n.plan_start||b.e.event_date||'')); });
 }
 function _daysBetween(a,b){ if(!a||!b) return 0; return Math.round((new Date(a+'T00:00:00')-new Date(b+'T00:00:00'))/86400000); }
@@ -7136,7 +7150,7 @@ function _pdLinked(c, which){
       + _pcFold('Completed', tDone.length,
           tDone.slice(0,25).map(taskRow).join('')
           + (tDone.length>25?`<div style="padding:7px 0;font-size:11.5px;color:#566070">+ ${tDone.length-25} more</div>`:'')),
-    `openProjectDashboard('tasks')`);
+    `openProjectDashboard('taskcal')`);
 
   // --- construction calendar --------------------------------------------------
   const evs=_ppEventsOn(c.id);
@@ -7163,7 +7177,7 @@ function _pdLinked(c, which){
       + _pcFold('Done', eDone.length,
           eDone.slice(0,20).map(evRow).join('')
           + (eDone.length>20?`<div style="padding:7px 0;font-size:11.5px;color:#566070">+ ${eDone.length-20} more</div>`:'')),
-    `openProjectDashboard('calendar')`);
+    `openProjectDashboard('construction')`);
 
   // --- baseline schedule ------------------------------------------------------
   const baseItems=_pdBaseline(c.id);
@@ -7177,7 +7191,7 @@ function _pdLinked(c, which){
     '',
     (baseOpenRows||'<div style="padding:9px 0;font-size:12.5px;color:#0F7B54">Every step on the baseline is done.</div>')
       + _pcFold('Completed steps', baseDone, baseDoneRows),
-    `openProjectDashboard('calendar')`):'';
+    `openProjectDashboard('construction')`):'';
 
   // --- permits ----------------------------------------------------------------
   const pers=_pdPermits(c.id);
@@ -17522,7 +17536,7 @@ async function toggleStarProp(id){
   if(error){ alert("Couldn't update: "+(error.message||"")); return; }
   card.checklists=cl;
   _logAudit(cl.ceo_star?"starred":"unstarred","property",card.addr||"","CEO monitoring list");
-  if(typeof openProjectDashboard==='function') openProjectDashboard('board');
+  if(typeof openProjectDashboard==='function') openProjectDashboard('trello');
 }
 
 // Calendars scoped to a set of properties (used for the CEO's starred-only view).
@@ -17569,11 +17583,11 @@ function renderPMHome(user){
   const _stageN=(t)=>(t.phases||[]).reduce(function(n,p){ return n+ph(p); },0);
   const _left=_pmStageUncovered();
   const _leftN=_left.reduce(function(n,p){ return n+ph(p); },0);
-  const _stageTiles=[_rhTile("All my projects",_pmStageTotal(name),"#fff","every stage below","openProjectDashboard('board')")]
+  const _stageTiles=[_rhTile("All my projects",_pmStageTotal(name),"#fff","every stage below","openProjectDashboard('trello')")]
     .concat(PM_STAGE_TILES.map(function(t){
-      return _rhTile(t.label,_stageN(t),t.col,t.sub,"openProjectDashboard('board')");
+      return _rhTile(t.label,_stageN(t),t.col,t.sub,"openProjectDashboard('trello')");
     }));
-  if(_leftN) _stageTiles.push(_rhTile("Other stages",_leftN,"#8A94A6",_left.join(", "),"openProjectDashboard('board')"));
+  if(_leftN) _stageTiles.push(_rhTile("Other stages",_leftN,"#8A94A6",_left.join(", "),"openProjectDashboard('trello')"));
   return `<div style="padding:20px 24px;max-width:100%">
     ${welcomeHeader(user)}
     ${sharedWidgets()}
@@ -17670,7 +17684,7 @@ function renderArchitectHome(user){
       _rhTile("Properties in drawings",inSub(/drawing/i),"#514AA8","","openArchitectDashboard()"),
       _rhTile("Permits — drawings phase",inSub(/permit.*(drawing|submit|application)/i),"#A63258","","openArchitectDashboard()"),
       _rhTile("Permits — inspections",inSub(/inspection/i),"#A1521B","rough + final","openArchitectDashboard()"),
-      _rhTile("Properties in Pre Construction",_rhPhase("Pre Construction"),"#378ADD","","openProjectDashboard('board')"),
+      _rhTile("Properties in Pre Construction",_rhPhase("Pre Construction"),"#378ADD","","openProjectDashboard('trello')"),
       _rhTile("Upcoming takedowns",_rhPhase("Upcoming Takedowns"),"#AF2C2B",""),
     ])}
     ${_rhPerfStrip(name)}
@@ -21144,9 +21158,26 @@ const VA_TPL_SEED = {
         "Project manager @14d @auto:pm",
         "Closing info notes @14d @auto:closing",
         "Vacancy info and notes @14d @auto:vacancy"],
-  pre2:["Purchase confirmed on the card","Occupancy checked - who is still in it","Keys and access confirmed","Utilities transferred to us","CompanyCam folder started"],
-  pre3:["Lockbox on and the code logged","Electric, water and gas all on","Added to the mowing route","Property secured and photographed"],
-  pre4:["Scope of work uploaded to the card","Budget created and approved","Permits applied for","Start date agreed with the PM","Contractors lined up for week one"],
+  // Bruce, 11 Oct, dictated these three in the same sitting as the revised pre1.
+  // Anything left open on an earlier category follows the house in on top of these -
+  // see _vaCarried - so these lists are only what is NEW at this stage.
+  pre2:["Please confirm it actually closed",
+        "Please confirm it is still occupied, and for how long",
+        "Utilities transferred to us if applicable @na @auto:utilities",
+        "Follow up on the kickoff meeting @14d @auto:kickoff"],
+  // "These things will self tick. If she puts the utility information in for all the
+  // utilities, it will self tick. Same for the mowing route if Marlo marks it."
+  pre3:["Lockbox or key, and vacancy info @auto:vacancy",
+        "Utility transfer @auto:utilities",
+        "Added to the mowing route @auto:mowing",
+        "Follow up with Gabe until the First Time Access checklist is done in CompanyCam @2d @every2d @auto:access"],
+  // "For all these steps, they should be communicating with the other trackers."
+  pre4:["Scope of work uploaded to the card @14d @every14d @auto:scope",
+        "Final budget completed and uploaded @14d @every14d @auto:budget",
+        "Permits approved and uploaded @14d @auto:permits",
+        "Start date agreed with the PM @14d",
+        "Prices and bids back from contractors @14d",
+        "Any other documents - cabinet layouts, design packages @14d"],
   act1:["Rough-in inspections booked","Framing photos in CompanyCam","Exterior scope confirmed with the PM","Material deliveries logged"],
   act2:["Insulation inspection passed","Drywall scheduled","Weekly photos uploaded","Budget against spent checked"],
   act3:["Finish MEP trim scheduled","Fixtures ordered and received","Paint and flooring dates confirmed","Punch list opened"],
@@ -21157,7 +21188,7 @@ const VA_TPL_SEED = {
   post4:["Final spend reconciled","Utilities removed","CompanyCam folder closed out","End of project report filed"]
 };
 const VA_SOP_SEED = {
-  pre:"1. UPCOMING TAKEDOWNS - five steps, in this order.\n   1. Create the property card. Addresses waiting for one are listed at the top of the tab; nothing creates a card by itself.\n   2. Create the CompanyCam folder and put the link on the card. This one ticks itself once the link is there.\n   3. Find out who the project manager is. It opens at 14 days and ticks itself if a PM is already on the card.\n   4. Closing info and closing date on the card. Opens at 14 days, ticks itself if the date is already there.\n   5. Vacancy date, vacancy info, lockbox and any other comments on the card. Opens at 14 days, ticks itself if any of it is already there.\n   Steps 3, 4 and 5 fall due on your task calendar the day the card turns 14 days old, and come back every 7 days until they are dealt with. If Slack already gave us the answer the box is ticked for you - what you are chasing is only what is genuinely missing, and it goes on the property card when you get it.\n2. OCCUPIED / CLOSED - we own it, somebody may still be in it. Confirm the purchase on the card, find out who has keys, move the utilities to us.\n3. VACANT ON STANDBY - empty and waiting. Lockbox, utilities on, mowing route, photos. This is where houses quietly rot, so check it weekly.\n4. PRE-CONSTRUCTION - scope, budget, permits, start date. Nothing moves to Framing until all four are on the card.",
+  pre:"ANYTHING LEFT OPEN FOLLOWS THE HOUSE. When a property moves to the next list, every step you have not finished comes with it and shows as a CARRIED column, marked with where it came from. Nothing is lost by a house moving, and it is your job to chase it until it is clean.\nA step marked N/A is answered - use it when something genuinely does not apply to that house rather than leaving a box open for ever.\nHold puts a house away for 14 days. It disappears from the working list, stops chasing you, and comes back by itself.\n\n1. UPCOMING TAKEDOWNS - five steps, in this order.\n   1. Create the property card. Addresses waiting for one are listed at the top of the tab; nothing creates a card by itself.\n   2. Create the CompanyCam folder and put the link on the card. This one ticks itself once the link is there.\n   3. Find out who the project manager is. It opens at 14 days and ticks itself if a PM is already on the card.\n   4. Closing info and closing date on the card. Opens at 14 days, ticks itself if the date is already there.\n   5. Vacancy date, vacancy info, lockbox and any other comments on the card. Opens at 14 days, ticks itself if any of it is already there.\n   Steps 3, 4 and 5 fall due on your task calendar the day the card turns 14 days old, and come back every 7 days until they are dealt with. If Slack already gave us the answer the box is ticked for you - what you are chasing is only what is genuinely missing, and it goes on the property card when you get it.\n2. OCCUPIED / CLOSED - we own it, somebody may still be in it.\n   1. Confirm it actually closed.\n   2. Confirm it is still occupied, and for how long.\n   3. Utilities transferred to us if applicable - ticks itself once all three are on the utility tracker, and you can mark it N/A if they are not transferring while it is occupied.\n   4. Follow up on the kickoff meeting. If one has not been walked within 14 days this falls due, so Bruce gets it on the schedule instead of it being forgotten.\n3. VACANT ON STANDBY - empty and waiting. This is where houses quietly rot.\n   1. Lockbox or key, and vacancy info - ticks itself off the card.\n   2. Utility transfer - ticks itself when the utility tracker has electric, gas and water.\n   3. Added to the mowing route - ticks itself when Marlo sets the mower.\n   4. Follow up with Gabe until the First Time Access checklist is done in CompanyCam. This one comes back every 2 days, not every 7.\n4. PRE-CONSTRUCTION - the paperwork that has to exist before anybody starts work. Each of these reads the tracker that already holds the answer, so you are only chasing what is genuinely missing.\n   1. Scope of work uploaded - ticks itself when a scope exists. Chase the PM every 2 weeks until it does.\n   2. Final budget completed and uploaded - ticks itself when the budget is locked. Once it is locked, chase the PM for the final budget to upload.\n   3. Permits approved and uploaded - only a real job on a house marked permitted; ticks itself when every permit reads Issued.\n   4. Start date agreed with the PM.\n   5. Prices and bids back from contractors.\n   6. Any other documents - cabinet layouts, design packages.",
   act:"1. FRAMING, MEPs & EXTERIOR - rough-ins booked, photos going up, exterior scope agreed.\n2. INSULATION & DRYWALL - insulation inspection passed before drywall is scheduled. Check budget against spent here, not later.\n3. FINISH MEPs - trim-out scheduled, fixtures on site, paint and flooring dated. Open the punch list now.\n4. PUNCH OUT & PRE-LIST - NPI inspection, punch items assigned, final clean, photos booked. Photos booked is the finish date.",
   post:"1. LISTED ON THE MARKET - run the On the Market checklist every week, log agent feedback, take the price question to Bruce.\n2. IN CONTRACT - closing timeline on the card, inspection items logged, remedies opened, utility end-date set.\n3. RENTAL HANDOFF / RTR - packet sent, rent-ready walk, keys to property management, utilities out of our name.\n4. CLOSED - final spend reconciled, utilities removed, folder closed, end of project report filed. The house stays on this list four weeks after closing, then drops off."
 };
@@ -21211,13 +21242,64 @@ const VA_AUTO = {
   pm:      {label:'a project manager is on the card',  get:function(c){ return String((c&&c.pm)||'').trim(); }},
   ccam:    {label:'the CompanyCam folder is linked',   get:function(c){ return String((c&&c.companyCam)||'').trim(); }},
   closing: {label:'a closing date is on the card',     get:function(c){ return String((c&&(c.closingDate||c.closingDateSell))||'').trim(); }},
+  // ---- the rest of the trackers, so a step she can see answered ticks itself -----
+  // Bruce, 11 Oct: "these things will self tick. For instance, if she goes and puts the
+  // utility information in for all the utilities, it will self tick on step two. Same
+  // thing for the mowing route. If Marlo completes that and marks it in the mowing
+  // route, then it'll automatically self-tick on Patience's checklist."
+  //
+  // Every one of these reads the tracker that already holds the answer. Nothing is
+  // copied, so there is one version of the truth and no way for the two to disagree.
+  utilities:{label:'the utilities are on the utility tracker',
+             get:function(c){ if(!c||!c.id) return '';
+               const e=_trkVal('ue',c.id,'prov'), g=_trkVal('ug',c.id,'prov'), w=_trkVal('uw',c.id,'prov');
+               // all three, or it is not done
+               return (String(e).trim() && String(g).trim() && String(w).trim()) ? 'yes' : ''; }},
+  mowing:   {label:'it is on the mowing route',
+             get:function(c){ return (c&&c.id) ? String(_trkVal('mowinfo',c.id,'who')||'').trim() : ''; }},
+  scope:    {label:'a scope of work exists for it',
+             get:function(c){ try{ return (typeof _scAll==='function' &&
+               _scAll().some(function(x){ return x.sc && x.sc.property_id===c.id; })) ? 'yes':''; }catch(e){ return ''; } }},
+  budget:   {label:'the final budget is locked',
+             get:function(c){ try{ return (typeof _budLocked==='function' && _budLocked(c)) ? 'yes':''; }catch(e){ return ''; } }},
+  // Approved means Issued on the permit tracker. A house nobody marked as permitted has
+  // nothing to approve, so the step answers itself rather than sitting there for ever.
+  permits:  {label:'its permits are issued on the permit tracker',
+             get:function(c){ try{
+               if(typeof _isPermittedCard==='function' && !_isPermittedCard(c)) return 'not a permitted house';
+               if(typeof _permitList!=='function' || typeof _permitProp!=='function') return '';
+               const rows=_permitList().filter(function(r){ const p=_permitProp(r); return p && p.id===c.id; });
+               if(!rows.length) return '';
+               return rows.every(function(r){ return String(r.status||'')==='Issued'; }) ? 'yes' : '';
+             }catch(e){ return ''; } }},
+  kickoff:  {label:'its kickoff meeting has been walked',
+             get:function(c){ try{
+               const d=window._wmData||{};
+               return Object.keys(d).some(function(wk){
+                 const m=((d[wk]||{}).kickoff||{}).__covered||{};
+                 return !!m[c.id];
+               }) ? 'yes' : '';
+             }catch(e){ return ''; } }},
+  access:   {label:'the First Time Access checklist is done',
+             get:function(c){ const cl=(c&&c.checklists)||{};
+               return String(cl.first_access_done||'').trim() || String(cl.vos_lockbox||'').trim(); }},
   vacancy: {label:'vacancy or lockbox info is on the card',
             get:function(c){ const cl=(c&&c.checklists)||{};
                              return String((c&&c.vacancyDate)||'').trim() || String(cl.lockbox||'').trim(); }}
 };
 function _vaItemDays(item){ const m=String(item||'').match(/@(\d+)d\b/); return m?parseInt(m[1],10):0; }
 function _vaItemAuto(item){ const m=String(item||'').match(/@auto:([a-z]+)\b/i); return (m&&VA_AUTO[m[1].toLowerCase()])?m[1].toLowerCase():''; }
-function _vaItemLabel(item){ return String(item||'').replace(/@(?:\d+d|auto:[a-z]+)/ig,'').replace(/\s+/g,' ').trim(); }
+// Bruce, 11 Oct: "follow up with Gabe every 48 hours until the First Time Access
+// checklist has been completed." Most steps come back weekly; that one comes back every
+// two days. "@every2d" says so on the line itself.
+function _vaItemEvery(item){
+  const m=String(item||'').match(/@every(\d+)d\b/i);
+  return m?Math.max(1,parseInt(m[1],10)):VA_FOLLOWUP_DAYS;
+}
+// "@na" means the honest answer may be "this does not apply here", and she should be
+// able to say so rather than leave a box open for ever on a house it was never about.
+function _vaItemNA(item){ return /@na\b/i.test(String(item||'')); }
+function _vaItemLabel(item){ return String(item||'').replace(/@(?:\d+d|every\d+d|auto:[a-z]+|na)\b/ig,'').replace(/\s+/g,' ').trim(); }
 // What the card itself already says. Nothing is written - if the information is later
 // removed the box opens again, which is the truth rather than a stale tick.
 function _vaAutoFound(c,item){
@@ -21229,16 +21311,38 @@ function _vaCardAgeDays(c){
   if(!t) return null;                      // no creation date: never gate, never guess
   return Math.floor((Date.now()-t)/86400000);
 }
+// ---- A clock cannot start before the rule it measures -------------------------
+// The Occupied/Closed, Vacant and Pre-Construction checklists were written on 11 Oct.
+// Measured from the card's creation date, a house opened in August read as 56 days late
+// on its very first day, and the Gabe chase announced "follow-up 35" for a rule that had
+// existed for an hour. That is not a finding, it is noise, and it would have taught her
+// to ignore the red.
+//
+// So each checklist has a day it came into force, and the clock runs from the later of
+// that day and the day the card was made. Upcoming Takedowns is deliberately absent:
+// it went live on 10 Oct, Bruce has worked with its real numbers since, and resetting
+// them would throw away true history.
+const VA_RULES_FROM = { pre2:'2026-10-11', pre3:'2026-10-11', pre4:'2026-10-11' };
+function _vaGateAge(c, cat){
+  const age=_vaCardAgeDays(c);
+  if(age===null) return null;
+  const from=VA_RULES_FROM[cat];
+  if(!from) return age;
+  try{
+    const since=Math.floor((_dParse(_ymd(new Date()))-_dParse(from))/86400000);
+    return Math.max(0, Math.min(age, since));
+  }catch(e){ return age; }
+}
 // Open means she can do it now. A step with no marker is always open; one with a marker
 // opens on the day the card reaches that age.
-function _vaItemOpen(c,item){
+function _vaItemOpen(c,item,cat){
   const d=_vaItemDays(item); if(!d) return true;
-  const age=_vaCardAgeDays(c); if(age===null) return true;
+  const age=_vaGateAge(c,cat); if(age===null) return true;
   return age>=d;
 }
-function _vaItemOpensIn(c,item){
+function _vaItemOpensIn(c,item,cat){
   const d=_vaItemDays(item); if(!d) return 0;
-  const age=_vaCardAgeDays(c); if(age===null) return 0;
+  const age=_vaGateAge(c,cat); if(age===null) return 0;
   return Math.max(0, d-age);
 }
 // ---- On hold -------------------------------------------------------------------
@@ -21277,40 +21381,97 @@ async function _vaHoldClear(pid, cat){
     'Taken off hold on the '+((VA_CATS[cat]||{}).name||cat)+' checklist');
   _vaGo(window._vaSec, cat);
 }
-function _vaChkOn(propId,cat,item){ return _trkOn('va_chk',propId,cat+'|'+_vaSlug(item)); }
+function _vaChkOn(propId,cat,item){ return _trkOn('va_chk',propId,cat+'|'+_vaSlug(item))===true
+       && _trkVal('va_chk',propId,cat+'|'+_vaSlug(item))!=='na'; }
+// Marked "does not apply". Stored in the same place as the tick so it travels with the
+// step, and counted as answered so it stops chasing her.
+function _vaChkNA(propId,cat,item){ return _trkVal('va_chk',propId,cat+'|'+_vaSlug(item))==='na'; }
+async function _vaChkNAToggle(propId,cat,itemSlug){
+  if(_blockIfReadOnly()) return;
+  const cur=_trkVal('va_chk',propId,cat+'|'+itemSlug);
+  await _trkSet('va_chk',propId,cat+'|'+itemSlug, cur==='na'?false:'na', true);
+}
 function _vaCardById(propId){ return (typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===propId; })||null; }
 // A step is done when somebody ticked it OR the card already answers it.
 function _vaStepDone(c,cat,item){
-  if(c && _vaChkOn(c.id,cat,item)) return true;
-  return !!(c && _vaAutoFound(c,item));
+  if(!c) return false;
+  if(_vaChkOn(c.id,cat,item)) return true;
+  if(_vaChkNA(c.id,cat,item)) return true;        // answered, just not with a yes
+  return !!_vaAutoFound(c,item);
 }
 // A gated step she has not done yet. It falls due the day the card reaches the gate age,
 // and Bruce asked for a nudge "every seven days after that" until it is dealt with.
-const VA_FOLLOWUP_DAYS = 7;
-function _vaItemDue(c,item){
+const VA_FOLLOWUP_DAYS = 7;   // unless the line says @everyNd
+function _vaItemDue(c,item,cat){
   const d=_vaItemDays(item); if(!d) return '';
   const t=Date.parse((c&&c.createdAt)||''); if(!t) return '';
-  return _ymd(new Date(t+d*86400000));
+  let start=t;
+  const from=VA_RULES_FROM[cat];
+  if(from){ const f=Date.parse(from+'T00:00:00'); if(f && f>start) start=f; }
+  return _ymd(new Date(start+d*86400000));
 }
 function _vaItemChase(c,cat,item){
   const d=_vaItemDays(item); if(!d) return null;
   if(_vaStepDone(c,cat,item)) return null;
-  const age=_vaCardAgeDays(c); if(age===null || age<d) return null;
+  const age=_vaGateAge(c,cat); if(age===null || age<d) return null;
+  const every=_vaItemEvery(item);
   const late=age-d;
-  return { due:_vaItemDue(c,item), late:late,
-           round:Math.floor(late/VA_FOLLOWUP_DAYS)+1,
-           dueAgain:(VA_FOLLOWUP_DAYS-(late%VA_FOLLOWUP_DAYS))%VA_FOLLOWUP_DAYS };
+  return { due:_vaItemDue(c,item,cat), late:late, every:every,
+           round:Math.floor(late/every)+1,
+           dueAgain:(every-(late%every))%every };
 }
 async function _vaChkToggle(propId,cat,itemSlug){
   if(_blockIfReadOnly()) return;
   const cur=_trkOn('va_chk',propId,cat+'|'+itemSlug);
   await _trkSet('va_chk',propId,cat+'|'+itemSlug,!cur,true);
 }
+// ---- Work that follows the house ------------------------------------------------
+// Bruce, 11 Oct: "as you go from upcoming takedowns, occupied/closed, to vacant on
+// standby, from vacant on standby to pre-construction, any checklist tasks that are not
+// completed just carry into the next once the property card is moved into the next step.
+// And then it's Patience's job to follow up with everyone to keep everything cleaned up."
+//
+// A house only ever sits in ONE category, so when it moves, its old checklist stops being
+// drawn - and anything half-done on it used to vanish with it. Now the unfinished steps
+// come too.
+//
+// A carried step keeps its ORIGINAL key. That matters: it is the same job, so ticking it
+// here ticks the same box, and if the house somehow moves back nothing is duplicated or
+// lost. The step is shown with the category it came from, so nobody wonders why an
+// Upcoming Takedowns question is being asked of a house that closed weeks ago.
+const VA_CARRY_CHAIN = ['pre1','pre2','pre3','pre4'];
+function _vaCarryFrom(cat){
+  const i=VA_CARRY_CHAIN.indexOf(cat);
+  return i>0 ? VA_CARRY_CHAIN.slice(0,i) : [];
+}
+// Everything still open on the categories this house has already passed through.
+function _vaCarried(c, cat){
+  if(!c || !c.id) return [];
+  const out=[];
+  _vaCarryFrom(cat).forEach(function(from){
+    (_vaTpl(from)||[]).forEach(function(it){
+      if(_vaStepDone(c, from, it)) return;             // finished there, nothing to carry
+      out.push({ item:it, from:from, fromName:(VA_CATS[from]||{}).name||from });
+    });
+  });
+  return out;
+}
+// The rows a category actually shows for one house: its own steps, plus whatever has
+// followed the house in. Each row knows which category owns it, so every tick, every
+// gate and every chase is read and written against the category that set it.
+function _vaRows(c, cat){
+  const own=(_vaTpl(cat)||[]).map(function(it){ return {item:it, cat:cat, carried:false}; });
+  const got=_vaCarried(c, cat).map(function(x){
+    return {item:x.item, cat:x.from, carried:true, fromName:x.fromName};
+  });
+  return own.concat(got);
+}
+function _vaRowDone(c,row){ return _vaStepDone(c, row.cat, row.item); }
 function _vaChkCount(propId,cat){
-  const items=_vaTpl(cat);
-  const c=_vaCardById(propId);
-  const done=items.filter(it=>_vaStepDone(c||{id:propId},cat,it)).length;
-  return [done,items.length];
+  const c=_vaCardById(propId) || {id:propId};
+  const rows=_vaRows(c,cat);
+  const done=rows.filter(function(r){ return _vaRowDone(c,r); }).length;
+  return [done,rows.length];
 }
 // A card belongs to exactly one category. Closed houses fall off after four weeks, the
 // same window the property dashboard uses.
@@ -21352,21 +21513,23 @@ function _vaDerivedTasks(vaName){
     if(!vaName || !_canonSame(vaName, _vaRoleName())) return [];
     const out=[];
     Object.keys(VA_CATS).forEach(function(cat){
-      const items=_vaTpl(cat);
-      if(!items.some(function(it){ return _vaItemDays(it); })) return;
       _vaCards(cat).forEach(function(c){
         // On hold means on hold. A held house stops nagging her until it comes back,
         // which is the entire point of the button.
         if(typeof _vaHeld==='function' && _vaHeld(c.id,cat)) return;
-        items.forEach(function(it){
-          const ch=_vaItemChase(c,cat,it);
+        // Carried work chases her too - that is the point of it following the house.
+        _vaRows(c,cat).forEach(function(r){
+          const it=r.item, rc=r.cat;
+          const ch=_vaItemChase(c,rc,it);
           if(!ch) return;
-          out.push({ id:'vachk:'+c.id+':'+cat+':'+_vaSlug(it),
+          const own=_vaTpl(rc)||[];
+          out.push({ id:'vachk:'+c.id+':'+rc+':'+_vaSlug(it),
                      derived:true, readOnly:true,
                      title:_vaItemLabel(it)+(ch.round>1?(' \u2014 follow-up '+ch.round):''),
                      property_id:c.id, due_date:ch.due, assignee:vaName,
                      assignees:[vaName], status:'open',
-                     source:VA_CATS[cat].name+' checklist, step '+(items.indexOf(it)+1) });
+                     source:(VA_CATS[rc]||{}).name+' checklist, step '+(own.indexOf(it)+1)
+                            +(r.carried?' (carried over)':'') });
         });
       });
     });
@@ -21521,29 +21684,53 @@ function _vaSectionView(vaName,sec){
   } else {
     const items=_vaTpl(cat);
     const cards=_vaCards(cat);
+    // Different houses carry different unfinished work in, so the columns are the UNION
+    // of this category's own steps and everything any house on this tab has dragged in.
+    // A house that never had a given step simply gets an empty cell under it - that is
+    // the truthful answer, and it keeps every row the same shape.
+    const colKey=r=>r.cat+'|'+_vaSlug(r.item);
+    const cols=[]; const seen={};
+    items.forEach(function(it){ const r={item:it,cat:cat,carried:false};
+      seen[colKey(r)]=1; cols.push(r); });
+    cards.forEach(function(c){ _vaCarried(c,cat).forEach(function(x){
+      const r={item:x.item, cat:x.from, carried:true, fromName:x.fromName};
+      if(!seen[colKey(r)]){ seen[colKey(r)]=1; cols.push(r); }
+    }); });
     // One column per step, with the step named at the top - the boxes used to be an
     // anonymous row you had to decode from a legend at the foot of the page. A step that
     // is not open yet says when it opens instead of sitting there looking undone.
     const prow=c=>{
+      // Every house is drawn against the same columns. A column this house never had
+      // is left blank rather than pretending it is an open job.
+      const mine={}; _vaRows(c,cat).forEach(function(r){ mine[r.cat+'|'+_vaSlug(r.item)]=1; });
+      const rows=cols;
       const [done,total]=_vaChkCount(c.id,cat);
       const age=_vaCardAgeDays(c);
-      const cells=items.map(it=>{
-        const sl=_vaSlug(it), ticked=_vaChkOn(c.id,cat,it);
-        const auto=_vaAutoFound(c,it);          // the card already answers this one
-        const on=ticked||!!auto;
-        const open=_vaItemOpen(c,it), inDays=_vaItemOpensIn(c,it);
-        const chase=_vaItemChase(c,cat,it);
-        // An automatic tick is not hers to undo - it is what the card says. Hand her the
-        // property instead, so she can see why.
+      const cells=rows.map(r=>{
+        const it=r.item, rc=r.cat;
+        if(!mine[rc+'|'+_vaSlug(it)])
+          return `<td style="padding:9px 8px;text-align:center;color:#D5D9E0;background:#FCFCFD">&middot;</td>`;
+        const sl=_vaSlug(it), ticked=_vaChkOn(c.id,rc,it), na=_vaChkNA(c.id,rc,it);
+        const auto=_vaAutoFound(c,it);          // a tracker already answers this one
+        const on=ticked||!!auto||na;
+        const open=_vaItemOpen(c,it,rc), inDays=_vaItemOpensIn(c,it,rc);
+        const chase=_vaItemChase(c,rc,it);
+        const mark = na ? '\u2796' : (on?'\u2705':'\u2b1c');
+        // An automatic tick is not hers to undo - it is what the tracker says. Send her
+        // to the property instead, so she can see why.
         const box = (ro||auto)
-          ? `<span style="font-size:16px">${on?'\u2705':'\u2b1c'}</span>`
-          : `<span onclick="_vaChkToggle('${c.id}','${cat}','${sl}')" style="cursor:pointer;font-size:16px">${on?'\u2705':'\u2b1c'}</span>`;
+          ? `<span style="font-size:16px">${mark}</span>`
+          : `<span onclick="_vaChkToggle('${c.id}','${rc}','${sl}')" style="cursor:pointer;font-size:16px">${mark}</span>`;
+        const naBtn = (!ro && !auto && _vaItemNA(it))
+          ? `<div onclick="_vaChkNAToggle('${c.id}','${rc}','${sl}')" title="This one does not apply to this house" style="cursor:pointer;font-size:9.5px;color:${na?'#185FA5':'#8A94A6'};margin-top:2px">${na?'applies after all':'N/A'}</div>` : '';
         let note='';
-        if(auto)              note=`<div title="${_calEsc(auto)}" style="font-size:9.5px;color:#2E7D32;margin-top:2px;white-space:nowrap">already done</div>`;
+        if(na)                note=`<div style="font-size:9.5px;color:#566070;margin-top:2px;white-space:nowrap">does not apply</div>`;
+        else if(auto)         note=`<div title="${_calEsc(auto)}" style="font-size:9.5px;color:#2E7D32;margin-top:2px;white-space:nowrap">already done</div>`;
         else if(!on && !open) note=`<div style="font-size:10px;color:#8A94A6;margin-top:2px;white-space:nowrap">opens in ${inDays}d</div>`;
-        else if(chase)        note=`<div style="font-size:9.5px;color:#B42318;font-weight:600;margin-top:2px;white-space:nowrap">${chase.late===0?'due today':('chase &middot; '+chase.late+'d late')}</div>`;
-        const bg = auto ? 'background:#F3FAF5;' : (chase ? 'background:#FDF4F3;' : ((!on&&!open)?'background:#FBFBFD;':''));
-        return `<td style="padding:9px 8px;text-align:center;vertical-align:top;${bg}">${box}${note}</td>`;
+        else if(chase)        note=`<div style="font-size:9.5px;color:#B42318;font-weight:600;margin-top:2px;white-space:nowrap">${chase.late===0?'due today':(chase.late+'d late')}</div>`;
+        const bg = na ? 'background:#FAFAFC;' : (auto ? 'background:#F3FAF5;' : (chase ? 'background:#FDF4F3;' : ((!on&&!open)?'background:#FBFBFD;':'')));
+        const carried = r.carried ? 'border-top:2px solid #E0C98A;' : '';
+        return `<td style="padding:9px 8px;text-align:center;vertical-align:top;${bg}${carried}">${box}${note}${naBtn}</td>`;
       }).join('');
       const held=_vaHeld(c.id,cat);
       const hold = ro ? '' : (held
@@ -21633,14 +21820,17 @@ function _vaSectionView(vaName,sec){
         <thead><tr style="background:#122A4A;color:#fff">
           <th style="padding:9px 12px;text-align:left">Property</th>
           <th style="padding:9px 10px;text-align:left;white-space:nowrap">Card age</th>
-          ${items.map(function(it,i){
+          ${cols.map(function(r,i){
             // Bruce, 11 Oct: "you don't even need to have the words in there after 14
             // days ... you should just set it automatically." The rule still runs - the
-            // box goes red and counts the days late, and ticks itself when the card
-            // answers it. The heading no longer explains what the box is already showing.
-            return `<th style="padding:8px 8px;text-align:center;font-weight:600;min-width:96px;max-width:150px">
-              <div style="font-size:10px;opacity:.6;letter-spacing:.05em">STEP ${i+1}</div>
-              <div style="font-size:11.5px;line-height:1.3;white-space:normal">${_calEsc(_vaItemLabel(it))}</div></th>`; }).join('')}
+            // box goes red and counts the days late, and ticks itself when a tracker
+            // answers it. The heading no longer explains what the box already shows.
+            // A carried column says which list it came from, so nobody wonders why an
+            // Upcoming Takedowns question is being asked of a house that closed weeks ago.
+            return `<th style="padding:8px 8px;text-align:center;font-weight:600;min-width:96px;max-width:150px;${r.carried?'border-top:2px solid #E0C98A;':''}">
+              <div style="font-size:10px;opacity:.6;letter-spacing:.05em">${r.carried?'CARRIED':('STEP '+(i+1))}</div>
+              <div style="font-size:11.5px;line-height:1.3;white-space:normal">${_calEsc(_vaItemLabel(r.item))}</div>
+              ${r.carried?`<div style="font-size:9px;opacity:.6;margin-top:2px;font-weight:400">from ${_calEsc(r.fromName||'')}</div>`:''}</th>`; }).join('')}
           <th style="padding:9px 12px;text-align:left">Done</th></tr></thead>
         <tbody>${(function(){
           // Bruce, 11 Oct: a house on hold "disappears for 14 days and then reappears
@@ -21651,9 +21841,9 @@ function _vaSectionView(vaName,sec){
           const rest=cards.filter(function(c){ return  _vaHeld(c.id,cat); })
                           .sort(function(a,b){ return _vaHoldUntil(a.id,cat).localeCompare(_vaHoldUntil(b.id,cat)); });
           const body = live.length ? live.map(prow).join('')
-            : `<tr><td colspan="${items.length+3}" style="padding:22px;text-align:center;color:#636b7a">${cards.length?'Everything in this category is on hold right now.':'No properties in this category right now.'}</td></tr>`;
+            : `<tr><td colspan="${cols.length+3}" style="padding:22px;text-align:center;color:#636b7a">${cards.length?'Everything in this category is on hold right now.':'No properties in this category right now.'}</td></tr>`;
           const heldHead = rest.length
-            ? `<tr><td colspan="${items.length+3}" style="padding:9px 12px;background:#FBFAF7;border-top:0.5px solid #e8e2d4;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#8A5A10">On hold &middot; ${rest.length} &mdash; ${rest.length===1?'it comes':'they come'} back by ${_calEsc(_vaHoldUntil(rest[rest.length-1].id,cat))}</td></tr>`
+            ? `<tr><td colspan="${cols.length+3}" style="padding:9px 12px;background:#FBFAF7;border-top:0.5px solid #e8e2d4;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#8A5A10">On hold &middot; ${rest.length} &mdash; ${rest.length===1?'it comes':'they come'} back by ${_calEsc(_vaHoldUntil(rest[rest.length-1].id,cat))}</td></tr>`
             : '';
           return body + heldHead + rest.map(prow).join('');
         })()}</tbody>
@@ -31444,4 +31634,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-11c takedown-hold-button-short-labels-step1-autotick -->
+<!-- build: 2026-10-11d patience-four-checklists-carryover-selftick-na -->
