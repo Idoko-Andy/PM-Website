@@ -11867,7 +11867,11 @@ const MKT_PHASES={
   contract:["In Contract"],
   rtr:     ["RTR In Process"],
   ctc:     ["RTR Completed (Pending Closing)"],
-  soon:    ["Rental Handoff Process","Pre List / Punchout Process"]
+  // Bruce, 10 Oct: "as soon as it gets into the finishes process, it needs to populate
+  // in here in the coming soon tab on the meeting doc. But it still also needs to stay
+  // in the full project Monday meeting as well." Nothing is moved or renamed - this tab
+  // simply starts watching a house earlier, and Monday keeps walking the same houses.
+  soon:    ["Finishes","Pre List / Punchout Process","Rental Handoff Process"]
 };
 // Bruce, 8 Sept: "Coming Soon needs to be all the way on the left, then Active
 // Listings, then In Contract, then Request a Remedy, then Clear to Close, then
@@ -11888,13 +11892,73 @@ const MKT_TABS=[
 // next render threw "_mktTab is not a function" - which is why In Contract, Coming Soon
 // and Suggested Listing Doc could not be opened at all. Keep the two names apart.
 function _mktTab(){ const t=window._mktTabSel||'active'; return MKT_TABS.some(x=>x[0]===t)?t:'active'; }
-function _mktGo(t,wk){ window._mktTabSel=t; openWeeklyMeeting('market', wk); }
+function _mktGo(t,wk){
+  window._mktTabSel=t;
+  // A realtor with houses on one tab may have none on the next, and an empty screen
+  // with no explanation reads as a bug. Keep the choice only where it still applies.
+  const sel=window._mktRealtorSel||'';
+  if(sel && sel!=='__none'){
+    const next=(t==='doc')?_mktCards('soon').concat(_mktCards('active')):_mktCards(t);
+    if(!next.some(c=>_sameAssignee(_mktRealtor(c), sel))) window._mktRealtorSel='';
+  }
+  openWeeklyMeeting('market', wk);
+}
 function _mktCards(which){
   const _n=(a)=>{ const m=String(a||'').match(/\d+/); return m?parseInt(m[0],10):999999; };
   const ph=MKT_PHASES[which]||[];
   return (typeof propCards!=='undefined'?propCards:[])
     .filter(c=>!c.archived && ph.includes(c.phase))
     .sort((a,b)=>_n(a.addr)-_n(b.addr)||String(a.addr||'').localeCompare(String(b.addr||'')));
+}
+// ---- Realtor sub-tabs -----------------------------------------------------------
+// Bruce, 10 Oct: "under each tab it needs to break off the properties by realtor. So
+// coming soon, if I click on coming soon it would then break down to Will and Katie. So
+// I click on Will and it'll show all the properties tied to Will ... same thing for
+// active listings and contract properties and request for remedy, cleared to close,
+// suggested listing docs."
+//
+// The realtor comes off the property card, unless somebody typed a different one into
+// this meeting - the meeting answer wins, because that is the person actually working it.
+function _mktRealtor(c){
+  try{
+    const d=((window._wmData||{})[window.__wmLastWeek||_wmWeekKeyFor('market')]||{}).market||{};
+    const typed=d[c.id+'::realtor'];
+    if(typed && String(typed).trim()) return String(typed).trim();
+  }catch(e){}
+  return String((c&&c.listingAgent)||'').trim();
+}
+// The realtors actually on this tab, most properties first, then alphabetical. Built
+// from the houses themselves so a new realtor needs no setting up anywhere.
+function _mktRealtors(cards){
+  const by={};
+  cards.forEach(function(c){ const r=_mktRealtor(c)||''; const k=_canonName?_canonName(r):r.toLowerCase();
+    if(!by[k]) by[k]={name:r, n:0}; by[k].n++; });
+  const named=Object.keys(by).filter(k=>by[k].name).map(k=>by[k])
+    .sort((a,b)=>b.n-a.n || a.name.localeCompare(b.name));
+  const none=by[''] ? by[''].n : 0;
+  return {list:named, none:none};
+}
+function _mktRealtorGo(v){ window._mktRealtorSel=v||''; openWeeklyMeeting('market', window.__wmLastWeek||undefined); }
+function _mktRealtorFilter(cards){
+  const sel=window._mktRealtorSel||'';
+  if(!sel) return cards;
+  if(sel==='__none') return cards.filter(c=>!_mktRealtor(c));
+  return cards.filter(c=>_sameAssignee(_mktRealtor(c), sel));
+}
+function _mktRealtorBar(cards){
+  const r=_mktRealtors(cards);
+  if(!r.list.length && !r.none) return '';
+  // One realtor and nobody unassigned is not a choice, so do not pretend it is.
+  if(r.list.length<2 && !r.none) return '';
+  const sel=window._mktRealtorSel||'';
+  const chip=(val,label,n)=>{ const on=(sel===val);
+    return `<div onclick="_mktRealtorGo('${_argEsc(val)}')" style="cursor:pointer;padding:5px 12px;border-radius:99px;border:0.5px solid ${on?'#185FA5':'#dde2ec'};background:${on?'#E6F1FB':'#fff'};color:${on?'#185FA5':'#566070'};font-size:12.5px;font-weight:${on?700:500};white-space:nowrap">${_calEsc(label)} <span style="font-weight:400;opacity:.75">${n}</span></div>`; };
+  return `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:11px">
+      <span style="font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#8A94A6;margin-right:2px">By realtor</span>
+      ${chip('','Everyone',cards.length)}
+      ${r.list.map(x=>chip(x.name,x.name,x.n)).join('')}
+      ${r.none?chip('__none','No realtor yet',r.none):''}
+    </div>`;
 }
 function _mktMoney(v){ const n=parseFloat(String(v||'').replace(/[^0-9.\-]/g,'')); return isNaN(n)?null:n; }
 function _mktDom(listed){
@@ -11916,6 +11980,320 @@ function _mktMargin(price, c){
   if(sp!=null) return p - sp;
   return null;
 }
+// ---- Coming Soon: the six dates ------------------------------------------------
+// Bruce, 10 Oct: "all of those dates need to have an auto function as well, that if that
+// is scheduled on the construction calendar or the task calendar for any person or
+// property, it auto fills that date."
+//
+// So each date knows what it is called out there in the wild. Nothing is written back:
+// the found date is shown as the answer until somebody types over it, and the card always
+// says where the date came from, so a wrong guess is visible rather than silent.
+const MKT_SOON_DATES = [
+  ['walk_realtor', 'Realtor walk',        /realtor\s*walk|agent\s*walk|realtor\s*(visit|showing|preview)|walk.*realtor/i],
+  ['walk_npi',     'NPI inspection walk', /\bnpi\b|pre[\s-]?list\s*inspect|final\s*inspect|inspection\s*walk/i],
+  ['clean_final',  'Final clean',         /final\s*clean|deep\s*clean|clean\s*out|post[\s-]?construction\s*clean/i],
+  ['stage_date',   'Staging',             /stag(e|ed|ing)\b/i],
+  ['pics_date',    'Photos',              /photo|photograph|pictures|matterport|drone/i],
+  ['list_date',    'Target list date',    /target\s*list|go\s*live|list(ing)?\s*date|on\s*the\s*market/i]
+];
+// Look on the construction calendar first, then the task calendar. An event still to come
+// beats one that has already happened; among several, the nearest in time wins.
+function _mktAutoDate(c, re){
+  const today=_ymd(new Date());
+  const hits=[];
+  (typeof _calEventsCache!=='undefined'?_calEventsCache:[]).forEach(function(e){
+    if(e.property_id!==c.id || !e.event_date) return;
+    const words=[e.title||'', e.notes||'', (e.kind==='contractor'&&typeof _contractorName==='function')?_contractorName(e.contractor_id):''].join(' ');
+    if(re.test(words)) hits.push({date:e.event_date, where:'construction calendar', what:(e.title||words).trim().slice(0,60), done:!!e.completed});
+  });
+  (typeof _tasksCache!=='undefined'?_tasksCache:[]).forEach(function(t){
+    if(t.property_id!==c.id || !t.due_date) return;
+    const words=[t.title||'', t.category||''].join(' ');
+    if(re.test(words)) hits.push({date:t.due_date, where:'task calendar', what:(t.title||'').trim().slice(0,60), done:_taskStatusFor?(_taskStatusFor(t)==='done'):false});
+  });
+  if(!hits.length) return null;
+  const ahead=hits.filter(h=>h.date>=today).sort((a,b)=>a.date<b.date?-1:1);
+  if(ahead.length) return ahead[0];
+  return hits.sort((a,b)=>a.date<b.date?1:-1)[0];
+}
+// Bruce: "it can show what is already scheduled for the next two weeks from the
+// construction calendar only. That's all the realtors need to see."
+function _mktNext2Weeks(c){
+  const t0=_ymd(new Date());
+  const t1=_ymd(new Date(Date.now()+14*86400000));
+  return (typeof _calEventsCache!=='undefined'?_calEventsCache:[])
+    .filter(e=>e.property_id===c.id && e.event_date && e.event_date>=t0 && e.event_date<=t1)
+    .sort((a,b)=>String(a.event_date).localeCompare(String(b.event_date)));
+}
+function _mktEvLabel(e){
+  if(e.kind==='contractor' && typeof _contractorName==='function') return _contractorName(e.contractor_id)||'Contractor';
+  return e.title||(e.kind==='material'?'Material delivery':'Scheduled');
+}
+// ---- The CMA / comps block -----------------------------------------------------
+// Bruce, 10 Oct: "the CMA slash comps document can either be typed out or Katie can
+// attach the PDF that Tom created for her." Both, then - a typing box and a real
+// attachment, next to each other, with the old link field still honoured so nothing
+// anybody has already pasted is lost.
+const MKT_CMA_PREFIX='cma-docs';
+const MKT_CMA_MAX_MB=25;
+function _mktCmaList(c){ const a=((c&&c.checklists)||{}).cma_docs; return Array.isArray(a)?a:[]; }
+function _mktCmaBlock(c, link, typed, linkId, typedId, box, roNow){
+  const docs=_mktCmaList(c);
+  const files=docs.length
+    ? docs.map(function(d){ return `<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-top:0.5px solid #f4f5f7;font-size:12.5px">
+        <a href="${_calEsc(d.url||'')}" target="_blank" style="color:#185FA5;text-decoration:none;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">&#128196; ${_calEsc(d.name||'document')}</a>
+        <span style="color:#8A94A6;white-space:nowrap">${_calEsc(d.by||'')}</span>
+        ${roNow?'':`<span onclick="_mktCmaRemove('${c.id}','${_argEsc(d.id)}')" title="Remove this attachment" style="cursor:pointer;color:#B42318;font-weight:700">&times;</span>`}
+      </div>`; }).join('')
+    : `<div style="padding:9px 10px;border-top:0.5px solid #f4f5f7;font-size:12.5px;color:#636b7a">Nothing attached yet.</div>`;
+  const upload = roNow ? '' : `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 10px;border-top:0.5px solid #f4f5f7">
+      <input type="file" id="cma-f-${c.id}" accept="application/pdf,.pdf" multiple style="font-size:12px;max-width:100%"/>
+      <span onclick="_mktCmaUpload('${c.id}')" style="cursor:pointer;font-size:12.5px;background:#111;color:#fff;border-radius:6px;padding:6px 12px;white-space:nowrap">Attach</span>
+      <span id="cma-s-${c.id}" style="display:none;font-size:12px;color:#566070"></span>
+    </div>`;
+  return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-top:4px">
+      <div>
+        <div style="font-size:10.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em;margin-bottom:3px">Typed out</div>
+        ${roNow
+          ? `<div style="font-size:13px;color:#333;white-space:pre-wrap;background:#F7F8FB;border-radius:7px;padding:8px 10px;min-height:30px">${_calEsc(typed)||'<span style="color:#636b7a">Nothing written</span>'}</div>`
+          : `<textarea id="${typedId}" placeholder="One comp per line &mdash; address &middot; sold price &middot; date &middot; sq ft &middot; how it compares." style="width:100%;min-height:70px;padding:8px 10px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px;color:#222;resize:vertical;font-family:inherit">${_calEsc(typed)}</textarea>`}
+      </div>
+      <div style="border:0.5px solid #e6e8ee;border-radius:8px;overflow:hidden">
+        <div style="padding:7px 10px;background:#fafbfc;font-size:10.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em">Tommy&rsquo;s PDF</div>
+        ${files}${upload}
+        ${roNow
+          ? (link?`<div style="padding:6px 10px;border-top:0.5px solid #f4f5f7"><a href="${_calEsc(link)}" target="_blank" style="font-size:12.5px;color:#185FA5">Open the linked CMA &#8599;</a></div>`:'')
+          : `<div style="padding:7px 10px;border-top:0.5px solid #f4f5f7"><input id="${linkId}" value="${_calEsc(link)}" placeholder="&hellip;or paste a link instead" style="${box};width:100%"/></div>`}
+      </div>
+    </div>`;
+}
+async function _mktCmaUpload(pid){
+  if(_blockIfReadOnly()) return;
+  const inp=document.getElementById('cma-f-'+pid);
+  const files=(inp && inp.files)?Array.from(inp.files):[];
+  if(!files.length){ alert("Choose a PDF first."); return; }
+  const tooBig=files.filter(f=>f.size > MKT_CMA_MAX_MB*1048576);
+  if(tooBig.length) alert("These are over "+MKT_CMA_MAX_MB+"MB and were not attached:\n\n"+tooBig.map(f=>f.name).join("\n"));
+  const ok=files.filter(f=>f.size <= MKT_CMA_MAX_MB*1048576);
+  if(!ok.length) return;
+  const st=document.getElementById('cma-s-'+pid);
+  const say=(t)=>{ if(st){ st.textContent=t; st.style.display=t?'inline':'none'; } };
+  const me=(typeof _miWho==='function')?_miWho():'';
+  const added=[], failed=[];
+  for(let i=0;i<ok.length;i++){
+    const f=ok[i];
+    say('Attaching '+(i+1)+' of '+ok.length+'\u2026');
+    const path=MKT_CMA_PREFIX+'/'+pid+'/'+Date.now()+'-'+i+'-'+_pdocSafeName(f.name);
+    try{
+      const up=await supabase.storage.from(PERMIT_DOC_BUCKET).upload(path, f, {contentType:f.type||'application/pdf', upsert:false});
+      if(up.error){ failed.push(f.name+' \u2014 '+(up.error.message||'upload refused')); continue; }
+      const pub=supabase.storage.from(PERMIT_DOC_BUCKET).getPublicUrl(path);
+      added.push({ id:Date.now().toString(36)+Math.random().toString(36).slice(2,5), name:f.name,
+                   path:path, url:(pub&&pub.data&&pub.data.publicUrl)||'', size:f.size, by:me,
+                   at:new Date().toISOString() });
+    }catch(e){ failed.push(f.name+' \u2014 '+((e&&e.message)||'upload failed')); }
+  }
+  if(added.length){
+    const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
+    const arr=_mktCmaList(c).concat(added);
+    if(await _wmChecklistPatch(pid,{cma_docs:arr})){
+      if(typeof _logAudit==='function') _logAudit('created','property',(c&&c.addr)||'', 'Attached '+added.length+' CMA document'+(added.length===1?'':'s')+': '+added.map(x=>x.name).join(', '));
+    }
+  }
+  say('');
+  if(failed.length) alert("Some files did not attach:\n\n"+failed.join("\n"));
+  if(typeof openWeeklyMeeting==='function') openWeeklyMeeting('market', window.__wmLastWeek||undefined);
+}
+async function _mktCmaRemove(pid, did){
+  if(_blockIfReadOnly()) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return;
+  const d=_mktCmaList(c).find(x=>x.id===did); if(!d) return;
+  // Named, every time - "are you sure" on its own tells nobody what they are about to lose.
+  if(!confirm('Remove "'+(d.name||'this document')+'" from '+(c.addr||'this property')+'?\n\nThe file itself stays in storage; it just stops showing on the meeting doc.')) return;
+  const arr=_mktCmaList(c).filter(x=>x.id!==did);
+  if(await _wmChecklistPatch(pid,{cma_docs:arr})){
+    if(typeof _logAudit==='function') _logAudit('deleted','property', c.addr||'', 'Removed CMA document: '+(d.name||''));
+  }
+  if(typeof openWeeklyMeeting==='function') openWeeklyMeeting('market', window.__wmLastWeek||undefined);
+}
+// ---- Active Listings: price drops ----------------------------------------------
+// Bruce, 10 Oct: "price drops, those need to be tracked, each price drop and when and
+// what we're dropping it to." One drop per line in the carried `drops` field, written
+// as "2026-09-14 $329,900" so the history is readable even in the raw record.
+function _mktDropList(raw){
+  return String(raw||'').split('\n').map(function(l){
+    const m=l.match(/(\d{4}-\d{2}-\d{2})\s*[^\d$]*\$?\s*([\d,]+)/);
+    if(!m) return null;
+    return { date:m[1], price:_mktMoney(m[2]) };
+  }).filter(Boolean).sort(function(a,b){ return a.date<b.date?-1:1; });
+}
+// Each drop shown against the one before it, so the room sees the size of each cut and
+// the total off the original ask without anybody doing arithmetic out loud.
+function _mktDropChain(raw, firstPrice){
+  const list=_mktDropList(raw);
+  const start=_mktMoney(firstPrice);
+  let prev=(start!=null && (!list.length || start>list[0].price)) ? start : null;
+  return list.map(function(d){
+    const cut=(prev!=null)?(prev-d.price):null;
+    const out={date:d.date, price:d.price, cut:cut, from:prev};
+    prev=d.price; return out;
+  });
+}
+async function _mktAddDrop(pid){
+  if(_blockIfReadOnly()) return;
+  const el=document.getElementById('wm-'+pid+'::drops');
+  const price=prompt("What are we dropping the price to?\n\nJust the number, e.g. 329900");
+  if(price===null) return;
+  const n=_mktMoney(price);
+  if(n==null || n<=0){ alert("That did not look like a price, so nothing was recorded."); return; }
+  const when=prompt("What date does this drop take effect?", _ymd(new Date()));
+  if(when===null) return;
+  const date=/^\d{4}-\d{2}-\d{2}$/.test(String(when||'').trim()) ? String(when).trim() : _ymd(new Date());
+  const line=date+' $'+Math.round(n).toLocaleString();
+  if(el){
+    el.value=(el.value?el.value.replace(/\s*$/,'')+'\n':'')+line;
+    el.dispatchEvent(new Event('input',{bubbles:true}));
+    el.dispatchEvent(new Event('change',{bubbles:true}));
+  }
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
+  if(typeof _logAudit==='function') _logAudit('updated','property',(c&&c.addr)||'', 'Price drop recorded: '+line);
+}
+
+// ---- Showings and feedback, read from whatever Slack sync writes them -----------
+// Bruce, 10 Oct: "total showings needs to be tracked automatically ... but it needs to
+// read that information from Slack", and the same for the last seven days and for the
+// repeated feedback.
+//
+// NOTHING IN THIS APP READS SLACK TODAY. What this does is define where such a sync
+// would put its answer, read it if it is there, and otherwise say plainly that it is
+// not. The manual boxes keep working either way, and a typed number always wins over a
+// synced one - Bruce: "Katie or the realtors can verify and update it as needed."
+//
+// The contract, for whoever builds the sync: pm_settings key 'showings', shaped
+//   { "<property id>": { total:12, last7:3, asof:"2026-10-11",
+//                        feedback:[{text:"priced too high", at:"2026-10-09"}, ...] } }
+function _mktShowings(pid){
+  const d=(typeof window!=='undefined' && window._shwData) ? window._shwData : null;
+  const r=d && d[pid];
+  return (r && typeof r==='object') ? r : null;
+}
+async function _mktLoadShowings(){
+  try{
+    const r=await supabase.from("pm_settings").select("data").eq("key","showings").maybeSingle();
+    window._shwData=(r.error || !r.data) ? {} : ((r.data.data)||{});
+  }catch(e){ window._shwData={}; }
+}
+// Group what people keep saying. Bruce: "if the same things get repeated, it'll show
+// 1, 2, 3." Two comments count as the same when their meaningful words match, so
+// "priced too high" and "the price is too high" land together.
+const MKT_FB_STOP=['the','a','an','is','it','its','was','were','and','or','but','to','too','of','in','on','for','at','that','this','these','those','they','we','i','he','she','you','my','our','their','very','really','quite','just','so','be','been','being','am','are','with','without','has','have','had','said','says','say','think','thought','feel','feels','felt','seem','seems','seemed','look','looks','looked','like','would','could','should','about','from','not','no','more','much','lot','bit'];
+// Two comments mean the same thing when they are about the same things. Words are cut to
+// their first four letters, so "price", "priced" and "pricing" land together without a
+// stemmer nobody can predict, and the small words that carry no meaning are dropped.
+function _mktFbWords(t){
+  const seen={}; const out=[];
+  String(t||'').toLowerCase().replace(/[^a-z0-9\s]/g,' ').split(/\s+/).forEach(function(w){
+    if(!w || MKT_FB_STOP.indexOf(w)>=0) return;
+    const k=w.slice(0,4);
+    if(!seen[k]){ seen[k]=1; out.push(k); }
+  });
+  return out;
+}
+function _mktFbKey(t){ return _mktFbWords(t).slice().sort().join(' '); }
+// Close enough to be the same complaint: what they share covers most of the shorter one.
+// "kitchen is dated" and "kitchen feels dated" both reduce to kitchen + dated, so they
+// are one line said twice - which is the whole point of counting them.
+const MKT_FB_OVERLAP=0.65;
+function _mktFbSame(a,b){
+  if(!a.length || !b.length) return false;
+  let hit=0;
+  a.forEach(function(w){ if(b.indexOf(w)>=0) hit++; });
+  return (hit/Math.min(a.length,b.length)) >= MKT_FB_OVERLAP;
+}
+// Typed lines and anything a Slack sync found, counted together.
+function _mktFeedback(pid, typed){
+  const items=[];
+  String(typed||'').split('\n').forEach(function(l){ const t=l.trim(); if(t) items.push({text:t, from:'typed'}); });
+  const s=_mktShowings(pid);
+  if(s && Array.isArray(s.feedback)) s.feedback.forEach(function(f){
+    const t=String((f&&f.text)||f||'').trim(); if(t) items.push({text:t, from:'Slack'});
+  });
+  const groups=[];
+  items.forEach(function(x){
+    const w=_mktFbWords(x.text); if(!w.length) return;
+    let g=null;
+    for(let i=0;i<groups.length;i++){ if(_mktFbSame(w, groups[i].words)){ g=groups[i]; break; } }
+    if(!g){ g={text:x.text, words:w, n:0, slack:0}; groups.push(g); }
+    g.n++; if(x.from==='Slack') g.slack++;
+    // Keep the shortest wording - it is usually the clearest way to say it.
+    if(x.text.length < g.text.length){ g.text=x.text; }
+  });
+  return groups.sort(function(a,b){ return b.n-a.n || a.text.localeCompare(b.text); });
+}
+
+// ---- Check-in dates -------------------------------------------------------------
+// Bruce, 10 Oct: "check-in dates can go horizontally across the screen each time an
+// on-market checklist has been completed ... it'll flag red when the property is two
+// weeks overdue from an on-market checklist."
+//
+// Derived from the checklist tasks that were actually completed, so the row is the real
+// history rather than a box somebody has to keep typing dates into.
+function _mktCheckins(c){
+  const out=(typeof _tasksCache!=='undefined'?_tasksCache:[])
+    .filter(function(t){ return t.property_id===c.id && t.category===MARKET_TASK_CATEGORY && t.completed_at; })
+    .map(function(t){ return String(t.completed_at).slice(0,10); });
+  if(c.checklistMarketLast && out.indexOf(c.checklistMarketLast)<0) out.push(c.checklistMarketLast);
+  return out.filter(function(v,i,a){ return a.indexOf(v)===i; }).sort();
+}
+// Days since the last one. Before the first ever check-in, the clock runs from the day
+// the listing started - otherwise a house that has never been checked looks fine.
+function _mktCheckinLate(c){
+  const list=_mktCheckins(c);
+  const base=list.length?list[list.length-1]:(_marketBaseline(c)||null);
+  if(!base) return null;
+  try{ return Math.max(0, Math.round((_dParse(_ymd(new Date()))-_dParse(base))/86400000)); }catch(e){ return null; }
+}
+
+// ---- Maintenance that becomes real work -----------------------------------------
+// Bruce, 10 Oct: "maintenance notes needs to be more of an assigned task to somebody for
+// a punch out or something that gets scheduled to the construction calendar that then
+// becomes a checkbox on the meeting thing."
+const MKT_MAINT_CATEGORY="Listing Maintenance";
+function _mktMaintItems(c){
+  const tasks=(typeof _tasksCache!=='undefined'?_tasksCache:[])
+    .filter(function(t){ return t.property_id===c.id && t.category===MKT_MAINT_CATEGORY; })
+    .map(function(t){ return {kind:'task', id:t.id, title:t.title||'', when:t.due_date||'',
+                              who:taskAssignees(t).join(', '), done:_taskStatusFor(t)==='done'}; });
+  const evs=(typeof _calEventsCache!=='undefined'?_calEventsCache:[])
+    .filter(function(e){ return e.property_id===c.id && /maintenance|punch/i.test(String(e.title||'')+' '+String(e.notes||'')); })
+    .map(function(e){ return {kind:'event', id:e.id, title:_mktEvLabel(e), when:e.event_date||'',
+                              who:'construction calendar', done:!!e.completed}; });
+  return tasks.concat(evs).sort(function(a,b){ return String(a.when).localeCompare(String(b.when)); });
+}
+async function _mktMaintAdd(pid){
+  if(_blockIfReadOnly()) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return;
+  const what=prompt("What needs doing at "+(c.addr||'this property')+"?");
+  if(!what || !what.trim()) return;
+  const who=prompt("Who is doing it? (leave blank to decide later)", c.pm||'')||'';
+  const when=prompt("When does it need to be done by?", _ymdPlus(7));
+  if(when===null) return;
+  const due=/^\d{4}-\d{2}-\d{2}$/.test(String(when||'').trim()) ? String(when).trim() : _ymdPlus(7);
+  const row={ title:what.trim(), category:MKT_MAINT_CATEGORY, start_date:due, due_date:due,
+              property_id:pid, notes:"Raised in the listings meeting." };
+  if(who.trim()){ row.assignee=who.trim(); row.assignees=[who.trim()]; }
+  const { error } = await supabase.from("pm_tasks").insert(row);
+  if(error){ alert("That was NOT saved - "+(error.message||'')); return; }
+  if(typeof _logAudit==='function') _logAudit('created','task',what.trim(),'Listing maintenance raised in the listings meeting for '+(c.addr||''));
+  if(typeof loadTasks==='function') await loadTasks();
+  if(typeof openWeeklyMeeting==='function') openWeeklyMeeting('market', window.__wmLastWeek||undefined);
+}
+async function _mktMaintToggle(kind, id){
+  if(_blockIfReadOnly()) return;
+  if(kind==='task'){ await pmaToggleTask(id); }
+  else { await pmaToggleEvent(id); }
+  if(typeof openWeeklyMeeting==='function') openWeeklyMeeting('market', window.__wmLastWeek||undefined);
+}
 function _mktMarginNote(c){
   const arv=_mktMoney(c.goalArv), prof=_mktMoney(c.estProfit);
   if(arv!=null && prof!=null && arv>0) return 'against the sheet’s '+_wmFmt(prof)+' at '+_wmFmt(arv);
@@ -11933,6 +12311,11 @@ const MKT_CARRY = [
   'drops',            // the price-drop history so far
   'sh_total',         // showings ALL TIME - cumulative, so it carries
   'cma',              // link to the CMA
+  'cma_text',         // the comps typed out by hand
+  // Coming Soon, Bruce 10 Oct. All four prices and all six dates describe the LISTING,
+  // not the week, so they follow the house from week to week until somebody changes them.
+  'tom_price','agreed_price','punch_done','realtor','margin_manual',
+  'walk_realtor','walk_npi','clean_final','stage_date','pics_date',
   'pm',
   'contract_price',
   'close_date',
@@ -12190,43 +12573,122 @@ function _mktMeetingBody(wk, kind, notes, prevNotes, roNow){
 
   let body='';
 
+  // Bruce, 10 Oct: every tab breaks down by realtor, so the room can go realtor by
+  // realtor. The bar is built from whichever houses this tab is showing.
+  const allOnTab = (tab==='doc') ? _mktCards('soon').concat(_mktCards('active')) : _mktCards(tab);
+  const realtorBar = _mktRealtorBar(allOnTab);
+
   if(tab==='active'){
-    const cards=_mktCards('active');
+    const cards=_mktRealtorFilter(_mktCards('active'));
     body = cards.length ? cards.map(c=>{
-      const listed=V(c.id,'date_listed')||((c.checklists||{}).timeline_done)||'';
+      // The day it went on. Typed answer first, then whatever the listing clock already
+      // knows, so days on market works without anybody retyping a date we have.
+      const listed=V(c.id,'date_listed')||_marketBaseline(c)||'';
       const dom=_mktDom(listed);
-      const margin=_mktMargin(V(c.id,'list_price'), c);
-      return wrap(head(c)
+      const price=V(c.id,'list_price');
+      const drops=_mktDropChain(V(c.id,'drops'), price);
+      const latest=drops.length?drops[drops.length-1].price:_mktMoney(price);
+      const calc=_mktMargin(V(c.id,'list_price'), c);
+      const mTyped=V(c.id,'margin_manual');
+      const shw=_mktShowings(c.id);
+      const fb=_mktFeedback(c.id, V(c.id,'feedback'));
+      const chk=_mktCheckins(c), late=_mktCheckinLate(c);
+      const maint=_mktMaintItems(c);
+      const zurl='https://www.zillow.com/homes/'+encodeURIComponent(String(c.addr||''))+'_rb/';
+      // A number a sync found, with the typed answer always on top of it.
+      const synced=(key,label)=>{
+        const typed=V(c.id,key);
+        const found=shw && shw[key==='sh_total'?'total':'last7'];
+        const show=typed!==''?typed:(found!=null?String(found):'');
+        const note=typed!==''?'typed in'
+                 :(found!=null?('from Slack'+(shw.asof?(' '+shw.asof):'')):'no Slack sync yet — type it');
+        return metric(label, roNow?(_calEsc(show)||'—')
+          :`<input id="${id(c.id,key)}" value="${_calEsc(typed)}" placeholder="${_calEsc(show)||'0'}" style="${box};width:64px"/>`,
+          '#111', note);
+      };
+      return wrap(head(c, c.listingAgent?(' &middot; realtor: '+_calEsc(c.listingAgent)):'')
         + grid(
             fld('PM assigned', roNow?roShow(V(c.id,'pm')||c.pm||''):`<select id="${id(c.id,'pm')}" style="${box};width:100%">${pmOpts(c)}</select>`,'from the property card')
-          + fld('Listing done · in CompanyCam', sel(c.id,'cc',['','Yes','No'],96))
-          + fld('Date listed', dt(c.id,'date_listed'), listed&&!V(c.id,'date_listed')?'from the card':'')
-          + fld('List price', tx(c.id,'list_price','$0',110))
-          + fld('Price drops', tx(c.id,'drops','none yet',110))
-          + fld('DOM', `<span style="font-size:15px;font-weight:700;color:${dom!=null&&dom>60?'#B42318':'#111'}">${dom==null?'—':dom}</span>`, dom==null?'set the date listed':'days on market')
+          // Bruce, 10 Oct: the CompanyCam box nobody could explain is gone. This answer
+          // is given once on Coming Soon and carries straight through to here.
+          + fld('All punch out checklists completed', sel(c.id,'punch_done',['','Yes','No'],96), 'carried from Coming Soon')
+          + fld('Realtor', roNow?roShow(V(c.id,'realtor')||c.listingAgent||''):`<input id="${id(c.id,'realtor')}" value="${_calEsc(V(c.id,'realtor')||c.listingAgent||'')}" placeholder="Who is listing it" style="${box};width:100%"/>`)
+          + fld('Date listed', dt(c.id,'date_listed'), (listed&&!V(c.id,'date_listed'))?('listing clock says '+_calEsc(listed)):'')
+          + fld('Current list price', tx(c.id,'list_price','$0',110),
+                `<a href="${zurl}" target="_blank" style="color:#185FA5;text-decoration:none">check on Zillow &#8599;</a>`)
+          + fld('Days on market', `<span style="font-size:15px;font-weight:700;color:${dom!=null&&dom>60?'#B42318':'#111'}">${dom==null?'—':dom}</span>`, dom==null?'set the date listed':'counts itself, every day')
           , 150)
-        + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-top:10px">
-             ${metric('Showings total', roNow?(_calEsc(V(c.id,'sh_total'))||'—'):`<input id="${id(c.id,'sh_total')}" value="${_calEsc(V(c.id,'sh_total'))}" placeholder="0" style="${box};width:64px"/>`)}
-             ${metric('Showings last 7 days', roNow?(_calEsc(V(c.id,'sh_7'))||'—'):`<input id="${id(c.id,'sh_7')}" value="${_calEsc(V(c.id,'sh_7'))}" placeholder="0" style="${box};width:64px"/>`)}
-             ${metric('Goal ARV', _wmFmt(_mktMoney(c.goalArv)), '#111', 'from the tracker sheet')}
-             ${metric('Spent to date', _wmFmt(_mktMoney(c.spent)), '#111')}
-             ${metric('Margin at list price', _wmFmt(margin), margin!=null&&margin<0?'#B42318':'#0F7B54', _mktMarginNote(c))}
+        // ---- price drops ----
+        + `<div style="margin-top:11px;border:0.5px solid #e6e8ee;border-radius:9px;overflow:hidden">
+             <div style="padding:8px 12px;background:#fafbfc;border-bottom:0.5px solid #eef0f6;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+               <span style="font-size:11.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em">Price drops</span>
+               ${roNow?'':`<span onclick="_mktAddDrop('${c.id}')" style="cursor:pointer;font-size:12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:6px;padding:4px 10px;color:#185FA5;font-weight:600">&#65291; Record a drop</span>`}
+             </div>
+             ${drops.length?drops.map(d=>`<div style="display:flex;justify-content:space-between;gap:10px;padding:6px 12px;border-top:0.5px solid #f4f5f7;font-size:12.5px">
+                  <span style="color:#566070;white-space:nowrap">${_calEsc(d.date)}</span>
+                  <span style="color:#111;font-weight:600">${_wmFmt(d.price)}</span>
+                  <span style="color:${d.cut?'#B42318':'#8A94A6'};white-space:nowrap">${d.cut?('−'+_wmFmt(d.cut).replace('$','$')):'first price'}</span>
+                </div>`).join('')
+               :`<div style="padding:10px 12px;border-top:0.5px solid #f4f5f7;font-size:12.5px;color:#636b7a">No drops yet.</div>`}
+             ${roNow?'':`<div style="padding:7px 12px;border-top:0.5px solid #f4f5f7">
+                <div style="font-size:10px;color:#636b7a;margin-bottom:3px">One per line, date then price. The button above writes this for you.</div>
+                <input id="${id(c.id,'drops')}" value="${_calEsc(V(c.id,'drops'))}" placeholder="2026-09-14 $329,900" style="${box};width:100%"/></div>`}
            </div>`
-        + sec('General repetitive feedback', ta(c.id,'feedback','What are we hearing over and over from showings? Price, smell, layout, photos…'))
-        + sec('Maintenance notes', ta(c.id,'maint','Lawn, snow, utilities, anything the house needs while it sits.'))
-        + sec('Check-in dates', tx(c.id,'checkins','e.g. 9/3, 9/10',260))
+        // ---- the money ----
+        + `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-top:10px">
+             ${synced('sh_total','Showings total')}
+             ${synced('sh_7','Showings last 7 days')}
+             ${metric('Goal ARV', _wmFmt(_mktMoney(c.goalArv)), '#111', 'from the project tracker')}
+             ${metric('Spent to date', _wmFmt(_mktMoney(c.spent)), '#111', 'construction only')}
+             ${metric('Margin at list price',
+                 roNow?(mTyped?_calEsc(mTyped):_wmFmt(calc))
+                     :`<input id="${id(c.id,'margin_manual')}" value="${_calEsc(mTyped)}" placeholder="${_wmFmt(calc)}" style="${box};width:92px"/>`,
+                 (mTyped?(_mktMoney(mTyped)<0):(calc!=null&&calc<0))?'#B42318':'#0F7B54',
+                 mTyped?'Tommy’s number':('Tommy types this — the sheet works out '+_wmFmt(calc)))}
+           </div>`
+        // ---- what people keep saying ----
+        + `<div style="margin-top:11px"><div style="font-size:11.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em">General repetitive feedback</div>
+             ${fb.length?`<div style="display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 2px">${fb.map(f=>`<span title="${f.slack?(f.slack+' of these came from Slack'):'typed in'}" style="font-size:12px;background:${f.n>2?'#FCEBEB':'#F2F5F9'};border:0.5px solid ${f.n>2?'#F0C8C2':'#e0e4ec'};color:${f.n>2?'#791F1F':'#333'};border-radius:99px;padding:3px 10px">${_calEsc(f.text)} <b>&times;${f.n}</b></span>`).join('')}</div>`:''}
+             ${ta(c.id,'feedback','One comment per line. Repeats are counted above — price, smell, layout, photos…')}
+             ${(shw&&Array.isArray(shw.feedback)&&shw.feedback.length)?'':`<div style="font-size:10px;color:#636b7a;margin-top:2px">Nothing is reading Slack for this house yet — what is typed here is all it has.</div>`}
+           </div>`
+        // ---- maintenance that turns into real work ----
+        + `<div style="margin-top:11px;border:0.5px solid #e6e8ee;border-radius:9px;overflow:hidden">
+             <div style="padding:8px 12px;background:#fafbfc;border-bottom:0.5px solid #eef0f6;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+               <span style="font-size:11.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em">Maintenance &amp; punch out</span>
+               ${roNow?'':`<span onclick="_mktMaintAdd('${c.id}')" style="cursor:pointer;font-size:12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:6px;padding:4px 10px;color:#185FA5;font-weight:600">&#65291; Assign it to somebody</span>`}
+             </div>
+             ${maint.length?maint.map(m=>`<div ${roNow?'':`onclick="_mktMaintToggle('${m.kind}','${_argEsc(m.id)}')" style="cursor:pointer;"`} style="display:flex;align-items:center;gap:9px;padding:7px 12px;border-top:0.5px solid #f4f5f7;font-size:12.5px;${m.done?'opacity:.6':''}">
+                  <span style="font-size:15px">${m.done?'✅':'⬜'}</span>
+                  <span style="flex:1;min-width:0;${m.done?'text-decoration:line-through':''}">${_calEsc(m.title)}</span>
+                  <span style="color:#8A94A6;white-space:nowrap">${_calEsc(m.who||'')}</span>
+                  <span style="color:#185FA5;white-space:nowrap">${_calEsc(m.when||'')}</span>
+                </div>`).join('')
+               :`<div style="padding:10px 12px;border-top:0.5px solid #f4f5f7;font-size:12.5px;color:#636b7a">Nothing assigned. Anything raised here becomes a real task, so it shows up on somebody’s calendar rather than only in this meeting.</div>`}
+             <div style="padding:7px 12px;border-top:0.5px solid #f4f5f7">${ta(c.id,'maint','Anything the house needs while it sits. Use the button above to turn one into real work.')}</div>
+           </div>`
+        // ---- check-ins, straight across ----
+        + `<div style="margin-top:11px;border:0.5px solid ${late!=null&&late>=14?'#f0c8c2':'#e6e8ee'};background:${late!=null&&late>=14?'#FFF7F5':'#fff'};border-radius:9px;padding:9px 12px">
+             <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+               <span style="font-size:11.5px;font-weight:700;color:${late!=null&&late>=14?'#B42318':'#555'};text-transform:uppercase;letter-spacing:.04em">Check-in dates</span>
+               <span style="font-size:11.5px;color:${late!=null&&late>=14?'#B42318':'#636b7a'}">${late==null?'no listing clock yet':(late>=14?(late+' days since the last on-market checklist — two weeks overdue'):(late+' days since the last one'))}</span>
+             </div>
+             ${chk.length?`<div style="display:flex;flex-wrap:wrap;gap:6px">${chk.map((d,i)=>`<span style="font-size:12px;background:${i===chk.length-1?'#EAF4EE':'#F2F5F9'};border:0.5px solid ${i===chk.length-1?'#BBDCC8':'#e0e4ec'};color:#333;border-radius:99px;padding:3px 10px;font-variant-numeric:tabular-nums">${_calEsc(d)}</span>`).join('')}</div>`
+               :`<div style="font-size:12.5px;color:#636b7a">No on-market checklist has been completed for this house yet.</div>`}
+             <div style="font-size:10px;color:#636b7a;margin-top:5px">These are the on-market checklists actually completed — they write themselves.</div>
+           </div>`
         + `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-            <button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">＋ Add task</button>
-            <button onclick="_miAddQuick('q','${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#8A5A10;cursor:pointer;font-weight:600">＋ Question for Bruce / Tommy</button>
+            <button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">&#65291; Add task</button>
+            <button onclick="_miAddQuick('q','${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#8A5A10;cursor:pointer;font-weight:600">&#65291; Question for Bruce / Tommy</button>
           </div>`);
-    }).join('') : none('Nothing is on the market right now.');
+    }).join('') : none(window._mktRealtorSel?'Nothing on the market for this realtor.':'Nothing is on the market right now.');
   }
 
   // In Contract, Request a Remedy and Cleared to Close are the same house at three
   // points on the same road, so they share one card. What changes is which houses are
   // on the tab and what the tab says when it is empty.
   else if(tab==='contract'||tab==='rtr'||tab==='ctc'){
-    const cards=_mktCards(tab);
+    const cards=_mktRealtorFilter(_mktCards(tab));
     const _emptyMsg = tab==='rtr' ? 'No remedy lists are being worked right now.'
                     : tab==='ctc' ? 'Nothing is cleared to close right now.'
                     : 'Nothing is in contract right now.';
@@ -12273,37 +12735,72 @@ function _mktMeetingBody(wk, kind, notes, prevNotes, roNow){
   }
 
   else if(tab==='soon'){
-    const cards=_mktCards('soon');
+    const cards=_mktRealtorFilter(_mktCards('soon'));
+    // A date box that fills itself from the calendars. Whatever is typed here wins; until
+    // somebody types, the found date stands in and the line underneath says where it came
+    // from, so nobody has to trust a number with no history.
+    const autodt=(c,key,re)=>{
+      const typed=V(c.id,key);
+      const found=typed?null:_mktAutoDate(c,re);
+      const shown=typed||(found?found.date:'');
+      const note=typed ? '' : (found
+        ? ('from the '+found.where+(found.what?(' — '+_calEsc(found.what)):'')+(found.done?' (done)':''))
+        : 'not scheduled yet');
+      const inner = roNow
+        ? `<span style="font-size:13px;color:${shown?'#111':'#636b7a'}">${_calEsc(shown)||'—'}</span>`
+        : `<input type="date" id="${id(c.id,key)}" value="${_calEsc(typed)}" style="${box};width:132px;${typed?'':'color:#566070;background:#FAFBFD'}"/>`;
+      return (!typed && shown)
+        ? `${inner}<div style="font-size:10px;color:#2E6B52;line-height:1.3">${_calEsc(shown)} · ${note}</div>`
+        : `${inner}${note?`<div style="font-size:10px;color:#636b7a;line-height:1.3">${note}</div>`:''}`;
+    };
     body = (cards.length ? cards.map(c=>{
       const rental=(c.phase==='Rental Handoff Process');
-      return wrap(head(c, rental?' · 🏠 going to rentals':'')
-        + grid(
-            fld('Suggested list price', tx(c.id,'sugg_price','$0',120))
-          + fld('Staging date', dt(c.id,'stage_date'))
-          + fld('Photos date', dt(c.id,'pics_date'))
-          + fld('Target list date', dt(c.id,'list_date'))
-          , 132)
-        + sec('CMA / comps document', roNow
-            ? (V(c.id,'cma')?`<a href="${_calEsc(V(c.id,'cma'))}" target="_blank" style="font-size:13px;color:#185FA5">Open the CMA ↗</a>`:roShow(''))
-            : `<input id="${id(c.id,'cma')}" value="${_calEsc(V(c.id,'cma'))}" placeholder="Paste the link to the CMA doc" style="${box};width:100%"/>`)
+      const sched=_mktNext2Weeks(c);
+      // Bruce, 10 Oct: four numbers at the top, in this order.
+      const prices=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px;align-items:end;background:#F7F9FC;border:0.5px solid #e4e9f2;border-radius:9px;padding:11px 12px">
+          ${fld('Suggested listing price from realtor', tx(c.id,'sugg_price','$0',120))}
+          ${fld('ARV', `<span style="font-size:15px;font-weight:700;color:#111">${_wmFmt(_mktMoney(c.goalArv))}</span>`, 'pulled from the full project meeting doc')}
+          ${fld('Tommy&rsquo;s price', tx(c.id,'tom_price','$0',120))}
+          ${fld('Agreed on listing price', tx(c.id,'agreed_price','$0',120), 'what we are actually going to ask')}
+        </div>`;
+      const dates=`<div style="margin-top:11px"><div style="font-size:11.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em;margin-bottom:5px">The dates &mdash; these fill themselves from the construction and task calendars</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px;align-items:start">
+          ${MKT_SOON_DATES.map(d=>fld(d[1], autodt(c,d[0],d[2]))).join('')}
+        </div></div>`;
+      return wrap(head(c, (rental?' &middot; 🏠 going to rentals':'')
+                          + (c.listingAgent?(' &middot; realtor: '+_calEsc(c.listingAgent)):''))
+        + prices
+        + dates
+        + `<div style="margin-top:11px;display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:9px;align-items:end">
+             ${fld('All punch out checklists completed', sel(c.id,'punch_done',['','Yes','No'],96), 'carries over to Active Listings')}
+             ${fld('Realtor', roNow?roShow(V(c.id,'realtor')||c.listingAgent||''):`<input id="${id(c.id,'realtor')}" value="${_calEsc(V(c.id,'realtor')||c.listingAgent||'')}" placeholder="Who is listing it" style="${box};width:100%"/>`)}
+           </div>`
+        + sec('CMA / comps &mdash; type it out, or attach Tommy&rsquo;s PDF', _mktCmaBlock(c, V(c.id,'cma'), V(c.id,'cma_text'), id(c.id,'cma'), id(c.id,'cma_text'), box, roNow))
         + sec('What is left before it can be listed', ta(c.id,'left','Punch list, final clean, photos, anything holding it up.'))
+        + `<div style="margin-top:11px;border:0.5px solid #e6e8ee;border-radius:9px;overflow:hidden">
+             <div style="padding:8px 12px;background:#fafbfc;border-bottom:0.5px solid #eef0f6;font-size:11.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em">Already scheduled &mdash; next two weeks</div>
+             ${sched.length?sched.map(e=>`<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 12px;border-top:0.5px solid #f4f5f7;font-size:13px">
+                 <span style="color:#111;${e.completed?'text-decoration:line-through;opacity:.6':''}">${e.completed?'✓ ':''}${_calEsc(_mktEvLabel(e))}</span>
+                 <span style="color:#185FA5;white-space:nowrap">${_calEsc(e.event_date)}</span></div>`).join('')
+               :`<div style="padding:13px;text-align:center;color:#636b7a;font-size:12.5px">Nothing on the construction calendar for this house in the next two weeks.</div>`}
+           </div>`
         + `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
-            <button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">＋ Add task</button>
-            <button onclick="_wmAddEvent('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#4A7318;cursor:pointer;font-weight:600">＋ Schedule contractor</button>
+            <button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">&#65291; Add task</button>
+            <button onclick="_wmAddEvent('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#4A7318;cursor:pointer;font-weight:600">&#65291; Schedule contractor</button>
           </div>`);
-    }).join('') : none('Nothing is queued to be listed right now.'))
-    + `<div style="font-size:12.5px;color:#8a6d1a;background:#FFF7E0;border-radius:8px;padding:9px 12px;margin-top:4px">These same houses are also walked in Monday’s Project Team Meeting — that is where the construction side is handled. Here it is only about the listing.</div>`;
+    }).join('') : none(window._mktRealtorSel?'Nothing queued to be listed for this realtor.':'Nothing is queued to be listed right now.'))
+    + `<div style="font-size:12.5px;color:#8a6d1a;background:#FFF7E0;border-radius:8px;padding:9px 12px;margin-top:4px">A house lands here the moment it reaches <b>Finishes</b>, and stays through Pre List / Punchout and Rental Handoff. These same houses are still walked in Monday&rsquo;s Project Team Meeting &mdash; that is where the construction side is handled. Here it is only about the listing.</div>`;
   }
 
   else { // doc
-    const cards=_mktCards('soon').concat(_mktCards('active'));
+    const cards=_mktRealtorFilter(_mktCards('soon').concat(_mktCards('active')));
     body = cards.length ? cards.map(c=>wrap(head(c)
       + `<div style="font-size:12.5px;color:#666;margin-bottom:8px">Write the comps that support the number we are going to ask, then the conclusion underneath. <a href="https://www.zillow.com/homes/${encodeURIComponent(String(c.addr||''))}_rb/" target="_blank" style="color:#185FA5;text-decoration:none;font-weight:600">Open this address on Zillow ↗</a></div>`
       + sec('Comps', ta(c.id,'doc_comps','One per line — address · sold price · date · sq ft · how it compares to ours.',90))
       + sec('Conclusion — as-is value range', tx(c.id,'doc_range','e.g. $310,000 – $330,000',220))
       + sec('Conclusion — recommended list price', tx(c.id,'doc_reco','$0',150))
       + sec('Why', ta(c.id,'doc_why','What makes this the right number.'))
-    )).join('') : none('Nothing to price right now.');
+    )).join('') : none(window._mktRealtorSel?'Nothing to price for this realtor.':'Nothing to price right now.');
   }
 
   const tabBar=`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">${MKT_TABS.map(t=>{
@@ -12315,6 +12812,7 @@ function _mktMeetingBody(wk, kind, notes, prevNotes, roNow){
   const closedRec=_wmMeta(wk,'market','__closed');
   return `${_wmClosedBanner(wk, closedRec, 'market')}${tabBar}
     <div style="font-size:12.5px;color:#666;background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:10px 14px;margin-bottom:12px">${MKT_TABS.find(t=>t[0]===tab)[2]}. Everything here saves itself as you type, and last week’s answers sit above each box.</div>
+    ${realtorBar}
     ${body}
     ${_wmOpenQuestionsPanel(_mktCards('active').concat(_mktCards('contract')))}
     ${_wmCloseBar(wk, closedRec, false, 'market')}`;
@@ -14538,7 +15036,7 @@ function openWeeklyMeeting(kind, week){
   // Hiding the menu item is not the same as closing the door - this screen can
   // also be reached from a restored nav state or a link, so check here too.
   if(!_canSeeMeeting(kind)){ document.getElementById("dash-body").innerHTML=_meetingDenied(kind); return; }
-  if(window._wmData===undefined||window._wmData===null){ if(window._wmData===undefined){ window._wmData=null; Promise.all([_wmLoad(), _miLoad(), (window._pdnData===undefined?( (window._pdnData=null), _pdnLoad()):Promise.resolve())]).then(()=>openWeeklyMeeting(kind, week)); document.getElementById("dash-body").innerHTML='<div style="padding:40px;text-align:center;color:#566070">Loading meeting…</div>'; return; } }
+  if(window._wmData===undefined||window._wmData===null){ if(window._wmData===undefined){ window._wmData=null; Promise.all([_wmLoad(), _miLoad(), _mktLoadShowings(), (window._pdnData===undefined?( (window._pdnData=null), _pdnLoad()):Promise.resolve())]).then(()=>openWeeklyMeeting(kind, week)); document.getElementById("dash-body").innerHTML='<div style="padding:40px;text-align:center;color:#566070">Loading meeting…</div>'; return; } }
   const titles={team:'🤝 Project Team Meeting',market:'🏡 Listings Meeting',kickoff:'🚀 Kickoff Meeting',eop:'🏁 End of Project Meeting',company:'🏢 Full Company Meeting',ceo:'👔 Director / CEO Meeting'};
   const liveWk=_wmWeekKeyFor(kind);
   const wk = week || liveWk;
@@ -30457,4 +30955,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-10h patience-pre1-revised-companycam-14d-autotick-chase -->
+<!-- build: 2026-10-11a listings-coming-soon-rebuild-active-listings-realtor-subtabs -->
