@@ -11381,7 +11381,10 @@ async function _wmComplete(wk, kind){
   if(await _wmSetMeta(wk,kind,'__closed',rec)){
     _logAudit("completed","meeting",(_MEETING_NAMES[kind]||'Meeting')+" — week of "+wk,"Marked complete");
     openWeeklyMeeting(kind, wk);
-    if(kind==='team') setTimeout(()=>_wmOpenSummary(wk), 200);
+    if(kind==='team')   setTimeout(()=>_wmOpenSummary(wk), 200);
+    // Bruce, 11 Oct: "we can send out one generalized PDF once completed for the
+    // listings meeting." Closing the week puts the overview in front of whoever closed it.
+    if(kind==='market') setTimeout(()=>_mktOverviewPreview(wk), 200);
   }
 }
 async function _wmReopen(wk, kind){
@@ -11909,6 +11912,411 @@ function _mktCards(which){
   return (typeof propCards!=='undefined'?propCards:[])
     .filter(c=>!c.archived && ph.includes(c.phase))
     .sort((a,b)=>_n(a.addr)-_n(b.addr)||String(a.addr||'').localeCompare(String(b.addr||'')));
+}
+// ================= THE LISTINGS MEETING SEND-OUT =================================
+// Bruce, 11 Oct: "we can send out one generalized PDF once completed for the listings
+// meeting that'll be sent to everybody for the week. And then one that'll be generated
+// and sent to Katie for Katie's listings only. And one for Will for Will's listings
+// only. And then one for anybody that has an active task scheduled for a property from
+// the listings meeting. If there is no scheduled task, then they will not receive a PDF
+// other than the complete overview of the meeting."
+//
+// So: ONE overview for the room, and a personal copy only for somebody who has a reason
+// to get one - their own listings, or their own work. Nobody gets a personal PDF that
+// would only repeat the overview back at them.
+
+// Every house the listings meeting walks, across all five property tabs. 'doc' is not
+// included: it is the same houses as Coming Soon and Active Listings seen again.
+function _mktAllCards(){
+  const seen={}, out=[];
+  ['soon','active','contract','rtr','ctc'].forEach(function(t){
+    _mktCards(t).forEach(function(c){ if(!seen[c.id]){ seen[c.id]=1; out.push(c); } });
+  });
+  return out;
+}
+// Open work booked against one of those houses. "Active task scheduled for a property
+// from the listings meeting" - so: not done, has somebody's name on it, and the property
+// is one the meeting actually walks.
+function _mktMeetingTasks(){
+  const ids={}; _mktAllCards().forEach(function(c){ ids[c.id]=1; });
+  return (typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(function(t){
+    return t.property_id && ids[t.property_id] && !t.derived
+        && _taskStatusFor(t)!=='done' && taskAssignees(t).length;
+  });
+}
+// Who gets what. Returns the overview plus one row per person who has earned a personal
+// copy, saying in plain words WHY they are on the list - that sentence is printed on the
+// panel, so nobody has to guess why Katie got one and somebody else did not.
+function _mktSendList(wk){
+  const cards=_mktAllCards();
+  const byName={};
+  const add=function(name, how){
+    const key=(typeof _canonName==='function')?_canonName(name):String(name||'').toLowerCase();
+    if(!key) return null;
+    if(!byName[key]) byName[key]={name:String(name).trim(), cards:[], tasks:[], why:[]};
+    if(how && byName[key].why.indexOf(how)<0) byName[key].why.push(how);
+    return byName[key];
+  };
+  // the realtors, from the houses themselves
+  cards.forEach(function(c){
+    const r=_mktRealtor(c); if(!r) return;
+    const row=add(r,'realtor'); if(row) row.cards.push(c);
+  });
+  // anybody with open work on one of these houses
+  _mktMeetingTasks().forEach(function(t){
+    taskAssignees(t).forEach(function(a){
+      const row=add(a,'has work'); if(row) row.tasks.push(t);
+    });
+  });
+  const people=Object.keys(byName).map(function(k){ return byName[k]; })
+    .filter(function(p){ return p.cards.length || p.tasks.length; })
+    .sort(function(a,b){
+      const d=(b.cards.length?1:0)-(a.cards.length?1:0);
+      return d || a.name.localeCompare(b.name);
+    });
+  return { cards:cards, people:people, tasks:_mktMeetingTasks() };
+}
+function _mktWhyLine(p){
+  const bits=[];
+  if(p.cards.length) bits.push(p.cards.length+' listing'+(p.cards.length===1?'':'s')+' of their own');
+  if(p.tasks.length) bits.push(p.tasks.length+' open task'+(p.tasks.length===1?'':'s')+' from this meeting');
+  return bits.join(' · ');
+}
+// ---- what one house reads like on the PDF ---------------------------------------
+// The same words the room typed in the meeting. This is a copy of the meeting for the
+// houses that are this person's, never a second document somebody has to keep current.
+const MKT_PDF_FIELDS = {
+  soon: [['sugg_price','Suggested listing price from realtor'],['tom_price','Tommy’s price'],
+         ['agreed_price','Agreed on listing price'],['punch_done','All punch out checklists completed'],
+         ['walk_realtor','Realtor walk'],['walk_npi','NPI inspection walk'],['clean_final','Final clean'],
+         ['stage_date','Staging'],['pics_date','Photos'],['list_date','Target list date'],
+         ['cma_text','CMA / comps'],['left','What is left before it can be listed']],
+  active:[['punch_done','All punch out checklists completed'],['date_listed','Date listed'],
+          ['list_price','Current list price'],['drops','Price drops'],
+          ['sh_total','Showings total'],['sh_7','Showings last 7 days'],
+          ['margin_manual','Margin at list price'],['feedback','Repeated feedback'],
+          ['maint','Maintenance notes']],
+  other: [['ic_date','In contract date'],['contract_price','Contract price'],
+          ['insp_date','Inspection date'],['appr_date','Appraisal date'],['close_date','Close date'],
+          ['rem_due','Remedies need done by'],['rem_started','Remedies started'],
+          ['rem_done','Remedies completed'],['rem_status','Remedy status'],
+          ['lag','Lag times and why'],['closing','Closing notes']]
+};
+function _mktPdfKind(c){
+  if(MKT_PHASES.soon.indexOf(c.phase)>=0)   return 'soon';
+  if(MKT_PHASES.active.indexOf(c.phase)>=0) return 'active';
+  return 'other';
+}
+// One house, as a block of label-and-answer. Empty answers are left out rather than
+// printed as a row of dashes - a page of dashes tells nobody anything.
+function _mktPdfHouse(wk, c, esc){
+  const notes=(((window._wmData||{})[wk]||{}).market)||{};
+  const V=(f)=>String(notes[c.id+'::'+f]||'').trim();
+  const kind=_mktPdfKind(c);
+  const st=_mktStateOf(wk,c.id);
+  const S=WM_STATE[st];
+  const stLabel=(st==='done')?'reviewed':(st==='ready'?'ready for the meeting':'not prepared');
+  const rows=MKT_PDF_FIELDS[kind].map(function(f){
+    const v=V(f[0]); if(!v) return '';
+    const multi=/\n/.test(v) || v.length>60;
+    return multi
+      ? `<div class="bub"><div class="bh">${esc(f[1])}</div><div class="bb">${esc(v)}</div></div>`
+      : `<p class="m"><b>${esc(f[1])}:</b> ${esc(v)}</p>`;
+  }).join('');
+  const money=[
+    c.goalArv?('Goal ARV '+_wmFmt(_mktMoney(c.goalArv))):'',
+    c.spent?('spent to date '+_wmFmt(_mktMoney(c.spent))+' (construction only)'):''
+  ].filter(Boolean).join(' · ');
+  // Active listings carry the two things the room actually chases.
+  let extra='';
+  if(kind==='active'){
+    const dom=_mktDom(V('date_listed')||_marketBaseline(c)||'');
+    const late=_mktCheckinLate(c), chk=_mktCheckins(c);
+    const bits=[];
+    if(dom!=null) bits.push(dom+' days on market');
+    if(late!=null) bits.push(late>=14?('<b class="over">'+late+' days since the last on-market checklist — two weeks overdue</b>'):(late+' days since the last check-in'));
+    if(chk.length) bits.push(chk.length+' check-in'+(chk.length===1?'':'s')+' logged');
+    if(bits.length) extra=`<p class="m">${bits.join(' · ')}</p>`;
+  }
+  return `<section class="rec">
+    <div class="rh">${esc(c.addr||'')}<span class="rp">${esc(_phLabel(c.phase))}${c.pm?(' · PM '+esc(c.pm)):''}</span>
+      <span class="stchip" style="background:${S.chipBg};color:${S.chip}">${stLabel}</span></div>
+    ${money?`<p class="m">${money}</p>`:''}${extra}
+    ${rows||`<p class="bd dim">Nothing was written about this one in the meeting.</p>`}
+  </section>`;
+}
+// The jobs somebody is carrying out of this meeting, as a tickable list.
+function _mktPdfTasks(tasks, esc){
+  if(!tasks.length) return '';
+  const today=_ymd(new Date());
+  return '<div class="jobs">'+tasks.slice().sort(function(a,b){
+      return String(a.due_date||'9999').localeCompare(String(b.due_date||'9999')); })
+    .map(function(t){
+      const due=t.due_date||'';
+      const late=due && due<today;
+      const where=_locLabel(t);
+      const when=due?((late?'late · ':'')+due):'no date on it';
+      return `<div class="job${late?' late':''}"><span class="bx"></span><div class="jb">
+        <div class="jt">${esc(t.title||'')}</div>
+        <div class="js">${where?esc(where)+' · ':''}${esc(when)}</div></div></div>`;
+    }).join('')+'</div>';
+}
+// ---- the page the PDF is printed from -------------------------------------------
+// Same visual language as the Monday summary and the job role PDFs, so the three
+// documents read as one set rather than three.
+function _mktPdfShell(title, sub, when, inner){
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${_calEsc(title)}</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+ :root{--ink:#14171C;--muted:#5B6472;--faint:#9AA3B2;--rule:#E3E7EE;--navy:#122A4A;
+       --navy-soft:#EAF0F7;--good:#0F7B54;--bad:#B42318;--warn:#8A5A10;--paper:#fff}
+ *{box-sizing:border-box}
+ body{margin:0;padding:22px 16px 40px;background:#F2F4F7;color:var(--ink);
+      font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;line-height:1.45}
+ .sheet{max-width:900px;margin:0 auto;background:var(--paper);border-radius:3px;
+        box-shadow:0 1px 2px rgba(20,24,35,.10),0 8px 26px rgba(20,24,35,.13);overflow:hidden}
+ .mast{background:var(--navy);color:#fff;padding:16px 26px;display:flex;justify-content:space-between;align-items:flex-end;gap:14px;flex-wrap:wrap}
+ .mast .co{font-size:10px;text-transform:uppercase;letter-spacing:.16em;opacity:.72;margin-bottom:3px}
+ .mast h2{margin:0;font-size:21px;font-weight:600}
+ .mast .when{font-size:11.5px;text-align:right;opacity:.85;line-height:1.7;font-family:ui-monospace,Menlo,monospace}
+ .pad{padding:20px 26px}
+ .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:6px;overflow:hidden;margin-bottom:20px}
+ .kpi{background:#fff;padding:11px 13px}
+ .kpi .k{font-size:9px;text-transform:uppercase;letter-spacing:.07em;color:var(--faint);white-space:nowrap}
+ .kpi .v{font-family:ui-monospace,Menlo,monospace;font-size:19px;font-weight:600;margin-top:3px;font-variant-numeric:tabular-nums}
+ .kpi .s{font-size:10px;color:var(--faint);margin-top:1px}
+ h2.sec{font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;
+        color:var(--muted);margin:26px 0 0;padding-bottom:5px;border-bottom:1px solid var(--rule)}
+ section.rec{margin-top:14px;break-inside:avoid;page-break-inside:avoid}
+ .rh{font-size:14.5px;font-weight:700;border-bottom:1px solid var(--rule);padding-bottom:4px;
+     display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+ .rp{font-size:11px;font-weight:600;color:var(--muted);text-transform:none;letter-spacing:0}
+ .stchip{margin-left:auto;font-size:9.5px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;
+         padding:2px 9px;border-radius:99px;white-space:nowrap}
+ p.m{margin:4px 0;font-size:12px;color:var(--muted)} b.over{color:var(--bad)}
+ p.bd{margin:0;font-size:13px;line-height:1.5;white-space:pre-wrap}
+ p.bd.dim{color:var(--faint)}
+ .bub{position:relative;margin:8px 0 1px 10px;background:#F1F4F9;border:1px solid var(--rule);
+      border-radius:14px;border-top-left-radius:5px;padding:9px 12px;break-inside:avoid}
+ .bub:before{content:"";position:absolute;left:-7px;top:10px;width:12px;height:12px;
+             background:#F1F4F9;border-left:1px solid var(--rule);border-bottom:1px solid var(--rule);
+             transform:rotate(45deg);border-radius:0 0 0 3px}
+ .bh{font-size:9px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);margin-bottom:2px}
+ .bb{font-size:12px;line-height:1.55;white-space:pre-wrap}
+ .jobs{display:flex;flex-direction:column;gap:8px;margin-top:11px}
+ .job{display:flex;gap:11px;align-items:flex-start;background:#fff;border:1px solid var(--rule);
+      border-radius:14px;border-bottom-left-radius:5px;padding:11px 14px;break-inside:avoid}
+ .job.late{box-shadow:inset 3px 0 0 var(--bad)}
+ .bx{width:19px;height:19px;border:1.5px solid #8A94A6;border-radius:5px;flex:none;margin-top:1px}
+ .jb{flex:1;min-width:0}
+ .jt{font-size:14px;line-height:1.4}
+ .js{font-size:11.5px;color:var(--muted);margin-top:2px}
+ table{width:100%;border-collapse:collapse;font-size:12px;margin-top:10px}
+ thead th{background:var(--navy-soft);color:var(--navy);font-size:9.5px;text-transform:uppercase;
+          letter-spacing:.06em;text-align:left;padding:6px 9px;font-weight:600;white-space:nowrap}
+ tbody td{padding:7px 9px;border-bottom:1px solid var(--rule);vertical-align:top}
+ .none{font-size:12.5px;color:var(--faint);padding:8px 0}
+ .foot{border-top:1px solid var(--rule);padding:12px 26px 18px;font-size:10.5px;color:var(--faint);
+       font-family:ui-monospace,Menlo,monospace;text-align:center}
+ .bar{max-width:900px;margin:0 auto 14px;display:flex;gap:9px;flex-wrap:wrap;align-items:center}
+ .bar button{padding:8px 15px;border:1px solid var(--navy);border-radius:8px;background:var(--navy);
+             color:#fff;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
+ .bar .hint{font-size:12px;color:#6b6f78}
+ @media (max-width:760px){.kpis{grid-template-columns:repeat(2,1fr)}}
+ @media print{body{background:#fff;padding:0}.sheet{box-shadow:none;max-width:none}.bar{display:none}
+              .job{box-shadow:none}.job.late{box-shadow:none;border-left:3px solid var(--bad)}}
+</style></head><body>
+<div class="bar">
+  <button onclick="window.print()">&#8595; Save as PDF / Print</button>
+  <span class="hint">Your browser&rsquo;s print dialog has a <b>Save as PDF</b> destination &mdash; that is the file you attach.</span>
+</div>
+<div class="sheet">
+  <div class="mast">
+    <div><div class="co">Legacy Homes &middot; Listings</div><h2>${_calEsc(sub)}</h2></div>
+    <div class="when">${when}</div>
+  </div>
+  <div class="pad">${inner}</div>
+  <div class="foot">Legacy Homes &middot; from the listings meeting</div>
+</div></body></html>`;
+}
+function _mktPdfOpen(html){
+  const w=window.open('','_blank');
+  if(!w){ alert("Your browser blocked the PDF window. Allow pop-ups for this site and try again."); return; }
+  w.document.open(); w.document.write(html); w.document.close();
+}
+
+// ---- 1. the overview everybody gets ---------------------------------------------
+function _mktOverviewHtml(wk){
+  const esc=_calEsc;
+  const S=_mktSendList(wk);
+  const t=_mktStateTally(wk, S.cards);
+  const byTab=[['soon','Coming Soon'],['active','Active Listings'],['contract','In Contract'],
+               ['rtr','Request a Remedy'],['ctc','Cleared to Close']];
+  const secs=byTab.map(function(x){
+    const cards=_mktCards(x[0]);
+    if(!cards.length) return '';
+    return `<h2 class="sec">${esc(x[1])} &middot; ${cards.length}</h2>`
+      + cards.map(function(c){ return _mktPdfHouse(wk,c,esc); }).join('');
+  }).join('');
+  // Who is carrying what out of the room.
+  const taskRows=S.tasks.length
+    ? '<table><thead><tr><th>Who</th><th>Task</th><th>Property</th><th>Due</th></tr></thead><tbody>'
+      + S.tasks.slice().sort(function(a,b){ return String(a.due_date||'9999').localeCompare(String(b.due_date||'9999')); })
+        .map(function(tk){ return `<tr><td><b>${esc(taskAssignees(tk).join(', '))}</b></td><td>${esc(tk.title||'')}</td>`
+          +`<td>${esc(_locLabel(tk))||'&mdash;'}</td><td>${esc(tk.due_date||'no date')}</td></tr>`; }).join('')
+      + '</tbody></table>'
+    : '<div class="none">Nothing is booked against a listing right now.</div>';
+  const inner=`<div class="kpis">
+      <div class="kpi"><div class="k">Listings walked</div><div class="v">${S.cards.length}</div><div class="s">across all five tabs</div></div>
+      <div class="kpi"><div class="k">Reviewed</div><div class="v">${t.done}</div><div class="s">of ${S.cards.length}</div></div>
+      <div class="kpi"><div class="k">Ready, not yet reviewed</div><div class="v">${t.ready}</div><div class="s">prepared beforehand</div></div>
+      <div class="kpi"><div class="k">Not prepared</div><div class="v">${t.todo}</div><div class="s">${t.todo?'nobody filled these in':'all covered'}</div></div>
+    </div>
+    <h2 class="sec">What people are carrying out of this meeting &middot; ${S.tasks.length}</h2>${taskRows}
+    ${secs||'<div class="none">No listings to walk this week.</div>'}`;
+  return _mktPdfShell('Listings Meeting — week of '+wk, 'Listings Meeting Summary',
+    `Week of ${esc(_wmLabel(wk))}<br>${S.cards.length} listings &middot; ${t.done} reviewed<br>goes to everybody`, inner);
+}
+function _mktOverviewPreview(wk){ _mktPdfOpen(_mktOverviewHtml(wk)); }
+
+// ---- 2 and 3. one person's copy --------------------------------------------------
+// A realtor gets their own listings. Anybody with open work gets their work. Somebody
+// who is both gets ONE document with both halves, not two emails saying half each.
+function _mktPersonHtml(person, wk){
+  const esc=_calEsc;
+  const S=_mktSendList(wk);
+  const key=(typeof _canonName==='function')?_canonName(person):String(person||'').toLowerCase();
+  const p=S.people.find(function(x){ return ((typeof _canonName==='function')?_canonName(x.name):String(x.name).toLowerCase())===key; })
+        || {name:person, cards:[], tasks:[], why:[]};
+  const first=String(p.name||'').split(' ')[0];
+  const t=_mktStateTally(wk, p.cards);
+  const houses=p.cards.length
+    ? p.cards.map(function(c){ return _mktPdfHouse(wk,c,esc); }).join('')
+    : '';
+  const jobs=_mktPdfTasks(p.tasks, esc);
+  const inner=`<div class="kpis">
+      <div class="kpi"><div class="k">Your listings</div><div class="v">${p.cards.length}</div><div class="s">${p.cards.length?(t.done+' reviewed'):'none on this list'}</div></div>
+      <div class="kpi"><div class="k">Your jobs</div><div class="v">${p.tasks.length}</div><div class="s">from this meeting</div></div>
+      <div class="kpi"><div class="k">Not prepared</div><div class="v">${t.todo}</div><div class="s">of your listings</div></div>
+      <div class="kpi"><div class="k">Week</div><div class="v" style="font-size:13px">${esc(_wmLabel(wk))}</div><div class="s">listings meeting</div></div>
+    </div>
+    ${p.tasks.length?`<h2 class="sec">What you are carrying &middot; ${p.tasks.length}</h2>${jobs}`:''}
+    ${p.cards.length?`<h2 class="sec">Your listings &middot; ${p.cards.length}</h2>${houses}`:''}
+    ${(!p.tasks.length && !p.cards.length)?'<div class="none">Nothing on this week’s listings meeting is yours. You will still get the full overview.</div>':''}`;
+  return _mktPdfShell(first+'’s listings — week of '+wk, first+'’s listings',
+    `Week of ${esc(_wmLabel(wk))}<br>${_mktWhyLine(p)||'nothing of their own'}<br>from the listings meeting`, inner);
+}
+function _mktPersonPreview(person, wk){ _mktPdfOpen(_mktPersonHtml(person, wk)); }
+// ---- the send-out panel ---------------------------------------------------------
+// Sits under the listings meeting and says, in plain words, exactly who gets a PDF and
+// why. Bruce: "if there is no scheduled task, then they will not receive a PDF other
+// than the complete overview of the meeting" - so the panel also names the people who
+// are getting ONLY the overview, rather than quietly leaving them out.
+function _mktEmailOf(name){
+  try{
+    const key=(typeof _canonName==='function')?_canonName(name):String(name||'').toLowerCase();
+    const u=(typeof getUsers==='function'?getUsers():[]).find(function(x){
+      const n=((x.firstName||'')+' '+(x.lastName||'')).trim();
+      return x.status==='approved' && ((typeof _canonName==='function')?_canonName(n):n.toLowerCase())===key;
+    });
+    return (u&&u.email)||'';
+  }catch(e){ return ''; }
+}
+function _mktSendPanel(wk, roNow){
+  const S=_mktSendList(wk);
+  const t=_mktStateTally(wk, S.cards);
+  const esc=_calEsc;
+  const everybody=(typeof getUsers==='function'?getUsers():[]).filter(function(u){ return u.status==='approved'; });
+  const personal={};
+  S.people.forEach(function(p){ personal[(typeof _canonName==='function')?_canonName(p.name):p.name.toLowerCase()]=1; });
+  const overviewOnly=everybody.filter(function(u){
+    const n=((u.firstName||'')+' '+(u.lastName||'')).trim();
+    return !personal[(typeof _canonName==='function')?_canonName(n):n.toLowerCase()];
+  });
+  const row=function(p){
+    const mail=_mktEmailOf(p.name);
+    return `<div style="display:flex;align-items:center;gap:10px;padding:9px 13px;border-top:0.5px solid #eef0f6;flex-wrap:wrap">
+      <div style="flex:1;min-width:175px">
+        <div style="font-size:13.5px;font-weight:600;color:#111">${esc(p.name)}</div>
+        <div style="font-size:11.5px;color:#566070">${esc(_mktWhyLine(p))}${mail?(' · '+esc(mail)):' · <span style="color:#B42318">no email on file</span>'}</div>
+      </div>
+      <span onclick="_mktPersonPreview('${_argEsc(p.name)}','${wk}')" style="cursor:pointer;font-size:12.5px;background:#185FA5;color:#fff;border-radius:7px;padding:6px 13px;font-weight:600;white-space:nowrap">&#128196; Preview their PDF</span>
+    </div>`;
+  };
+  return `<div style="margin-top:16px;background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;overflow:hidden">
+    <div style="padding:13px 16px;border-bottom:0.5px solid #e0e4ec;background:#fafbfc">
+      <div style="font-size:15px;font-weight:600;color:#111">Who gets a PDF this week</div>
+      <div style="font-size:12.5px;color:#566070;line-height:1.5">Everybody gets the full overview. On top of that, somebody gets their own copy only if they have listings of their own or work booked out of this meeting &mdash; nobody is sent a personal PDF that would just repeat the overview back at them.</div>
+    </div>
+    <div style="padding:11px 16px;border-bottom:0.5px solid #eef0f6;display:flex;gap:11px;align-items:center;flex-wrap:wrap">
+      <div style="flex:1;min-width:190px">
+        <div style="font-size:13.5px;font-weight:600;color:#111">The whole meeting &mdash; goes to everybody</div>
+        <div style="font-size:11.5px;color:#566070">${S.cards.length} listing${S.cards.length===1?'':'s'} &middot; ${t.done} reviewed &middot; ${t.ready} ready &middot; ${t.todo} not prepared</div>
+      </div>
+      <span onclick="_mktOverviewPreview('${wk}')" style="cursor:pointer;font-size:12.5px;background:#122A4A;color:#fff;border-radius:7px;padding:7px 14px;font-weight:600;white-space:nowrap">&#128196; Preview the overview</span>
+    </div>
+    ${S.people.length
+      ? `<div style="padding:9px 16px 2px;font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#8A94A6">Their own copy as well &middot; ${S.people.length}</div>`
+        + S.people.map(row).join('')
+      : `<div style="padding:14px 16px;font-size:12.5px;color:#636b7a">Nobody has listings of their own or work booked out of this meeting yet, so the overview is the only PDF this week.</div>`}
+    ${overviewOnly.length?`<div style="padding:11px 16px;border-top:0.5px solid #eef0f6;background:#FAFBFC">
+        <div style="font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#8A94A6;margin-bottom:3px">Overview only &middot; ${overviewOnly.length}</div>
+        <div style="font-size:12px;color:#566070;line-height:1.5">${overviewOnly.map(function(u){ return esc(((u.firstName||'')+' '+(u.lastName||'')).trim()||u.email); }).join(' &middot; ')}</div>
+        <div style="font-size:11px;color:#8A94A6;margin-top:3px">No listings of their own and nothing booked, so no personal PDF.</div>
+      </div>`:''}
+    ${roNow?'':`<div style="padding:11px 16px;border-top:0.5px solid #eef0f6;font-size:11.5px;color:#636b7a;line-height:1.5">
+      Each preview opens in its own window. Use your browser&rsquo;s <b>Save as PDF</b> to save it, then attach it to the email. The site does not send mail itself.</div>`}
+  </div>`;
+}
+// ---- Where each listing stands, before the room gets to it ----------------------
+// Bruce, 11 Oct: "I want the listings meeting to have the same setup as the full
+// project team meeting in a sense of having the options of the color codes for the
+// properties - prepared, not prepared, ready for meeting, not ready for meeting,
+// completed as in reviewed."
+//
+// Same three states the Monday meeting uses, same colours, stored the same way - on
+// this week's record, so it clears itself every week. WM_STATE is shared deliberately:
+// two meetings that mean the same thing should not look different.
+function _mktStateOf(wk, pid){
+  if((_wmMeta(wk,'market','__covered')||{})[pid]) return 'done';
+  if((_wmMeta(wk,'market','__ready')||{})[pid])   return 'ready';
+  return 'todo';
+}
+async function _mktReady(wk, pid){
+  if(await _wmSetMetaAt(wk,'market','__ready',pid, function(cur){ return cur?undefined:{at:new Date().toISOString(), by:_miWho()}; }))
+    openWeeklyMeeting('market', wk);
+}
+async function _mktCovered(wk, pid){
+  if(await _wmSetMetaAt(wk,'market','__covered',pid, function(cur){ return cur?undefined:{at:new Date().toISOString(), by:_miWho()}; }))
+    openWeeklyMeeting('market', wk);
+}
+// The two pills that sit in a property's header. Reviewed replaces Prepared once it is
+// reviewed - saying both at once is clutter, and reviewed already implies prepared.
+function _mktStatePills(wk, c, roNow){
+  const st=_mktStateOf(wk,c.id);
+  const S=WM_STATE[st];
+  if(roNow) return `<span style="font-size:11.5px;font-weight:700;padding:2px 10px;border-radius:99px;background:${S.chipBg};color:${S.chip};white-space:nowrap">${st==='done'?'✓ reviewed':(st==='ready'?'✓ ready for the meeting':'not prepared')}</span>`;
+  const pill=(on,colour,label,title,fn)=>`<span onclick="event.preventDefault();event.stopPropagation();${fn}" title="${title}" style="cursor:pointer;font-size:12px;font-weight:700;padding:4px 12px;border-radius:99px;border:0.5px solid ${on?colour:'#cdd7e6'};background:${on?colour:'#fff'};color:${on?'#fff':colour};white-space:nowrap">${on?'✓ ':''}${label}</span>`;
+  if(st==='done') return pill(true,'#0F7B54','Reviewed','Put this listing back on the list','_mktCovered(\''+wk+'\',\''+c.id+'\')');
+  return pill(st==='ready','#185FA5','Prepared','Mark this listing prepared before the meeting','_mktReady(\''+wk+'\',\''+c.id+'\')')
+       + ' ' + pill(false,'#0F7B54','Mark reviewed','Mark this listing reviewed in the meeting','_mktCovered(\''+wk+'\',\''+c.id+'\')');
+}
+// How the room is doing, across whichever houses are on this tab.
+function _mktStateTally(wk, cards){
+  const t={todo:0, ready:0, done:0};
+  cards.forEach(function(c){ t[_mktStateOf(wk,c.id)]++; });
+  return t;
+}
+function _mktStateBar(wk, cards){
+  if(!cards.length) return '';
+  const t=_mktStateTally(wk,cards);
+  const chip=(n,key,label)=>`<span style="font-size:12px;font-weight:600;padding:3px 11px;border-radius:99px;background:${WM_STATE[key].chipBg};color:${WM_STATE[key].chip};white-space:nowrap">${n} ${label}</span>`;
+  return `<div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-bottom:11px">
+      <span style="font-size:10.5px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#8A94A6;margin-right:2px">Where this tab stands</span>
+      ${t.todo?chip(t.todo,'todo','not prepared'):''}
+      ${t.ready?chip(t.ready,'ready','ready for the meeting'):''}
+      ${t.done?chip(t.done,'done','reviewed'):''}
+    </div>`;
 }
 // ---- Realtor sub-tabs -----------------------------------------------------------
 // Bruce, 10 Oct: "under each tab it needs to break off the properties by realtor. So
@@ -12563,11 +12971,20 @@ function _mktMeetingBody(wk, kind, notes, prevNotes, roNow){
   const sec=(label,inner)=>`<div style="margin-top:10px"><div style="font-size:11.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em">${label}</div>${inner}</div>`;
   const metric=(l,v,color,note)=>`<div style="background:#f7f8fb;border-radius:6px;padding:5px 9px"><div style="font-size:9.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap">${l}</div><div style="font-size:13px;font-weight:700;color:${color||'#111'}">${v}</div>${note?`<div style="font-size:9.5px;color:#566070">${note}</div>`:''}</div>`;
 
-  const head=(c,extra)=>`<div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:8px">
-      <span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-size:15.5px;font-weight:700;color:#185FA5">${_calEsc(c.addr||'')}</span>
-      <span style="font-size:12px;color:#666">${_calEsc(_phLabel(c.phase))} · PM: ${_calEsc(c.pm||'—')}${extra||''}</span>
+  const head=(c,extra)=>`<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+      <div style="min-width:0">
+        <span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-size:15.5px;font-weight:700;color:#185FA5">${_calEsc(c.addr||'')}</span>
+        <div style="font-size:12px;color:#666">${_calEsc(_phLabel(c.phase))} &middot; PM: ${_calEsc(c.pm||'&mdash;')}${extra||''}</div>
+      </div>
+      <span style="margin-left:auto;white-space:nowrap">${_mktStatePills(wk, c, roNow)}</span>
     </div>`;
-  const wrap=(inner)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:14px 16px;margin-bottom:12px">${inner}</div>`;
+  // Bruce, 11 Oct: the same colour codes the Monday meeting uses, so a listing says
+  // where it stands before the room gets to it. A card with no state is plain white.
+  const wrap=(inner,c)=>{
+    const S=WM_STATE[(c&&c.id)?_mktStateOf(wk,c.id):'todo'];
+    const on=!!(c&&c.id);
+    return `<div style="background:${on?S.bg:'#fff'};border:0.5px solid ${on?S.bd:'#e0e4ec'};border-radius:12px;padding:14px 16px;margin-bottom:12px">${inner}</div>`;
+  };
   const none=(t)=>`<div style="color:#636b7a;font-size:14px;padding:22px 0">${t}</div>`;
   const grid=(inner,min)=>`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(${min||130}px,1fr));gap:9px;align-items:end">${inner}</div>`;
 
@@ -12577,6 +12994,7 @@ function _mktMeetingBody(wk, kind, notes, prevNotes, roNow){
   // realtor. The bar is built from whichever houses this tab is showing.
   const allOnTab = (tab==='doc') ? _mktCards('soon').concat(_mktCards('active')) : _mktCards(tab);
   const realtorBar = _mktRealtorBar(allOnTab);
+  const stateBar   = _mktStateBar(wk, _mktRealtorFilter(allOnTab));
 
   if(tab==='active'){
     const cards=_mktRealtorFilter(_mktCards('active'));
@@ -12680,7 +13098,7 @@ function _mktMeetingBody(wk, kind, notes, prevNotes, roNow){
         + `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
             <button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">&#65291; Add task</button>
             <button onclick="_miAddQuick('q','${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#8A5A10;cursor:pointer;font-weight:600">&#65291; Question for Bruce / Tommy</button>
-          </div>`);
+          </div>`, c);
     }).join('') : none(window._mktRealtorSel?'Nothing on the market for this realtor.':'Nothing is on the market right now.');
   }
 
@@ -12730,7 +13148,7 @@ function _mktMeetingBody(wk, kind, notes, prevNotes, roNow){
         + `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
             <button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">＋ Add task</button>
             <button onclick="_miAddQuick('q','${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#8A5A10;cursor:pointer;font-weight:600">＋ Question for Bruce / Tommy</button>
-          </div>`);
+          </div>`, c);
     }).join('') : none(_emptyMsg);
   }
 
@@ -12787,7 +13205,7 @@ function _mktMeetingBody(wk, kind, notes, prevNotes, roNow){
         + `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
             <button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">&#65291; Add task</button>
             <button onclick="_wmAddEvent('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#4A7318;cursor:pointer;font-weight:600">&#65291; Schedule contractor</button>
-          </div>`);
+          </div>`, c);
     }).join('') : none(window._mktRealtorSel?'Nothing queued to be listed for this realtor.':'Nothing is queued to be listed right now.'))
     + `<div style="font-size:12.5px;color:#8a6d1a;background:#FFF7E0;border-radius:8px;padding:9px 12px;margin-top:4px">A house lands here the moment it reaches <b>Finishes</b>, and stays through Pre List / Punchout and Rental Handoff. These same houses are still walked in Monday&rsquo;s Project Team Meeting &mdash; that is where the construction side is handled. Here it is only about the listing.</div>`;
   }
@@ -12800,7 +13218,7 @@ function _mktMeetingBody(wk, kind, notes, prevNotes, roNow){
       + sec('Conclusion — as-is value range', tx(c.id,'doc_range','e.g. $310,000 – $330,000',220))
       + sec('Conclusion — recommended list price', tx(c.id,'doc_reco','$0',150))
       + sec('Why', ta(c.id,'doc_why','What makes this the right number.'))
-    )).join('') : none(window._mktRealtorSel?'Nothing to price for this realtor.':'Nothing to price right now.');
+    , c)).join('') : none(window._mktRealtorSel?'Nothing to price for this realtor.':'Nothing to price right now.');
   }
 
   const tabBar=`<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">${MKT_TABS.map(t=>{
@@ -12813,8 +13231,10 @@ function _mktMeetingBody(wk, kind, notes, prevNotes, roNow){
   return `${_wmClosedBanner(wk, closedRec, 'market')}${tabBar}
     <div style="font-size:12.5px;color:#666;background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:10px 14px;margin-bottom:12px">${MKT_TABS.find(t=>t[0]===tab)[2]}. Everything here saves itself as you type, and last week’s answers sit above each box.</div>
     ${realtorBar}
+    ${stateBar}
     ${body}
     ${_wmOpenQuestionsPanel(_mktCards('active').concat(_mktCards('contract')))}
+    ${_mktSendPanel(wk, roNow)}
     ${_wmCloseBar(wk, closedRec, false, 'market')}`;
 }
 // Raising a question straight off a property block, without leaving the tab.
@@ -30955,4 +31375,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-11a listings-coming-soon-rebuild-active-listings-realtor-subtabs -->
+<!-- build: 2026-10-11b listings-meeting-colour-codes-and-four-pdfs -->
