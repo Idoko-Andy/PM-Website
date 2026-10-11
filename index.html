@@ -383,15 +383,17 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openDesignPkgData()">🎨 Design Package Data</div>
     </div>
   </div>
-  <div class="ni has-dd" id="rep-t">📊 Reporting ▾
-    <div class="dd" id="rep-d" style="min-width:220px">
+  <div class="ni has-dd" id="rep-t">📅 Meetings ▾
+    <div class="dd" id="rep-d" style="min-width:260px">
       <div class="ddl">Weekly Meetings</div>
-      <div class="ddi" onclick="openWeeklyMeeting('team')">🤝 Project Team Meeting</div>
-      <div class="ddi" onclick="openWeeklyMeeting('market')">🏡 Listings Meeting</div>
+      <div class="ddi" onclick="openWeeklyMeeting('team')">🤝 Project Team Meeting <span style="color:#8a93a3">(Monday)</span></div>
+      <div class="ddi" onclick="openWeeklyMeeting('market')">🏡 Listings Meeting <span style="color:#8a93a3">(9am Tuesday)</span></div>
       <div class="ddi" onclick="openWeeklyMeeting('kickoff')">🚀 Kickoff Meeting</div>
       <div class="ddi" onclick="openWeeklyMeeting('eop')">🏁 End of Project Meeting</div>
       <div class="ddi" onclick="openWeeklyMeeting('company')">🏢 Full Company Meeting</div>
       <div class="ddi" onclick="openWeeklyMeeting('ceo')">👔 Director / CEO Meeting</div>
+      <div class="ddl" style="margin-top:4px">Monthly Meetings</div>
+      <div class="ddi" onclick="openWeeklyMeeting('va')">🗂 VA Assistant Meetings <span style="color:#8a93a3">(8am Tuesdays)</span></div>
       <div class="ddl" style="margin-top:4px">Daily</div>
       <div class="ddi" onclick="openDailyReports()">📝 Daily Reports and Huddles</div>
       <div class="ddi" onclick="openEndOfDayReports()">🌙 End of Day Reports</div>
@@ -1468,6 +1470,7 @@ const PERM_ITEMS = [
   { key:"rep_kickoff",      label:"Meeting: Kickoff",        group:"Reporting" },
   { key:"rep_company",      label:"Meeting: Full Company",   group:"Reporting" },
   { key:"rep_ceo",          label:"Meeting: Director / CEO (Bruce & Tommy only)", group:"Reporting" },
+  { key:"rep_va",           label:"Meeting: Monthly VA Assistant",  group:"Reporting" },
   { key:"edit_history",     label:"Edit History (audit log)", group:"Admin" },
   { key:"sops_view",        label:"SOPs (default on for everyone)", group:"Defaults" },
 ];
@@ -1522,6 +1525,12 @@ Object.keys(ROLE_DEFAULTS).forEach(r=>{
   const p=ROLE_DEFAULTS[r];
   if(p.indexOf("dash_admin")>=0 || p.indexOf("dash_vaadmin")>=0){ if(p.indexOf("trk_all")<0) p.push("trk_all"); }
   if(p.indexOf("rep_all")>=0){ ["rep_team","rep_kickoff","rep_company"].forEach(k=>{ if(p.indexOf(k)<0) p.push(k); }); }
+  // The monthly VA calls are Patience's own meetings, and everyone who sits in one of
+  // them is either a PM or an assistant - so anyone who can already see the project
+  // dashboard can see the rota. Bruce can take it away per person in Permissions.
+  if(p.indexOf("rep_all")>=0 || p.indexOf("dash_vaadmin")>=0 || p.indexOf("dash_pmassistant")>=0){
+    if(p.indexOf("rep_va")<0) p.push("rep_va");
+  }
 });
 const ROLE_FALLBACK = ["dash_project","dash_pmassistant","sops_view"]; // acquisitions / unknown = view what PM assistants see
 
@@ -1539,6 +1548,7 @@ const ONCLICK_PERM = [
   ["openWeeklyMeeting('eop')",         "rep_eop"],
   ["openWeeklyMeeting('kickoff')",     "rep_kickoff"],
   ["openWeeklyMeeting('company')",     "rep_company"],
+  ["openWeeklyMeeting('va')",          "rep_va"],
   ["openProjectDashboard",      "dash_project"],
   ["openDesignDashboard",       "dash_design"],
   ["openPMAssistantDashboard",  "dash_pmassistant"],
@@ -1595,7 +1605,7 @@ function applyPermissionsUI() {
   const setMenu = (id, show) => { const e = document.getElementById(id); if (e) e.style.display = show ? "" : "none"; };
   // Reporting is no longer one switch: the menu appears if the person can see any
   // single thing inside it, and the items gate themselves individually above.
-  setMenu("rep-t", ["rep_all","rep_team","rep_kickoff","rep_company","rep_ceo"].some(k=>hasPerm(u,k)));
+  setMenu("rep-t", ["rep_all","rep_team","rep_kickoff","rep_company","rep_ceo","rep_va"].some(k=>hasPerm(u,k)));
   setMenu("sop-t",  hasPerm(u,"sops_view")); // SOPs = single toggle (default on)
   const _hb=document.getElementById("hist-box"); if(_hb) _hb.style.display = hasPerm(u,"edit_history") ? "flex" : "none"; // Edit History box beside search
   if(typeof _confirmNavRefresh==='function') _confirmNavRefresh();
@@ -2577,7 +2587,14 @@ let SUB_PHASE_BOARD = {
 
 // ---- Automated phase workflow ----
 // Which subphases require sign-off (Bruce/Marlo/Tommy). Others just need "completed".
-let SUBPHASE_APPROVAL = { "SOW Approval":true, "Budget Approval":true, "Design Budget Approval":true };
+// The saved workflow (pm_settings key "workflow") replaces this at load time, and it has
+// carried the two COMBINED names for a long time - "SOW Creation & Approval" and "Budget
+// Creation & Approval" are what the 48 live cards actually use. The hard-coded default
+// still listed only the old split names, so a fresh environment, or any run before the
+// saved workflow loads, would not treat the company's commonest approval step as one.
+// Both spellings now sit in the default, so the two can no longer disagree.
+let SUBPHASE_APPROVAL = { "SOW Approval":true, "Budget Approval":true, "Design Budget Approval":true,
+                          "SOW Creation & Approval":true, "Budget Creation & Approval":true };
 function subphaseNeedsApproval(name){ return !!SUBPHASE_APPROVAL[name]; }
 // Which properties a subphase applies to: 'all' | 'permitted' | 'nonpermitted'.
 // Defaults: permit-approval and inspection steps only apply to PERMITTED properties.
@@ -9603,7 +9620,65 @@ function _wmMonday(dateStr){ const d=new Date(dateStr+"T00:00:00"); const day=d.
 // and next week's - already prefilled - is open from Sunday. Everything else keeps the
 // Thursday-noon roll that suits the Monday meeting.
 window.__mktPrefilled_ = window.__mktPrefilled_ || {};
+// ===== Monthly VA Assistant meetings (Meetings -> Monthly) ==========================
+// Bruce, 11 Oct: "a monthly VA assistant meeting tab, which will be Tuesdays at 8 a.m.
+// ... the first Tuesday of each month to be 8 a.m., which will be a 15-minute Zoom
+// meeting with Jen and Patience ... second Tuesday ... Gabe and Patience. The 8:30 to
+// 9 a.m. meeting will be Marlo and Patience and VA Andy ... third Tuesday ... Isaiah ...
+// Andrew ... last Tuesday ... Alex ... Bruce and Patience."
+//
+// His sentence was dictated and the middle of it is elided, so the two slots marked
+// confirm:true below are MY reading of the pattern, not his words. They are labelled on
+// screen as needing confirmation rather than quietly presented as fact - one line from
+// him and the flag comes off. Patience is in every one of them, which is the whole
+// point: these are her monthly one-to-ones with each person she works with.
+const VA_MEET_ROTA = [
+  { wk:1, name:'First Tuesday', slots:[
+      { t:'8:00 - 8:15 AM', who:['Jen','Patience'], note:'15-minute Zoom' }
+  ]},
+  { wk:2, name:'Second Tuesday', slots:[
+      { t:'8:00 - 8:15 AM', who:['Gabe','Patience'], note:'15-minute Zoom' },
+      { t:'8:30 - 9:00 AM', who:['Marlo','Patience','VA Andy'], note:'' }
+  ]},
+  { wk:3, name:'Third Tuesday', slots:[
+      { t:'8:00 - 8:15 AM', who:['Isaiah','Patience'], note:'15-minute Zoom', confirm:true },
+      { t:'8:30 - 9:00 AM', who:['Andrew','Patience'], note:'', confirm:true }
+  ]},
+  { wk:0, name:'Last Tuesday', slots:[
+      { t:'8:00 - 8:15 AM', who:['Alex','Patience'], note:'15-minute Zoom', confirm:true },
+      { t:'8:30 - 9:00 AM', who:['Bruce','Patience'], note:'' }
+  ]}
+];
+// The nth Tuesday of a month, in LOCAL time so it lines up with everything else here.
+// n=0 means the LAST Tuesday.
+function _vaMeetTuesday(y, mo, n){
+  if(n===0){
+    const last=new Date(y, mo+1, 0);
+    const back=(last.getDay()-2+7)%7;
+    return _ymd(new Date(y, mo+1, 0-back));
+  }
+  const first=new Date(y, mo, 1);
+  const shift=(2-first.getDay()+7)%7;
+  return _ymd(new Date(y, mo, 1+shift+(n-1)*7));
+}
+// Which month's sheet is on screen. It rolls to the next month the day after the last
+// Tuesday, so the month that is finished does not sit there looking current.
+function _vaMeetMonthKey(){
+  const now=new Date(); now.setHours(0,0,0,0);
+  const y=now.getFullYear(), mo=now.getMonth();
+  const last=_vaMeetTuesday(y, mo, 0);
+  if(_ymd(now) > last){
+    const nxt=new Date(y, mo+1, 1);
+    return _ymd(nxt);
+  }
+  return _ymd(new Date(y, mo, 1));
+}
+function _vaMeetMonthLabel(mk){
+  try{ return new Date(mk+"T00:00:00").toLocaleDateString(undefined,{month:'long',year:'numeric'}); }
+  catch(e){ return mk; }
+}
 function _wmWeekKeyFor(kind){
+  if(kind==='va') return _vaMeetMonthKey();
   // The full company meeting is Tuesday 8:45am, but the PDF goes out on Sunday night -
   // so the new week has to be sitting there ready on SATURDAY morning.
   if(kind==='company'){
@@ -10327,7 +10402,7 @@ function openDailyReports(){
 function _canSeeCeoMeeting(){ return _canSeeMeeting('ceo'); }
 // Hiding a menu item is not the same as closing the door - these screens can also
 // be reached from a restored view or a link, so each one checks its own key.
-const _MEETING_PERM={team:'rep_team',market:'rep_market',kickoff:'rep_kickoff',eop:'rep_eop',company:'rep_company',ceo:'rep_ceo'};
+const _MEETING_PERM={team:'rep_team',market:'rep_market',kickoff:'rep_kickoff',eop:'rep_eop',company:'rep_company',ceo:'rep_ceo',va:'rep_va'};
 function _canSeeMeeting(kind){
   const u=(typeof _viewUser==='function')?_viewUser():null;
   if(!u) return false;
@@ -10337,7 +10412,7 @@ function _canSeeMeeting(kind){
   return hasPerm(u,k);
 }
 function _meetingDenied(kind){
-  const names={team:'Project Team Meeting',market:'Listings Meeting',kickoff:'Kickoff Meeting',eop:'End of Project Meeting',company:'Full Company Meeting',ceo:'Director / CEO Meeting'};
+  const names={team:'Project Team Meeting',market:'Listings Meeting',kickoff:'Kickoff Meeting',eop:'End of Project Meeting',company:'Full Company Meeting',ceo:'Director / CEO Meeting',va:'Monthly VA Assistant Meetings'};
   const extra=(kind==='ceo')?'This one is just for Bruce and Tommy.':'You do not have this meeting turned on yet.';
   return `<div class="empty-state"><div class="icon">&#128274;</div>
     <p style="color:#566070;font-size:16px;font-weight:500">${names[kind]||'Meeting'}</p>
@@ -15617,6 +15692,7 @@ async function _wmPollCarried(kind){
 // When each meeting actually runs. Bruce, 13 Sept: "the listings meeting is every
 // Tuesday at 9:00 or 9:15am just depends when we finish our full company meeting."
 const _WM_WHEN = {
+  va:      'Tuesday mornings from 8:00 AM, once a month each',
   team:    'Monday 8:00 AM',
   market:  'Tuesday, straight after the company meeting \u2014 9:00 or 9:15 AM',
   company: 'Tuesday 8:45 AM',
@@ -15632,7 +15708,7 @@ function openWeeklyMeeting(kind, week){
   // also be reached from a restored nav state or a link, so check here too.
   if(!_canSeeMeeting(kind)){ document.getElementById("dash-body").innerHTML=_meetingDenied(kind); return; }
   if(window._wmData===undefined||window._wmData===null){ if(window._wmData===undefined){ window._wmData=null; Promise.all([_wmLoad(), _miLoad(), _mktLoadShowings(), _rtrLoad(), (window._pdnData===undefined?( (window._pdnData=null), _pdnLoad()):Promise.resolve())]).then(()=>openWeeklyMeeting(kind, week)); document.getElementById("dash-body").innerHTML='<div style="padding:40px;text-align:center;color:#566070">Loading meeting…</div>'; return; } }
-  const titles={team:'🤝 Project Team Meeting',market:'🏡 Listings Meeting',kickoff:'🚀 Kickoff Meeting',eop:'🏁 End of Project Meeting',company:'🏢 Full Company Meeting',ceo:'👔 Director / CEO Meeting'};
+  const titles={team:'🤝 Project Team Meeting',market:'🏡 Listings Meeting',kickoff:'🚀 Kickoff Meeting',eop:'🏁 End of Project Meeting',company:'🏢 Full Company Meeting',ceo:'👔 Director / CEO Meeting',va:'🗂 Monthly VA Assistant Meetings'};
   const liveWk=_wmWeekKeyFor(kind);
   const wk = week || liveWk;
   const isPast = wk!==liveWk;
@@ -15647,7 +15723,45 @@ function openWeeklyMeeting(kind, week){
     return `<div style="margin-top:8px">${lastBox}<textarea id="wm-${pid}" placeholder="${ph}" style="width:100%;min-height:64px;margin-top:6px;padding:9px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:13.5px;color:#222;resize:vertical;font-family:inherit">${_calEsc(notes[pid]||'')}</textarea><div style="display:flex;align-items:center;gap:8px;margin-top:4px"><button onclick="_wmSaveNote('${kind}','${pid}','${wk}')" style="padding:6px 14px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">Save</button><span id="wm-ok-${pid}" style="display:none;font-size:12px;color:#16794C">Saved ✓</span></div></div>`;
   };
   let body='';
-  if(kind==='team'){
+  if(kind==='va'){
+    // One card per Tuesday, each holding its sessions. The notes box on every session is
+    // an ordinary meeting note, so it saves and archives exactly like every other meeting
+    // on this screen and nothing new had to be given write access to make it work.
+    const mk=wk, Y=parseInt(mk.slice(0,4),10), MO=parseInt(mk.slice(5,7),10)-1;
+    const today=_ymd(new Date());
+    const anyConfirm=VA_MEET_ROTA.some(function(r){ return r.slots.some(function(x){ return x.confirm; }); });
+    const chip=(txt,bg,fg)=>`<span style="display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;background:${bg};color:${fg}">${txt}</span>`;
+    const cards=VA_MEET_ROTA.map(function(row){
+      const d=_vaMeetTuesday(Y, MO, row.wk);
+      const past = d < today, isToday = d===today;
+      let nice=d; try{ nice=new Date(d+'T00:00:00').toLocaleDateString(undefined,{weekday:'long',month:'long',day:'numeric'}); }catch(e){}
+      const slots=row.slots.map(function(sl,i){
+        const pid='va-'+row.wk+'-'+i;
+        const people=sl.who.map(function(w){ return `<span style="display:inline-block;padding:2px 9px;margin:0 5px 5px 0;border-radius:99px;font-size:12.5px;background:#EEF2F9;color:#2b3a51;font-weight:500">${_calEsc(w)}</span>`; }).join('');
+        return `<div style="border-top:0.5px solid #eef0f6;padding:11px 0 2px">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px">
+            <span style="font-size:13.5px;font-weight:600;color:#111">${_calEsc(sl.t)}</span>
+            ${sl.note?chip(_calEsc(sl.note),'#F2F7F2','#2f6a3d'):''}
+            ${sl.confirm?chip('times inferred - confirm with Bruce','#FFF4E5','#8a5a10'):''}
+          </div>
+          <div>${people}</div>
+          ${ta(pid, 'What was agreed, and anything to pick up next month...')}
+        </div>`;
+      }).join('');
+      return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid ${isToday?'#639922':(past?'#cdd7e6':'#7A3FA8')};border-radius:10px;padding:14px 16px;margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px">
+          <div style="font-size:15px;font-weight:700;color:#111">${_calEsc(row.name)}</div>
+          <div style="font-size:12.5px;color:#566070">${_calEsc(nice)}${isToday?' &middot; today':(past?' &middot; done':'')}</div>
+        </div>
+        ${slots}
+      </div>`;
+    }).join('');
+    body=`<div style="background:#F7F8FB;border:0.5px solid #e6e9f0;border-radius:10px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#444">
+        Patience sits in every one of these. They are her monthly one-to-ones, 8:00 AM on Tuesdays, and the notes below save straight into the meeting record like every other meeting on this screen.
+        ${anyConfirm?'<div style="margin-top:8px;color:#8a5a10"><b>Two of these are my reading, not your words.</b> Your message was dictated and the middle of it came through as dots, so the third Tuesday and the first slot of the last Tuesday are marked above. Tell me the right pairing and I will set it straight.</div>':''}
+      </div>${cards}`;
+  }
+  else if(kind==='team'){
     // Vacant / On Standby through Pre List / Punchout. Once a house is listed on the
     // market - or handed to rentals - it leaves the Monday construction walk-through
     // and picks up in the Listings Meeting instead.
@@ -16029,7 +16143,7 @@ function openWeeklyMeeting(kind, week){
   // narrow measure - long lines of prose are genuinely harder to read.
   const _wmWide = (kind==='team');
   document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div data-wm-doc="${kind}" data-wm-week="${wk}" style="padding:20px ${_wmWide?'26px':'20px'};max-width:${_wmWide?'none':'1000px'};margin:0 auto">
-    <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:4px"><div style="font-size:18px;font-weight:700;color:#111">${titles[kind]||'Weekly Meeting'}</div><div style="font-size:13px;color:#566070">Week of ${_calEsc(_wmLabel(wk))} &middot; ${_wmWhenLabel(kind)}${isPast?' &middot; archived':''}</div></div>
+    <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:4px"><div style="font-size:18px;font-weight:700;color:#111">${titles[kind]||'Weekly Meeting'}</div><div style="font-size:13px;color:#566070">${kind==='va'?_calEsc(_vaMeetMonthLabel(wk)):'Week of '+_calEsc(_wmLabel(wk))} &middot; ${_wmWhenLabel(kind)}${isPast?' &middot; archived':''}</div></div>
     <div style="font-size:12.5px;color:#566070;margin-bottom:14px">Auto-prefilled from live data. <b style="color:#0F7B54">Everything saves itself as you type</b> — the Save buttons still work, you just don't need them. Notes are shared with everyone for this week's meeting.${isPast?' <b style="color:#8a6d1a">You are looking back at a past week.</b>':''}</div>
     ${_wmArchive(kind, wk)}
     ${(kind==='team'||kind==='market') && typeof _ctlPanel==='function' ? _ctlPanel(isReadOnly()||isPast) : ''}
@@ -17959,10 +18073,57 @@ function _rltCards(name){
     .filter(c=>!c.archived && norm(c.listingAgent)===norm(name));
 }
 function _rltKey(name){ return 'r:'+name; }
+// Bruce, 11 Oct: "I don't know why we have an in contract tab. You can just remove that."
+// Off the tab bar it goes. The board itself is not deleted - the In contract section on
+// the main page still opens it, because that is where the inspection, remedy and notes
+// boxes live and nothing else holds them. _rltTab() therefore still accepts 'contract';
+// it is simply not somewhere you land by accident any more.
+// Bruce, 11 Oct: "we also want to be able to add in where they can schedule tasks."
+// It opens the same Add-task window the rest of the app uses - one task list, one
+// calendar, no second kind of task that only realtors can see. If their own tab is
+// open, the task starts out pointed at a house they are listing.
+function _rltAddTask(){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
+  const t=_rltTab();
+  let pre=null;
+  if(t.indexOf('r:')===0){
+    const mine=_rltCards(t.slice(2));
+    if(mine.length===1) pre={ propId:mine[0].id };
+  }
+  if(typeof openAddTask==='function') openAddTask(null, pre);
+}
+// Bruce, 11 Oct: "add in another tab where it's closed on the year."
+function _rltClosedYear(){
+  const yr=String(new Date().getFullYear());
+  const all=(typeof propCards!=='undefined'?propCards:[])
+    .filter(function(c){ return !c.archived && c.phase==='Closed' && String(c.closedDate||'').slice(0,4)===yr; })
+    .sort(function(a,b){ return String(b.closedDate||'').localeCompare(String(a.closedDate||'')); });
+  // Grouped by whoever listed it, because that is the question this tab answers.
+  const byAgent={};
+  all.forEach(function(c){ const k=String(c.listingAgent||'').trim()||'No listing agent'; (byAgent[k]=byAgent[k]||[]).push(c); });
+  const names=Object.keys(byAgent).sort(function(a,b){ return byAgent[b].length-byAgent[a].length || a.localeCompare(b); });
+  const row=function(c){
+    return `<div onclick="openPropDetail('${c.id}')" style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;padding:8px 15px;border-top:0.5px solid #f4f5f7;cursor:pointer">
+      <div style="min-width:0"><div style="font-size:13.5px;font-weight:600;color:#185FA5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(c.addr||'')}</div>
+        <div style="font-size:11.5px;color:#566070">${c.pm?('PM '+_calEsc(c.pm)):'no PM'}</div></div>
+      <div style="font-size:12px;color:#566070;white-space:nowrap;text-align:right">${_calEsc(c.closedDate||'')}</div>
+    </div>`;
+  };
+  const blocks=names.map(function(n){
+    return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;overflow:hidden;margin-bottom:10px">
+      <div style="padding:9px 15px;background:#EFF4F9;display:flex;justify-content:space-between;align-items:center">
+        <span style="font-size:13px;font-weight:700;color:#1F4E79">${_calEsc(n)}</span>
+        <span style="font-size:12px;font-weight:700;color:#1F4E79;opacity:.75">${byAgent[n].length}</span>
+      </div>${byAgent[n].map(row).join('')}</div>`;
+  }).join('');
+  return `<div style="font-size:12.5px;color:#566070;margin-bottom:10px">Every house closed in ${yr}, newest first, grouped by who listed it. <b style="color:#111">${all.length} closed so far this year.</b></div>`
+    + (all.length?blocks:'<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:16px;font-size:13px;color:#636b7a">Nothing has closed yet this year.</div>');
+}
 function _rltTabs(){
-  const t=[['main','\uD83D\uDD11 Main Dashboard','Listings, contracts and what is coming up'],
-           ['contract','\uD83E\uDD1D In contract','Inspection, remedy and notes on every house in contract']];
+  const t=[['main','\uD83D\uDD11 Main Dashboard','Listings, contracts and what is coming up']];
   _rltVisible().forEach(n=>t.push([_rltKey(n),'\uD83C\uDFE0 '+n,'Every house '+n+' is holding, by stage']));
+  // Bruce, 11 Oct: "add in another tab where it's closed on the year."
+  t.push(['closed','\uD83C\uDFC5 Closed this year','Every house closed this year, newest first']);
   if(_rltSeesAll()) t.push(['stages','\uD83C\uDFC1 All houses','Every house on the market, by stage, whoever is listing it']);
   return t;
 }
@@ -18247,7 +18408,7 @@ function _icBody(){
   </div>`;
 }
 const RLT_STAGES=["Pre List / Punchout Process","Listed on the Market","In Contract","RTR In Process","RTR Completed (Pending Closing)"];
-function _rltTab(){ const t=window._rltTabSel||'main'; return RLT_TABS.some(x=>x[0]===t)?t:'main'; }
+function _rltTab(){ const t=window._rltTabSel||'main'; return (t==='contract'||RLT_TABS.some(x=>x[0]===t))?t:'main'; }
 function _rltGo(t){ window._rltTabSel=t; openRealtorDashboard(); }
 function openRealtorDashboard(tab){
   window.__rltOpen=true;
@@ -18255,11 +18416,22 @@ function openRealtorDashboard(tab){
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
   if(tab) window._rltTabSel=tab;
   const _rt=_rltTab();
-  const act=(typeof _mktCards==='function')?_mktCards('active'):[];
-  const ctr=(typeof _mktCards==='function')?_mktCards('contract'):[];
-  const rtr=(typeof _mktCards==='function')?_mktCards('rtr'):[];
-  const ctc=(typeof _mktCards==='function')?_mktCards('ctc'):[];
-  const soon=(typeof _mktCards==='function')?_mktCards('soon'):[];
+  // Bruce, 11 Oct: "when I click on Katie Har and Will Har, I want their dashboard to
+  // show five squares at the top." Their tab used to be the stage list and nothing else.
+  // It is now the same page as the front one - five squares, five chase lists - built
+  // from THEIR houses, with the stage list still underneath it.
+  const _rltWho=(_rt.indexOf('r:')===0) ? _rt.slice(2) : null;
+  const _rOnly=function(arr){
+    if(!_rltWho) return arr;
+    const n=function(x){ return String(x||'').trim().toLowerCase(); };
+    const me=n(_rltWho);
+    return (arr||[]).filter(function(c){ return n(c.listingAgent)===me; });
+  };
+  const act=_rOnly((typeof _mktCards==='function')?_mktCards('active'):[]);
+  const ctr=_rOnly((typeof _mktCards==='function')?_mktCards('contract'):[]);
+  const rtr=_rOnly((typeof _mktCards==='function')?_mktCards('rtr'):[]);
+  const ctc=_rOnly((typeof _mktCards==='function')?_mktCards('ctc'):[]);
+  const soon=_rOnly((typeof _mktCards==='function')?_mktCards('soon'):[]);
   const tile=(icon,title,n,sub,color,click)=>`<div ${click?`onclick="${click}"`:''} style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${color};border-radius:10px;padding:13px 15px;${click?'cursor:pointer':''}">
       <div style="display:flex;justify-content:space-between"><div style="font-size:13.5px;font-weight:600;color:#111">${icon} ${title}</div>${click?'<span style="color:#636b7a">›</span>':''}</div>
       <div style="font-size:26px;font-weight:600;color:${color};margin-top:5px">${n}</div>
@@ -18377,24 +18549,31 @@ function openRealtorDashboard(tab){
       ${tile('✅','Cleared to close',ctc.length,'remedies completed','#534AB7',"_rltGo('stages')")}
     </div>
     <div style="font-size:13px;font-weight:700;color:#111;margin-bottom:8px">What needs chasing</div>
-    ${need('⏳ Pre-list / punch out', poOpen.length, '#8A5A10', 'Houses whose punch-out checklist is not finished. Patience fills it in from the NPI inspection report — click one to open it.', poBody, 'See every stage', "_rltGo('stages')")}
+    ${need('⏳ Pre-list / punch out', poOpen.length, '#8A5A10', 'Houses whose punch-out checklist is not finished. <b>The eight are:</b> '+PUNCH_ITEMS.map(x=>_calEsc(x[1])).join(' &middot; ')+'. So "0 of 8, not started" means nobody has opened a punch-out walk-through on that house at all. Patience fills it in from the NPI inspection report — click one to open it.', poBody, 'See every stage', "_rltGo('stages')")}
     ${need('🏡 Listed on the market', mktLate.length, '#185FA5', 'The on-the-market checklist is due every two weeks. These have run out.', mktBody, 'On the market meeting', "openWeeklyMeeting('market')")}
     ${need('🤝 In contract', icNo.length, '#0E7460', 'No home inspection recorded yet. Open the in-contract board to answer inspection, remedy and notes on each one.', icBody, 'Open the in-contract board', "_rltGo('contract')")}
     ${need('🛠 Request a remedy', rtr.length, '#BA7517', 'Remedy lists being worked, and the next thing booked on each house.', rtrBody, 'Construction calendar', "openProjectDashboard('construction')")}
     ${need('✅ Cleared to close', ctc.length, '#534AB7', 'Remedies finished — these are waiting on a closing date.', ctcBody, 'See every stage', "_rltGo('stages')")}`;
 
   document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div style="padding:20px;max-width:1000px;margin:0 auto">
-    <div style="font-size:18px;font-weight:700;color:#111">🔑 Realtor Dashboard</div>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+      <div style="font-size:18px;font-weight:700;color:#111">🔑 Realtor Dashboard</div>
+      ${isReadOnly()?'':`<button onclick="_rltAddTask()" style="padding:8px 15px;background:#122A4A;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">＋ Schedule a task</button>`}
+    </div>
     <div style="font-size:12.5px;color:#566070;margin-bottom:12px">Listings, remedies and contracts in one place.</div>
     ${tabBar}
     ${_rt==='contract'
       ? `<div style="font-size:12.5px;color:#566070;margin-bottom:10px">Every house in contract. Pick one on the left; answer inspection, remedy and notes in the middle.</div><div id="ic-body">${_icBody()}</div>`
     : _rt==='stages'
       ? `<div style="font-size:12.5px;color:#566070;margin-bottom:10px">Every house on the board, in the order it moves: pre-list and punch out, on the market, in contract, request a remedy, cleared to close.</div>${stageBlock}`
+    : _rt==='closed'
+      ? _rltClosedYear()
       : (_rt.indexOf('r:')===0
         ? (()=>{ const who=_rt.slice(2); const mine=_rltCards(who);
-            return `<div style="font-size:12.5px;color:#566070;margin-bottom:10px"><b style="color:#111">${_calEsc(who)}</b> &mdash; ${mine.length} house${mine.length===1?'':'s'}, in the order they move: pre-list and punch out, on the market, in contract, request a remedy, cleared to close.</div>`
+            return `<div style="font-size:12.5px;color:#566070;margin-bottom:10px"><b style="color:#111">${_calEsc(who)}</b> &mdash; ${mine.length} house${mine.length===1?'':'s'}. The squares and the chase lists below are theirs only.</div>`
               + (mine.length?'':`<div style="background:#FFF7E0;border:1px solid #EAD9A8;border-radius:11px;padding:12px 15px;margin-bottom:12px;font-size:13px;color:#6b5310">No houses are listed under this name yet. A house shows up here once <b>${_calEsc(who)}</b> is set as the listing agent on its property card.</div>`)
+              + mainBody
+              + `<div style="font-size:13px;font-weight:700;color:#111;margin:18px 0 8px">Every house ${_calEsc(who)} is holding, by stage</div>`
               + _stageBlockFor(who); })()
         : mainBody)}
   </div></div></div>`;
@@ -19552,11 +19731,36 @@ function _execStat(label,val,color){
 // ===== Approver (Bruce/Tommy) extras: pending approvals w/ 48h timers + Tommy's money boxes =====
 // Everything awaiting sign-off: pure approval steps that are started but not approved,
 // plus combined creation+approval steps that are completed but not approved.
+// "Pending Permit Approval (R-26-97)" is a permit sitting at the CITY. Nobody here can
+// sign it, there is no 48-hour clock anybody controls, and it belongs on the Permit
+// Tracker. It matched the old pure-approval test only because its name contains the word
+// approval, and it was putting six houses on the Director's sign-off list with a stopwatch
+// against each one. It is a record of waiting, not a job.
+const _APPR_NOT_OURS = /permit/i;
+// Bruce, 11 Oct: "pre-construction approvals, that'll be properties pending approval on
+// the scope of work ... those do not come due until the scope of work has actually been
+// marked completed or submitted."
+// A bare "SOW Approval" step is a clock with nothing under it until the scope itself is
+// finished. So when the same card carries the matching CREATION step, the approval does
+// not count until that step is completed. On the usual combined step - "SOW Creation &
+// Approval" - the rule is already the right one: completed, waiting on a signature.
+function _apprCreationDone(c, sp){
+  const nm=String((sp&&sp.name)||'');
+  const stem=nm.replace(/\s*approval\s*$/i,'').trim().toLowerCase();
+  if(!stem) return true;
+  const sibs=((c&&c.subPhases)||[]).filter(function(x){
+    const n=String((x&&x.name)||'').toLowerCase();
+    return x!==sp && /creat/i.test(n) && n.indexOf(stem)===0;
+  });
+  if(!sibs.length) return true;                       // nothing to wait for
+  return sibs.some(function(x){ return !!x.completed; });
+}
 function _apprPending(){
   const out=[]; const now=Date.now();
   (typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived).forEach(c=>(c.subPhases||[]).forEach(sp=>{
     let pending=false, sinceIso=null;
-    if(_isPureApproval(sp.name)){ if(sp.start && !sp.approved && !sp.completed){ pending=true; sinceIso=sp.start; } }
+    if(_APPR_NOT_OURS.test(String((sp&&sp.name)||''))) return;
+    if(_isPureApproval(sp.name)){ if(sp.start && !sp.approved && !sp.completed && _apprCreationDone(c,sp)){ pending=true; sinceIso=sp.start; } }
     else if(typeof subphaseNeedsApproval==='function' && subphaseNeedsApproval(sp.name)){ if(sp.completed && !sp.approved){ pending=true; sinceIso=sp.completedAt||sp.start||null; } }
     if(pending){ const since=sinceIso?new Date(sinceIso).getTime():now; const hrsLeft=Math.round(48-(now-since)/3600000); out.push({c,sp,hrsLeft}); }
   }));
@@ -19799,8 +20003,12 @@ function _pDrill(kind, back){
     if(window._miData===undefined){ window._miData={}; _miLoad().then(()=>_pDrill('pq','tommy')); }
     html=head("Priority Qs from meetings")+'<div style="font-size:13px;color:#566070;margin:-8px 0 12px">Questions the team raised on a property in the Monday meeting and flagged for you or Bruce. Mark one opened when you pick it up; answering it writes the answer back onto that property in the meeting, and it stops coming back every week.</div>'+_pqPanel();
   } else if(kind==='takedowns'){
-    const rows=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && c.phase==="Upcoming Takedowns").map(_dirPropRow).join("");
-    html=head("Upcoming Takedowns")+list(rows);
+    const tds=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived && c.phase==="Upcoming Takedowns");
+    // Houses still owing him something first - that is the only reason he opened this.
+    const ordered=tds.slice().sort((a,b)=> _tdCeoMissing(b).length-_tdCeoMissing(a).length || String(a.addr||'').localeCompare(String(b.addr||'')));
+    const owing=ordered.filter(c=>_tdCeoMissing(c).length).length;
+    const note=`<div style="font-size:13px;color:#566070;margin:-8px 0 12px">Three things each takedown needs from you: an acquisitions budget, a kickoff meeting walked, and an ARV. ${owing?('<b style="color:#8a5a10">'+owing+' of '+tds.length+' still owe at least one.</b>'):'<b style="color:#0F7B54">All '+tds.length+' are complete.</b>'} Each one ticks itself off the card, the kickoff meeting record and the ARV field - nothing here is a box anybody has to remember.</div>`;
+    html=head("Upcoming Takedowns")+note+list(ordered.map(_dirTdRow).join(""));
   } else if(kind==='closings'){
     const rows=_upcomingClosings().map(u=>`<div onclick="openPropDetail('${u.c.id}')" style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid ${u.t==='BUYING'?'#185FA5':'#B42318'};border-radius:8px;padding:10px 13px;cursor:pointer;display:flex;justify-content:space-between;align-items:center">
       <div><div style="font-size:13.5px;font-weight:600;color:#111">${_calEsc(u.c.addr||'')}</div><div style="font-size:12px;color:#566070">${u.c.pm?_calEsc(u.c.pm):'—'}</div></div>
@@ -19809,6 +20017,31 @@ function _pDrill(kind, back){
     html=head("Upcoming Closings — buying & selling")+list(rows);
   }
   el.innerHTML=`<div style="padding:20px">${html}</div>`;
+}
+// Bruce, 11 Oct: "tasks assigned to Tommy that are due that week. Not next week, not
+// months apart." The full list stays underneath - this is the short one he actually has
+// to clear, and anything already overdue belongs in it too, because a job that was due
+// last Thursday is not next week's problem.
+function _wkBounds(){
+  const d=new Date(); d.setHours(0,0,0,0);
+  const day=d.getDay();                                  // 0 Sun ... 6 Sat
+  const back=(day===0?6:day-1);                          // back to Monday
+  const mon=new Date(d.getTime()-back*86400000);
+  return { from:_ymd(mon), to:_ymd(new Date(mon.getTime()+6*86400000)) };
+}
+function _thisWeekCard(name, mine){
+  const w=_wkBounds();
+  const rows=(mine||[]).filter(function(t){
+    const d=t&&t.due_date; if(!d) return false;          // undated is not "due this week"
+    return d<=w.to;                                      // this week, and anything already late
+  }).sort(function(a,b){ return (a.due_date||'zzz')<(b.due_date||'zzz')?-1:1; });
+  let lab=w.from+' to '+w.to;
+  try{
+    const o={month:'short',day:'numeric'};
+    lab=new Date(w.from+'T00:00:00').toLocaleDateString(undefined,o)+' – '+new Date(w.to+'T00:00:00').toLocaleDateString(undefined,o);
+  }catch(e){}
+  return _pmaCard('Due this week ('+_calEsc(lab)+')', rows.map(_pmaTaskRow).join(''), rows.length,
+                  'Nothing due this week.');
 }
 function _personDashView(name, title){
   const today=new Date(); today.setHours(0,0,0,0); const todayStr=_ymd(today);
@@ -19831,7 +20064,8 @@ function _personDashView(name, title){
     </div>
     ${_ceoBoxes(name)}
     ${(name||'').trim().split(' ')[0]==='Bruce' ? `<div style="margin:4px 0 16px">${threeCalendarWidgets({firstName:'Bruce',lastName:'',role:'Project Director'})}</div>` : ''}
-    ${_pmaCard('Tasks assigned to '+_calEsc(name), rows, mine.length, 'No open tasks assigned right now.')}
+    ${_thisWeekCard(name, mine)}
+    ${_pmaCard('Everything assigned to '+_calEsc(name), rows, mine.length, 'No open tasks assigned right now.')}
   </div>`;
 }
 function _execShell(fnName, tabs, activeTab, content){
@@ -20767,6 +21001,40 @@ function renderDirectorHome(){
 }
 function _dirBack(){ const el=document.getElementById('pd-content'); if(el) el.innerHTML=renderDirectorHome(); }
 function _dirDrillHead(title){ return `<div style="display:flex;align-items:center;gap:10px;margin-bottom:14px"><button onclick="_dirBack()" style="font-size:13px;padding:6px 12px;border:0.5px solid #cdd7e6;border-radius:6px;background:#fff;color:#185FA5;cursor:pointer">‹ Back</button><div style="font-size:16px;font-weight:600;color:#111">${title}</div></div>`; }
+// Bruce, 11 Oct: "in the upcoming takedowns, when you click on Tommy's name ... he needs
+// a checklist for need acquisitions budget, need kickoff meeting, need ARV."
+// Each one reads the place that already holds the answer, so none of them is a box
+// somebody has to remember to tick, and none of them can disagree with the card.
+const TD_CEO_CHECKS = [
+  { k:'acq',  label:'Acquisitions budget',
+    has:function(c){ return !!String(((c&&c.checklists)||{}).acqBudget||'').trim(); } },
+  { k:'kick', label:'Kickoff meeting',
+    has:function(c){ try{
+      const d=window._wmData||{};
+      return Object.keys(d).some(function(wk){ return !!(((d[wk]||{}).kickoff||{}).__covered||{})[c.id]; });
+    }catch(e){ return false; } } },
+  { k:'arv',  label:'ARV',
+    has:function(c){ return !!String((c&&c.goalArv)||'').trim(); } }
+];
+function _tdCeoMissing(c){ return TD_CEO_CHECKS.filter(function(x){ return !x.has(c); }); }
+// The takedown row Tommy sees: the same row as everywhere else, with his three
+// outstanding items under it. A house with all three answered says so instead of
+// showing an empty strip.
+function _dirTdRow(c){
+  const p=(typeof phInfo==='function')?phInfo(c.phase):{dot:'#566070'};
+  const pills=TD_CEO_CHECKS.map(function(x){
+    const ok=x.has(c);
+    return `<span style="display:inline-block;padding:2px 9px;margin:4px 5px 0 0;border-radius:99px;font-size:11.5px;font-weight:600;background:${ok?'#E1F5EE':'#FFF4E5'};color:${ok?'#0F7B54':'#8a5a10'}">${ok?'✓':'need'} ${_calEsc(x.label)}</span>`;
+  }).join('');
+  const n=_tdCeoMissing(c).length;
+  return `<div onclick="openPropDetail('${c.id}')" style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid ${n?'#AF2C2B':(p.dot||'#566070')};border-radius:8px;padding:10px 13px;cursor:pointer">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+      <div><div style="font-size:13.5px;font-weight:600;color:#111">${_calEsc(c.addr||'')}</div><div style="font-size:12px;color:#566070">${_calEsc(_phLabel(c.phase))} · ${c.pm?_calEsc(c.pm):'—'}</div></div>
+      <div style="font-size:12px;color:#566070;text-align:right">${c.closingDate?('Buy '+c.closingDate):''}${c.closingDateSell?('<br>Sell '+c.closingDateSell):''}</div>
+    </div>
+    <div>${pills}</div>
+  </div>`;
+}
 function _dirPropRow(c){ const p=(typeof phInfo==='function')?phInfo(c.phase):{dot:'#566070'}; return `<div onclick="openPropDetail('${c.id}')" style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid ${p.dot||'#566070'};border-radius:8px;padding:10px 13px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px">
     <div><div style="font-size:13.5px;font-weight:600;color:#111">${_calEsc(c.addr||'')}</div><div style="font-size:12px;color:#566070">${_calEsc(_phLabel(c.phase))} · ${c.pm?_calEsc(c.pm):'—'}</div></div>
     <div style="font-size:12px;color:#566070;text-align:right">${c.closingDate?('Buy '+c.closingDate):''}${c.closingDateSell?('<br>Sell '+c.closingDateSell):''}</div>
@@ -21117,10 +21385,20 @@ function openDirectorCEODashboard(activeTab) {
     {id:'property',label:'Property Dashboard',icon:'🏗'},
     {id:'construction',label:'Construction Calendar',icon:'📅'},
     {id:'taskcal',label:'Task Calendar',icon:'🗓'},
+    // Bruce, 11 Oct: "let's add trackers next to task calendar."
+    {id:'trackers',label:'Trackers',icon:'📋'},
   ];
   let content;
   switch(activeTab){
     case 'daily':        content=renderDailyReport(); break;
+    case 'trackers':
+      // Same trackers screen everyone else uses, drawn inside this dashboard rather
+      // than sending him off to another one. It loads on first open like it does there.
+      window._trkRerender=()=>_trkKeepScroll(()=>openDirectorCEODashboard('trackers'));
+      window._trkCtx='dir';
+      content=_vaTrackers();
+      if(!window._trkLoaded){ Promise.all([_trkLoad(), loadContractorsFromSupabase()]).then(()=>_permitSeedIfEmpty()).then(()=>openDirectorCEODashboard('trackers')); }
+      break;
     case 'tommy':        content=_personDashView('Tommy','Chief Executive Officer'); break;
     case 'bruce':        content=_personDashView('Bruce','Project Director'); break;
     case 'andyk':        content=_personDashView('Andy','Principal / Owner'); break;
@@ -21343,7 +21621,20 @@ const VA_TPL_SEED = {
   act2:["Insulation inspection passed","Drywall scheduled","Weekly photos uploaded","Budget against spent checked"],
   act3:["Finish MEP trim scheduled","Fixtures ordered and received","Paint and flooring dates confirmed","Punch list opened"],
   act4:["Pre-list inspection booked","NPI report received and typed up","Punch-out items assigned to a trade","Final clean scheduled","Photos scheduled"],
-  post1:["On the Market checklist run this week","Photos live on the listing","Agent feedback logged","Price review with Bruce"],
+  // Bruce, 11 Oct: "you click post construction, and you go to listed on the market.
+  // Step one will be anything not marked completed from active construction carried over
+  // into this. Step two is on the market checklist every two weeks. Step three is
+  // reviewing the on the market checklists and any issues Gabe puts in there. Another
+  // step will be, did Gabe change the furnace filter? Go through and make sure all
+  // contractors used on that job have their W-9s. Follow up with the project manager if
+  // there's any returns that can get scheduled."
+  // His step one is the carry-over, which is behaviour rather than a line - see
+  // VA_CARRY_CHAIN. The rest are these five.
+  post1:["On the Market checklist completed in CompanyCam @14d @every14d @auto:market",
+         "Review that checklist and anything Gabe raised on it @14d @every14d",
+         "Furnace filter changed @14d @every14d",
+         "W-9s in for every contractor used on this job @auto:w9",
+         "Follow up with the PM on any returns that can be scheduled @7d"],
   post2:["Closing timeline applied to the card","Inspection items logged","Remedy requests opened","Utility end-date set"],
   post3:["Rental handoff packet sent","Rent-ready walk done","Keys handed to property management","Utilities transferred out"],
   post4:["Final spend reconciled","Utilities removed","CompanyCam folder closed out","End of project report filed"]
@@ -21351,7 +21642,7 @@ const VA_TPL_SEED = {
 const VA_SOP_SEED = {
   pre:"ANYTHING LEFT OPEN FOLLOWS THE HOUSE. When a property moves to the next list, every step you have not finished comes with it and shows as a CARRIED column, marked with where it came from. Nothing is lost by a house moving, and it is your job to chase it until it is clean.\nA step marked N/A is answered - use it when something genuinely does not apply to that house rather than leaving a box open for ever.\nHold puts a house away for 14 days. It disappears from the working list, stops chasing you, and comes back by itself.\n\n1. UPCOMING TAKEDOWNS - five steps, in this order.\n   1. Create the property card. Addresses waiting for one are listed at the top of the tab; nothing creates a card by itself.\n   2. Create the CompanyCam folder and put the link on the card. This one ticks itself once the link is there.\n   3. Find out who the project manager is. It opens at 14 days and ticks itself if a PM is already on the card.\n   4. Closing info and closing date on the card. Opens at 14 days, ticks itself if the date is already there.\n   5. Vacancy date, vacancy info, lockbox and any other comments on the card. Opens at 14 days, ticks itself if any of it is already there.\n   Steps 3, 4 and 5 fall due on your task calendar the day the card turns 14 days old, and come back every 7 days until they are dealt with. If Slack already gave us the answer the box is ticked for you - what you are chasing is only what is genuinely missing, and it goes on the property card when you get it.\n2. OCCUPIED / CLOSED - we own it, somebody may still be in it.\n   1. Confirm it actually closed.\n   2. Confirm it is still occupied, and for how long.\n   3. Utilities transferred to us if applicable - ticks itself once all three are on the utility tracker, and you can mark it N/A if they are not transferring while it is occupied.\n   4. Follow up on the kickoff meeting. If one has not been walked within 14 days this falls due, so Bruce gets it on the schedule instead of it being forgotten.\n3. VACANT ON STANDBY - empty and waiting. This is where houses quietly rot.\n   1. Lockbox or key, and vacancy info - ticks itself off the card.\n   2. Utility transfer - ticks itself when the utility tracker has electric, gas and water.\n   3. Added to the mowing route - ticks itself when Marlo sets the mower.\n   4. Follow up with Gabe until the First Time Access checklist is done in CompanyCam. This one comes back every 2 days, not every 7.\n4. PRE-CONSTRUCTION - the paperwork that has to exist before anybody starts work. Each of these reads the tracker that already holds the answer, so you are only chasing what is genuinely missing.\n   1. Scope of work uploaded - ticks itself when a scope exists. Chase the PM every 2 weeks until it does.\n   2. Final budget completed and uploaded - ticks itself when the budget is locked. Once it is locked, chase the PM for the final budget to upload.\n   3. Permits approved and uploaded - only a real job on a house marked permitted; ticks itself when every permit reads Issued.\n   4. Start date agreed with the PM.\n   5. Prices and bids back from contractors.\n   6. Any other documents - cabinet layouts, design packages.",
   act:"1. FRAMING, MEPs & EXTERIOR - rough-ins booked, photos going up, exterior scope agreed.\n2. INSULATION & DRYWALL - insulation inspection passed before drywall is scheduled. Check budget against spent here, not later.\n3. FINISH MEPs - trim-out scheduled, fixtures on site, paint and flooring dated. Open the punch list now.\n4. PUNCH OUT & PRE-LIST - NPI inspection, punch items assigned, final clean, photos booked. Photos booked is the finish date.",
-  post:"1. LISTED ON THE MARKET - run the On the Market checklist every week, log agent feedback, take the price question to Bruce.\n2. IN CONTRACT - closing timeline on the card, inspection items logged, remedies opened, utility end-date set.\n3. RENTAL HANDOFF / RTR - packet sent, rent-ready walk, keys to property management, utilities out of our name.\n4. CLOSED - final spend reconciled, utilities removed, folder closed, end of project report filed. The house stays on this list four weeks after closing, then drops off."
+  post:"ANYTHING LEFT OPEN FOLLOWS THE HOUSE, the same as it does on the pre-construction lists - so everything still unfinished from Active Construction arrives here as a CARRIED column saying where it came from.\n\n1. LISTED ON THE MARKET - five steps.\n   1. On the Market checklist completed in CompanyCam. This one reads CompanyCam, so do not tick it by hand: it ticks itself when a checklist is finished and unticks itself a fortnight later, which is how it comes back every two weeks.\n   2. Review that checklist and anything Gabe raised on it. Same fortnightly rhythm.\n   3. Furnace filter changed. Also fortnightly.\n   4. W-9s in for every contractor used on this job - ticks itself once every contractor with money against this house is ticked on the W-9 tracker. A house with nobody on its payables yet stays open, because an empty list proves nothing.\n   5. Follow up with the PM on any returns that can be scheduled.\n2. IN CONTRACT - closing timeline on the card, inspection items logged, remedies opened, utility end-date set.\n3. RENTAL HANDOFF / RTR - packet sent, rent-ready walk, keys to property management, utilities out of our name.\n4. CLOSED - final spend reconciled, utilities removed, folder closed, end of project report filed. The house stays on this list four weeks after closing, then drops off."
 };
 function _vaSlug(s){ let h=0,t=String(s||''); for(let i=0;i<t.length;i++){ h=((h<<5)-h+t.charCodeAt(i))|0; } return 'i'+Math.abs(h).toString(36); }
 // A checklist that was never actually edited still gets SAVED the first time anybody
@@ -21364,6 +21655,9 @@ function _vaSlug(s){ let h=0,t=String(s||''); for(let i=0;i<t.length;i++){ h=((h
 // Every wording this checklist has ever shipped with. A saved copy matching ANY of them
 // is a default nobody chose, so it falls through to the current one.
 const VA_TPL_RETIRED = {
+  post1:[
+    ["On the Market checklist run this week","Photos live on the listing","Agent feedback logged","Price review with Bruce"]
+  ],
   pre1:[
     ["Property card created and the address double-checked","CompanyCam folder created","Closing / takedown date on the card","Utilities ordered in our name","Lockbox on and the code logged"],
     ["Create the property card","Find out who the project manager is @7d","Vacancy info, lockbox info and any other comments up to date @7d","Fill out as much of the property card as possible","Chase the assigned project manager to get it done @14d"],
@@ -21446,10 +21740,45 @@ const VA_AUTO = {
                return String(cl.first_access_done||'').trim() || String(cl.vos_lockbox||'').trim(); }},
   vacancy: {label:'vacancy or lockbox info is on the card',
             get:function(c){ const cl=(c&&c.checklists)||{};
-                             return String((c&&c.vacancyDate)||'').trim() || String(cl.lockbox||'').trim(); }}
+                             return String((c&&c.vacancyDate)||'').trim() || String(cl.lockbox||'').trim(); }},
+  // Bruce: "on the market checklist every two weeks". The checklist itself lives in
+  // CompanyCam and a scheduled job writes the date of the newest completed one onto the
+  // card, so this step reads that date rather than asking anybody to copy it over. It
+  // ticks while the newest one is inside the fortnight and UNTICKS the day it is not,
+  // which is what makes the step come back every two weeks on its own.
+  market:  {label:'an On the Market checklist was completed in the last 14 days',
+            get:function(c){
+              const d=String((c&&c.checklistMarketLast)||'').slice(0,10);
+              if(!/^\d{4}-\d{2}-\d{2}$/.test(d)) return '';
+              try{
+                const age=Math.floor((_dParse(_ymd(new Date()))-_dParse(d))/86400000);
+                return (age>=0 && age<=14) ? d : '';
+              }catch(e){ return ''; }
+            }},
+  // Bruce: "go through and make sure all contractors used on that job have their W-9s."
+  // "Used on that job" has two records and they are not the same size. The payables hold
+  // two rows in the whole company; the construction calendar holds 223 bookings with a
+  // contractor on them. Reading only the payables would have meant this step never once
+  // ticked itself, so it reads BOTH and takes the union - anyone booked onto the house or
+  // owed money for it counts as having worked it.
+  // A job with nobody on it in either record proves nothing, so it stays open rather than
+  // ticking itself on an empty list.
+  w9:      {label:'every contractor used on this job has a W-9 on file',
+            get:function(c){ try{
+              if(!c||!c.id) return '';
+              const ids=[];
+              const add=function(id){ if(id && ids.indexOf(id)<0) ids.push(id); };
+              if(typeof _apFor==='function') _apFor(c.id).forEach(function(r){ add(r&&r.contractor_id); });
+              (typeof _calEventsCache!=='undefined'?_calEventsCache:[]).forEach(function(e){
+                if(e && e.property_id===c.id) add(e.contractor_id);
+              });
+              if(!ids.length) return '';
+              const w9=((window._trkData||{}).w9)||{};
+              return ids.every(function(id){ return w9[id]===true; }) ? 'yes' : '';
+            }catch(e){ return ''; } }}
 };
 function _vaItemDays(item){ const m=String(item||'').match(/@(\d+)d\b/); return m?parseInt(m[1],10):0; }
-function _vaItemAuto(item){ const m=String(item||'').match(/@auto:([a-z]+)\b/i); return (m&&VA_AUTO[m[1].toLowerCase()])?m[1].toLowerCase():''; }
+function _vaItemAuto(item){ const m=String(item||'').match(/@auto:([a-z][a-z0-9]*)(?![a-z0-9])/i); return (m&&VA_AUTO[m[1].toLowerCase()])?m[1].toLowerCase():''; }
 // Bruce, 11 Oct: "follow up with Gabe every 48 hours until the First Time Access
 // checklist has been completed." Most steps come back weekly; that one comes back every
 // two days. "@every2d" says so on the line itself.
@@ -21460,7 +21789,7 @@ function _vaItemEvery(item){
 // "@na" means the honest answer may be "this does not apply here", and she should be
 // able to say so rather than leave a box open for ever on a house it was never about.
 function _vaItemNA(item){ return /@na\b/i.test(String(item||'')); }
-function _vaItemLabel(item){ return String(item||'').replace(/@(?:\d+d|every\d+d|auto:[a-z]+|na)\b/ig,'').replace(/\s+/g,' ').trim(); }
+function _vaItemLabel(item){ return String(item||'').replace(/@(?:every\d+d|\d+d|auto:[a-z][a-z0-9]*|na)(?![a-z0-9])/ig,'').replace(/\s+/g,' ').trim(); }
 // What the card itself already says. Nothing is written - if the information is later
 // removed the box opens again, which is the truth rather than a stale tick.
 function _vaAutoFound(c,item){
@@ -21483,7 +21812,7 @@ function _vaCardAgeDays(c){
 // that day and the day the card was made. Upcoming Takedowns is deliberately absent:
 // it went live on 10 Oct, Bruce has worked with its real numbers since, and resetting
 // them would throw away true history.
-const VA_RULES_FROM = { pre2:'2026-10-11', pre3:'2026-10-11', pre4:'2026-10-11' };
+const VA_RULES_FROM = { pre2:'2026-10-11', pre3:'2026-10-11', pre4:'2026-10-11', post1:'2026-10-11' };
 function _vaGateAge(c, cat){
   const age=_vaCardAgeDays(c);
   if(age===null) return null;
@@ -21600,7 +21929,12 @@ async function _vaChkToggle(propId,cat,itemSlug){
 // here ticks the same box, and if the house somehow moves back nothing is duplicated or
 // lost. The step is shown with the category it came from, so nobody wonders why an
 // Upcoming Takedowns question is being asked of a house that closed weeks ago.
-const VA_CARRY_CHAIN = ['pre1','pre2','pre3','pre4'];
+// Bruce, 11 Oct, on the Listed on the Market list: "step one will be anything not
+// marked completed from active construction carried over into this." Carrying is not
+// a checklist line, it is the behaviour - so the chain simply runs the whole way from
+// Upcoming Takedowns through Active Construction and into Listed on the Market, and
+// every unfinished step follows the house in, keeping its original key.
+const VA_CARRY_CHAIN = ['pre1','pre2','pre3','pre4','act1','act2','act3','act4','post1'];
 function _vaCarryFrom(cat){
   const i=VA_CARRY_CHAIN.indexOf(cat);
   return i>0 ? VA_CARRY_CHAIN.slice(0,i) : [];
@@ -31795,4 +32129,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-11e rtr-approvals-read-from-slack -->
+<!-- build: 2026-10-11f listed-on-market-checklist meetings-dropdown va-monthly-rota ceo-trackers-takedown-checks realtor-rebuild -->
