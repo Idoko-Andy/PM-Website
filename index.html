@@ -21136,11 +21136,14 @@ const VA_TPL_SEED = {
   // the property card that answers the step, so a step she never has to chase is already
   // ticked when she gets there. The Slack syncs write onto those same fields, which is
   // how "if you get it from Slack it checks itself" actually happens.
-  pre1:["Create the property card",
+  // Bruce, 11 Oct: shorter headings. "Just put label project manager instead of the
+  // words find out who the project manager is ... step four, closing info notes ...
+  // step five, vacancy info and notes." The behaviour behind each one is unchanged.
+  pre1:["Create the property card @auto:card",
         "Create the CompanyCam folder @auto:ccam",
-        "Find out who the project manager is @14d @auto:pm",
-        "Closing info and closing date on the card @14d @auto:closing",
-        "Vacancy date, vacancy info, lockbox and any other comments on the card @14d @auto:vacancy"],
+        "Project manager @14d @auto:pm",
+        "Closing info notes @14d @auto:closing",
+        "Vacancy info and notes @14d @auto:vacancy"],
   pre2:["Purchase confirmed on the card","Occupancy checked - who is still in it","Keys and access confirmed","Utilities transferred to us","CompanyCam folder started"],
   pre3:["Lockbox on and the code logged","Electric, water and gas all on","Added to the mowing route","Property secured and photographed"],
   pre4:["Scope of work uploaded to the card","Budget created and approved","Permits applied for","Start date agreed with the PM","Contractors lined up for week one"],
@@ -21171,7 +21174,8 @@ function _vaSlug(s){ let h=0,t=String(s||''); for(let i=0;i<t.length;i++){ h=((h
 const VA_TPL_RETIRED = {
   pre1:[
     ["Property card created and the address double-checked","CompanyCam folder created","Closing / takedown date on the card","Utilities ordered in our name","Lockbox on and the code logged"],
-    ["Create the property card","Find out who the project manager is @7d","Vacancy info, lockbox info and any other comments up to date @7d","Fill out as much of the property card as possible","Chase the assigned project manager to get it done @14d"]
+    ["Create the property card","Find out who the project manager is @7d","Vacancy info, lockbox info and any other comments up to date @7d","Fill out as much of the property card as possible","Chase the assigned project manager to get it done @14d"],
+    ["Create the property card","Create the CompanyCam folder @auto:ccam","Find out who the project manager is @14d @auto:pm","Closing info and closing date on the card @14d @auto:closing","Vacancy date, vacancy info, lockbox and any other comments on the card @14d @auto:vacancy"]
   ]
 };
 function _vaTplIsRetired(cat, lines){
@@ -21200,6 +21204,10 @@ function _vaSop(sec){
 // information is on the property card. Markers sit at the end in any order and are
 // stripped before the words are shown.
 const VA_AUTO = {
+  // Every row in this table IS a property card, so step 1 is answered by the row
+  // existing. Before this, the tick was only written when the card was created from
+  // her queue - a card made any other way sat there looking undone for ever.
+  card:    {label:'the property card exists',          get:function(c){ return (c&&c.id)?'yes':''; }},
   pm:      {label:'a project manager is on the card',  get:function(c){ return String((c&&c.pm)||'').trim(); }},
   ccam:    {label:'the CompanyCam folder is linked',   get:function(c){ return String((c&&c.companyCam)||'').trim(); }},
   closing: {label:'a closing date is on the card',     get:function(c){ return String((c&&(c.closingDate||c.closingDateSell))||'').trim(); }},
@@ -21232,6 +21240,42 @@ function _vaItemOpensIn(c,item){
   const d=_vaItemDays(item); if(!d) return 0;
   const age=_vaCardAgeDays(c); if(age===null) return 0;
   return Math.max(0, d-age);
+}
+// ---- On hold -------------------------------------------------------------------
+// Bruce, 11 Oct: "I would like to be able to click on hold ... you can put them on hold
+// and they'll disappear for 14 days and then reappear right there for Patience to follow
+// up and click on hold again if needed."
+//
+// A hold is a date, not a flag: the day the house comes back. That way it expires by
+// itself - nobody has to remember to take a hold off, and a hold can never go stale.
+// It lives in the trackers record, which ordinary staff are allowed to write, so this
+// works for Patience today without waiting on the permissions fix.
+const VA_HOLD_DAYS = 14;
+function _vaHoldUntil(pid, cat){ return String(_trkVal('va_hold', pid, cat)||'').slice(0,10); }
+function _vaHeld(pid, cat){
+  const u=_vaHoldUntil(pid,cat);
+  return !!u && u > _ymd(new Date());     // the day it is due back, it is back
+}
+function _vaHoldDaysLeft(pid, cat){
+  const u=_vaHoldUntil(pid,cat); if(!u) return 0;
+  try{ return Math.max(0, Math.round((_dParse(u)-_dParse(_ymd(new Date())))/86400000)); }catch(e){ return 0; }
+}
+async function _vaHoldSet(pid, cat){
+  if(_blockIfReadOnly()) return;
+  const until=_ymd(new Date(Date.now()+VA_HOLD_DAYS*86400000));
+  await _trkSet('va_hold', pid, cat, until, false);
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===pid; });
+  if(typeof _logAudit==='function') _logAudit('updated','property',(c&&c.addr)||'',
+    'Put on hold on the '+((VA_CATS[cat]||{}).name||cat)+' checklist until '+until);
+  _vaGo(window._vaSec, cat);
+}
+async function _vaHoldClear(pid, cat){
+  if(_blockIfReadOnly()) return;
+  await _trkSet('va_hold', pid, cat, '', false);
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===pid; });
+  if(typeof _logAudit==='function') _logAudit('updated','property',(c&&c.addr)||'',
+    'Taken off hold on the '+((VA_CATS[cat]||{}).name||cat)+' checklist');
+  _vaGo(window._vaSec, cat);
 }
 function _vaChkOn(propId,cat,item){ return _trkOn('va_chk',propId,cat+'|'+_vaSlug(item)); }
 function _vaCardById(propId){ return (typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===propId; })||null; }
@@ -21311,6 +21355,9 @@ function _vaDerivedTasks(vaName){
       const items=_vaTpl(cat);
       if(!items.some(function(it){ return _vaItemDays(it); })) return;
       _vaCards(cat).forEach(function(c){
+        // On hold means on hold. A held house stops nagging her until it comes back,
+        // which is the entire point of the button.
+        if(typeof _vaHeld==='function' && _vaHeld(c.id,cat)) return;
         items.forEach(function(it){
           const ch=_vaItemChase(c,cat,it);
           if(!ch) return;
@@ -21498,9 +21545,15 @@ function _vaSectionView(vaName,sec){
         const bg = auto ? 'background:#F3FAF5;' : (chase ? 'background:#FDF4F3;' : ((!on&&!open)?'background:#FBFBFD;':''));
         return `<td style="padding:9px 8px;text-align:center;vertical-align:top;${bg}">${box}${note}</td>`;
       }).join('');
-      return `<tr style="border-top:0.5px solid #eef0f6">
+      const held=_vaHeld(c.id,cat);
+      const hold = ro ? '' : (held
+        ? `<div onclick="_vaHoldClear('${c.id}','${cat}')" title="Bring it back now" style="cursor:pointer;font-size:10.5px;color:#185FA5;margin-top:3px">bring it back &rsaquo;</div>`
+        : `<div onclick="_vaHoldSet('${c.id}','${cat}')" title="Put this one away for ${VA_HOLD_DAYS} days, then it comes back here" style="cursor:pointer;display:inline-block;font-size:10.5px;color:#566070;background:#fff;border:0.5px solid #d8dce6;border-radius:6px;padding:2px 8px;margin-top:4px">Hold ${VA_HOLD_DAYS}d</div>`);
+      return `<tr style="border-top:0.5px solid #eef0f6;${held?'background:#FAFAFC;':''}">
         <td style="padding:9px 12px;min-width:170px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${_calEsc(c.addr||'')}</span>
-          <div style="font-size:11px;color:#8A94A6">${_calEsc(_phLabel(c.phase))}${c.pm?(' &middot; '+_calEsc(c.pm)):'<span style="color:#B42318"> &middot; no PM</span>'}</div></td>
+          <div style="font-size:11px;color:#8A94A6">${_calEsc(_phLabel(c.phase))}${c.pm?(' &middot; '+_calEsc(c.pm)):'<span style="color:#B42318"> &middot; no PM</span>'}</div>
+          ${held?`<div style="font-size:10.5px;color:#8A5A10">back in ${_vaHoldDaysLeft(c.id,cat)} day${_vaHoldDaysLeft(c.id,cat)===1?'':'s'} &middot; ${_calEsc(_vaHoldUntil(c.id,cat))}</div>`:''}
+          ${hold}</td>
         <td style="padding:9px 10px;white-space:nowrap;font-size:12px;color:${age===null?'#8A94A6':(age>=14?'#B42318':(age>=7?'#8A5A10':'#566070'))}">${age===null?'&mdash;':(age===0?'today':(age+' day'+(age===1?'':'s')))}</td>
         ${cells}
         <td style="padding:9px 12px;white-space:nowrap;font-weight:600;color:${done===total&&total?'#2E7D32':'#8A5A10'}">${done}/${total}</td></tr>`;
@@ -21580,14 +21633,30 @@ function _vaSectionView(vaName,sec){
         <thead><tr style="background:#122A4A;color:#fff">
           <th style="padding:9px 12px;text-align:left">Property</th>
           <th style="padding:9px 10px;text-align:left;white-space:nowrap">Card age</th>
-          ${items.map(function(it,i){ const d=_vaItemDays(it), a=_vaItemAuto(it);
+          ${items.map(function(it,i){
+            // Bruce, 11 Oct: "you don't even need to have the words in there after 14
+            // days ... you should just set it automatically." The rule still runs - the
+            // box goes red and counts the days late, and ticks itself when the card
+            // answers it. The heading no longer explains what the box is already showing.
             return `<th style="padding:8px 8px;text-align:center;font-weight:600;min-width:96px;max-width:150px">
               <div style="font-size:10px;opacity:.6;letter-spacing:.05em">STEP ${i+1}</div>
-              <div style="font-size:11.5px;line-height:1.3;white-space:normal">${_calEsc(_vaItemLabel(it))}</div>
-              ${d?`<div style="font-size:9.5px;opacity:.65;margin-top:2px">after ${d} days &middot; chase every ${VA_FOLLOWUP_DAYS}</div>`:''}
-              ${a?`<div style="font-size:9.5px;opacity:.65;margin-top:1px">ticks itself</div>`:''}</th>`; }).join('')}
+              <div style="font-size:11.5px;line-height:1.3;white-space:normal">${_calEsc(_vaItemLabel(it))}</div></th>`; }).join('')}
           <th style="padding:9px 12px;text-align:left">Done</th></tr></thead>
-        <tbody>${cards.map(prow).join('')||`<tr><td colspan="${items.length+3}" style="padding:22px;text-align:center;color:#636b7a">No properties in this category right now.</td></tr>`}</tbody>
+        <tbody>${(function(){
+          // Bruce, 11 Oct: a house on hold "disappears for 14 days and then reappears
+          // right there". So it leaves the working list and waits in its own row at the
+          // bottom, which says the day it is due back. Nothing is deleted and nothing has
+          // to be remembered - the hold runs out by itself.
+          const live=cards.filter(function(c){ return !_vaHeld(c.id,cat); });
+          const rest=cards.filter(function(c){ return  _vaHeld(c.id,cat); })
+                          .sort(function(a,b){ return _vaHoldUntil(a.id,cat).localeCompare(_vaHoldUntil(b.id,cat)); });
+          const body = live.length ? live.map(prow).join('')
+            : `<tr><td colspan="${items.length+3}" style="padding:22px;text-align:center;color:#636b7a">${cards.length?'Everything in this category is on hold right now.':'No properties in this category right now.'}</td></tr>`;
+          const heldHead = rest.length
+            ? `<tr><td colspan="${items.length+3}" style="padding:9px 12px;background:#FBFAF7;border-top:0.5px solid #e8e2d4;font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#8A5A10">On hold &middot; ${rest.length} &mdash; ${rest.length===1?'it comes':'they come'} back by ${_calEsc(_vaHoldUntil(rest[rest.length-1].id,cat))}</td></tr>`
+            : '';
+          return body + heldHead + rest.map(prow).join('');
+        })()}</tbody>
       </table></div>
     </div>`;
   }
@@ -31375,4 +31444,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-11b listings-meeting-colour-codes-and-four-pdfs -->
+<!-- build: 2026-10-11c takedown-hold-button-short-labels-step1-autotick -->
