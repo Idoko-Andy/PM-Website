@@ -348,6 +348,7 @@ function row(i){
       <select onchange="assign('${i.id}', this.value)" ${i.cc_done?'disabled':''}>
         <option value="">— pick a contractor —</option>${opts}
       </select>
+      ${i.contractor_id && !i.cc_done && !(CONTRACTORS.find(c=>c.id===i.contractor_id)||{}).phone ? `<div><button class="ubtn small" onclick="addPhone('${i.contractor_id}').then(ok=>ok&&load())">📞 Add ${esc(i.contractor_name||'their')} phone</button></div>` : ""}
       ${i.cc_contractor_text?`<div class="cctext ${unmatched?'unmatched':''}">CompanyCam says: <b>${esc(i.cc_contractor_text)}</b>${unmatched?' — not in directory':''}</div>`:""}
       ${bidList(i)}
       ${invoiceLine(i)}
@@ -462,7 +463,8 @@ function renderPicker(){
     const opts = list.map(c=>`<option value="${c.id}" ${PICK.slots[k]===c.id?'selected':''} ${taken.includes(c.id)?'disabled':''}>${esc(label(c))}</option>`).join("");
     return `<div class="pick" style="cursor:default"><span class="tier t1" style="min-width:74px;text-align:center">Choice ${k+1}</span>
       <select style="flex:1;background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:7px 8px;font-size:13px;min-width:0" onchange="pickSlot(${k},this.value)">
-        <option value="">— pick a contractor —</option>${opts}</select></div>`;
+        <option value="">— pick a contractor —</option>${opts}</select>
+      ${PICK.slots[k] ? `<button class="ubtn small" title="Add or fix this contractor's cell" onclick="addPhone('${PICK.slots[k]}').then(renderPicker)">📞</button>` : ""}</div>`;
   };
   const sibBlock = PICK.sibs.length ? `<div class="ddl" style="padding:8px 16px 2px;font-size:11px;letter-spacing:.4px;color:var(--mute)">SAME TRADE ON THIS HOUSE — SEND IN THE SAME TEXT?</div>` +
     PICK.sibs.map(x=>`<label class="pick" style="cursor:pointer"><input type="checkbox" ${PICK.extra.has(x.id)?'checked':''} onchange="this.checked?PICK.extra.add('${x.id}'):PICK.extra.delete('${x.id}');renderPicker()" style="accent-color:#5ad17a">
@@ -474,26 +476,47 @@ function renderPicker(){
       <p>Pick your first, second and third choice. The list shows each contractor's rating and how many jobs they've done with us. Pick three. If there aren't three in the list, pick everyone there is.</p></div>
     <div class="modal-b">${list.length ? [0,1,2].map(slot).join("") : `<div class="sched-empty">No ${esc(i.trade)} contractors in the directory. Tap "Show other trades".</div>`}${sibBlock}</div>
     <div class="modal-f"><button class="ubtn small" onclick="PICK.all=!PICK.all;renderPicker()">${PICK.all?'Only '+esc(i.trade):'Show other trades'}</button>
+      <button class="ubtn small" onclick="pickNew()">＋ Someone not on the list</button>
       <span class="sp"></span><span class="cnt">${n} of 3 picked</span>
       <button class="ubtn small" onclick="PICK=null;renderPicker()">Cancel</button>
       <button class="ubtn small primary" ${n && n>=need?'':'disabled'} onclick="sendPicked()">Text ${n||3} for bids</button></div>
   </div></div>`;
 }
 // Tom 10/9: contractors we use but have no number for show up too; picking one asks for the cell and saves it to the directory
+// Tom 10/12: anywhere a contractor has no number, there's a button to add it right there. Saves to every
+// directory row with that name (same person, different trades) so it only has to be typed once.
+const tidyPhone = ph => { const d=(ph||"").replace(/\D/g,"").replace(/^1(?=\d{10}$)/,""); return d.length===10 ? `${d.slice(0,3)}-${d.slice(3,6)}-${d.slice(6)}` : null; };
+async function addPhone(id){
+  const c = CONTRACTORS.find(x=>x.id===id); if(!c) return false;
+  const ph = prompt(`${c.phone?"Change":"Add"} ${c.name}'s cell number:`, c.phone||"");
+  if(ph===null) return false;
+  const pretty = tidyPhone(ph);
+  if(!pretty){ toast("That doesn't look like a 10-digit number"); return false; }
+  const { error } = await sb.from("contractor_directory").update({ phone: pretty }).eq("name", c.name);
+  if(error){ toast("Couldn't save the number: "+error.message); return false; }
+  CONTRACTORS.forEach(x=>{ if(x.name===c.name) x.phone = pretty; });
+  toast(`Saved ${c.name}: ${pretty}`);
+  return true;
+}
+// someone who isn't in the list at all
+async function addContractor(trade){
+  const name = (prompt(`New ${trade||""} contractor — name or company:`, "")||"").trim();
+  if(!name) return null;
+  const pretty = tidyPhone(prompt(`${name}'s cell number:`, "")||"");
+  if(!pretty){ toast("That doesn't look like a 10-digit number"); return null; }
+  const { data, error } = await sb.from("contractor_directory").insert({ name, trade: trade||"Handyman / General", phone: pretty, active: true, is_archived: false, vetting_tier: "Unrated", source_list: "added on Remedies page" }).select("id,name,trade,phone,vetting_tier,jobs_done_n,is_internal,tracker_props_n,tracker_last_date,contact_name,tracker_name").single();
+  if(error){ toast("Couldn't add: "+error.message); return null; }
+  CONTRACTORS.push(data); toast(`Added ${name}: ${pretty}`);
+  return data;
+}
 async function pickSlot(k, id){
   const c = CONTRACTORS.find(x=>x.id===id);
-  if(c && !c.phone){
-    const ph = prompt(`What's ${c.name}'s cell? (saved to the directory for next time)`, "");
-    if(!ph){ PICK.slots[k]=""; renderPicker(); return; }
-    const d = ph.replace(/\D/g,"").replace(/^1(?=\d{10}$)/,"");
-    if(d.length!==10){ toast("That doesn't look like a 10-digit number"); PICK.slots[k]=""; renderPicker(); return; }
-    const pretty = `${d.slice(0,3)}-${d.slice(3,6)}-${d.slice(6)}`;
-    const { error } = await sb.from("contractor_directory").update({ phone: pretty }).eq("name", c.name).is("phone", null);
-    if(error){ toast("Couldn't save the number: "+error.message); PICK.slots[k]=""; renderPicker(); return; }
-    CONTRACTORS.forEach(x=>{ if(x.name===c.name && !x.phone) x.phone = pretty; });
-    toast(`Saved ${c.name}: ${pretty}`);
-  }
+  if(c && !c.phone && !(await addPhone(id))){ PICK.slots[k]=""; renderPicker(); return; }
   PICK.slots[k]=id; renderPicker();
+}
+async function pickNew(){
+  const c = await addContractor(ITEMS.find(x=>x.id===PICK.id)?.trade); if(!c) return;
+  const k = PICK.slots.findIndex(v=>!v); if(k>=0) PICK.slots[k]=c.id; renderPicker();
 }
 async function sendPicked(){
   const ids = PICK.slots.filter(Boolean), id = PICK.id, extra = [...PICK.extra];
@@ -542,7 +565,8 @@ function renderScope(){
   if(!SCOPE){ $("#picker").innerHTML=""; return; }
   const i = ITEMS.find(x=>x.id===SCOPE.id);
   const gcs = [...new Map(CONTRACTORS.filter(c=>!c.is_internal).map(c=>[c.name,c])).values()].sort((a,b)=>(b.tracker_props_n||0)-(a.tracker_props_n||0) || a.name.localeCompare(b.name));
-  const gcOpts = gcs.map(c=>`<option value="${c.id}" ${SCOPE.gc===c.id?'selected':''} ${c.phone?'':'disabled'}>${esc(c.name)}${c.phone?'':' (no phone)'}</option>`).join("");
+  const gcOpts = gcs.map(c=>`<option value="${c.id}" ${SCOPE.gc===c.id?'selected':''}>${esc(c.name)}${c.phone?'':' (no phone)'}</option>`).join("");
+  const gcSel = CONTRACTORS.find(c=>c.id===SCOPE.gc);
   const lines = SCOPE.loading ? `<div class="sched-empty">Looking up the scope of work…</div>`
     : !SCOPE.hasSow ? `<div class="sched-empty">No scope of work in the system for this house.${i.rehab_scope_url?` <a href="${esc(i.rehab_scope_url)}" target="_blank" style="color:var(--info)">Open the scope document</a> and decide.`:' Check the signed scope and decide.'}</div>`
     : SCOPE.lines.map(l=>`<div class="pick" onclick="SCOPE.pick=SCOPE.pick==='${l.line_id}'?null:'${l.line_id}';renderScope()" style="${SCOPE.pick===l.line_id?'background:rgba(80,160,100,.18)':''}">
@@ -559,11 +583,12 @@ function renderScope(){
       <p>If the rehab contractor was already paid to do this, it goes back to them to fix for free. Tap the matching scope line if you see it (optional), then answer.${i.rehab_scope_url?` <a href="${esc(i.rehab_scope_url)}" target="_blank" style="color:var(--info)">Open the full scope doc ↗</a>`:""}</p></div>
     <div class="modal-b">${lines}${who}</div>
     <div class="modal-f" style="flex-wrap:wrap;gap:8px">
-      <label style="font-size:12.5px;color:var(--mute)">Who did the rehab?${SCOPE.guess?` <span style="color:var(--info)">(looks like ${esc(SCOPE.guess)})</span>`:''} <select style="background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:5px 6px;font-size:12.5px;max-width:220px" onchange="SCOPE.gc=this.value"><option value="">— pick —</option>${gcOpts}</select></label>
+      <label style="font-size:12.5px;color:var(--mute)">Who did the rehab?${SCOPE.guess?` <span style="color:var(--info)">(looks like ${esc(SCOPE.guess)})</span>`:''} <select style="background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:5px 6px;font-size:12.5px;max-width:220px" onchange="SCOPE.gc=this.value;renderScope()"><option value="">— pick —</option>${gcOpts}</select></label>
+      ${gcSel ? `<button class="ubtn small" onclick="addPhone('${gcSel.id}').then(renderScope)">${gcSel.phone?'📞 '+esc(gcSel.phone):'📞 Add phone'}</button>` : `<button class="ubtn small" onclick="addContractor('GC / Full Reno').then(c=>{ if(c){ SCOPE.gc=c.id; } renderScope(); })">＋ Not on the list</button>`}
       <span class="sp"></span>
       <button class="ubtn small" onclick="SCOPE=null;renderScope()">Cancel</button>
       <button class="ubtn small" onclick="scopeNo()">NO — not on scope</button>
-      <button class="ubtn small primary" ${SCOPE.gc?'':'disabled'} onclick="scopeYes()">YES — send back to them, no charge</button></div>
+      <button class="ubtn small primary" ${gcSel&&gcSel.phone?'':'disabled'} title="${gcSel&&!gcSel.phone?'Add their phone first':''}" onclick="scopeYes()">YES — send back to them, no charge</button></div>
   </div></div>`;
 }
 async function scopeNo(){
