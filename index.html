@@ -2550,6 +2550,11 @@ const PROP_PHASES = [
 // luxury rehab." Top of the range - his own starting lineup for it reads "Luxury Rehabs
 // 1 Million & up" - so it sits at the end, after Full Rehab Permit. Adding it here is all
 // that is needed: every dropdown, filter and chip on the site reads this one list.
+//
+// Bruce, 12 Oct: "where Tommy added full gut slash high-end rehab, go ahead and remove
+// that property type ... the type that's labeled luxury rehab, that needs to be luxury
+// full gut rehab." So the two collapse into one: "Full Gut / High-End" goes, and the
+// luxury line is renamed to say what it actually is.
 const PROP_TYPES = [
   "Rental Turn / Flip",
   "Whole Tail / Flip",
@@ -2558,9 +2563,13 @@ const PROP_TYPES = [
   "Full Cosmetic",
   "Full Rehab No Permit",
   "Full Rehab Permit",
-  "Luxury Rehab",
-  "Full Gut / High-End",
+  "Luxury Full Gut Rehab",
 ];
+// A card saved under one of the retired spellings still has to render, and has to read
+// as the type it is now rather than as a blank. Nothing rewrites the stored value here -
+// the one card on the old spelling is corrected in the database, once, by hand.
+const PROP_TYPE_RENAMED = { "Luxury Rehab":"Luxury Full Gut Rehab", "Full Gut / High-End":"Luxury Full Gut Rehab" };
+function _propType(t){ const k=String(t||'').trim(); return PROP_TYPE_RENAMED[k] || k; }
 
 let SUB_PHASES = [
   "First Time Access Checklist",
@@ -2855,8 +2864,9 @@ const PROP_TYPE_STYLE = {
   "Full Cosmetic":         "background:#FAECE7;color:#712B13",
   "Full Rehab No Permit":  "background:#FCEBEB;color:#791F1F",
   "Full Rehab Permit":     "background:#CECBF6;color:#26215C",
+  "Luxury Full Gut Rehab": "background:#F3E6F6;color:#5B2A6B",
   "Luxury Rehab":          "background:#F3E6F6;color:#5B2A6B",
-  "Full Gut / High-End":   "background:#E8D5C4;color:#5C3D2E",
+  "Full Gut / High-End":   "background:#F3E6F6;color:#5B2A6B",
 };
 
 // propCards is populated from Supabase (table public.pm_properties) by
@@ -2991,8 +3001,15 @@ async function savePropInfo(id, fieldOnly){
   // cleared comes back from the dead. Name the five, and the save merges the rest from the
   // live row instead of the stale card. (30 Aug: this is what resurrected 12424 Graham's
   // cleared "Us Selling" date twelve minutes after it was cleared.)
+  // A start date changed here was chosen, not inherited. Record that, so the
+  // construction clock counts from it rather than from the Framing stamp.
+  const _oldStart=String((c&&c.start)||'').trim();
+  const _newStart=String(data.start_date||'').trim();
   const ok=await savePropertyToSupabase(id, data, ['phase','pm','type','start_date','end_date']);
   if(!ok) return;
+  if(_newStart && _newStart!==_oldStart){
+    try{ await _wmChecklistPatch(id,{ start_by_hand:_ymd(new Date()) }); }catch(e){}
+  }
   if (_phaseChanged) { const moved = await updatePropertyPhaseInSupabase(id, _newPhase); if(!moved) return; }
   window._piSaved = Date.now();
   openPropDetail(id);
@@ -4132,14 +4149,44 @@ function _datesUnset(c){ return !c || !c.start || !c.end || _datesArePlaceholder
 //
 // So take the EARLIER of the two anchors - money over the days money was being spent - and
 // ignore a same-day placeholder start date entirely.
+// A start date somebody typed on purpose is evidence. One the card was born with is
+// not. The difference matters below, so the app records which it is - see _wmStartSet.
+// Reaching Framing on a permitted house stamps build_start AND overwrites the card's
+// Start Date with the same day (see the phase-advance rule). So on those cards the two
+// are born equal, and a Start Date that is NOT the stamp is one a person went in and
+// changed afterwards. That is the signal - no migration, no new flag needed for the
+// cards this has already happened to. start_by_hand is recorded as well, for edits made
+// from here on and for houses that never got a stamp.
+function _startSetByHand(c){
+  if(!c) return false;
+  if(c.checklists && c.checklists.start_by_hand) return true;
+  const build=(c.checklists && c.checklists.build_start) || null;
+  const start=String((c && c.start) || '').trim();
+  return !!(build && start && start!==String(build));
+}
 function _consStart(c){
   if(!c) return null;
   // A permitted house measures its build from the day it reached Framing, because that
   // is the day work actually started. That stamp wins outright - taking the earlier of
   // it and the old start date would put the clock back into the permit wait, which is
   // the whole thing this is meant to separate out.
+  //
+  // Bruce, 12 Oct: "for 999 Norway, I just updated the closing date, the vacancy date,
+  // the start date ... make sure the day trackers are correct, calculating correctly."
+  // They were not, and the screen was promising that they would be: the dialog that
+  // guards the start date says in as many words that "production $/day and days
+  // accumulated are both measured from this date", then the permitted branch above
+  // threw the new date away and went on counting from the Framing stamp. 999 Norway
+  // read 9 days against $167,798 spent - about $18,600 a day, which is not a number
+  // anybody should act on.
+  // The stamp still wins over a date nobody chose. It does not win over one somebody
+  // sat down and corrected.
   const build=(c.checklists && c.checklists.build_start) || null;
-  if(_isPermittedCard(c) && build) return build;
+  if(_isPermittedCard(c) && build){
+    const typed=_datesArePlaceholder(c) ? null : (c.start || null);
+    if(_startSetByHand(c) && typed) return String(typed)<String(build) ? typed : build;
+    return build;
+  }
   const stamp=(c.checklists && c.checklists.construction_start) || null;
   const begun=_datesArePlaceholder(c) ? null : (c.start || null);
   if(stamp && begun) return String(begun)<String(stamp) ? begun : stamp;
@@ -7197,7 +7244,14 @@ function _pdLinked(c, which){
     `openProjectDashboard('construction')`);
 
   // --- baseline schedule ------------------------------------------------------
-  const baseItems=_pdBaseline(c.id);
+  // Bruce, 12 Oct: "Tommy created an automated construction schedule for each property
+  // ... can we go ahead and remove that ... it's essentially that baseline schedule I'm
+  // talking about. It's like on the property cards as well."
+  // So it comes off the card as well as off the construction calendar. The 910 rows are
+  // left in the database rather than deleted - nothing in the app reads them now, and
+  // deleting three quarters of the calendar's history is not something to do quietly.
+  const BASELINE_OFF = true;
+  const baseItems=BASELINE_OFF?[]:_pdBaseline(c.id);
   const baseDone=baseItems.filter(function(x){return x.e.completed;}).length;
   // "Baseline schedule, set it up the same way" - open steps on the panel, the steps
   // that are already signed off in the folder underneath.
@@ -7432,7 +7486,7 @@ function _pdLinked(c, which){
             <div style="padding:9px 14px;border-bottom:0.5px solid #e0e4ec;font-size:13px;font-weight:500;color:#111;display:flex;align-items:center;justify-content:space-between">Property Info${(Date.now()-(window._piSaved||0)<5000)?'<span style="font-size:12px;color:#16794C;font-weight:600;margin-left:auto;margin-right:8px">Saved ✓</span>':''}${_ro_sp?'':`<button onclick="savePropInfo('${c.id}')" style="font-size:12px;padding:3px 10px;border-radius:4px;background:#111;color:#fff;border:none;cursor:pointer">Save Info</button>`}</div>
             <div style="padding:10px 14px">
               <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px"><span style="color:#566070">Project Manager</span>${_ro_sp?`<span style="color:#111;font-weight:500">${c.pm||'—'}</span>`:`<select id="pi-pm" onchange="savePropInfo('${c.id}',true)" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"><option value="">— Assign —</option>${_pmAssignOptions(c.pm)}</select>`}</div>
-              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px"><span style="color:#566070">Property Type</span>${_ro_sp?`<span style="color:#111;font-weight:500">${c.type||'—'}</span>`:`<select id="pi-type" onchange="savePropInfo('${c.id}',true)" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"><option value="">— Type —</option>${PROP_TYPES.map(t=>`<option ${c.type===t?'selected':''}>${_calEsc(t)}</option>`).join('')}</select>`}</div>
+              <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px"><span style="color:#566070">Property Type</span>${_ro_sp?`<span style="color:#111;font-weight:500">${c.type||'—'}</span>`:`<select id="pi-type" onchange="savePropInfo('${c.id}',true)" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"><option value="">— Type —</option>${PROP_TYPES.map(t=>`<option ${_propType(c.type)===t?'selected':''}>${_calEsc(t)}</option>`).join('')}</select>`}</div>
               <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px"><span style="color:#566070">Main Phase</span>${_ro_sp?`<span style="color:#111;font-weight:500">${_phLabel(c.phase)||'—'}</span>`:`<select id="pi-phase" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none">${PROP_PHASES.map(p=>`<option value="${_calEsc(p.name)}" ${c.phase===p.name?'selected':''}>${_calEsc(_phLabel(p.name))}</option>`).join('')}</select>`}</div>
               <div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:0.5px solid #f4f5f7;font-size:14px">
                 <span style="color:#566070">🏗 Permitted?</span>
@@ -7497,7 +7551,8 @@ function _pdLinked(c, which){
                 <span style="color:#566070;display:flex;align-items:center;gap:5px">📁 Project Drive Folder</span>
                 ${c.driveUrl ? `<a href="${c.driveUrl}" target="_blank" style="font-size:13px;color:#185FA5;text-decoration:none">Open Folder ↗</a>` : (_ro_sp?`<span style="font-size:12px;color:#636b7a">—</span>`:`<button onclick="openPropModal('drive','${c.id}')" style="font-size:12px;padding:2px 8px;border-radius:4px;background:transparent;color:#566070;border:0.5px solid #ccc;cursor:pointer">+ Add Link</button>`)}
               </div>
-              ${_pdocBody(c)}
+              ${_pdocBody(c,'proj')}
+              ${(!_pcTabs(c).some(function(t){return t.key==='permits';}) && _pdocList(c,'permit').length) ? _pdocBody(c,'permit') : ''}
             </div>
           </div>
           <div>
@@ -7522,7 +7577,7 @@ function _pdLinked(c, which){
           </div>
           <div>${_sqBody(c)}${_pdLinked(c,'work')}</div>
         </div>
-        ${_pcTabs(c).some(function(t){return t.key==='permits';}) ? `<div style="display:${_pcTab(c)==='permits'?'block':'none'}">${_pdLinked(c,'permits')}${_pdPermitNudge(c)}</div>` : ''}
+        ${_pcTabs(c).some(function(t){return t.key==='permits';}) ? `<div style="display:${_pcTab(c)==='permits'?'block':'none'}">${_pdLinked(c,'permits')}${_pdPermitNudge(c)}${_pdocBody(c,'permit')}</div>` : ''}
         <div style="display:${_pcTab(c)==='ap'?'block':'none'}">${_pcTab(c)==='ap'?_apBody(c):''}</div>
         <div style="display:${_pcTab(c)==='co'?'block':'none'}">${_pcTab(c)==='co'?`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden;max-width:960px">
           <div style="padding:11px 20px;border-bottom:0.5px solid #e7eaf0">
@@ -7746,7 +7801,7 @@ function openPropModal(mode, id) {
       <label style="display:block;font-size:12px;color:#566070;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:4px">Property Type</label>
       <select id="pm-type" style="width:100%;padding:7px 10px;border:0.5px solid #ccc;border-radius:6px;font-size:14px;color:#111;background:#fff;outline:none">
         <option value="">— Select Type —</option>
-        ${PROP_TYPES.map(t=>`<option ${c&&c.type===t?'selected':''}>${t}</option>`).join('')}
+        ${PROP_TYPES.map(t=>`<option ${c&&_propType(c.type)===t?'selected':''}>${t}</option>`).join('')}
       </select>
     </div>
     <div style="display:grid;grid-template-columns:${c?'1fr 1fr':'1fr'};gap:10px;margin-bottom:12px">
@@ -8544,6 +8599,46 @@ function _dpTrackerItems(){
     .forEach(c=>out.push('<b style="color:#5b6472">NOT STARTED:</b> '+_calEsc(c.addr||'')+' \u2014 '+_calEsc(c.pm||'no PM yet')));
   return out;
 }
+// Bruce, 11 Oct: "a design package tracker and how many times a package is used."
+// Ten packages exist - five styles at two tiers. This counts how many houses have each
+// one SIGNED OFF, across the whole company and all time, not just the ones currently at
+// a design stage: a package used eleven times is a house style we know how to build,
+// and one never used is worth asking about.
+function _dpUsageCounts(){
+  const out={}, order=[];
+  DP_STYLES.forEach(function(st){ DP_TIERS.forEach(function(ti){
+    const k=st+' \u00b7 '+ti; out[k]={style:st, tier:ti, n:0, houses:[]}; order.push(k); }); });
+  (typeof propCards!=='undefined'?propCards:[]).filter(function(c){ return !c.archived; }).forEach(function(c){
+    const d=_dpOf(c);
+    if(!d || d.status!=='complete' || !d.dsn) return;
+    const k=String(d.dsn.style||'').trim()+' \u00b7 '+String(d.dsn.tier||'').trim();
+    if(!out[k]) { out[k]={style:d.dsn.style||'(not recorded)', tier:d.dsn.tier||'', n:0, houses:[]}; order.push(k); }
+    out[k].n++; out[k].houses.push(c.addr||'');
+  });
+  return order.map(function(k){ return out[k]; });
+}
+function _dpUsage(){
+  const rows=_dpUsageCounts();
+  const total=rows.reduce(function(n,r){ return n+r.n; },0);
+  const max=rows.reduce(function(n,r){ return Math.max(n,r.n); },0);
+  const used=rows.filter(function(r){ return r.n>0; }).length;
+  const bar=function(r){
+    const w=max?Math.round((r.n/max)*100):0;
+    return '<div title="'+_calEsc(r.houses.join(', '))+'" style="display:flex;align-items:center;gap:9px;padding:5px 0">'
+      +'<div style="width:168px;flex-shrink:0;font-size:12.5px;color:'+(r.n?'#111':'#9aa1ad')+';font-weight:'+(r.n?'600':'400')+'">'+_calEsc(r.style)+'</div>'
+      +'<div style="width:62px;flex-shrink:0;font-size:11.5px;color:#566070">'+_calEsc(r.tier)+'</div>'
+      +'<div style="flex:1;min-width:40px;height:9px;background:#F1F2F6;border-radius:99px;overflow:hidden"><div style="width:'+w+'%;height:100%;background:'+(r.n?'#7A3FA8':'transparent')+'"></div></div>'
+      +'<div style="width:26px;flex-shrink:0;text-align:right;font-size:13px;font-weight:700;color:'+(r.n?'#111':'#c4c9d2')+';font-variant-numeric:tabular-nums">'+r.n+'</div></div>';
+  };
+  return '<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:13px 16px;margin-bottom:14px">'
+    +'<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:3px">'
+    +'<div style="font-size:12.5px;font-weight:700;color:#111">Which packages we actually build</div>'
+    +'<div style="font-size:11.5px;color:#566070">'+total+' signed off \u00b7 '+used+' of '+rows.length+' packages used</div></div>'
+    +'<div style="font-size:11.5px;color:#566070;margin-bottom:7px">Every house whose package is locked, all time. Hover a row to see which houses.</div>'
+    +rows.map(bar).join('')
+    +(total?'':'<div style="font-size:12.5px;color:#9aa1ad;padding-top:6px">No package has been signed off yet, so every row reads zero. This fills itself in as forms are completed.</div>')
+    +'</div>';
+}
 function _dpMainBody(){
   const all=_designCards();
   const skipped=all.filter(_dpSkipped);
@@ -8573,6 +8668,7 @@ function _dpMainBody(){
       ${box(drafts.length,'started, not sent','#185FA5')}
       ${box(none.length,'form not started','#5b6472')}
     </div>
+    ${_dpUsage()}
     <div style="font-size:12.5px;font-weight:700;color:#111;margin-bottom:7px">Houses at a design stage <span style="font-weight:400;color:#566070">&middot; ${cards.length}</span></div>
     <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">${_dpList(cards,'No houses are sitting at a design stage right now.')}</div>
     ${skipped.length?`<details style="margin-top:16px">
@@ -10726,6 +10822,9 @@ function _wmItems(pid, from, to){
   });
   (typeof _calEventsCache!=='undefined'?_calEventsCache:[]).forEach(e=>{
     if(e.property_id!==pid) return;
+    // The generated baseline plan is off the board - see BASELINE_OFF on the property
+    // card. It was padding this agenda with steps nobody booked and nobody can do.
+    if(e.kind==='baseline') return;
     const d=e.event_date||''; if(!d) return;
     // A trade booked as a date RANGE is on site the whole way through, so it belongs
     // in every week it touches - not only the week it started.
@@ -11382,6 +11481,9 @@ async function _wmStartSet(pid, val, el){
     }
   }
   await _wmDeal(pid,'start_date',val,el);
+  // Remember that this one was chosen rather than inherited, so _consStart can tell
+  // a corrected date from a date the card was born with.
+  try{ await _wmChecklistPatch(pid,{ start_by_hand:_ymd(new Date()) }); }catch(e){}
   openWeeklyMeeting('team');
 }
 // Bruce, 13 Sept: a PM "can choose their committed finish date one time, which is the
@@ -14485,7 +14587,27 @@ function _kickPdfHtml(pid){
 const PERMIT_DOC_BUCKET = 'hub-deploy';
 const PERMIT_DOC_PREFIX = 'permit-docs';
 const PERMIT_DOC_MAX_MB = 25;
-function _pdocList(c){ const a=((c&&c.checklists)||{}).permit_docs; return Array.isArray(a)?a:[]; }
+// Bruce, 12 Oct: "on the property card where it says project info and approved permit
+// PDFs, let's move that attachment to under the permits tab ... and that'll be something
+// Jen does when they get approved ... but for project info, we can put attach other PDFs
+// here, not permit related ... cabinet layouts, design packages, scopes of work."
+// Same uploader, same storage, two drawers: the permits one sits on the Permits tab
+// where Jen and Patience work, and the general one stays on Project Info.
+const PDOC_KINDS = {
+  permit: { field:'permit_docs',  icon:'\u{1F4CB}', title:'Approved permit PDFs',
+            sub:'the stamped copies, kept with the house',
+            hint:'Jen attaches these when a permit comes back approved \u2014 or sends them to Patience to put on.',
+            word:'permit PDF' },
+  proj:   { field:'project_docs', icon:'\u{1F4C1}', title:'Other project PDFs',
+            sub:'cabinet layouts, design packages, scopes of work \u2014 anything not permit related',
+            hint:'Permits do not go here; they live on the Permits tab so they stay with the permit record.',
+            word:'project PDF' }
+};
+function _pdocKind(k){ return PDOC_KINDS[k] || PDOC_KINDS.permit; }
+function _pdocList(c, kind){
+  const a=((c&&c.checklists)||{})[_pdocKind(kind).field];
+  return Array.isArray(a)?a:[];
+}
 function _pdocSafeName(n){
   return String(n||'file.pdf').replace(/[^A-Za-z0-9._-]+/g,'-').replace(/^-+|-+$/g,'').slice(-80) || 'file.pdf';
 }
@@ -14495,29 +14617,31 @@ function _pdocSize(b){
   if(b<1024*1024) return Math.round(b/1024)+' KB';
   return (b/1048576).toFixed(1)+' MB';
 }
-async function _pdocWrite(pid, mut){
+async function _pdocWrite(pid, kind, mut){
   const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return false;
-  const arr=_pdocList(c).slice();
+  const arr=_pdocList(c, kind).slice();
   mut(arr);
-  return await _wmChecklistPatch(pid, { permit_docs: arr });
+  const patch={}; patch[_pdocKind(kind).field]=arr;
+  return await _wmChecklistPatch(pid, patch);
 }
-async function _pdocUpload(pid){
+async function _pdocUpload(pid, kind){
   if(_blockIfReadOnly()) return;
-  const inp=document.getElementById('pdoc-f-'+pid);
+  const K=_pdocKind(kind);
+  const inp=document.getElementById('pdoc-f-'+kind+'-'+pid);
   const files=(inp && inp.files)?Array.from(inp.files):[];
   if(!files.length){ alert("Choose one or more PDFs first."); return; }
   const tooBig=files.filter(f=>f.size > PERMIT_DOC_MAX_MB*1048576);
   if(tooBig.length){ alert("These are over "+PERMIT_DOC_MAX_MB+"MB and were not uploaded:\n\n"+tooBig.map(f=>f.name).join("\n")); }
   const ok=files.filter(f=>f.size <= PERMIT_DOC_MAX_MB*1048576);
   if(!ok.length) return;
-  const st=document.getElementById('pdoc-s-'+pid);
+  const st=document.getElementById('pdoc-s-'+kind+'-'+pid);
   const say=(t)=>{ if(st){ st.textContent=t; st.style.display='inline'; } };
   const me=(typeof _myProfile!=='undefined' && _myProfile)?(((_myProfile.firstName||'')+' '+(_myProfile.lastName||'')).trim()):'';
   const added=[]; const failed=[];
   for(let i=0;i<ok.length;i++){
     const f=ok[i];
     say('Uploading '+(i+1)+' of '+ok.length+'…');
-    const path=PERMIT_DOC_PREFIX+'/'+pid+'/'+Date.now()+'-'+i+'-'+_pdocSafeName(f.name);
+    const path=PERMIT_DOC_PREFIX+'/'+pid+'/'+(kind==='proj'?'project/':'')+Date.now()+'-'+i+'-'+_pdocSafeName(f.name);
     try{
       const up=await supabase.storage.from(PERMIT_DOC_BUCKET).upload(path, f, {contentType:f.type||'application/pdf', upsert:false});
       if(up.error){ failed.push(f.name+' — '+(up.error.message||'upload refused')); continue; }
@@ -14528,10 +14652,10 @@ async function _pdocUpload(pid){
     }catch(e){ failed.push(f.name+' — '+((e&&e.message)||'upload failed')); }
   }
   if(added.length){
-    const saved=await _pdocWrite(pid, arr=>added.forEach(x=>arr.push(x)));
+    const saved=await _pdocWrite(pid, kind, arr=>added.forEach(x=>arr.push(x)));
     if(saved){
       const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
-      _logAudit('created','property',(c&&c.addr)||'', 'Attached '+added.length+' permit PDF'+(added.length===1?'':'s')+': '+added.map(x=>x.name).join(', '));
+      _logAudit('created','property',(c&&c.addr)||'', 'Attached '+added.length+' '+K.word+(added.length===1?'':'s')+': '+added.map(x=>x.name).join(', '));
     }
   }
   say('');
@@ -14543,46 +14667,51 @@ async function _pdocUpload(pid){
 }
 // Takes it off the card. The file itself is deliberately left in storage - nothing
 // here deletes a document for good, and an accidental click should never be able to.
-async function _pdocDetach(pid, id){
+async function _pdocDetach(pid, kind, id){
   if(_blockIfReadOnly()) return;
+  const K=_pdocKind(kind);
   const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
-  const x=_pdocList(c).find(y=>y.id===id);
+  const x=_pdocList(c, kind).find(y=>y.id===id);
   if(!x) return;
   if(!confirm('Take "'+(x.name||'this PDF')+'" off this property card?\n\nThe file itself is kept — this only removes it from the card.')) return;
-  if(await _pdocWrite(pid, arr=>{ const i=arr.findIndex(y=>y.id===id); if(i>=0) arr.splice(i,1); })){
-    _logAudit('updated','property',(c&&c.addr)||'', 'Took the permit PDF "'+(x.name||'')+'" off the card');
+  if(await _pdocWrite(pid, kind, arr=>{ const i=arr.findIndex(y=>y.id===id); if(i>=0) arr.splice(i,1); })){
+    _logAudit('updated','property',(c&&c.addr)||'', 'Took the '+K.word+' "'+(x.name||'')+'" off the card');
     if(typeof openPropDetail==='function') openPropDetail(pid);
   }
 }
-function _pdocBody(c){
+function _pdocBody(c, kind){
   if(!c) return '';
+  kind = kind || 'permit';
+  const K=_pdocKind(kind);
   const ro=(typeof isReadOnly==='function')?isReadOnly():false;
-  const list=_pdocList(c);
-  const permitted=(typeof _isPermittedCard==='function') ? _isPermittedCard(c) : ((c.checklists||{}).permitted==='yes');
-  // Only worth showing on a house that actually has permits - but never hide a file
-  // somebody has already attached.
-  if(!permitted && !list.length) return '';
+  const list=_pdocList(c, kind);
+  if(kind==='permit'){
+    const permitted=(typeof _isPermittedCard==='function') ? _isPermittedCard(c) : ((c.checklists||{}).permitted==='yes');
+    // Only worth showing on a house that actually has permits - but never hide a file
+    // somebody has already attached.
+    if(!permitted && !list.length) return '';
+  }
   const row=(x)=>`<div style="display:flex;align-items:center;gap:9px;padding:7px 0;border-bottom:0.5px solid #f4f5f9">
       <span style="font-size:15px;flex-shrink:0">&#128196;</span>
       <div style="flex:1;min-width:0">
-        ${x.url?`<a href="${_calEsc(x.url)}" target="_blank" rel="noopener" style="font-size:13px;color:#185FA5;text-decoration:none;font-weight:600;word-break:break-all">${_calEsc(x.name||'permit.pdf')}</a>`
-               :`<span style="font-size:13px;color:#111;font-weight:600">${_calEsc(x.name||'permit.pdf')}</span>`}
+        ${x.url?`<a href="${_calEsc(x.url)}" target="_blank" rel="noopener" style="font-size:13px;color:#185FA5;text-decoration:none;font-weight:600;word-break:break-all">${_calEsc(x.name||'file.pdf')}</a>`
+               :`<span style="font-size:13px;color:#111;font-weight:600">${_calEsc(x.name||'file.pdf')}</span>`}
         <div style="font-size:10.5px;color:#b6bcc7">${_pdocSize(x.size)}${x.by?(' &middot; '+_calEsc(x.by)):''}${x.at?(' &middot; '+_calEsc(String(x.at).slice(0,10))):''}</div>
       </div>
-      ${ro?'':`<span onclick="_pdocDetach('${c.id}','${x.id}')" title="Take it off this card" style="cursor:pointer;font-size:11px;color:#ddd;flex-shrink:0">&#10005;</span>`}
+      ${ro?'':`<span onclick="_pdocDetach('${c.id}','${kind}','${x.id}')" title="Take it off this card" style="cursor:pointer;font-size:11px;color:#ddd;flex-shrink:0">&#10005;</span>`}
     </div>`;
   const adder=ro?'':`<div style="border-top:0.5px solid #eef0f6;padding:9px 14px;background:#FAFBFD">
       <div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap">
-        <input type="file" id="pdoc-f-${c.id}" accept="application/pdf,.pdf" multiple style="font-size:12.5px;max-width:100%"/>
-        <button onclick="_pdocUpload('${c.id}')" style="padding:6px 13px;border:none;border-radius:7px;background:#122A4A;color:#fff;font-size:13px;font-weight:600;cursor:pointer">Attach</button>
-        <span id="pdoc-s-${c.id}" style="display:none;font-size:12px;color:#8A5A10"></span>
+        <input type="file" id="pdoc-f-${kind}-${c.id}" accept="application/pdf,.pdf" multiple style="font-size:12.5px;max-width:100%"/>
+        <button onclick="_pdocUpload('${c.id}','${kind}')" style="padding:6px 13px;border:none;border-radius:7px;background:#122A4A;color:#fff;font-size:13px;font-weight:600;cursor:pointer">Attach</button>
+        <span id="pdoc-s-${kind}-${c.id}" style="display:none;font-size:12px;color:#8A5A10"></span>
       </div>
-      <div style="font-size:11px;color:#566070;margin-top:5px">Pick as many as you like &mdash; one approval often comes back as several files. PDFs up to ${PERMIT_DOC_MAX_MB}MB each. They open in a new tab and are stored on a public link, so treat them the way you would a permit pinned up on site.</div>
+      <div style="font-size:11px;color:#566070;margin-top:5px">${K.hint} Pick as many as you like. PDFs up to ${PERMIT_DOC_MAX_MB}MB each. They open in a new tab and are stored on a public link, so treat them the way you would a permit pinned up on site.</div>
     </div>`;
   return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:hidden;margin-top:12px">
       <div style="padding:9px 14px;border-bottom:0.5px solid #eef0f6;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
-        <div style="font-size:13px;font-weight:500;color:#111">&#128203; Approved permit PDFs
-          <span style="font-size:11.5px;color:#566070;font-weight:400">&mdash; the stamped copies, kept with the house</span></div>
+        <div style="font-size:13px;font-weight:500;color:#111">${K.icon} ${K.title}
+          <span style="font-size:11.5px;color:#566070;font-weight:400">&mdash; ${K.sub}</span></div>
         <span style="font-size:11.5px;color:#566070">${list.length?(list.length+' attached'):'none yet'}</span>
       </div>
       ${list.length?`<div style="padding:2px 14px 6px">${list.map(row).join('')}</div>`:''}
@@ -16362,6 +16491,10 @@ function _pdhPermitRows(){
     addr:r.addr||'',
     days:_pdhDays(r.submitted, r.issued),
     stampDays:_pdhDays(r.submitted, r.stamped),
+    drawDays:_pdhDays(r.drawings, r.submitted),
+    drawings:r.drawings||'',
+    submitted:r.submitted||'',
+    drawOpen:!!(r.drawings && !r.submitted),
     awaiting:(!r.issued && /issued|closed/i.test(String(r.status||'')))
   }));
 }
@@ -16411,6 +16544,9 @@ function openPermitDataHousing(){
 
   const sIssue=_pdhStat(perms.map(x=>x.days));
   const sStamp=_pdhStat(perms.map(x=>x.stampDays));
+  const sDrawSub=_pdhStat(perms.map(x=>x.drawDays));
+  const drawMissing=perms.filter(x=>!x.drawings).length;
+  const drawOpenN=perms.filter(x=>x.drawOpen).length;
   const sDraw =_pdhStat(draw.map(x=>x.days));
   const sRough=_pdhStat(rough.map(x=>x.days));
   const sFinal=_pdhStat(final.map(x=>x.days));
@@ -16482,8 +16618,9 @@ function openPermitDataHousing(){
         <div style="font-size:13px;color:#566070;margin-bottom:16px;max-width:78ch">How long each stage really takes, measured from the dates already on the permit tracker and the property cards. Nothing here is estimated &mdash; where a date has never been entered the row says so instead of guessing.</div>
 
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:11px">
+          ${kpi('Drawings started \u2192 permit submitted', sDrawSub, drawMissing?(drawMissing+' permit'+(drawMissing===1?'':'s')+' with no drawings start date'):(drawOpenN?(drawOpenN+' still being drawn'):''))}
           ${kpi('Permit submitted \u2192 issued', sIssue, waitingIssue?(waitingIssue+' issued permit'+(waitingIssue===1?'':'s')+' need an issue date'):'')}
-          ${kpi('Drawings \u2014 start to finished', sDraw, openDraw?(openDraw+' still open'):'')}
+          ${kpi('Drawings subphase \u2014 start to ticked', sDraw, openDraw?(openDraw+' still open'):'')}
           ${kpi('Submitted \u2192 engineer stamp', sStamp, sStamp?'':'no stamp dates entered yet')}
           ${kpi('Rough MEP inspections \u2014 all passed', sRough, '')}
           ${kpi('Final inspections \u2014 all passed', sFinal, '')}
@@ -16499,6 +16636,18 @@ function openPermitDataHousing(){
               </tr></thead>
               <tbody>${jRows||`<tr><td colspan="7" style="padding:18px;text-align:center;color:#636b7a">No permits on the tracker yet.</td></tr>`}</tbody>
             </table></div></div>
+
+        ${detail('Drawings \u2014 Jen started to permit submitted', perms.length,
+          th('Property')+th('Department','center')+th('Drawings started','center')+th('Submitted','center')+th('Days','center'),
+          perms.slice().sort((a,b)=>(b.drawDays==null?-1:b.drawDays)-(a.drawDays==null?-1:a.drawDays)).map(x=>`
+            <tr style="border-top:0.5px solid #eef0f6">
+              <td style="padding:8px 12px">${_calEsc(x.addr)}</td>
+              <td style="padding:8px 12px;text-align:center;color:#666">${_calEsc(x.juris)}</td>
+              <td style="padding:8px 12px;text-align:center;color:${x.drawings?'#666':'#8A5A10'}">${_calEsc(x.drawings)||'not recorded'}</td>
+              <td style="padding:8px 12px;text-align:center;color:#666">${_calEsc(x.submitted)||'&mdash;'}</td>
+              <td style="padding:8px 12px;text-align:center;font-weight:600;color:${x.drawDays==null?'#8A5A10':'#111'}">${x.drawDays==null?(x.drawOpen?'still drawing':'&mdash;'):x.drawDays+'d'}</td>
+            </tr>`).join(''),
+          'From the day Jen first went out for rough measurements to the day the permit went in. The date lives on the permit tracker, beside the submitted date, so it is filled in where the work happens.')}
 
         ${detail('Drawings / structural phase', draw.length,
           th('Property')+th('Started','center')+th('Finished','center')+th('Days','center'), drawBody,
@@ -18577,6 +18726,12 @@ async function _poFormField(pid, fid, field, val){
   await _poWrite(pid, arr=>{ const f=arr.find(x=>x.id===fid); if(f) f[field]=val; });
 }
 function _poRerender(pid){
+  // The phone is now one of the places a punch-out can be ticked, so it has to be the
+  // first thing checked - otherwise ticking a box in the field would redraw a desktop
+  // screen nobody is looking at and the phone would sit there showing the old answer.
+  if(document.body.classList.contains('mobile-on')){
+    if(typeof _mOpenProp==='function'){ _mOpenProp(pid); return; }
+  }
   if(window.__poModal===pid){ _poOpen(pid); return; }
   if(typeof openRealtorDashboard==='function' && window.__rltOpen){ openRealtorDashboard(); return; }
   if(typeof openPropDetail==='function') openPropDetail(pid);
@@ -23829,6 +23984,9 @@ function _permitList(){
 // row - a second pass simply overwrites nothing and adds nothing.
 async function _permitSeedIfEmpty(){
   const d=window._trkData||{};
+  // Catch the cards up whichever door the trackers were opened through. Fire and
+  // forget: a card that is behind must not hold up the screen somebody asked for.
+  try{ Promise.resolve().then(_permitCatchUpOnce); }catch(e){}
   if(d.permits_seeded) return false;
   if(window._trkLoadOk===false) return false;
   if(typeof isReadOnly==="function" && isReadOnly()) return false;
@@ -24170,7 +24328,12 @@ async function _permitAckApproval(id){
 // The dates come from the tracker every time, so a corrected tracker date reaches the
 // card instead of the card keeping whatever it was born with.
 async function _permitWriteSubs(permit, steps){
-  const c=_permitProp(permit);
+  return await _permitWriteSubsOn(_permitProp(permit), steps);
+}
+// Same writer, addressed to a card rather than to one permit. The house-level steps
+// ("Permits Submitted" and friends) are about every permit on the house at once, so
+// there is no single permit to hang them off.
+async function _permitWriteSubsOn(c, steps){
   if(!c) return false;
   const subs=Array.isArray(c.subPhases)?c.subPhases.map(s=>Object.assign({},s)):[];
   let changed=false;
@@ -24196,11 +24359,107 @@ async function _permitWriteSubs(permit, steps){
   c.subPhases=subs;
   return true;
 }
+// ---- the house-level permit steps -------------------------------------------------
+// Bruce, 12 Oct: "when permits has been submitted, I want it to tick automatically and
+// read from the permit tracker ... once we've gotten the permit approval, or revisions
+// back, it should tick permits reviewed automatically ... and once Jen puts in the
+// permit tracker that permits have been approved, it should automatically check that
+// box completed in the permits approved subphase box."
+//
+// Two sets of permit steps have been living side by side on these cards. The tracker
+// writes a PAIR PER PERMIT - "Permit Submitted (ALTR2625228)" - and those have ticked
+// themselves for a while. But the workflow Bruce configured in Settings also has three
+// steps that describe the HOUSE: Permits Submitted, Permits Reviewed, Permits Approved.
+// Nothing read the tracker for those, so they waited to be ticked by hand, and 999
+// Norway is the proof: the tracker had said submitted 26 June since June, and the card
+// said it happened today, because today is when somebody got round to clicking it.
+//
+// A house-level step is done when EVERY permit on the house has got that far. One of
+// three permits back is not "permits approved", and saying so would be worse than
+// leaving the box open.
+const PERMIT_GEN_SUBS = { sub:"Permits Submitted", rev:"Permits Reviewed", appr:"Permits Approved" };
+function _permitRowsForCard(c){
+  if(!c) return [];
+  return _permitList().filter(function(r){ const x=_permitProp(r); return x && x.id===c.id; });
+}
+function _permitGenPlan(c){
+  const rows=_permitRowsForCard(c);
+  // No permits on the tracker for this house means we know nothing about it. Say
+  // nothing rather than ticking or clearing anything.
+  if(!rows.length) return [];
+  const pick=function(f){ return rows.map(function(r){ return String((r&&r[f])||"").trim(); }); };
+  const every=function(v){ return v.length>0 && v.every(Boolean); };
+  const first=function(v){ const x=v.filter(Boolean).slice().sort(); return x[0]||""; };
+  const last =function(v){ const x=v.filter(Boolean).slice().sort(); return x[x.length-1]||""; };
+  const sub=pick("submitted");
+  // "Reviewed" is the department coming back to us - a comment letter, or, where it
+  // went straight through with nothing to fix, the approval itself.
+  const rev=rows.map(function(r){ return String((r&&r.received)||"").trim() || String((r&&r.issued)||"").trim(); });
+  const iss=pick("issued");
+  return [
+    // Submitted has no finish date - Bruce, 27 Sept: "there is no finish date for that."
+    { label:PERMIT_GEN_SUBS.sub,  done:every(sub), start:first(sub), due:"" },
+    { label:PERMIT_GEN_SUBS.rev,  done:every(rev), start:first(rev), due:last(rev) },
+    { label:PERMIT_GEN_SUBS.appr, done:every(iss), start:first(iss), due:last(iss) }
+  ];
+}
 // Called whenever a permit's status or submitted date moves. Keeps the card honest.
 async function _permitSyncCard(id){
   const r=((window._trkData||{}).permits||{})[id];
   if(!r) return false;
-  return await _permitWriteSubs(r, _permitSubPlan(r));
+  const ok=await _permitWriteSubs(r, _permitSubPlan(r));
+  const c=_permitProp(r);
+  if(c){ try{ await _permitWriteSubsOn(c, _permitGenPlan(c)); }catch(e){} }
+  return ok;
+}
+// ---- catching the cards up ---------------------------------------------------------
+// The sync above only ever ran when somebody touched a permit row. A row entered before
+// the sync existed, and never edited since, left its card frozen at whatever it was born
+// with - which is exactly how 999 Norway ended up three and a half months stale. This
+// walks every permit on the tracker and brings its card up to date. It only writes where
+// something actually differs, and it never un-ticks anything.
+async function _permitCatchUpCards(opts){
+  const quiet=!!(opts&&opts.quiet);
+  if(typeof isReadOnly==="function" && isReadOnly()) return {cards:0, skipped:'read only'};
+  const seen={}, cards=[];
+  _permitList().forEach(function(r){
+    const c=_permitProp(r); if(!c || seen[c.id]) return;
+    seen[c.id]=true; cards.push(c);
+  });
+  let touched=0;
+  for(let i=0;i<cards.length;i++){
+    const c=cards[i];
+    const before=JSON.stringify(c.subPhases||[]);
+    try{
+      const rows=_permitRowsForCard(c);
+      for(let k=0;k<rows.length;k++){ await _permitWriteSubsOn(c, _permitSubPlan(rows[k])); }
+      await _permitWriteSubsOn(c, _permitGenPlan(c));
+    }catch(e){}
+    if(JSON.stringify(c.subPhases||[])!==before) touched++;
+  }
+  if(touched && typeof _logAudit==="function"){
+    _logAudit("updated","permit","Property cards caught up",
+      "Read the Permit Tracker and brought "+touched+" property card"+(touched===1?'':'s')+" into line with it - submitted, reviewed and approved dates and ticks.");
+  }
+  if(!quiet && typeof alert==="function"){
+    alert(touched? (touched+" property card"+(touched===1?'':'s')+" brought up to date from the Permit Tracker.")
+                 : "Every property card already matches the Permit Tracker.");
+  }
+  try{ if(typeof _permitRerender==="function") _permitRerender(); }catch(e){}
+  return {cards:touched};
+}
+// Once per session, quietly, when the trackers are loaded. A card nobody has opened is
+// just as wrong as one somebody is looking at.
+async function _permitCatchUpOnce(){
+  if(window.__permCaught) return;
+  // Do not spend the one shot before the pieces are here. With no property cards
+  // loaded nothing matches, and the run would quietly do nothing for ever after.
+  if(window._trkLoadOk===false) return;
+  if(typeof propCards==="undefined" || !propCards || !propCards.length) return;
+  if(!_permitList().length) return;
+  if(typeof isReadOnly==="function" && isReadOnly()) return;
+  window.__permCaught=true;
+  try{ await _permitCatchUpCards({quiet:true}); }catch(e){}
 }
 // Revisions means Jen has drawings to redo. That is real work with a date on it,
 // so it becomes a scheduled task rather than a colour on a dropdown.
@@ -24235,7 +24494,7 @@ async function _permitRevisionTask(id){
 async function _permitAfterChange(id, field){
   // Bruce, 27 Sept: the dates on the card come off the tracker now, so a change to any
   // of the dates has to reach the card too - not just the status.
-  if(["status","submitted","number","received","issued"].indexOf(field)<0) return;
+  if(["status","submitted","number","received","issued","drawings"].indexOf(field)<0) return;
   try{ await _permitSyncCard(id); }catch(e){}
   if(field==="status"){
     const st=String((((window._trkData||{}).permits||{})[id]||{}).status||"");
@@ -24870,6 +25129,21 @@ function _permitTrackerBody(){
       + (st.fails?`<span style="font-size:11.5px;color:#B42318;font-weight:600;margin-left:8px">${st.fails} failure${st.fails===1?'':'s'}</span>`:'');
   };
 
+  // Bruce, 12 Oct: "that would be like her first day going to the house and getting
+  // rough measurements of everything. So we can track from there until permit submitted
+  // how many days that's taking on average."
+  // Until now the only "drawings" clock was the Drawing / Structural Phase subphase on
+  // the property card, and of twenty of those only ONE had both a start and a finish
+  // date on it - so the average was being taken across a single house. Jen works in the
+  // tracker, so the date goes in the tracker.
+  const drawNote=(r)=>{
+    const d=String(r.drawings||"").trim();
+    if(!d) return "Jen&rsquo;s first visit &mdash; rough measurements";
+    const sub=String(r.submitted||"").trim();
+    if(sub){ const k=_pdhDays(d,sub); return k==null?'' : (k+" day"+(k===1?'':'s')+" to submit"); }
+    const k=_permitDaysSince(d);
+    return k==null?'' : ("<b>"+k+" day"+(k===1?'':'s')+", not submitted yet</b>");
+  };
   const whCell=(r)=>{
     if((r.status||"")!=="Issued") return `<span style="font-size:12px;color:#c4c9d2">not issued yet</span>`;
     const cur=r.warehouse||"";
@@ -24917,6 +25191,7 @@ function _permitTrackerBody(){
         ${(arch&&r.chk_task)?`<div style="background:#FFFBF0;border-bottom:0.5px solid #EAD9A8;padding:5px 13px;font-size:11.5px;color:#8a6d1a">a check-the-portal task is out</div>`:''}
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr))">
           ${fld('Permit / application #', tx(r.id,"number","Permit #",150))}
+          ${fld('Drawings started', dt(r.id,"drawings"), drawNote(r))}
           ${fld('Submitted', dt(r.id,"submitted"))}
           ${fld('Approved / issued', dt(r.id,"issued"), (/issued|closed/i.test(String(r.status||""))&&!r.issued)?'<b style="color:#B42318">approved, but no date &mdash; put it in</b>':(r.issued?'the day the city approved it':''))}
           ${fld('Turnaround', turn)}
@@ -24956,6 +25231,8 @@ function _permitTrackerBody(){
     <input id="perm-new-juris" list="perm-juris-list" placeholder="Jurisdiction" style="padding:6px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px;width:190px"/>
     <datalist id="perm-juris-list">${_permitJurisdictions().map(j=>`<option value="${_calEsc(j)}"></option>`).join("")}</datalist>
     <button onclick="_permitAdd()" style="padding:6px 13px;border:none;border-radius:7px;background:#122A4A;color:#fff;font-size:13px;font-weight:600;cursor:pointer">Add</button>
+    <span style="flex:1;min-width:10px"></span>
+    <button onclick="_permitCatchUpCards()" title="Read every permit here and bring the Permits Submitted, Permits Reviewed and Permits Approved steps on the property cards into line with it" style="padding:6px 13px;border:0.5px solid #d8dce6;border-radius:7px;background:#fff;color:#122A4A;font-size:12.5px;font-weight:600;cursor:pointer">Catch the property cards up</button>
   </div>`;
 
   let banner;
@@ -28181,9 +28458,10 @@ function _calKindSelect(st){
   const opt=(v,label)=>`<option value="${_calEsc(v)}" ${st.filter===v?'selected':''}>${_calEsc(label)}</option>`;
   return `<select onchange="calSetFilter(this.value)" title="Filter by category"
     style="padding:8px 11px;font-size:13px;border:0.5px solid #d8dce6;border-radius:9px;background:#fff;color:#333;max-width:250px">
-    ${opt('all','All categories')}
+    ${opt('all','All categories (real bookings)')}
     ${opt('material','\u{1F4E6} Material deliveries')}
     ${opt('contractor','★ Contractor starts')}
+    ${opt('baseline','\u{1F5D3} Baseline plan \u2014 the generated schedule')}
     ${types.length?('<optgroup label="Your own types">'+types.map(t=>opt('custom::'+t,'• '+t)).join('')+'</optgroup>'):''}
   </select>`;
 }
@@ -28208,8 +28486,21 @@ function renderConstructionCalendar(){
   // month grid
   const first=new Date(st.y,st.m,1), startDow=first.getDay(), daysInMonth=new Date(st.y,st.m+1,0).getDate();
   const todayStr=(()=>{const d=new Date();return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;})();
+  // Bruce, 12 Oct: "Tommy created an automated construction schedule for each property
+  // ... can we go ahead and remove that, because it's making the construction calendar
+  // super choppy and super disorganized."
+  // He is right about the effect: 910 of the 1,234 events on this calendar are that
+  // generated plan - three quarters of everything on the grid, dated from June 2024 to
+  // June 2027, sitting on top of the 249 real contractor bookings. Every property card
+  // already filters them out (kind!=='baseline'); the calendar was the one place that
+  // did not, which is why it alone looks like that.
+  // Bruce, 12 Oct, on where else it shows: "it's essentially that baseline schedule I'm
+  // talking about. It's like on the property cards as well." So it is off the property
+  // card and off the Monday agenda too. The rows are hidden rather than deleted - three
+  // quarters of this calendar's history is not something to drop quietly - and anybody
+  // who wants to look at the old plan can still pick it out of the category list.
   const _matchFilter=(e)=>{
-    if(st.filter==="all") return true;
+    if(st.filter==="all") return e.kind!=="baseline";
     if(st.filter.indexOf("custom::")===0) return e.kind==="custom" && (e.title||"").trim()===st.filter.slice(8);
     return e.kind===st.filter;
   };
@@ -30242,6 +30533,60 @@ function _mDocsBlock(c){
     ${docs.length?'':`<div style="font-size:12.5px;color:#b6bcc7;padding-top:9px;border-top:0.5px solid #f2f4f7">No approved permits attached yet. They get attached from the property card on a computer.</div>`}
   </div>`;
 }
+// ---- Punch-out, on the phone -------------------------------------------------
+// Bruce, 11 Oct: the designer and the realtors "go to job sites and fill out punch out
+// checklists or job site check-in forms, things they notice they need fixed or redone or
+// touched up, so that way the project manager can review and keep up on those things" -
+// and the same for the project managers.
+//
+// This is the SAME record the property card holds, not a phone copy of it: one house can
+// have several walk-throughs, each with its own eight items, who ticked each one and
+// when. A second walk that finds new problems is its own form, so the history of what was
+// wrong and when somebody saw it survives.
+function _mPunchBlock(c){
+  if(typeof PUNCH_ITEMS==='undefined' || typeof _poForms!=='function') return '';
+  const ro=(typeof isReadOnly==='function')?isReadOnly():false;
+  const forms=_poForms(c).slice().sort(function(a,b){ return String(a.made||'').localeCompare(String(b.made||'')); });
+  const sel=forms.find(function(f){ return f.id===window._poOpenForm; }) || forms[forms.length-1] || null;
+  const tot=PUNCH_ITEMS.length;
+  const head='<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px">'
+    +'<div style="font-size:16px;font-weight:700;color:#111">&#128203; Punch-out walk-through</div>'
+    +'<div style="font-size:12.5px;color:#566070">'+(sel?(_poFormCount(sel)+' of '+tot):'none yet')+'</div></div>';
+  if(!forms.length){
+    return '<div class="m-card">'+head
+      +'<div style="font-size:13px;color:#566070;padding:8px 0 10px">Nobody has walked this house for punch-out yet. Start one here and tick what is genuinely done - the project manager sees it the moment you do.</div>'
+      +(ro?'':'<button class="m-btn" onclick="_poAddForm(\''+c.id+'\')">Start a walk-through</button>')+'</div>';
+  }
+  const picker=(forms.length>1)
+    ? '<div style="display:flex;gap:6px;flex-wrap:wrap;padding:9px 0 3px">'+forms.map(function(f){
+        const on=(sel&&f.id===sel.id);
+        return '<span onclick="window._poOpenForm=\''+f.id+'\';_mOpenProp(\''+c.id+'\')" style="padding:6px 11px;border-radius:8px;font-size:12.5px;font-weight:'+(on?'700':'500')+';background:'+(on?'#122A4A':'#fff')+';color:'+(on?'#fff':'#444')+';border:0.5px solid '+(on?'#122A4A':'#d8dce6')+'">'
+          +_calEsc(f.title||'Walk')+' '+_poFormCount(f)+'/'+tot+'</span>'; }).join('')+'</div>'
+    : '';
+  const rows=PUNCH_ITEMS.map(function(it){
+    const k=it[0], on=_poFormDone(sel,k);
+    const meta=(_poFormItems(sel)[k]||{});
+    const who=on?[meta.by,meta.at].filter(Boolean).join(' \u00b7 '):'';
+    const tap=ro?'':'onclick="_poSet(\''+c.id+'\',\''+sel.id+'\',\''+k+'\','+(on?'false':'true')+')"';
+    return '<div '+tap+' style="display:flex;align-items:flex-start;gap:11px;padding:11px 0;border-top:0.5px solid #f2f4f7;'+(ro?'':'cursor:pointer')+'">'
+      +'<span style="font-size:21px;line-height:1.1;flex-shrink:0;color:'+(on?'#0F7B54':'#c4c9d2')+'">'+(on?'\u2611':'\u2610')+'</span>'
+      +'<div style="flex:1;min-width:0"><div style="font-size:15px;font-weight:600;color:'+(on?'#0F7B54':'#111')+'">'+_calEsc(it[1])+'</div>'
+      +'<div style="font-size:12px;color:#8a93a3">'+_calEsc(who||it[2]||'')+'</div></div></div>';
+  }).join('');
+  const notes=ro?(sel.notes?('<div style="font-size:13px;color:#444;white-space:pre-wrap;padding-top:9px;border-top:0.5px solid #f2f4f7">'+_calEsc(sel.notes)+'</div>'):'')
+    : '<div style="padding-top:10px;border-top:0.5px solid #f2f4f7">'
+      +'<div style="font-size:12px;font-weight:700;color:#111;margin-bottom:5px">Anything else you noticed</div>'
+      +'<textarea id="mpo-n-'+c.id+'" placeholder="Something that needs fixing, redoing or touching up" style="width:100%;min-height:62px;padding:10px 11px;border:0.5px solid #d8dce6;border-radius:9px;font:inherit;font-size:15px;resize:vertical">'+_calEsc(sel.notes||'')+'</textarea>'
+      +'<button class="m-btn" style="margin-top:7px" onclick="_mPoNote(\''+c.id+'\',\''+sel.id+'\')">Save the note</button></div>';
+  return '<div class="m-card">'+head+picker+rows+notes
+    +(ro?'':'<button class="m-btn m-btn-lite" style="margin-top:9px" onclick="_poAddForm(\''+c.id+'\')">\uFF0B Start another walk-through</button>')
+    +'</div>';
+}
+async function _mPoNote(pid, fid){
+  const el=document.getElementById('mpo-n-'+pid); if(!el) return;
+  if(typeof _poNote==='function') await _poNote(pid, fid, el.value);
+  _mOpenProp(pid);
+}
 function renderMobileApp(){
   const host=document.getElementById("mobile-app"); if(!host) return;
   const u=currentUser();
@@ -30574,6 +30919,7 @@ function _mPropDetail(id){
     </div>
     ${links.length?`<div class="m-card">${links.join("")}</div>`:""}
     ${_mDocsBlock(p)}
+    ${_mPunchBlock(p)}
     ${_mSqBlock(p)}`;
 }
 
@@ -32587,4 +32933,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-11h pre2-occupancy-autotick carried-step-dedupe carry-scope queue-hold -->
+<!-- build: 2026-10-12b field-punchout design-package-tracker permit-subphase-sync drawings-clock permit-pdf-tab start-date-clock prop-types -->
