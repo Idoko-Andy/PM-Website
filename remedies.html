@@ -198,7 +198,7 @@ function toast(m){ const t=$("#toast"); t.textContent=m; t.classList.add("show")
 async function load(){
   const [a,b] = await Promise.all([
     sb.from("v_rtr_tracker").select("*").not("cc_task_id","is",null).neq("status","cancelled").order("address").order("item_no"),
-    sb.from("contractor_directory").select("id,name,trade,phone,vetting_tier,jobs_done_n,is_internal,tracker_props_n,tracker_last_date,contact_name").eq("is_archived",false).eq("active",true).order("trade").order("vetting_tier").order("jobs_done_n",{ascending:false,nullsFirst:false}),
+    sb.from("contractor_directory").select("id,name,trade,phone,vetting_tier,jobs_done_n,is_internal,tracker_props_n,tracker_last_date,contact_name,tracker_name").eq("is_archived",false).eq("active",true).order("trade").order("vetting_tier").order("jobs_done_n",{ascending:false,nullsFirst:false}),
   ]);
   if(a.error){ $("#list").innerHTML=`<div class="empty">Couldn't load remedies: ${esc(a.error.message)}</div>`; return; }
   ITEMS = a.data||[]; CONTRACTORS = b.data||[];
@@ -508,13 +508,29 @@ async function scopeCheck(id){
   const i = ITEMS.find(x=>x.id===id); if(!i) return;
   SCOPE = { id, lines: [], loading: true, pick: null, gc: i.rehab_contractor_id || "" };
   renderScope();
-  const r = await sb.rpc("rtr_sow_lines", { p_item_id: id });
+  const [r, inv] = await Promise.all([ sb.rpc("rtr_sow_lines", { p_item_id: id }), sb.rpc("rtr_invoice_lines", { p_item_id: id }) ]);
   const iw = new Set(words(i.description));
   const score = l => { const lw = words([l.section,l.location,l.description,l.notes].join(" ")); let n=0; for(const w of new Set(lw)) if(iw.has(w)) n++; return n; };
   SCOPE.lines = (r.data||[]).map(l=>({...l, score: score(l)})).sort((a,b)=>b.score-a.score).slice(0, 8);
-  SCOPE.hasSow = (r.data||[]).length>0; SCOPE.loading = false;
+  SCOPE.hasSow = (r.data||[]).length>0;
+  // Tom 10/12: cross-reference the project tracker's invoices — who actually did (and got paid for) this kind of work on this house
+  const cats = TRADE_CATS[i.trade] || [];
+  SCOPE.inv = (inv.data||[]).filter(x=>!/mow|lawn|dumpster|delivery|non construction|final steps/i.test((x.category||"")+" "+(x.description||"")+" "+(x.vendor||"")))
+    .map(x=>({...x, score: score({description:x.description}) + (cats.includes(x.category)?2:0)})).filter(x=>x.score>0).sort((a,b)=>b.score-a.score || (b.amount||0)-(a.amount||0)).slice(0,6);
+  SCOPE.hasInv = (inv.data||[]).length>0;
+  // best guess at who did it -> pre-fill "Who did the rehab?" if nothing is set yet
+  if(!SCOPE.gc && SCOPE.inv.length){
+    const top = SCOPE.inv[0].vendor;
+    const c = CONTRACTORS.find(c=>(c.tracker_name||c.name).toLowerCase()===top.toLowerCase() && !c.is_internal) || CONTRACTORS.find(c=>c.name.toLowerCase()===top.toLowerCase());
+    if(c) SCOPE.gc = c.id;
+    SCOPE.guess = top;
+  }
+  SCOPE.loading = false;
   renderScope();
 }
+const TRADE_CATS = { "Electrical":["Electrical"], "HVAC":["HVAC"], "Plumbing":["Plumbing","Bathroom"], "Roofing":["Roofing Plus"], "Gutters":["Roofing Plus","Exterior (Other)"], "Siding":["Exterior (Siding/Windows)"], "Windows":["Exterior (Siding/Windows)"],
+  "Garage Door":["Garage"], "Foundation Repair":["Foundation","Masonry"], "Masonry":["Masonry","Foundation"], "Asphalt / Concrete":["Concrete/Driveway"], "Painting":["Paint"], "Drywall":["Drywall"], "Carpentry":["Int/Ext Trim/Doors","Framing"], "Framing":["Framing"],
+  "Flooring / Tile":["Flooring","Bathroom"], "Kitchen Cabinets":["Kitchen"], "Appliances":["Appliances"], "Landscaping":["Landscaping"], "Demo / Haul":["Demolition"], "Insulation":["Drywall","HVAC"], "Handyman / General":["Exterior (Other)","Misc"], "GC / Full Reno":["Paint","Drywall","Int/Ext Trim/Doors"], "Fireplace / Chimney":["Masonry","Exterior (Other)"] };
 function renderScope(){
   if(!SCOPE){ $("#picker").innerHTML=""; return; }
   const i = ITEMS.find(x=>x.id===SCOPE.id);
@@ -526,12 +542,17 @@ function renderScope(){
         <span class="tier ${l.score>=2?'t1':l.score?'t2':''}" style="min-width:60px;text-align:center">${l.score>=2?'likely':l.score?'maybe':'—'}</span>
         <span class="nm">${esc(l.description)}<small>${esc([l.section,l.location].filter(Boolean).join(" · "))}${l.amount?' · $'+Number(l.amount).toLocaleString():''}</small></span></div>`).join("");
   const picked = SCOPE.lines.find(l=>l.line_id===SCOPE.pick);
+  const money = n => n==null ? "" : "$"+Number(n).toLocaleString("en-US",{maximumFractionDigits:0});
+  const who = SCOPE.loading ? "" : SCOPE.inv && SCOPE.inv.length
+    ? `<div class="ddl" style="padding:8px 16px 2px;font-size:11px;letter-spacing:.4px;color:var(--mute)">WHO DID THIS KIND OF WORK HERE (from the project tracker invoices)</div>` +
+      SCOPE.inv.map(x=>`<div class="pick" style="cursor:default"><span class="tier ${x.score>=3?'t1':'t2'}" style="min-width:60px;text-align:center">${esc(fmt(x.inv_date)||'')}</span><span class="nm"><b>${esc(x.vendor)}</b> — ${esc(x.description||'')}<small>${esc(x.category||'')}${x.amount?' · '+money(x.amount):''}</small></span></div>`).join("")
+    : SCOPE.hasInv ? `<div class="sched-empty">No invoice on this house's tracker looks like this item.</div>` : `<div class="sched-empty">No project tracker invoices loaded for this house yet.</div>`;
   $("#picker").innerHTML = `<div class="modal-bg" onclick="if(event.target===this){SCOPE=null;renderScope()}"><div class="modal">
     <div class="modal-h"><b>Was this on the old scope of work?</b><p>#${i.item_no??""} ${esc(i.address)} — ${esc((i.description||"").slice(0,160))}</p>
       <p>If the rehab contractor was already paid to do this, it goes back to them to fix for free. Tap the matching scope line if you see it (optional), then answer.${i.rehab_scope_url?` <a href="${esc(i.rehab_scope_url)}" target="_blank" style="color:var(--info)">Open the full scope doc ↗</a>`:""}</p></div>
-    <div class="modal-b">${lines}</div>
+    <div class="modal-b">${lines}${who}</div>
     <div class="modal-f" style="flex-wrap:wrap;gap:8px">
-      <label style="font-size:12.5px;color:var(--mute)">Who did the rehab? <select style="background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:5px 6px;font-size:12.5px;max-width:220px" onchange="SCOPE.gc=this.value"><option value="">— pick —</option>${gcOpts}</select></label>
+      <label style="font-size:12.5px;color:var(--mute)">Who did the rehab?${SCOPE.guess?` <span style="color:var(--info)">(looks like ${esc(SCOPE.guess)})</span>`:''} <select style="background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:5px 6px;font-size:12.5px;max-width:220px" onchange="SCOPE.gc=this.value"><option value="">— pick —</option>${gcOpts}</select></label>
       <span class="sp"></span>
       <button class="ubtn small" onclick="SCOPE=null;renderScope()">Cancel</button>
       <button class="ubtn small" onclick="scopeNo()">NO — not on scope</button>
