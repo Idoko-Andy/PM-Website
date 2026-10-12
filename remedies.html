@@ -382,6 +382,7 @@ const isHold = i => /^HOLD\b/i.test(i.description||"");
 function actionCell(i){
   if(i.cc_done) return "";
   if(isHold(i)) return `<span class="pill chase">on hold</span> <button class="ubtn small" onclick="releaseHold('${i.id}')">Release hold</button>`;
+  if(i.bundle_id && !i.bundle_primary) return `<span class="pill bids">in one text with #${i.bundle_primary_no??""}</span>`;
   if(i.scope_check==="pending" && !i.contractor_id && !(i.dispatched_n>0)) return `<button class="ubtn small primary" onclick="scopeCheck('${i.id}')">Was this on the old scope?</button>`;
   if(i.maint_status){ const p = MAINT_PILL[i.maint_status]||["chase","maint: "+i.maint_status]; return `<span class="pill ${p[0]}">${esc(p[1])}${i.maint_start?' '+esc(String(i.maint_start).slice(5).replace('-','/')):''}</span>`; }
   if(i.contractor_id) return `<button class="ubtn small" onclick="chase('${i.id}')">Text for status</button>`;
@@ -446,7 +447,9 @@ const lastMon = d => d ? new Date(d+"T12:00:00").toLocaleDateString("en-US",{mon
 function bids(id){
   const i = ITEMS.find(x=>x.id===id);
   if(!i.trade){ toast("Set the trade first so it knows which contractors to show"); return; }
-  PICK = { id, slots: ["","",""], all: false };
+  // Tom 10/12: other items of the same trade on this house can go in the same text
+  const sibs = ITEMS.filter(x=>x.id!==id && x.property_id===i.property_id && x.trade===i.trade && x.status==="new" && !x.cc_done && !x.bundle_id && !isHold(x) && x.scope_check!=="on_scope" && !(x.dispatched_n>0));
+  PICK = { id, slots: ["","",""], all: false, sibs, extra: new Set(sibs.filter(x=>x.scope_check==="not_on_scope").map(x=>x.id)) };
   renderPicker();
 }
 function renderPicker(){
@@ -461,16 +464,19 @@ function renderPicker(){
       <select style="flex:1;background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:7px 8px;font-size:13px;min-width:0" onchange="pickSlot(${k},this.value)">
         <option value="">— pick a contractor —</option>${opts}</select></div>`;
   };
+  const sibBlock = PICK.sibs.length ? `<div class="ddl" style="padding:8px 16px 2px;font-size:11px;letter-spacing:.4px;color:var(--mute)">SAME TRADE ON THIS HOUSE — SEND IN THE SAME TEXT?</div>` +
+    PICK.sibs.map(x=>`<label class="pick" style="cursor:pointer"><input type="checkbox" ${PICK.extra.has(x.id)?'checked':''} onchange="this.checked?PICK.extra.add('${x.id}'):PICK.extra.delete('${x.id}');renderPicker()" style="accent-color:#5ad17a">
+      <span class="nm">#${x.item_no??""} ${esc((x.description||"").slice(0,110))}<small>${x.scope_check==="pending"?"scope check not answered yet — including it counts as NOT on the old scope":"one bid covers all items checked"}</small></span></label>`).join("") : "";
   const n = PICK.slots.filter(Boolean).length;
-  const need = 1; // Tom 10/9: 3 is the goal, but 2 or even 1 is fine when that's who we have
+  const need = Math.min(3, list.filter(c=>c.phone).length); // Tom 10/12: TRY for 3; fewer only when fewer exist (adding a phone to a NO PHONE guy counts)
   $("#picker").innerHTML = `<div class="modal-bg" onclick="if(event.target===this){PICK=null;renderPicker()}"><div class="modal">
     <div class="modal-h"><b>Get 3 bids — who should we text?</b><p>${esc(i.address)} #${i.item_no??""} — ${esc(i.description.slice(0,140))}</p>
-      <p>Pick your first, second and third choice. The list shows each contractor's rating and how many jobs they've done with us. Three is the goal — two or one is fine if that's who we have.</p></div>
-    <div class="modal-b">${list.length ? [0,1,2].map(slot).join("") : `<div class="sched-empty">No ${esc(i.trade)} contractors in the directory. Tap "Show other trades".</div>`}</div>
+      <p>Pick your first, second and third choice. The list shows each contractor's rating and how many jobs they've done with us. Pick three. If there aren't three in the list, pick everyone there is.</p></div>
+    <div class="modal-b">${list.length ? [0,1,2].map(slot).join("") : `<div class="sched-empty">No ${esc(i.trade)} contractors in the directory. Tap "Show other trades".</div>`}${sibBlock}</div>
     <div class="modal-f"><button class="ubtn small" onclick="PICK.all=!PICK.all;renderPicker()">${PICK.all?'Only '+esc(i.trade):'Show other trades'}</button>
       <span class="sp"></span><span class="cnt">${n} of 3 picked</span>
       <button class="ubtn small" onclick="PICK=null;renderPicker()">Cancel</button>
-      <button class="ubtn small primary" ${n>=need?'':'disabled'} onclick="sendPicked()">Text ${n||3} for bids</button></div>
+      <button class="ubtn small primary" ${n && n>=need?'':'disabled'} onclick="sendPicked()">Text ${n||3} for bids</button></div>
   </div></div>`;
 }
 // Tom 10/9: contractors we use but have no number for show up too; picking one asks for the cell and saves it to the directory
@@ -490,11 +496,12 @@ async function pickSlot(k, id){
   PICK.slots[k]=id; renderPicker();
 }
 async function sendPicked(){
-  const ids = PICK.slots.filter(Boolean), id = PICK.id;
+  const ids = PICK.slots.filter(Boolean), id = PICK.id, extra = [...PICK.extra];
   const names = ids.map((x,k)=>`${k+1}. ${CONTRACTORS.find(c=>c.id===x)?.name||""}`);
-  if(!confirm(`Text these ${ids.length} to ask if they want to bid?\n\n${names.join("\n")}`)) return;
+  const bundleNote = extra.length ? `\n\nOne text covering ${extra.length+1} items (#${[PICK.id,...extra].map(x=>ITEMS.find(i=>i.id===x)?.item_no).join(", #")}).` : "";
+  if(!confirm(`Text these ${ids.length} to ask if they want to bid?\n\n${names.join("\n")}${bundleNote}`)) return;
   PICK=null; renderPicker(); toast("Sending…");
-  const r = await fn("rtr-dispatch", { action:"dispatch", item_id:id, contractor_ids: ids });
+  const r = await fn("rtr-dispatch", { action:"dispatch", item_id:id, contractor_ids: ids, extra_item_ids: extra });
   if(r.error) return toast(r.error);
   toast(r.sent?.length ? `Sent to ${r.sent.join(", ")}${r.skipped?.length?` (skipped: ${r.skipped.join("; ")})`:""}` : `Couldn't send — ${(r.failed||r.skipped||[])[0]||"nobody picked"}`);
   await load();
@@ -582,7 +589,9 @@ async function sendInternal(id){
   const i = ITEMS.find(x=>x.id===id);
   if(!confirm(`Send this to maintenance?\n\nIt posts in Slack #project-maint-requests and tags Jeriel for a work order.\n\n${i.description}\n\nat ${i.address}`)) return;
   toast("Sending…");
-  const r = await fn("rtr-dispatch", { action:"dispatch", item_id:id });
+  const sibs = ITEMS.filter(x=>x.id!==id && x.property_id===i.property_id && internalFor(x.trade) && x.status==="new" && !x.cc_done && !x.bundle_id && !isHold(x) && x.scope_check==="not_on_scope" && !(x.dispatched_n>0));
+  const extra = sibs.length && confirm(`Also put these on the same work order?\n\n${sibs.map(x=>"#"+(x.item_no??"")+" "+(x.description||"").slice(0,80)).join("\n")}`) ? sibs.map(x=>x.id) : [];
+  const r = await fn("rtr-dispatch", { action:"dispatch", item_id:id, extra_item_ids: extra });
   toast(r.error ? r.error : "Queued — posts in #project-maint-requests within the hour");
   await load();
 }
