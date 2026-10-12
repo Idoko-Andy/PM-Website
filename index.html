@@ -2658,10 +2658,40 @@ function _isCardOnlySub(name){ return SUB_PHASES.indexOf(name)<0; }
 // The tick is somebody's memory. A tracker row is the evidence. If the Permit Tracker
 // has written an inspection or a permit step onto THIS card, that step exists, and it
 // shows - whatever the tick says.
+// Bruce, 12 Oct: "on the property card, 875 Scioto, there's a final electric inspection
+// and final plumbing inspection under the subphases on that property card."
+// 875 Scioto is marked NOT permitted, so neither should be anywhere near it. They are
+// there because of the behaviour the comment further up describes - the app used to
+// stamp "Final Electric Inspection" and "Final Plumbing Inspection" onto cards whether
+// or not those inspections were real. That stopped, but what it had already written
+// stayed, and the rule below then protected it: being ON the card was taken as proof the
+// Permit Tracker had put it there.
+// It is not proof. The leftovers are bare - {"name":"Final Electric Inspection"} and
+// nothing else, on fifteen rows across eight houses. Anything the tracker or a person
+// actually wrote carries something with it: a date, a tick, a task. A row with only a
+// name is a leftover, and it no longer counts as evidence.
+function _spRowHasSubstance(s){
+  if(!s) return false;
+  return !!(s.completed || s.approved || s.completedAt || s.taskId ||
+            String(s.start||'').trim() || String(s.due||'').trim());
+}
 function _spFromTracker(name, card){
   if(!card || !Array.isArray(card.subPhases)) return false;
   if(!INSPECTION_SUB_RE.test(name||'') && !PERMIT_SUB_RE.test(name||'')) return false;
-  return card.subPhases.some(function(s){ return String(s.name||'')===String(name); });
+  const row=card.subPhases.find(function(s){ return String(s.name||'')===String(name); });
+  if(!row) return false;
+  if(_spRowHasSubstance(row)) return true;
+  // A bare row still counts if the Permit Tracker really is carrying that inspection
+  // for this house - then it is a step waiting to happen, not a leftover.
+  try{
+    if(typeof _permitList!=='function' || typeof _permitProp!=='function') return false;
+    return _permitList().some(function(r){
+      const pr=_permitProp(r); if(!pr || pr.id!==card.id) return false;
+      return (Array.isArray(r.insps)?r.insps:[]).some(function(x){
+        return String(x.name||'').trim() && String(name).indexOf(String(x.name).trim())>=0;
+      });
+    });
+  }catch(e){ return false; }
 }
 function _spApplies(name, card){
   if(_spFromTracker(name, card)) return true;
@@ -20095,6 +20125,53 @@ function _accumStage1(c){
 // checklists.construction_start when it leaves Pre Construction, checklists.timeline_done
 // when it reaches Listed / Rental Handoff, and closed_date when it sells. A stretch that
 // has not begun reads "not started"; one still running counts to today and is marked live.
+// Bruce, 12 Oct: "the day tracker for listed to sold needs updated because it says not
+// started ... the construction to listed right now is showing as 168. That date tracker
+// there needs fixed. Construction to listed should be from whatever the listed date was."
+//
+// Both come from the same hole. This only ever asked for checklists.timeline_done, which
+// is stamped when a card is moved into Listed on the Market - and on most houses nobody
+// moved it that way. Of the nine houses on the market today only two carry it; the other
+// seven are sitting on a market_since stamp or a completed On the Market checklist, which
+// the app wrote itself and which prove the house was listed. Every closed house has none
+// of the three, so "Listed to sold" read "not started" on all five of them, and the build
+// stretch, having no end date, kept counting to today - which is the 168.
+//
+// So ask every source the app already has, and take the EARLIEST. Each of them means "it
+// was on the market by this date at the latest", so the earliest is the closest honest
+// answer. A date somebody actually typed wins outright over all of them.
+// (Reading the real list date off Zillow is not something this app can do - the site
+// blocks it and we do not scrape it. What makes this exact is somebody typing the date,
+// which the End of Project meeting already asks for.)
+// The End of Project meeting already asks "Date it was listed", and the answer has been
+// sitting inside that week's notes where nothing else could see it. Read it.
+function _listedTyped(c){
+  if(!c) return '';
+  const cl=(c.checklists)||{};
+  const onCard=String(cl.listed_on||'').trim();
+  if(onCard) return onCard;
+  try{
+    const all=window._wmData||{};
+    const key=c.id+'::listed_on';
+    let best='';
+    Object.keys(all).forEach(function(wk){
+      const v=String((((all[wk]||{})['eop'])||{})[key]||'').trim();
+      // Only a real date; the box is free text and somebody may have typed a note in it.
+      if(/^\d{4}-\d{2}-\d{2}$/.test(v) && (!best || wk>best.wk)) best={v:v, wk:wk};
+    });
+    return best ? best.v : '';
+  }catch(e){ return ''; }
+}
+function _listedOn(c){
+  const typed=_listedTyped(c);
+  if(typed) return { date:typed, exact:true };
+  const cl=(c && c.checklists) || {};
+  const seen=[cl.timeline_done, cl.market_since, c&&c.checklistMarketLast]
+    .map(function(x){ return String(x||'').trim(); })
+    .filter(Boolean).sort();
+  if(!seen.length) return { date:null, exact:false };
+  return { date:seen[0], exact:false };
+}
 function _accumSegments(c){
   const today=_ymd(new Date());
   const cl=(c && c.checklists) || {};
@@ -20104,8 +20181,13 @@ function _accumSegments(c){
   const bought = c.vacancyDate || c.closingDate || null;
   const boughtIsFallback = !c.vacancyDate && !!c.closingDate;
   const cStart = _consStart(c);
-  const listed = cl.timeline_done || null;
-  const sold   = c.closedDate || null;
+  const lo     = _listedOn(c);
+  const listed = lo.date || null;
+  const listedNote = (listed && !lo.exact)
+    ? "listed date worked out from the board \u2014 type the real one in the End of Project meeting" : "";
+  // A house that has closed was on the market at some point, whatever the board says.
+  // Reporting "not started" on a sold house is worse than saying we never captured it.
+  const sold   = c.closedDate || c.closingDateSell || null;
   // A stage that finishes BEFORE it starts is bad data, not a zero-day stage. Clamping it to
   // 0 is what made 6060 Cleveland sit there reading "0 d" as though the work took no time.
   // Report the gap as out-of-order so somebody fixes the dates instead of believing the 0.
@@ -20126,7 +20208,9 @@ function _accumSegments(c){
   const head={ label:st1.label, from:bought, to:mid, n:s1.n, bad:s1.bad, live:!!(bought&&!mid),
       note:[startNote,permNote].filter(Boolean).join(" \u00b7 ") };
   const tail={ label:"Listed \u2192 sold", from:listed, to:sold, n:s3.n, bad:s3.bad,
-      live:!!(listed&&!sold), note:"" };
+      live:!!(listed&&!sold),
+      note: listed ? listedNote
+                   : (sold ? "sold, but no listed date was ever recorded \u2014 put it in on the End of Project meeting" : "") };
 
   // Bruce, 16 Sept. On a permitted house the permits coming through and the work
   // actually starting are two different days, and the build should be measured from
@@ -20140,13 +20224,13 @@ function _accumSegments(c){
       { label:"Permits through \u2192 build started", from:mid, to:build, n:sWait.n, bad:sWait.bad,
         live:!!(mid&&!build), note: build?"":"not into framing yet" },
       { label:"Build started \u2192 listed", from:build, to:listed, n:sBuild.n, bad:sBuild.bad,
-        live:!!(build&&!listed), note:"" },
+        live:!!(build&&!listed), note:listedNote },
       tail ];
   }
 
   const s2=seg(mid,listed);
   return [ head,
-    { label:st1.next, from:mid, to:listed, n:s2.n, bad:s2.bad, live:!!(mid&&!listed), note:"" },
+    { label:st1.next, from:mid, to:listed, n:s2.n, bad:s2.bad, live:!!(mid&&!listed), note:listedNote },
     tail ];
 }
 // $/day for the property card. Spend to date over construction days, the same basis
@@ -32933,4 +33017,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-12b field-punchout design-package-tracker permit-subphase-sync drawings-clock permit-pdf-tab start-date-clock prop-types -->
+<!-- build: 2026-10-12c phantom-inspections listed-date-trackers -->
