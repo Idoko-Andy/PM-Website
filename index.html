@@ -3140,15 +3140,18 @@ async function updatePropertyPhaseInSupabase(id, newPhase) {
     // start the start date till listed, for permitted jobs."
     // On a permitted house the permits coming through and the work actually starting are
     // two different days, and it is the second one the build should be measured from.
-    // Reaching Framing stamps it, and the card's Start Date moves to match so every
-    // screen counts from the same day. The date that was there before is kept, not
-    // thrown away - a PM may have set it deliberately and we should be able to see it.
+    // Reaching Framing stamps build_start, and the "Build started -> listed" stretch is
+    // measured from it. It used to ALSO overwrite the card's Start Date, and that is the
+    // bug Bruce is reporting: Start Date is what "days accumulated" and "$ / day" count
+    // from, and those are whole-PROJECT numbers. Moving the start date forward to the day
+    // framing began divided months of spending by a handful of days. On 12 Oct the board
+    // read 1313 Lincoln at $27,612 a day, 2616 Bristol $22,958, 999 Norway $18,644 and
+    // 3388 Wicklow $15,998 - none of which is a number anybody can act on.
+    // The build stamp lives in checklists.build_start and always did, so the build clock
+    // loses nothing by leaving the Start Date alone. The PM's start date is the PM's.
     if (_frIdx>=0 && _npIdx>=_frIdx && (_cl.permitted==='yes') && !_cl.build_start) {
       const _bs = _ymd(new Date());
       _cl.build_start = _bs; _clChg=true;
-      const _prev = String((_pc && _pc.start) || '').trim();
-      if (_prev && _prev !== _bs) _cl.start_before_build = _prev;
-      patch.start_date = _bs;
     }
     if (_clChg) patch.checklists = _cl;
   }
@@ -4211,10 +4214,20 @@ function _consStart(c){
   // anybody should act on.
   // The stamp still wins over a date nobody chose. It does not win over one somebody
   // sat down and corrected.
+  // The Framing stamp says when the BUILD began. It does not say when the money
+  // started going out, and this function is what the money is divided by. The two were
+  // the same thing here for a while, which is how whole-project spend ended up over a
+  // nine-day denominator. "Build started -> listed" has its own row on the card and its
+  // own anchor in _buildStart, so nothing is lost by separating them.
+  // A card whose Start Date was overwritten before this was fixed still carries the real
+  // one in start_before_build, kept precisely so it could be seen. Use it.
   const build=(c.checklists && c.checklists.build_start) || null;
+  const rescued=String((c.checklists && c.checklists.start_before_build) || '').trim();
   if(_isPermittedCard(c) && build){
-    const typed=_datesArePlaceholder(c) ? null : (c.start || null);
-    if(_startSetByHand(c) && typed) return String(typed)<String(build) ? typed : build;
+    const own=_datesArePlaceholder(c) ? '' : String(c.start||'').trim();
+    // The clobbered cards have start === build. Anything else is a date somebody chose.
+    const real=(own && own!==String(build)) ? own : (rescued || own);
+    if(real) return String(real)<String(build) ? real : build;
     return build;
   }
   const stamp=(c.checklists && c.checklists.construction_start) || null;
@@ -33017,4 +33030,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-12c phantom-inspections listed-date-trackers -->
+<!-- build: 2026-10-12d days-accumulated start-date drive-links -->
