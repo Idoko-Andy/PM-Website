@@ -354,8 +354,6 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddl">Realtor</div>
       <div class="ddi" onclick="openRealtorDashboard()">🔑 Realtor Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
-      <!-- Tom, 12 Oct: the Request to Remedy page lives in the Realtor menu -->
-      <div class="ddi" onclick="window.open('remedies.html','_blank')">🛠 Request to Remedy ↗</div>
     </div>
   </div>
   <div class="ni has-dd" id="arch-t">📐 Architect ▾
@@ -32054,12 +32052,28 @@ function _prioKey(person, pid){ return person+'||'+(pid||'_none'); }
 // It used to reach a fortnight forward, so a person opened their week and read a wall
 // of work half of which was not theirs to worry about yet. One week, and only one.
 const PRIO_WEEKS = 1;
+// Bruce, 12 Oct, looking at Tommy's: "there's stuff from 1313 Lincoln rd on there and
+// stuff from weeks ago. That recap needs to be clean, clear and organized."
+// Three different things were making it a wall.
+//
+// 1. A recurring calendar entry is not work. "8am Project TEAM MEETING" is stored as an
+//    open task once a week out to December 2027 - sixty-six rows on Tommy alone - and a
+//    standing meeting does not belong on a checklist of things to do. It belongs on the
+//    calendar, where it already is.
+const PRIO_NOT_WORK = /^(meeting|training|calendar|holiday|time off|pto)$/i;
+// 2. Late work has had no floor at all. 157 N Kellner's End of Project Report has been
+//    sitting on Tommy's list for 34 days and leads it every week. It is real and it is
+//    not being dropped - past this many days it collapses to one line saying how many,
+//    so the list says it without being buried by it.
+const PRIO_LATE_DAYS = 30;
 function _prioTasksFor(person, wk){
   const R=_wmRange(wk,PRIO_WEEKS);
+  const today=_ymd(new Date());
   const out=[];
   (typeof _tasksCache!=='undefined'?_tasksCache:[]).forEach(function(t){
     if(t.status==='done') return;
     if(typeof _taskStatusFor==='function' && _taskStatusFor(t,person)==='done') return;
+    if(PRIO_NOT_WORK.test(String(t.category||'').trim())) return;
     const names=taskAssignees(t)||[];
     if(!names.some(function(n){ return _sameAssignee(n,person); })) return;
     const d=t.due_date||'';
@@ -32067,8 +32081,11 @@ function _prioTasksFor(person, wk){
     // A task with no date on it used to fall off the list altogether, which is how
     // work quietly goes missing. It belongs at the bottom under "No date on it".
     if(!late && d && d>R.to) return;
+    const age=(late && d) ? Math.round((_dParse(today)-_dParse(d))/86400000) : 0;
     out.push({ id:t.id, title:t.title||'Task', due:d, late:late,
+               age:age, stale:(age>PRIO_LATE_DAYS),
                cat:t.category||'', pid:t.property_id||'',
+               phase:(t.property_id?(_propPhase(t.property_id)||''):''),
                where:(t.property_id?(_propAddr(t.property_id)||''):(t.location||'')),
                notes:t.notes||'' });
   });
@@ -32192,14 +32209,34 @@ function _prioSections(person, wk){
 }
 // The list as it will be read: by house, with the houseless work last, because that is
 // how the meeting walks it and how the person will work it.
+// 3. A house that has CLOSED is finished. Whatever is still open on it is a loose end,
+//    not this week's work, and putting it among the live houses is what made Bruce read
+//    1313 Lincoln - closed on 2 October - in Tommy's Monday list. Thirteen open tasks sit
+//    on closed houses across the team. They keep their own section at the bottom.
+const PRIO_DONE_PHASES = ['Closed'];
+function _prioIsFinished(t){ return PRIO_DONE_PHASES.indexOf(String((t&&t.phase)||''))>=0; }
 function _prioBuild(person, wk){
   const groups={}; const order=[];
-  const add=(pid,label)=>{ const k=pid||'_none';
-    if(!groups[k]){ groups[k]={pid:pid||'', label:label||'Not tied to a property', items:[], extra:[]}; order.push(k); }
+  const add=(pid,label,tail)=>{ const k=(tail?'tail:':'')+(pid||'_none');
+    if(!groups[k]){ groups[k]={pid:(tail?'':(pid||'')), label:label||'Not tied to a property',
+                               items:[], extra:[], tail:!!tail}; order.push(k); }
     return groups[k]; };
+  let staleN=0;
   _prioTasksFor(person, wk).forEach(function(t){
+    // Anything long overdue is counted, not listed - see PRIO_LATE_DAYS.
+    if(t.stale){ staleN++; return; }
+    if(_prioIsFinished(t)){
+      add('closed','Finished houses \u2014 loose ends',true).items.push(t);
+      return;
+    }
     add(t.pid, t.where||'Not tied to a property').items.push(t);
   });
+  if(staleN){
+    add('stale','Older than '+PRIO_LATE_DAYS+' days',true).items.push({
+      id:'stale', title:staleN+' task'+(staleN===1?'':'s')+' more than '+PRIO_LATE_DAYS
+        +' days past due, kept off this list so it stays readable. They are on the task calendar.',
+      due:'', late:true, stale:true, cat:'', pid:'', where:'' });
+  }
   _prioExtra(wk, person).forEach(function(x){
     const label = x.pid ? (_propAddr(x.pid)||'') : 'Not tied to a property';
     add(x.pid, label).extra.push(x);
@@ -32213,6 +32250,8 @@ function _prioBuild(person, wk){
   // Houses first (by house number, the way the room walks them), loose work last.
   const num=(s)=>{ const m=String(s||'').match(/\d+/); return m?parseInt(m[0],10):999999; };
   list.sort(function(a,b){
+    // Finished houses and the long-overdue count go last, after everything live.
+    if(!!a.tail!==!!b.tail) return a.tail?1:-1;
     if(!a.pid!==!b.pid) return a.pid?-1:1;
     return num(a.label)-num(b.label)||String(a.label).localeCompare(String(b.label));
   });
@@ -33032,4 +33071,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-12d days-accumulated start-date drive-links -->
+<!-- build: 2026-10-12e recap-cleanup -->
