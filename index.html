@@ -11871,8 +11871,8 @@ function _wmSummaryHtml(wk){
   // with them rather than being left to compute strings nobody renders.
   // Bruce, 13 Oct: "option C, the booked this week schedule template looks pretty
   // good to me." One row per house, one column per day, the trade leading each cell
-  // and the contractor's name under it. Comments from the meeting tab are footnoted
-  // with a * so the cells stay readable.
+  // and the contractor's name under it. (Until 13b the meeting-tab comments were footnoted
+  // here with a *; Bruce had that whole block removed, so the cells carry the work only.)
   const _dayKeys=(()=>{ const out=[]; const st=new Date(D.fwd.from+'T00:00:00');
     for(let i=0;i<6;i++){ const d=new Date(st.getTime()+i*86400000); out.push(_ymd(d)); } return out; })();
   const _dayLbl=(ds)=>{ try{ return new Date(ds+'T00:00:00')
@@ -25766,6 +25766,7 @@ function _vaTrackers(){
   // ---------- Window tracker — four dated stages + what's being replaced + notes ----------
   const winRow=(c)=>`<tr data-trk="${nm(c)}" style="border-top:0.5px solid #eef0f6">
     <td style="padding:7px 10px;min-width:170px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${nm(c)}</span><div style="font-size:11px;color:#566070">${_calEsc(_phLabel(c.phase))} · PM ${_calEsc(c.pm||'—')}</div>
+      ${["Closed","Completed"].includes(c.phase)?`<div style="margin-top:3px"><span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:99px;background:#8A5A101A;color:#8A5A10;white-space:nowrap">\u{1F3E1} Sold \u2014 one-off job</span></div>`:''}
       ${(()=>{const st=_winStage(c),m=_winStageMeta(st);return (st&&st!=='done')?`<div style="margin-top:3px"><span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:99px;background:${m.color}1A;color:${m.color};white-space:nowrap">${m.icon} ${m.label}</span><div style="font-size:10.5px;color:#566070;margin-top:2px">${_calEsc(_winStageNote(c))}</div></div>`:'';})()}
       <div style="margin-top:4px;font-size:11.5px;color:#666;display:flex;gap:9px;align-items:center">
         <span>${fchk('win',c.id,'glass')} Glass</span><span>${fchk('win',c.id,'windows')} Windows</span><span>${fchk('win',c.id,'both')} Both</span>${(!ro && _winStage(c)==='measure' && !_trkVal('win',c.id,'measure_date'))?`<span onclick="_winRemove('${c.id}')" title="Take this house back off the window list" style="cursor:pointer;font-size:10.5px;color:#636b7a">remove</span>`:''}</div></td>
@@ -25801,7 +25802,18 @@ function _vaTrackers(){
   // The front page is the window QUEUE - only houses somebody has actually asked for
   // windows or glass on. Everything else is off it until someone adds it.
   const winQueue=active.filter(_winInQueue);
-  const winLive=winQueue.filter(c=>!_winComplete(c));
+  // Bruce, 13 Oct: "we need to be able to add a property on the window tracker ...
+  // just in case it's a one-off scenario of a property we already sold and we broke
+  // a window or something". A sold house was unreachable twice over: it was not in
+  // the Add dropdown, and even if it had been, the queue was built from `active`
+  // only, so the job would have filed itself straight into the closed history
+  // folder where nobody is looking for work to do.
+  // A sold house joins the LIVE list only when there is something outstanding on
+  // it. Once the four boxes are ticked it drops back into the closed history where
+  // it belongs - so the finished ones (1285 Kingsgate, 1313 Lincoln, 157 N Kellner)
+  // stay filed exactly where they are today.
+  const winOneOff=closed.filter(c=>_winInQueue(c) && !_winComplete(c));
+  const winLive=winQueue.filter(c=>!_winComplete(c)).concat(winOneOff);
   const winFin=winQueue.filter(_winComplete);
   const _wf=window._winStageFilter||null;
   const winShown=_wf?winLive.filter(c=>_winStage(c)===_wf):winLive;
@@ -25829,9 +25841,21 @@ function _vaTrackers(){
       const where=_winComplete(c) ? 'windows finished \u2014 in the completed folder' : 'already on the list';
       return `<option value="" disabled style="color:#9AA3B2">${_calEsc(c.addr||'')} \u2014 ${where}</option>`;
     };
+    // Bruce, 13 Oct: a house we have already sold can still break a window. Sold
+    // houses are in their own group at the bottom so picking one is a deliberate
+    // act, never a mis-click on a name that looks like an active job.
+    const soldSorted=closed.slice().sort((a,b)=>String(a.addr||'').localeCompare(String(b.addr||'')));
+    const soldOpt=(c)=>{
+      if(!_winInQueue(c)) return `<option value="${c.id}">${_calEsc(c.addr||'')} \u2014 sold</option>`;
+      const where=_winComplete(c) ? 'windows finished \u2014 in the closed history' : 'already on the list';
+      return `<option value="" disabled style="color:#9AA3B2">${_calEsc(c.addr||'')} \u2014 ${where}</option>`;
+    };
+    const soldGroup=soldSorted.length
+      ? `<optgroup label="Sold &mdash; one-off job">${soldSorted.map(soldOpt).join('')}</optgroup>`
+      : '';
     return `<div style="background:#fff;border:0.5px dashed #cdd7e6;border-radius:9px;padding:9px 13px;margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-      <span style="font-size:12.5px;color:#666">Doing glass or windows on a house that is not on this list?</span>
-      <select id="win-add" style="padding:6px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12.5px;max-width:340px"><option value="">\u2014 Pick a property \u2014</option>${sorted.map(opt).join('')}</select>
+      <span style="font-size:12.5px;color:#666">Doing glass or windows on a house that is not on this list? <span style="color:#8A5A10">Sold houses are at the bottom of the list \u2014 pick one for a one-off.</span></span>
+      <select id="win-add" style="padding:6px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12.5px;max-width:340px"><option value="">\u2014 Pick a property \u2014</option><optgroup label="On the job">${sorted.map(opt).join('')}</optgroup>${soldGroup}</select>
       <button onclick="_winAdd()" style="padding:6px 13px;border:none;border-radius:7px;background:#122A4A;color:#fff;font-size:12.5px;font-weight:600;cursor:pointer">&#65291; Add to the window list</button>
       <span style="font-size:11.5px;color:#566070">${free.length} of ${sorted.length} not on the list yet \u2014 search above to find one that is</span>
     </div>`;
@@ -25850,7 +25874,9 @@ function _vaTrackers(){
             <tbody>${winFin.map(winRow).join('')}</tbody></table></div>
         </div>
       </details></div>`:'';
-  const winClosed=closed.length?`<div style="margin-top:14px">${_trkClosedFolders('🗄 Closed properties — window history', closed, '<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">Needed</th><th style="padding:9px">Measured</th><th style="padding:9px">Ordered</th><th style="padding:9px">Arrived</th><th style="padding:9px">Installed</th><th style="padding:9px;text-align:left">Notes</th>', winRow, '#566070')}</div>`:'';
+  // a sold house that is up in the live list must not also appear down here
+  const winClosedCards=closed.filter(c=>!winOneOff.some(o=>o.id===c.id));
+  const winClosed=winClosedCards.length?`<div style="margin-top:14px">${_trkClosedFolders('🗄 Closed properties — window history', winClosedCards, '<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px">Needed</th><th style="padding:9px">Measured</th><th style="padding:9px">Ordered</th><th style="padding:9px">Arrived</th><th style="padding:9px">Installed</th><th style="padding:9px;text-align:left">Notes</th>', winRow, '#566070')}</div>`:'';
 
   // ---------- Checklist tracker ----------
   const clrows=active.length?active.map(c=>{ const subs=c.subPhases||[]; const fta=subs.find(s=>s.name==="First Time Access Checklist"); const po=subs.find(s=>/punch/i.test(s.name||'')); return `<tr data-trk="${nm(c)}" style="border-top:0.5px solid #eef0f6"><td style="padding:7px 10px"><span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-weight:600;color:#185FA5">${nm(c)}</span></td><td style="text-align:center;padding:7px">${fta&&fta.completed?'✅':'⬜'}</td><td style="text-align:center;padding:7px">${po?(po.completed?'✅':'⬜'):'—'}</td></tr>`; }).join(""):'<tr><td colspan="3" style="padding:16px;color:#636b7a;text-align:center">No active properties.</td></tr>';
@@ -33167,4 +33193,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-13b summary-template-trimmed meeting-scoped -->
+<!-- build: 2026-10-13c window-tracker-add-sold-property -->
