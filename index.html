@@ -11690,7 +11690,13 @@ function _wmSummaryData(wk){
     // longest-waiting house first
     lagByProp.sort((a,b)=>String(a.items[0].raised||'').localeCompare(String(b.items[0].raised||'')));
   }
-  const qs=_miOpen('q').sort((a,b)=>String(a.raised||'').localeCompare(String(b.raised||'')));
+  // Bruce, 13 Oct: "only properties that are on the meeting tab". The lag list got
+  // this guard in 12e; the question list never had it, so a question raised on a
+  // house that has since closed or gone to contract would still be put in front of
+  // Bruce. Same rule: if the house is not in the meeting, the meeting does not
+  // carry it - it stays open on the property card where it belongs.
+  const qs=_miOpen('q').filter(x=>!x.pid || _inMeeting[x.pid])
+                       .sort((a,b)=>String(a.raised||'').localeCompare(String(b.raised||'')));
   const unassigned=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status!=="done" && taskAssignees(t).length===0)
     .sort((a,b)=>String(a.due_date||'9999').localeCompare(String(b.due_date||'9999')));
   // Tommy wants the week in front of him, not a fortnight. The meeting itself still
@@ -11821,7 +11827,6 @@ function _wmDateShort(d){ if(!d) return '&mdash;'; try{ return new Date(d+"T00:0
 // ---- the printable sheet ----------------------------------------------------
 function _wmSummaryHtml(wk){
   const D=_wmSummaryData(wk);
-  const leftover=(D.tb&&D.ts)?(D.tb-D.ts):null;
   const esc=_calEsc;
   const row=(cells)=>'<tr>'+cells.map(c=>'<td'+(c[1]?' class="'+c[1]+'"':'')+'>'+c[0]+'</td>').join('')+'</tr>';
   const sec=(title,right,inner)=>`<div class="sec"><div class="sech"><h3>${title}</h3><span class="cnt">${right||''}</span></div>${inner}</div>`;
@@ -11872,7 +11877,6 @@ function _wmSummaryHtml(wk){
     for(let i=0;i<6;i++){ const d=new Date(st.getTime()+i*86400000); out.push(_ymd(d)); } return out; })();
   const _dayLbl=(ds)=>{ try{ return new Date(ds+'T00:00:00')
       .toLocaleDateString(undefined,{weekday:'short',day:'numeric'}); }catch(e){ return ds; } };
-  const _bookNotes=[];
   const bookTbl=D.bookByProp.length?'<div class="scroller"><table class="wkg"><thead><tr>'+
     '<th>Property</th>'+_dayKeys.map(d=>`<th class="wd">${esc(_dayLbl(d))}</th>`).join('')+
     '</tr></thead><tbody>'+
@@ -11882,20 +11886,17 @@ function _wmSummaryHtml(wk){
           const a=it.date, b=it.endDate||it.date; return ds>=a && ds<=b; });
         if(!got.length) return '<td class="wd none">&ndash;</td>';
         return '<td class="wd">'+got.map(it=>{
-          const nt=_miItemNoteVal(it.key)||it.note||'';
-          if(nt) _bookNotes.push({addr:g.c.addr||'', day:_dayLbl(ds), note:nt});
+          // Bruce, 13 Oct: "you added in comments from the meeting tab - let's remove
+          // that section". The grid shows the work, not the chatter about it.
           // the trade is what is happening; the name is who is doing it
           const lead=(it.trade||it.title||'Scheduled');
           const sub=(it.trade && it.who && it.who!==it.trade)?it.who:(it.trade?'':'');
-          return `<div class="wi${it.done?' wdone':''}">${it.done?'&#10003; ':''}<b>${esc(lead)}</b>${nt?' *':''}`+
+          return `<div class="wi${it.done?' wdone':''}">${it.done?'&#10003; ':''}<b>${esc(lead)}</b>`+
                  (sub?`<div class="wsub">${esc(sub)}</div>`:'')+`</div>`;
         }).join('')+'</td>';
       }).join('');
       return `<tr><td class="wp"><b>${esc(g.c.addr||'')}</b><div class="wph">${esc(_phLabel(g.c.phase))}</div></td>${cells}</tr>`;
-    }).join('')+'</tbody></table></div>'+
-    (_bookNotes.length?'<div class="wnotes"><div class="wnh">Comments from the meeting tab</div>'+
-      _bookNotes.map(x=>`<div class="wn"><b>*</b> <b>${esc(x.addr)}</b>, ${esc(x.day)} &mdash; ${esc(x.note)}</div>`).join('')+
-      '</div>':'')
+    }).join('')+'</tbody></table></div>'
     :none('Nothing is booked this week.');
 
   // Bruce, 13 Oct: "I like how that's doubled up side by side." And the heading was
@@ -11923,11 +11924,6 @@ function _wmSummaryHtml(wk){
  .sech{display:flex;align-items:baseline;gap:10px;border-bottom:1.5px solid var(--navy);padding-bottom:5px;margin-bottom:11px}
  .sech h3{margin:0;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.09em;color:var(--navy)}
  .sech .cnt{font-size:11px;color:var(--faint);margin-left:auto;font-family:ui-monospace,Menlo,monospace}
- .kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:1px;background:var(--rule);border:1px solid var(--rule);border-radius:6px;overflow:hidden;margin-bottom:20px}
- .kpi{background:#fff;padding:11px 13px}
- .kpi .k{font-size:9px;text-transform:uppercase;letter-spacing:.07em;color:var(--faint);white-space:nowrap}
- .kpi .v{font-family:ui-monospace,Menlo,monospace;font-size:19px;font-weight:600;margin-top:3px;font-variant-numeric:tabular-nums}
- .kpi .s{font-size:10px;color:var(--faint);margin-top:1px}
  table{width:100%;border-collapse:collapse;font-size:12px}
  thead th{background:var(--navy-soft);color:var(--navy);font-size:9.5px;text-transform:uppercase;letter-spacing:.06em;text-align:left;padding:6px 9px;font-weight:600;white-space:nowrap}
  tbody td{padding:7px 9px;border-bottom:1px solid var(--hair);vertical-align:top}
@@ -11984,9 +11980,6 @@ function _wmSummaryHtml(wk){
  .wi:last-child{margin-bottom:0}
  .wi.wdone{color:var(--good)}
  .wsub{font-size:8.5px;color:var(--faint);font-weight:400;line-height:1.25}
- .wnotes{margin-top:7px;background:#F7F8FB;border:1px solid var(--rule);border-radius:9px;padding:8px 11px}
- .wnh{font-size:8.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);margin-bottom:4px}
- .wn{font-size:11px;color:var(--muted);line-height:1.5}
  /* Lag, every item, the house named once. */
  table.lagt{width:100%;border-collapse:collapse;font-size:12px}
  table.lagt td{padding:6px 9px;border-bottom:1px solid var(--hair);vertical-align:top}
@@ -12001,7 +11994,7 @@ function _wmSummaryHtml(wk){
  .win{background:var(--good-soft);padding:8px 11px;font-size:11.5px;line-height:1.45}
  .win .wt{color:var(--muted);margin-top:1px}
  @media (max-width:760px){.top2{grid-template-columns:1fr}.wins2{grid-template-columns:1fr}}
- @media (max-width:760px){.kpis{grid-template-columns:repeat(2,1fr)}.two{grid-template-columns:1fr}}
+ @media (max-width:760px){.two{grid-template-columns:1fr}}
  @media print{body{background:#fff;padding:0}.sheet{box-shadow:none;max-width:none}.bar{display:none}}
 </style></head><body>
 <div class="bar">
@@ -12014,13 +12007,9 @@ function _wmSummaryHtml(wk){
     <div class="when">Week of ${esc(_wmLabel(wk))}<br>${present}<br>${D.cards.length} properties reviewed</div>
   </div>
   <div class="pad">
-    <div class="kpis">
-      <div class="kpi"><div class="k">Properties reviewed</div><div class="v">${D.cards.length}</div><div class="s">vacant &rarr; pre-list &amp; rental handoff</div></div>
-      <div class="kpi"><div class="k">Budgeted</div><div class="v">${_wmMoneyShort(D.tb||null)}</div><div class="s">across the ${D.cards.length}</div></div>
-      <div class="kpi"><div class="k">Spent</div><div class="v">${_wmMoneyShort(D.ts||null)}</div><div class="s">${D.tb?Math.round((D.ts/D.tb)*100):0}% of budget</div></div>
-      <div class="kpi"><div class="k">Leftover</div><div class="v ${leftover!=null&&leftover<0?'red':'grn'}">${_wmMoneyShort(leftover)}</div><div class="s">${D.over.length} over budget</div></div>
-      <div class="kpi"><div class="k">Past committed finish</div><div class="v amb">${D.late.length}</div><div class="s">of ${D.cards.length}</div></div>
-    </div>
+    <!-- Bruce, 13 Oct: "you can also remove the section of properties reviewed,
+         budgeted, spent, leftover, past committed finish". The approved template
+         has no figures strip - the count stays in the masthead and that is all. -->
     <!-- Bruce, 13 Oct. Unassigned tasks and Over budget are gone - "he doesn't need
          to see the unassigned tasks" and "we don't need to see an over budget section".
          The two that need him are paired at the top and kept deliberately small. -->
@@ -12054,8 +12043,7 @@ function _wmSummaryText(wk){
   const leftover=(D.tb!=null&&D.ts!=null)?(D.tb-D.ts):null;
   L.push('MONDAY MEETING SUMMARY - week of '+_wmLabel(wk));
   L.push('');
-  L.push(D.cards.length+' properties reviewed  |  budgeted '+money(D.tb)+'  |  spent '+money(D.ts)+'  |  leftover '+money(leftover));
-  L.push(D.over.length+' over budget  |  '+D.late.length+' past their committed finish  |  '+D.moved.length+' timelines pushed this week');
+  L.push(D.cards.length+' properties reviewed');
   L.push('');
   const sect=(title, lines)=>{ L.push(title.toUpperCase()); if(!lines.length){ L.push('  (none)'); } else { lines.forEach(x=>L.push('  - '+x)); } L.push(''); };
   sect('Needs an answer from Bruce or Tommy', D.qs.map(q=>{
@@ -33179,4 +33167,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-13a monday-summary-template rtr-link-restored -->
+<!-- build: 2026-10-13b summary-template-trimmed meeting-scoped -->
