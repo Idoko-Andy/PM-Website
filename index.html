@@ -354,6 +354,10 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddl">Realtor</div>
       <div class="ddi" onclick="openRealtorDashboard()">🔑 Realtor Dashboard</div>
       <div class="ddi" onclick="openDesignDashboard()">🎨 Design Dashboard</div>
+      <!-- Tom, 12 Oct: the Request to Remedy page lives in the Realtor menu.
+           Restored 13 Oct — build 2026-10-12e dropped it because the local copy the
+           patch was built from predated Tom's commit. See the deploy log. -->
+      <div class="ddi" onclick="window.open('remedies.html','_blank')">🛠 Request to Remedy ↗</div>
     </div>
   </div>
   <div class="ni has-dd" id="arch-t">📐 Architect ▾
@@ -10892,6 +10896,11 @@ function _wmItems(pid, from, to){
               when:_wmSpan(d, e.end_date||''),
               title:isC?(_contractorName(e.contractor_id)||'Contractor'):(isB?bstep:(e.title||(e.kind==='material'?'Material':'Event'))),
               sub:isC?(trade?('Contractor \u00b7 '+trade):'Contractor booking'):(isB?'Baseline schedule':(e.kind==='material'?'Material / delivery':'Scheduled')),
+              // Bruce, 13 Oct: "don't even have the word contractor booked. Replace it
+              // with what they're doing or what trade's going there." The trade is what
+              // is HAPPENING, so the summary leads with it and keeps the name underneath.
+              trade:isC?(trade||''):(e.kind==='material'?'Material':''),
+              who:isC?(_contractorName(e.contractor_id)||''):'',
               note:enote,
               done:!!e.completed, kind:isC?'c':'m', kindLabel:isC?'Contractor':(isB?'Baseline':(e.kind==='material'?'Material':'Scheduled'))});
   });
@@ -11662,7 +11671,25 @@ function _wmSummaryData(wk){
     _wmPushes(c).forEach(p=>{ if(p.at && p.at>=wk && p.at<=wkEnd) moved.push({c:c, p:p}); });
   });
   const wins=cards.map(c=>({c:c, t:(notes[c.id+'::wins']||'').trim()})).filter(x=>x.t);
-  const lag=_miOpen('lag').sort((a,b)=>String(a.raised||'').localeCompare(String(b.raised||'')));
+  // Bruce, 13 Oct: "make sure that it's showing active properties in that meeting."
+  // _miOpen('lag') returns every open item whatever became of the house. On 13 Oct
+  // three of the nineteen were on 1313 Lincoln (closed 2 Oct) and 2616 Bristol (In
+  // Contract) - neither phase is in this meeting, so nobody walks them and nobody
+  // closes them. An item on a house that has left the meeting is not the meeting's
+  // to carry; it stays open on the property card where it belongs.
+  const _inMeeting={}; cards.forEach(c=>{ _inMeeting[c.id]=true; });
+  const lag=_miOpen('lag').filter(x=>!x.pid || _inMeeting[x.pid])
+                          .sort((a,b)=>String(a.raised||'').localeCompare(String(b.raised||'')));
+  // ...and grouped, so a house's items read together rather than scattered by date.
+  const lagByProp=[]; { const seen={};
+    lag.forEach(x=>{ const k=x.pid||'_none';
+      if(!seen[k]){ seen[k]={pid:x.pid||'', addr:(x.pid?(_propAddr(x.pid)||''):'Not tied to a property'), items:[]};
+                    seen[k].items=[]; lagByProp.push(seen[k]); }
+      seen[k].items.push(x); });
+    lagByProp.forEach(g=>g.items.sort((a,b)=>String(a.raised||'').localeCompare(String(b.raised||''))));
+    // longest-waiting house first
+    lagByProp.sort((a,b)=>String(a.items[0].raised||'').localeCompare(String(b.items[0].raised||'')));
+  }
   const qs=_miOpen('q').sort((a,b)=>String(a.raised||'').localeCompare(String(b.raised||'')));
   const unassigned=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>t.status!=="done" && taskAssignees(t).length===0)
     .sort((a,b)=>String(a.due_date||'9999').localeCompare(String(b.due_date||'9999')));
@@ -11673,8 +11700,18 @@ function _wmSummaryData(wk){
   cards.forEach(c=>{ _wmItems(c.id,fwd.from,fwd.to).forEach(it=>booked.push({c:c,it:it})); });
   booked.sort((a,b)=>String(a.it.date).localeCompare(String(b.it.date)));
   const conf=notes['__conf']||{};
+  // Bookings grouped by house, each house's week in date order - the shape the
+  // Mon-to-Sat grid needs.
+  const bookByProp=[]; { const seen={};
+    booked.forEach(b=>{ const k=b.c.id;
+      if(!seen[k]){ seen[k]={c:b.c, items:[]}; bookByProp.push(seen[k]); }
+      seen[k].items.push(b.it); });
+    const _n=(a)=>{ const m=String(a||'').match(/\d+/); return m?parseInt(m[0],10):999999; };
+    bookByProp.sort((a,b)=>_n(a.c.addr)-_n(b.c.addr));
+  }
   return {notes:notes, cards:cards, tb:tb, ts:ts, over:over, late:late, moved:moved, wins:wins,
-          lag:lag, qs:qs, unassigned:unassigned, booked:booked, conf:conf, closed:notes['__closed']||{}};
+          lag:lag, lagByProp:lagByProp, qs:qs, unassigned:unassigned, booked:booked,
+          bookByProp:bookByProp, fwd:fwd, conf:conf, closed:notes['__closed']||{}};
 }
 function _wmMoneyShort(n){
   if(n==null) return '&mdash;';
@@ -11789,29 +11826,31 @@ function _wmSummaryHtml(wk){
   const row=(cells)=>'<tr>'+cells.map(c=>'<td'+(c[1]?' class="'+c[1]+'"':'')+'>'+c[0]+'</td>').join('')+'</tr>';
   const sec=(title,right,inner)=>`<div class="sec"><div class="sech"><h3>${title}</h3><span class="cnt">${right||''}</span></div>${inner}</div>`;
   const none=(t)=>`<div class="none">${t}</div>`;
+  // Just the heading, for the paired boxes at the top that supply their own body.
+  const sechead=(title, note)=>`<div class="sech"><h3>${title}</h3>${note?`<span class="cnt">${note}</span>`:''}</div>`;
 
   const movedTbl=D.moved.length?`<div class="scroller"><table><thead><tr><th>Property</th><th>Committed</th><th>Now</th><th class="num">&Delta;</th><th>Reason given</th></tr></thead><tbody>`+
     D.moved.map(x=>row([[ '<b>'+esc(x.c.addr||'')+'</b>' ],[_wmDateShort(x.c.end),'num'],[_wmDateShort(x.p.to),'num'],
       [(()=>{const d=_wmEstDrift(x.c); return d==null?'&mdash;':((d>0?'+':'')+d);})(),'num'],[esc(x.p.why||'not given')]])).join('')+
     '</tbody></table></div>':none('No finish estimate moved this week.');
 
-  const overTbl=D.over.length?`<div class="scroller"><table><thead><tr><th>Property</th><th>PM</th><th class="num">Budgeted</th><th class="num">Spent</th><th class="num">Over by</th><th>Said in the meeting</th></tr></thead><tbody>`+
-    D.over.map(x=>row([['<b>'+esc(x.c.addr||'')+'</b>'],[esc(x.c.pm)||'&mdash;'],[_wmMoneyShort(x.m.b),'num'],[_wmMoneyShort(x.m.s),'num'],
-      ['<span class="red">'+_wmMoneyShort(x.m.left)+'</span>','num'],[esc(x.note)||'<span class="q">nothing written</span>']])).join('')+
-    '</tbody></table></div>':none('Nothing is over budget.');
-
   // Bruce, 10 Oct, option C: these rows become cards, the age becomes a chip you can
   // find without reading, and whatever was written about the item hangs underneath it
   // as its own bubble instead of being run onto the end of the sub-line, where nobody
   // saw it.
-  const lagList=D.lag.length?'<div class="items">'+D.lag.map(x=>{
-    const c=(typeof propCards!=='undefined'?propCards:[]).find(p=>p.id===x.pid);
-    return `<div class="item"><div class="ib">
-      <div class="t">${c?('<b>'+esc(c.addr||'')+'</b> &mdash; '):''}${esc(x.text)}<span class="agechip" style="color:${_miAgeColor(x.raised)};border-color:${_miAgeColor(x.raised)}33">${esc(_miAgeLabel(x.raised))}</span></div>
-      <div class="s">Raised ${esc(x.raised||'')} by ${esc(x.by||'')}</div>
-      ${x.note?`<div class="bub"><div class="bh">Said in the meeting</div><div class="bb">${esc(x.note)}</div></div>`:''}
-      </div></div>`;
-  }).join('')+'</div>':none('Nothing on a long lead is open.');
+  // Bruce, 13 Oct: "we need to see ALL of the open lag times... organize them with
+  // properties together at the very least." So: every open item, the house named once,
+  // its items underneath it, longest-waiting house first.
+  const lagList=D.lagByProp.length?'<table class="lagt">'+
+    D.lagByProp.map(g=>g.items.map((x,i)=>
+      `<tr${i===0?' class="gtop"':''}>`+
+      (i===0?`<td class="lp" rowspan="${g.items.length}"><b>${esc(g.addr)}</b></td>`:'')+
+      `<td class="lw">${esc(x.text)}`+
+      (x.note?`<div class="lsub">${esc(x.note)}</div>`:'')+
+      `<div class="lby">Raised ${esc(x.raised||'')} by ${esc(x.by||'')}</div></td>`+
+      `<td class="lage" style="color:${_miAgeColor(x.raised)}">${esc(_miAgeLabel(x.raised))}</td></tr>`
+    ).join('')).join('')+'</table>'
+    :none('Nothing on a long lead is open.');
 
   // Bruce's replacement for the full property table: what actually needs a person.
   const qList=D.qs.length?'<div class="items">'+D.qs.map(x=>{
@@ -11823,19 +11862,47 @@ function _wmSummaryHtml(wk){
       </div></div>`;
   }).join('')+'</div>':none('Nothing is waiting on Bruce or Tommy.');
 
-  const unTbl=D.unassigned.length?`<div class="scroller"><table><thead><tr><th>Task</th><th>Property</th><th class="num">Due</th></tr></thead><tbody>`+
-    D.unassigned.slice(0,25).map(t=>row([[esc(t.title||'')],[esc(_locLabel(t))||'&mdash;'],[t.due_date?_wmDateShort(t.due_date):'no date','num']])).join('')+
-    '</tbody></table></div>'+(D.unassigned.length>25?`<div class="s" style="margin-top:5px">+ ${D.unassigned.length-25} more on the board</div>`:'')
-    :none('Every open task has somebody on it.');
+  // Unassigned tasks and Over budget were removed on 13 Oct; their builders went
+  // with them rather than being left to compute strings nobody renders.
+  // Bruce, 13 Oct: "option C, the booked this week schedule template looks pretty
+  // good to me." One row per house, one column per day, the trade leading each cell
+  // and the contractor's name under it. Comments from the meeting tab are footnoted
+  // with a * so the cells stay readable.
+  const _dayKeys=(()=>{ const out=[]; const st=new Date(D.fwd.from+'T00:00:00');
+    for(let i=0;i<6;i++){ const d=new Date(st.getTime()+i*86400000); out.push(_ymd(d)); } return out; })();
+  const _dayLbl=(ds)=>{ try{ return new Date(ds+'T00:00:00')
+      .toLocaleDateString(undefined,{weekday:'short',day:'numeric'}); }catch(e){ return ds; } };
+  const _bookNotes=[];
+  const bookTbl=D.bookByProp.length?'<div class="scroller"><table class="wkg"><thead><tr>'+
+    '<th>Property</th>'+_dayKeys.map(d=>`<th class="wd">${esc(_dayLbl(d))}</th>`).join('')+
+    '</tr></thead><tbody>'+
+    D.bookByProp.map(g=>{
+      const cells=_dayKeys.map(ds=>{
+        const got=g.items.filter(it=>{
+          const a=it.date, b=it.endDate||it.date; return ds>=a && ds<=b; });
+        if(!got.length) return '<td class="wd none">&ndash;</td>';
+        return '<td class="wd">'+got.map(it=>{
+          const nt=_miItemNoteVal(it.key)||it.note||'';
+          if(nt) _bookNotes.push({addr:g.c.addr||'', day:_dayLbl(ds), note:nt});
+          // the trade is what is happening; the name is who is doing it
+          const lead=(it.trade||it.title||'Scheduled');
+          const sub=(it.trade && it.who && it.who!==it.trade)?it.who:(it.trade?'':'');
+          return `<div class="wi${it.done?' wdone':''}">${it.done?'&#10003; ':''}<b>${esc(lead)}</b>${nt?' *':''}`+
+                 (sub?`<div class="wsub">${esc(sub)}</div>`:'')+`</div>`;
+        }).join('')+'</td>';
+      }).join('');
+      return `<tr><td class="wp"><b>${esc(g.c.addr||'')}</b><div class="wph">${esc(_phLabel(g.c.phase))}</div></td>${cells}</tr>`;
+    }).join('')+'</tbody></table></div>'+
+    (_bookNotes.length?'<div class="wnotes"><div class="wnh">Comments from the meeting tab</div>'+
+      _bookNotes.map(x=>`<div class="wn"><b>*</b> <b>${esc(x.addr)}</b>, ${esc(x.day)} &mdash; ${esc(x.note)}</div>`).join('')+
+      '</div>':'')
+    :none('Nothing is booked this week.');
 
-  const bookTbl=D.booked.length?`<div class="scroller"><table><thead><tr><th class="num">When</th><th>Property</th><th>What</th><th>Confirmed</th><th>Waiting on</th></tr></thead><tbody>`+
-    D.booked.slice(0,30).map(x=>{
-      const cf=D.conf[x.it.key]||{};
-      const pill=cf.c?'<span class="pill on">Confirmed</span>':'<span class="pill off">Not confirmed</span>';
-      return row([[_wmSpanShort(x.it.date, x.it.endDate||''),'num'],['<b>'+esc(x.c.addr||'')+'</b>'],[esc(x.it.title)],[pill],[esc(_miItemNoteVal(x.it.key))||'&mdash;']]);
-    }).join('')+'</tbody></table></div>':none('Nothing is booked for the next two weeks.');
-
-  const winList=D.wins.length?'<ul>'+D.wins.map(x=>`<li><b>${esc(x.c.addr||'')}</b> &mdash; ${esc(x.t)}</li>`).join('')+'</ul>':none('No wins written up this week.');
+  // Bruce, 13 Oct: "I like how that's doubled up side by side." And the heading was
+  // wrong - the room writes this on Monday about the week that has just finished.
+  const winList=D.wins.length?'<div class="wins2">'+
+    D.wins.map(x=>`<div class="win"><b>${esc(x.c.addr||'')}</b><div class="wt">${esc(x.t)}</div></div>`).join('')+
+    '</div>':none('No wins written up for last week.');
 
   const present=D.closed.by?('Closed by '+esc(D.closed.by)):'Not yet marked complete';
   return `<!doctype html><html><head><meta charset="utf-8"><title>Monday Meeting Summary — week of ${esc(wk)}</title>
@@ -11898,6 +11965,42 @@ function _wmSummaryHtml(wk){
  .bar button{padding:8px 15px;border:1px solid var(--rule);border-radius:8px;background:#fff;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;color:var(--ink)}
  .bar button.dark{background:var(--navy);border-color:var(--navy);color:#fff}
  .bar .hint{font-size:12px;color:#6b6f78}
+ /* ---- Bruce's template, 13 Oct ------------------------------------------- */
+ /* The two things that need a person, paired and deliberately small. */
+ .top2{display:grid;grid-template-columns:1.35fr 1fr;gap:16px;margin-bottom:22px;align-items:start}
+ .top2 .sech{margin-bottom:8px}
+ .ask-wrap .item{padding:8px 11px;border-radius:11px;border-bottom-left-radius:4px}
+ .ask-wrap .ib .t{font-size:11.5px;line-height:1.45}
+ .ask-wrap .ib .s{font-size:10px;margin-top:0}
+ .ask-wrap .agechip{font-size:8px;padding:1px 5px}
+ .ask-wrap .items{gap:6px}
+ /* The week, one row a house, one column a day. */
+ table.wkg{table-layout:fixed}
+ table.wkg th.wd,table.wkg td.wd{text-align:center;width:13%}
+ table.wkg td.wp{width:22%}
+ table.wkg td.wp .wph{font-size:9px;color:var(--faint);font-weight:400;margin-top:1px}
+ table.wkg td.wd.none{color:#CBD1DB}
+ .wi{font-size:10.5px;line-height:1.3;margin-bottom:4px}
+ .wi:last-child{margin-bottom:0}
+ .wi.wdone{color:var(--good)}
+ .wsub{font-size:8.5px;color:var(--faint);font-weight:400;line-height:1.25}
+ .wnotes{margin-top:7px;background:#F7F8FB;border:1px solid var(--rule);border-radius:9px;padding:8px 11px}
+ .wnh{font-size:8.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);margin-bottom:4px}
+ .wn{font-size:11px;color:var(--muted);line-height:1.5}
+ /* Lag, every item, the house named once. */
+ table.lagt{width:100%;border-collapse:collapse;font-size:12px}
+ table.lagt td{padding:6px 9px;border-bottom:1px solid var(--hair);vertical-align:top}
+ table.lagt tr.gtop td{border-top:1px solid var(--rule)}
+ table.lagt td.lp{width:21%;background:#FAFBFD;font-size:12px}
+ table.lagt td.lage{width:9%;text-align:right;font-weight:700;font-size:10.5px;white-space:nowrap}
+ .lsub{font-size:10.5px;color:var(--faint);margin-top:2px;line-height:1.45}
+ .lby{font-size:9.5px;color:#A8AEBB;margin-top:2px}
+ /* Wins, two up. */
+ .wins2{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--rule);
+        border:1px solid var(--rule);border-radius:9px;overflow:hidden}
+ .win{background:var(--good-soft);padding:8px 11px;font-size:11.5px;line-height:1.45}
+ .win .wt{color:var(--muted);margin-top:1px}
+ @media (max-width:760px){.top2{grid-template-columns:1fr}.wins2{grid-template-columns:1fr}}
  @media (max-width:760px){.kpis{grid-template-columns:repeat(2,1fr)}.two{grid-template-columns:1fr}}
  @media print{body{background:#fff;padding:0}.sheet{box-shadow:none;max-width:none}.bar{display:none}}
 </style></head><body>
@@ -11918,13 +12021,16 @@ function _wmSummaryHtml(wk){
       <div class="kpi"><div class="k">Leftover</div><div class="v ${leftover!=null&&leftover<0?'red':'grn'}">${_wmMoneyShort(leftover)}</div><div class="s">${D.over.length} over budget</div></div>
       <div class="kpi"><div class="k">Past committed finish</div><div class="v amb">${D.late.length}</div><div class="s">of ${D.cards.length}</div></div>
     </div>
-    ${sec('Needs an answer from Bruce or Tommy', D.qs.length+' open', qList)}
-    ${sec('Unassigned tasks', D.unassigned.length+' with nobody on them', unTbl)}
-    ${sec('Timeline moved this week', D.moved.length+' pushed', movedTbl)}
-    ${sec('Over budget', D.over.length+' propert'+(D.over.length===1?'y':'ies'), overTbl)}
-    ${sec('Lag-time items still open', D.lag.length+' open', lagList)}
-    ${sec('Booked this week', D.booked.length+' items &middot; '+D.booked.filter(x=>!((D.conf[x.it.key]||{}).c)).length+' not confirmed', bookTbl)}
-    ${sec('Wins this week','', winList)}
+    <!-- Bruce, 13 Oct. Unassigned tasks and Over budget are gone - "he doesn't need
+         to see the unassigned tasks" and "we don't need to see an over budget section".
+         The two that need him are paired at the top and kept deliberately small. -->
+    <div class="top2">
+      <div>${sechead('Needs an answer from Bruce or Tommy', D.qs.length+' open')}<div class="ask-wrap">${qList}</div></div>
+      <div>${sechead('Timelines moved this week', D.moved.length+' pushed')}${movedTbl}</div>
+    </div>
+    ${sec('Booked this week', D.booked.length+' items &middot; '+D.bookByProp.length+' properties', bookTbl)}
+    ${sec('Lag-time items still open', D.lag.length+' open across '+D.lagByProp.length+' properties', lagList)}
+    ${sec('Wins \u2014 the week just gone', D.wins.length+' propert'+(D.wins.length===1?'y':'ies'), winList)}
   </div>
   <div class="foot"><span>Generated from the live property cards &middot; Legacy Homes PM Hub</span><span>${esc(_wmWhen(new Date().toISOString()))}</span></div>
 </div>
@@ -11956,14 +12062,16 @@ function _wmSummaryText(wk){
     const c=(typeof propCards!=='undefined'?propCards:[]).find(p=>p.id===q.pid);
     return (c?(c.addr+': '):'')+q.text+'  ['+_miAgeLabel(q.raised)+']';
   }));
-  sect('Unassigned tasks', D.unassigned.slice(0,12).map(t=>(t.title||'')+(t.due_date?(' - due '+t.due_date):'')));
+  // Same shape as the sheet: no unassigned tasks, no over-budget section, lag
+  // grouped by house, bookings led by the trade, wins labelled for last week.
   sect('Timelines moved this week', D.moved.map(m=>m.addr+': '+(m.from||'--')+' -> '+(m.to||'--')));
-  sect('Over budget', D.over.map(o=>o.addr+': '+money(o.over)+' over'));
-  sect('Lag-time items still open', D.lag.map(x=>{
-    const c=(typeof propCards!=='undefined'?propCards:[]).find(p=>p.id===x.pid);
-    return (c?(c.addr+': '):'')+x.text;
-  }));
-  sect('Booked this week - not yet confirmed', D.booked.filter(x=>!((D.conf[x.it.key]||{}).c)).map(x=>x.addr+': '+x.it.title+' ('+x.it.date+')'));
+  sect('Booked this week', D.bookByProp.map(g=>
+    g.c.addr+': '+g.items.map(it=>
+      (it.trade||it.title||'Scheduled')+(it.who&&it.who!==it.trade?(' ('+it.who+')'):'')
+      +' '+_wmDateShort(it.date)).join('; ')));
+  sect('Lag-time items still open', D.lagByProp.map(g=>
+    g.addr+': '+g.items.map(x=>x.text+' ['+_miAgeLabel(x.raised)+']').join('; ')));
+  sect('Wins - the week just gone', D.wins.map(x=>(x.c.addr||'')+': '+x.t));
   L.push('Full detail, including every property note, is in the PDF attached.');
   return L.join('\n');
 }
@@ -33071,4 +33179,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-12e recap-cleanup -->
+<!-- build: 2026-10-13a monday-summary-template rtr-link-restored -->
