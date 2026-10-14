@@ -195,6 +195,27 @@ a.ubtn{text-decoration:none}
 .ng-l{padding:6px 16px;font-size:12.5px;color:var(--mute);border-top:1px solid var(--line)}
 .ng-l span{color:var(--dim);font-size:11px;margin-left:6px}
 tr.flash td{background:rgba(239,111,111,.15);transition:background 1.5s}
+.ubtn.on{background:#fff;color:#111;border-color:#fff}
+.cal-nav{display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
+.cal-nav b{font-size:15px}
+.cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
+.cal-d{background:var(--panel);border:1px solid var(--line);border-radius:8px;min-height:150px;display:flex;flex-direction:column}
+.cal-d.today{border-color:#fff}
+.cal-d.past{opacity:.6}
+.cal-dh{padding:7px 9px;border-bottom:1px solid var(--line);font-size:12px;color:var(--mute);display:flex;justify-content:space-between}
+.cal-dh b{color:var(--fg);font-size:13px}
+.cal-ev{margin:6px 6px 0;padding:6px 7px;border-radius:6px;font-size:11.5px;line-height:1.3;border-left:3px solid var(--line2);background:var(--panel2);cursor:pointer}
+.cal-ev:last-child{margin-bottom:6px}
+.cal-ev b{display:block;font-size:12px;font-weight:600}
+.cal-ev .h{color:var(--mute)}
+.cal-ev.start{border-left-color:var(--ok)}.cal-ev.start.unconf{border-left-color:var(--warn)}
+.cal-ev.maint{border-left-color:var(--info)}
+.cal-ev.due{border-left-color:var(--bad)}
+.cal-ev.walk{border-left-color:#c79bff}.cal-ev.close{border-left-color:#c79bff}
+.cal-key{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;color:var(--mute);margin:10px 0}
+.cal-key span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px;background:var(--c)}
+.cal-nodate{margin-top:14px}
+@media (max-width:900px){.cal{grid-template-columns:1fr}.cal-d{min-height:0}}
 .bucket-help{font-size:12.5px;color:var(--mute);margin:-4px 0 12px;line-height:1.4}
 .bucket-help b{color:var(--fg);font-weight:600}
 .controls select{background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:4px 6px;font-size:12.5px}
@@ -247,6 +268,7 @@ td.act .ubtn{margin:0 0 6px 4px;white-space:normal;text-align:center;max-width:1
   <div class="steps" id="steps"></div>
   <div class="controls">
     <label>House <select id="house" onchange="HOUSE=this.value;render()"><option value="">All houses</option></select></label>
+    <button class="ubtn" id="cal-btn" onclick="toggleCal()">📅 Week calendar</button>
     <span class="sp"></span>
     <span class="synced" id="synced"></span>
   </div>
@@ -283,7 +305,7 @@ async function load(){
   if(a.error){ $("#list").innerHTML=`<div class="empty">Couldn't load remedies: ${esc(a.error.message)}</div>`; return; }
   ITEMS = a.data||[]; CONTRACTORS = b.data||[];
   await loadNeedsGabe();
-  TRADES = [...new Set(CONTRACTORS.map(c=>c.trade))].filter(Boolean).sort();
+  TRADES = [...new Set([...CONTRACTORS.map(c=>c.trade), ...ITEMS.map(i=>i.trade)])].filter(Boolean).sort();
   try { SESSION = (await authSb.auth.getSession()).data.session; } catch { SESSION = null; }
   ACCESS = {};
   const pids = [...new Set(ITEMS.map(i=>i.property_id).filter(Boolean))];
@@ -365,6 +387,7 @@ function render(){
       <span class="q">${s.q}${s.k===4&&walk?` · <b style="color:var(--ok)">${walk} to walk</b>`:""}</span></button>`).join("");
   $("#bucket-help").innerHTML = BUCKETS[BUCKET-1].help;
   renderNGBar();
+  if(CAL_MODE){ document.querySelectorAll(".step.on").forEach(e=>e.classList.remove("on")); $("#bucket-help").innerHTML=""; $("#sched").style.display="none"; renderCal(shown); return; }
   const blocks=[];
   for(const [addr, all] of Object.entries(shown)){
     const items = all.filter(i=>bucketOf(i)===BUCKET);
@@ -566,18 +589,81 @@ async function releaseHold(id){
 }
 // Tom 10/9: clicking the trade opens a clickable list of trades (with how many contractors each has);
 // picking one saves it and goes straight into the Choice 1/2/3 contractor picker.
-function askTrade(id){
+function askTrade(id, q){
   const i = ITEMS.find(x=>x.id===id); if(!i) return;
+  q = q || "";
   const counts = {}; CONTRACTORS.forEach(c=>{ if(c.trade && !c.is_internal && !NO_USE.includes(c.vetting_tier)) counts[c.trade]=(counts[c.trade]||0)+1; });
   const internal = t => CONTRACTORS.some(c=>c.is_internal && c.trade===t);
-  const rows = TRADES.map(t=>`<div class="pick" onclick="setTrade('${id}', this.dataset.t)" data-t="${esc(t)}">
+  const list = TRADES.filter(t=>!q || t.toLowerCase().includes(q.toLowerCase()));
+  const rows = list.map(t=>`<div class="pick" onclick="setTrade('${id}', this.dataset.t)" data-t="${esc(t)}">
       <span class="nm">${esc(t)}<small>${internal(t) ? 'our maintenance team (Robbie)' : (counts[t]||0)+' contractor'+((counts[t]||0)===1?'':'s')+' we can text'}</small></span>
       ${i.trade===t?'<span class="tier t1">current</span>':''}</div>`).join("");
+  const exact = TRADES.some(t=>t.toLowerCase()===q.trim().toLowerCase());
+  const create = `<div class="pick" onclick="newTrade('${id}', document.getElementById('trade-q').value)" style="color:var(--info)"><span class="nm"><b>＋ Create a new trade${q.trim() && !exact ? ` “${esc(q.trim())}”` : ""}</b><small>Nothing fits? Make one (e.g. Mold Remediation) — we'll pull who's done that work for us from the project trackers</small></span></div>`;
   $("#picker").innerHTML = `<div class="modal-bg" onclick="if(event.target===this){$('#picker').innerHTML=''}"><div class="modal">
-    <div class="modal-h"><b>Who does this kind of work?</b><p>#${i.item_no??""} — ${esc((i.description||"").slice(0,140))}</p><p>Tap a trade. Then you'll pick Choice 1, 2, 3.</p></div>
-    <div class="modal-b">${rows}</div>
+    <div class="modal-h"><b>Who does this kind of work?</b><p>#${i.item_no??""} — ${esc((i.description||"").slice(0,140))}</p></div>
+    <div class="dir-tools"><input id="trade-q" placeholder="Search trades or type a new one…" value="${esc(q)}" oninput="askTrade('${id}', this.value); const e=document.getElementById('trade-q'); e.focus(); e.setSelectionRange(e.value.length,e.value.length)"></div>
+    <div class="modal-b">${create}${rows || '<div class="sched-empty">No trade matches. Create it above.</div>'}</div>
     <div class="modal-f"><span class="sp"></span><button class="ubtn small" onclick="$('#picker').innerHTML=''">Cancel</button></div>
   </div></div>`;
+}
+// Tom 10/14: make a new trade on the spot (e.g. Mold Remediation) and fill it from who we've actually paid for that work
+let NEWT = null;
+async function newTrade(id, typed){
+  let name = (typed||"").trim();
+  if(!name || TRADES.some(t=>t.toLowerCase()===name.toLowerCase())) name = (prompt("Name the new trade (e.g. Mold Remediation):", name)||"").trim();
+  if(!name) return;
+  const hit = TRADES.find(t=>t.toLowerCase()===name.toLowerCase());
+  if(hit) return setTrade(id, hit);
+  name = name.replace(/\b\w/g, ch=>ch.toUpperCase());
+  NEWT = { id, name, loading: true, vendors: [], picked: new Set() };
+  renderNewTrade();
+  const STOPW = new Set(["and","the","work","repair","repairs","removal","services","service","general"]);
+  const words = name.toLowerCase().split(/[^a-z]+/).filter(w=>w.length>=4 && !STOPW.has(w));
+  let rows = [];
+  if(words.length){
+    const or = words.flatMap(w=>[`description.ilike.*${w}*`,`vendor.ilike.*${w}*`,`category.ilike.*${w}*`]).join(",");
+    const r = await sb.from("rtr_tracker_invoices").select("vendor_canonical,vendor,description,inv_date,amount,property_label").or(or).limit(1000);
+    // whole words only — "mold" must not pull in "molding"
+    const re = new RegExp(`\\b(${words.join("|")})(s|es|ed)?\\b`, "i");
+    // ...and trim "shoe mold" / "crown mold" is carpentry, not mold
+    rows = (r.data || []).filter(x=>re.test([x.description,x.vendor,x.vendor_canonical].join(" ").replace(/\b(shoe|crown|base|cove|trim|quarter[- ]round)[- ]?mold\w*/gi, "")));
+  }
+  const by = new Map();
+  for(const x of rows){ const v = (x.vendor_canonical||x.vendor||"").trim(); if(!v) continue;
+    const o = by.get(v) || { vendor: v, houses: new Set(), last: "", total: 0, eg: x.description }; o.houses.add(x.property_label); if((x.inv_date||"")>o.last){ o.last = x.inv_date||""; o.eg = x.description; } o.total += Number(x.amount||0); by.set(v, o); }
+  const norm = t => (t||"").toLowerCase().replace(/[^a-z0-9]/g,"");
+  NEWT.vendors = [...by.values()].map(o=>{ const c = CONTRACTORS.find(c=>norm(c.tracker_name)===norm(o.vendor)) || CONTRACTORS.find(c=>norm(c.name)===norm(o.vendor)); return { ...o, n: o.houses.size, c }; })
+    .sort((a,b)=>b.n-a.n || b.last.localeCompare(a.last)).slice(0, 15);
+  NEWT.vendors.filter(v=>v.c?.phone).slice(0,3).forEach(v=>NEWT.picked.add(v.vendor));
+  NEWT.loading = false; renderNewTrade();
+}
+function renderNewTrade(){
+  if(!NEWT){ $("#picker").innerHTML=""; return; }
+  const money = n => "$"+Math.round(n).toLocaleString();
+  const list = NEWT.loading ? `<div class="sched-empty">Looking through the project trackers for who's done ${esc(NEWT.name.toLowerCase())} for us…</div>`
+    : NEWT.vendors.length ? NEWT.vendors.map((v,k)=>`<label class="pick" style="cursor:pointer"><input type="checkbox" ${NEWT.picked.has(v.vendor)?'checked':''} onchange="this.checked?NEWT.picked.add(NEWT.vendors[${k}].vendor):NEWT.picked.delete(NEWT.vendors[${k}].vendor)" style="accent-color:#5ad17a">
+        <span class="nm">${esc(v.c?.name||v.vendor)}<small>${v.n} house${v.n===1?'':'s'} · last ${lastMon(v.last)} · ${money(v.total)} — “${esc((v.eg||"").slice(0,70))}”</small></span>
+        <span class="tier ${v.c?.phone?'t1':''}">${v.c?.phone?esc(v.c.phone):'no phone yet'}</span></label>`).join("")
+    : `<div class="sched-empty">Nobody in the project trackers matches “${esc(NEWT.name)}”. Create it empty and add people with ＋ Someone not on the list.</div>`;
+  $("#picker").innerHTML = `<div class="modal-bg" onclick="if(event.target===this){NEWT=null;renderNewTrade()}"><div class="modal">
+    <div class="modal-h"><b>New trade: ${esc(NEWT.name)}</b><p>These are the contractors we've paid for this kind of work (from the project tracker invoices). Check who should be in the ${esc(NEWT.name)} dropdown. You can add or fix people later under Contractors by trade.</p></div>
+    <div class="modal-b">${list}</div>
+    <div class="modal-f"><button class="ubtn small" onclick="addContractor(NEWT.name).then(c=>{ if(c){ NEWT.vendors.unshift({vendor:c.name,n:0,last:'',total:0,eg:'added just now',c}); NEWT.picked.add(c.name);} renderNewTrade(); })">＋ Someone not on the list</button>
+      <span class="sp"></span><button class="ubtn small" onclick="NEWT=null;renderNewTrade()">Cancel</button>
+      <button class="ubtn small primary" ${NEWT.loading?'disabled':''} onclick="saveNewTrade()">Create ${esc(NEWT.name)}${NEWT.picked.size?` with ${NEWT.picked.size}`:''}</button></div>
+  </div></div>`;
+}
+async function saveNewTrade(){
+  const t = NEWT, name = t.name, add = t.vendors.filter(v=>t.picked.has(v.vendor));
+  const rows = add.filter(v=>!(v.c && v.c.trade===name)).map(v=>({ name: v.c?.name || v.vendor, trade: name, phone: v.c?.phone || null, contact_name: v.c?.contact_name || null,
+    vetting_tier: v.c?.vetting_tier || "Unrated", tracker_name: v.c?.tracker_name || v.vendor, tracker_props_n: v.n || v.c?.tracker_props_n || null, tracker_last_date: v.last || v.c?.tracker_last_date || null,
+    active: true, is_archived: false, source_list: "new trade on Remedies page" }));
+  NEWT = null; renderNewTrade();
+  if(rows.length){ const { error } = await sb.from("contractor_directory").insert(rows); if(error) return toast("Couldn't add contractors: "+error.message); }
+  if(!TRADES.includes(name)){ TRADES.push(name); TRADES.sort(); }
+  toast(`Created ${name}${rows.length?` with ${rows.length} contractor${rows.length===1?'':'s'}`:''}`);
+  await setTrade(t.id, name);
 }
 async function setTrade(id, t){
   $("#picker").innerHTML = "";
@@ -923,7 +1009,8 @@ function renderNG(){
     return `<div class="ng-t"><div><div class="who">${esc(t0.contractor || t0.phone || "Unknown number")}</div>
       ${t0.item_id?`<div class="job" onclick="goItem('${t0.item_id}')">#${t0.item_no??""} ${esc(t0.address||"")} — go to the item →</div>`:`<div class="why">${esc(t0.phone||"")} — not tied to a job</div>`}
       ${g.slice().reverse().map(t=>`<div class="msg">"${esc(t.body||"[photo]")}"<span>${ago2(t.created_at)}</span></div>`).join("")}
-      <div class="why">${esc(t0.reason||"")}</div></div>
+      <div class="why">${esc(t0.reason||"")}</div>
+      ${t0.item_id ? (()=>{ const ds = [...new Set(g.flatMap(t=>datesIn(t.body, t.created_at)))].slice(0,3); return ds.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${ds.map(d=>`<button class="ubtn small" style="border-color:var(--ok);color:var(--ok)" onclick="scheduleFromText('${t0.item_id}', ${esc(JSON.stringify(t0.contractor||""))}, '${d}')">📅 Schedule ${new Date(d+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"numeric",day:"numeric"})}</button>`).join("")}</div>` : ""; })() : ""}</div>
       <div class="btns">${t0.deeplink?`<a class="ubtn small primary" href="${esc(t0.deeplink)}" target="_blank" rel="noopener">Answer in Quo ↗</a>`:""}
         <button class="ubtn small" onclick="ngHandled(${k})">Handled ✓</button></div></div>`; }).join("");
   const secs = {}; for(const d of NG.todo){ (secs[d.section] = secs[d.section]||[]).push(d); }
@@ -951,6 +1038,64 @@ function goItem(id){
 }
 // refresh the red section every 2 minutes so new texts show up without reloading
 setInterval(async()=>{ if(document.hidden) return; await loadNeedsGabe(); renderNGBar(); }, 120000);
+// ---- Tom 10/14: week calendar — what the contractors said they'd do this week, all houses or one ----
+let CAL_MODE = false, CAL_WEEK = null;
+function monday(d){ const x = new Date(d); x.setHours(0,0,0,0); const k = (x.getDay()+6)%7; x.setDate(x.getDate()-k); return x; }
+const isoD = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+function toggleCal(){ CAL_MODE = !CAL_MODE; if(!CAL_WEEK) CAL_WEEK = monday(new Date()); $("#cal-btn").classList.toggle("on", CAL_MODE); render(); }
+function calWeek(n){ if(n===0) CAL_WEEK = monday(new Date()); else CAL_WEEK.setDate(CAL_WEEK.getDate()+7*n); render(); }
+function renderCal(shown){
+  const days = [...Array(7)].map((_,k)=>{ const d = new Date(CAL_WEEK); d.setDate(d.getDate()+k); return d; });
+  const ev = {}; days.forEach(d=>ev[isoD(d)] = []);
+  const add = (date, e) => { if(date && ev[date]) ev[date].push(e); };
+  const short = t => esc((t||"").replace(/\s*:\s*Seller Agrees\s*/i,": ").slice(0,60));
+  const nodate = [];
+  for(const [addr, items] of Object.entries(shown)){
+    const it0 = items[0];
+    add(it0.walkthrough_date, { cls:"walk", t:"Walk-through", h:addr, o:0 });
+    add(it0.closing_date_sell, { cls:"close", t:"Closing", h:addr, o:0 });
+    for(const i of items){
+      if(i.cc_done) continue;
+      const who = i.maint_status ? "Maintenance" : (i.contractor_name || i.cc_contractor_text || "");
+      if(i.scheduled_start) add(i.scheduled_start, { cls:"start"+(i.award_confirmed_at?"":" unconf"), t:`${esc(who)} starts`, h:`#${i.item_no??""} ${esc(addr)} · ${short(i.description)}`, id:i.id, o:1 });
+      else if(i.maint_start) add(String(i.maint_start).slice(0,10), { cls:"maint", t:"Maintenance", h:`#${i.item_no??""} ${esc(addr)} · ${short(i.description)}`, id:i.id, o:1 });
+      if(i.deadline && i.status!=="done" && ev[i.deadline]){ // one "due" card per house per day
+        let e = ev[i.deadline].find(x=>x.cls==="due" && x.addr===addr);
+        if(!e){ e = { cls:"due", addr, n:0, none:0, o:2, house:addr }; ev[i.deadline].push(e); }
+        e.n++; if(!who) e.none++;
+        e.t = `${e.n} remed${e.n===1?"y":"ies"} due`; e.h = `${esc(addr)}${e.none?` · ${e.none} with nobody yet`:""}`; }
+      if(bucketOf(i)===3 && !i.scheduled_start && !i.maint_start) nodate.push(i);
+    }
+  }
+  const todayIso = isoD(today);
+  const label = `${days[0].toLocaleDateString("en-US",{month:"short",day:"numeric"})} – ${days[6].toLocaleDateString("en-US",{month:"short",day:"numeric"})}`;
+  const grid = days.map(d=>{ const k = isoD(d), list = ev[k].sort((a,b)=>a.o-b.o);
+    return `<div class="cal-d ${k===todayIso?'today':''} ${k<todayIso?'past':''}"><div class="cal-dh"><b>${d.toLocaleDateString("en-US",{weekday:"short"})}</b>${d.getMonth()+1}/${d.getDate()}</div>
+      ${list.map(e=>`<div class="cal-ev ${e.cls}" ${e.id?`onclick="goItem('${e.id}')"`:e.house?`onclick="HOUSE=${esc(JSON.stringify(e.house))};CAL_MODE=false;$('#cal-btn').classList.remove('on');render()"`:""}><b>${e.t}</b><span class="h">${e.h}</span></div>`).join("")}</div>`; }).join("");
+  const nd = nodate.length ? `<div class="cal-nodate"><div class="sched-h" style="border:1px solid var(--line);border-radius:8px 8px 0 0">Has a contractor but no date yet · ${nodate.length}</div>${nodate.map(i=>`<div class="sched-row" style="border:1px solid var(--line);border-top:none;cursor:pointer" onclick="goItem('${i.id}')"><span class="w"><b>${esc(i.contractor_name||i.cc_contractor_text||"")}</b> · ${esc(i.address)} #${i.item_no??""} ${short(i.description)}</span>${i.last_contact_summary?`<span style="color:var(--dim);font-size:11.5px">${esc(i.last_contact_summary.slice(0,70))}</span>`:""}</div>`).join("")}</div>` : "";
+  $("#list").innerHTML = `<div class="cal-nav"><button class="ubtn small" onclick="calWeek(-1)">← Prev</button><button class="ubtn small" onclick="calWeek(0)">This week</button><button class="ubtn small" onclick="calWeek(1)">Next →</button><b>${label}</b><span style="color:var(--mute);font-size:12.5px">${HOUSE?esc(HOUSE):"All houses"} · pick one house with the House menu</span></div>
+    <div class="cal-key"><span style="--c:var(--ok)">Contractor confirmed</span><span style="--c:var(--warn)">Start date, not confirmed yet</span><span style="--c:var(--info)">Maintenance</span><span style="--c:var(--bad)">Due date</span><span style="--c:#c79bff">Walk-through / closing</span></div>
+    <div class="cal">${grid}</div>${nd}`;
+}
+// read a contractor's text for a day ("Wednesday or Thursday", "next Tuesday", "10/20", "tomorrow") → candidate dates
+function datesIn(text, sentIso){
+  const t = (text||"").toLowerCase(), base = new Date(sentIso || Date.now()); base.setHours(0,0,0,0);
+  const out = [], push = d => { const k = isoD(d); if(!out.includes(k)) out.push(k); };
+  const names = ["sunday","monday","tuesday","wednesday","thursday","friday","saturday"], ab = ["sun","mon","tue","wed","thu","fri","sat"];
+  // weekdays: all land in the same week — this week if they're all still ahead, otherwise next week ("Wed or Thu" said on a Wednesday = next week)
+  const idx = []; names.forEach((n,k)=>{ if(new RegExp(`\\b(${n}|${ab[k]}\\.?)\\b`).test(t)) idx.push((k+6)%7); });
+  if(idx.length){ const b = (base.getDay()+6)%7; const nextWk = /next\s+(week|mon|tue|wed|thu|fri|sat|sun)/.test(t) || idx.some(i=>i<=b);
+    const mon = monday(base); idx.sort((x,y)=>x-y).forEach(i=>{ const d = new Date(mon); d.setDate(d.getDate()+i+(nextWk?7:0)); push(d); }); }
+  if(/\btomorrow\b/.test(t)){ const d = new Date(base); d.setDate(d.getDate()+1); push(d); }
+  if(/\btoday\b/.test(t)) push(new Date(base));
+  for(const m of t.matchAll(/\b(\d{1,2})\/(\d{1,2})\b/g)){ const d = new Date(base.getFullYear(), +m[1]-1, +m[2]); if(d < base) d.setFullYear(d.getFullYear()+1); push(d); }
+  return out.slice(0,3);
+}
+function scheduleFromText(item_id, contractor, date){
+  const c = CONTRACTORS.find(x=>x.name===contractor);
+  NG_OPEN = false; renderNG();
+  logHand(item_id); HAND.kind = "job"; HAND.contractor = c?.id || HAND.contractor; HAND.start = date; HAND.note = "date from their text"; renderHand();
+}
 // ---- invoices made for the contractor (Tom 10/8) ----
 function invoiceLine(i){
   if(i.cc_done && !i.invoice_status) return "";
