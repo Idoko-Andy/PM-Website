@@ -177,6 +177,24 @@ a.ubtn{text-decoration:none}
 .dir-r select{background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:4px 6px;font-size:12px;width:100%}
 .dir-r .nophone{color:var(--warn)}
 @media (max-width:700px){.dir-r{grid-template-columns:1fr 1fr}}
+.ngbar{display:flex;align-items:center;gap:12px;width:100%;margin-bottom:12px;padding:11px 14px;border-radius:10px;border:1px solid var(--bad);background:rgba(239,111,111,.12);color:#fff;cursor:pointer;text-align:left}
+.ngbar:hover{background:rgba(239,111,111,.2)}
+.ngbar .t{font-size:15px;font-weight:700;color:var(--bad);letter-spacing:.2px}
+.ngbar .n{background:var(--bad);color:#111;font-weight:700;border-radius:12px;padding:1px 9px;font-size:13px}
+.ngbar .s{font-size:12.5px;color:var(--mute);flex:1}
+.ngbar.clear{border-color:#3a6b4a;background:rgba(95,207,128,.08);cursor:default}
+.ngbar.clear .t{color:var(--ok)}
+.ngtag{display:inline-block;margin:6px 0 0 6px;font-size:11.5px;font-weight:600;color:#fff;background:var(--bad);border-radius:6px;padding:3px 8px;cursor:pointer;border:none}
+.ng-h{padding:10px 16px 6px;font-size:11px;letter-spacing:.5px;color:var(--bad);text-transform:uppercase;font-weight:600;border-top:1px solid var(--line)}
+.ng-h.soft{color:var(--mute)}
+.ng-t{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 12px;padding:9px 16px;border-top:1px solid var(--line);font-size:13px}
+.ng-t .who{font-weight:600}.ng-t .job{color:var(--info);font-size:12px;cursor:pointer}
+.ng-t .msg{color:var(--fg);margin-top:3px}.ng-t .msg span{color:var(--dim);font-size:11px;margin-left:6px}
+.ng-t .why{color:var(--dim);font-size:11.5px;margin-top:3px}
+.ng-t .btns{display:flex;flex-direction:column;gap:6px;align-items:flex-end}
+.ng-l{padding:6px 16px;font-size:12.5px;color:var(--mute);border-top:1px solid var(--line)}
+.ng-l span{color:var(--dim);font-size:11px;margin-left:6px}
+tr.flash td{background:rgba(239,111,111,.15);transition:background 1.5s}
 .bucket-help{font-size:12.5px;color:var(--mute);margin:-4px 0 12px;line-height:1.4}
 .bucket-help b{color:var(--fg);font-weight:600}
 .controls select{background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:4px 6px;font-size:12.5px}
@@ -225,6 +243,7 @@ td.act .ubtn{margin:0 0 6px 4px;white-space:normal;text-align:center;max-width:1
 </div>
 
 <div class="wrap">
+  <div id="ngbar"></div>
   <div class="steps" id="steps"></div>
   <div class="controls">
     <label>House <select id="house" onchange="HOUSE=this.value;render()"><option value="">All houses</option></select></label>
@@ -263,6 +282,7 @@ async function load(){
   ]);
   if(a.error){ $("#list").innerHTML=`<div class="empty">Couldn't load remedies: ${esc(a.error.message)}</div>`; return; }
   ITEMS = a.data||[]; CONTRACTORS = b.data||[];
+  await loadNeedsGabe();
   TRADES = [...new Set(CONTRACTORS.map(c=>c.trade))].filter(Boolean).sort();
   try { SESSION = (await authSb.auth.getSession()).data.session; } catch { SESSION = null; }
   ACCESS = {};
@@ -344,6 +364,7 @@ function render(){
       <span class="n">${s.k}</span><span class="t">${s.name}</span><span class="c ${counts[s.k]?'':'zero'}">${counts[s.k]}</span>
       <span class="q">${s.q}${s.k===4&&walk?` · <b style="color:var(--ok)">${walk} to walk</b>`:""}</span></button>`).join("");
   $("#bucket-help").innerHTML = BUCKETS[BUCKET-1].help;
+  renderNGBar();
   const blocks=[];
   for(const [addr, all] of Object.entries(shown)){
     const items = all.filter(i=>bucketOf(i)===BUCKET);
@@ -468,6 +489,7 @@ function row(i, b){
     <td class="desc">${esc(i.description)}<br>
       ${i.trade?`<button class="tradebtn" onclick="askTrade('${i.id}')" title="Change the trade">${esc(i.trade)} <span class="car">▾</span><span class="chg">change</span></button>`:`<button class="tradebtn ask" onclick="askTrade('${i.id}')">Pick a trade <span class="car">▾</span></button>`}
       ${i.warranty?'<span class="trade" style="color:var(--ok);border-color:#3a6b4a">warranty · no charge</span>':''}
+      ${NG.texts.some(t=>t.item_id===i.id)?`<button class="ngtag" onclick="openNG()">💬 Needs Gabe</button>`:''}
     </td>
     <td class="stand">${stand}</td>
     <td class="act">${actionCell(i, b)}${b<4 && !isHold(i) && !(i.bundle_id && !i.bundle_primary) ? `<div class="or"><a href="#" class="byhand" onclick="logHand('${i.id}');return false">✍ Log it by hand</a></div>` : ""}</td>
@@ -870,6 +892,65 @@ async function dirRemove(id){
   if(error) return toast("Couldn't save: "+error.message);
   CONTRACTORS = CONTRACTORS.filter(x=>x.id!==id); toast(`${c.name} removed from ${c.trade}`); renderDir();
 }
+// ---- Tom 10/14: "Needs Gabe" — everything the system flags for a person, in one red section. Clears itself as he does them:
+// texts clear when he replies in Quo (or taps Handled); the rest clears when the item moves on (same list as his 7:44 Slack list).
+let NG = { texts: [], todo: [] }, NG_OPEN = false;
+async function loadNeedsGabe(){
+  try {
+    const [t, d] = await Promise.all([ sb.rpc("rtr_needs_gabe_texts"), sb.rpc("rtr_gabe_todo_page") ]);
+    NG.texts = t.data || [];
+    NG.todo = (d.data || []).filter(x=>!/ANSWER IN QUO/i.test(x.section));
+  } catch { NG = { texts: [], todo: [] }; }
+}
+function ngGroups(){
+  const g = new Map();
+  for(const t of NG.texts){ const k = (t.contractor||t.phone)+"|"+(t.item_id||""); if(!g.has(k)) g.set(k, []); g.get(k).push(t); }
+  return [...g.values()];
+}
+function renderNGBar(){
+  const nt = ngGroups().length, nd = NG.todo.length, n = nt + nd;
+  $("#ngbar").innerHTML = n
+    ? `<button class="ngbar" onclick="openNG()"><span class="t">⚠ Needs Gabe</span><span class="n">${n}</span><span class="s">${nt?`${nt} text${nt===1?'':'s'} to answer`:''}${nt&&nd?' · ':''}${nd?`${nd} other thing${nd===1?'':'s'} to do`:''}</span><span class="s" style="flex:0;color:var(--bad);white-space:nowrap">Open →</span></button>`
+    : `<div class="ngbar clear"><span class="t">✓ Nothing needs Gabe right now</span></div>`;
+  if(NG_OPEN) renderNG();
+}
+function openNG(){ NG_OPEN = true; renderNG(); }
+function renderNG(){
+  if(!NG_OPEN){ $("#picker").innerHTML=""; return; }
+  const ago2 = iso => ago(iso);
+  const groups = ngGroups();
+  const texts = groups.map((g,k)=>{ const t0 = g[0];
+    return `<div class="ng-t"><div><div class="who">${esc(t0.contractor || t0.phone || "Unknown number")}</div>
+      ${t0.item_id?`<div class="job" onclick="goItem('${t0.item_id}')">#${t0.item_no??""} ${esc(t0.address||"")} — go to the item →</div>`:`<div class="why">${esc(t0.phone||"")} — not tied to a job</div>`}
+      ${g.slice().reverse().map(t=>`<div class="msg">"${esc(t.body||"[photo]")}"<span>${ago2(t.created_at)}</span></div>`).join("")}
+      <div class="why">${esc(t0.reason||"")}</div></div>
+      <div class="btns">${t0.deeplink?`<a class="ubtn small primary" href="${esc(t0.deeplink)}" target="_blank" rel="noopener">Answer in Quo ↗</a>`:""}
+        <button class="ubtn small" onclick="ngHandled(${k})">Handled ✓</button></div></div>`; }).join("");
+  const secs = {}; for(const d of NG.todo){ (secs[d.section] = secs[d.section]||[]).push(d); }
+  const todo = Object.entries(secs).map(([sec, rows])=>`<div class="ng-h soft">${esc(sec)}</div>` + rows.map(r=>`<div class="ng-l">${esc(r.line)}${r.age_days?`<span>${r.age_days}d</span>`:""}</div>`).join("")).join("");
+  $("#picker").innerHTML = `<div class="modal-bg" onclick="if(event.target===this){NG_OPEN=false;renderNG()}"><div class="modal wide">
+    <div class="modal-h"><b style="color:var(--bad)">⚠ Needs Gabe</b><p>Everything the system flagged for a person. Texts clear when Gabe replies in Quo (or taps Handled). Everything else clears itself once the item moves on.</p></div>
+    <div class="modal-b" style="max-height:68vh">
+      <div class="ng-h">Texts to answer · ${groups.length}</div>${texts || '<div class="ng-l">None — all caught up.</div>'}
+      ${todo}
+    </div>
+    <div class="modal-f"><span class="sp"></span><button class="ubtn small primary" onclick="NG_OPEN=false;renderNG()">Close</button></div>
+  </div></div>`;
+}
+async function ngHandled(k){
+  const g = ngGroups()[k]; if(!g) return;
+  const { data, error } = await sb.rpc("rtr_mark_handled", { p_ids: g.map(t=>t.id), p_by: (SESSION?.user?.email||"Remedies page").split("@")[0] });
+  if(error) return toast("Couldn't save: "+error.message);
+  toast("Marked handled"); await loadNeedsGabe(); render();
+}
+function goItem(id){
+  const i = ITEMS.find(x=>x.id===id); NG_OPEN=false; renderNG();
+  if(!i) return toast("That item isn't on the board");
+  HOUSE = i.address; setBucket(bucketOf(i));
+  setTimeout(()=>{ const r = document.querySelector(`tr[data-id="${id}"]`); if(r){ r.scrollIntoView({block:"center"}); r.classList.add("flash"); setTimeout(()=>r.classList.remove("flash"),2500); } }, 50);
+}
+// refresh the red section every 2 minutes so new texts show up without reloading
+setInterval(async()=>{ if(document.hidden) return; await loadNeedsGabe(); renderNGBar(); }, 120000);
 // ---- invoices made for the contractor (Tom 10/8) ----
 function invoiceLine(i){
   if(i.cc_done && !i.invoice_status) return "";
