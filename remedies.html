@@ -216,6 +216,15 @@ tr.flash td{background:rgba(239,111,111,.15);transition:background 1.5s}
 .cal-key span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px;background:var(--c)}
 .cal-nodate{margin-top:14px}
 @media (max-width:900px){.cal{grid-template-columns:1fr}.cal-d{min-height:0}}
+.agreed{font-size:13.5px;margin-bottom:5px;color:var(--ok)}
+.agreed b{color:#fff}
+.agreed.none{color:var(--warn)}
+.gl{display:flex;gap:12px;align-items:flex-start;padding:11px 16px;border-top:1px solid var(--line);cursor:pointer}
+.gl input{width:22px;height:22px;margin-top:1px;accent-color:#5ad17a;flex:none;cursor:pointer}
+.gl .gt{flex:1;font-size:14px;line-height:1.35}
+.gl .gt small{display:block;color:var(--mute);font-size:12px;margin-top:2px}
+.gl .gb{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.gl.on .gt{text-decoration:line-through;color:var(--dim)}
 .bucket-help{font-size:12.5px;color:var(--mute);margin:-4px 0 12px;line-height:1.4}
 .bucket-help b{color:var(--fg);font-weight:600}
 .controls select{background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:4px 6px;font-size:12.5px}
@@ -474,7 +483,25 @@ function contractorSelect(i, first){
   const opts = pool.filter(c=>{ const k=c.name+"|"+(pool===CONTRACTORS?c.trade:""); if(seen.has(k)) return false; seen.add(k); return true; })
     .map(c=>`<option value="${c.id}" ${c.id===i.contractor_id?'selected':''}>${esc(c.name)}${pool===CONTRACTORS?' — '+esc(c.trade):''}${c.phone||c.is_internal?'':' (no phone)'}</option>`).join("")
     + (pool!==CONTRACTORS ? `<option value="__all__">Show everyone…</option>` : "");
-  return `<select onchange="assign('${i.id}', this.value)"><option value="">${first}</option>${opts}</select>`;
+  const cur = CONTRACTORS.find(c=>c.id===i.contractor_id);
+  return `<button class="ubtn small pickone" onclick="pickOne('${i.id}')">${cur?esc(cur.name):first} ▾</button>`;
+}
+// Tom 10/14: "pick one" has a search bar
+let P1 = null;
+function pickOne(id){ P1 = { id, q:"", all:false }; renderPickOne(); }
+function renderPickOne(){
+  if(!P1){ $("#picker").innerHTML=""; return; }
+  const i = ITEMS.find(x=>x.id===P1.id), q = P1.q.toLowerCase();
+  const base = (P1.all || q) ? ranked(null) : ranked(i.trade);
+  const seenN = new Set();
+  const list = base.filter(c=>!q || [c.name,c.contact_name,c.trade,c.phone].join(" ").toLowerCase().includes(q))
+    .filter(c=>{ const k=(c.name||"").toLowerCase(); if(seenN.has(k)) return false; seenN.add(k); return true; }).slice(0,60);
+  $("#picker").innerHTML = `<div class="modal-bg" onclick="if(event.target===this){P1=null;renderPickOne()}"><div class="modal">
+    <div class="modal-h"><b>Ask one contractor for a bid</b><p>#${i.item_no??""} ${esc(i.address)} — ${esc((i.description||"").slice(0,120))}</p></div>
+    <div class="dir-tools"><input id="p1-q" placeholder="Search any name, trade or phone…" value="${esc(P1.q)}" oninput="P1.q=this.value;renderPickOne();const e=$('#p1-q');e.focus();e.setSelectionRange(e.value.length,e.value.length)"></div>
+    <div class="modal-b">${list.map(c=>`<div class="pick" onclick="P1=null;renderPickOne();assign('${i.id}','${c.id}')"><span class="nm">${esc(c.name)}<small>${esc(c.trade)}${c.tracker_props_n?` · ${c.tracker_props_n} houses with us`:''}</small></span><span class="tier ${c.phone?'t1':''}">${c.phone?esc(c.phone):'no phone'}</span></div>`).join("") || '<div class="sched-empty">No one matches. Try another name, or add them under Contractors by trade.</div>'}</div>
+    <div class="modal-f">${!q?`<button class="ubtn small" onclick="P1.all=!P1.all;renderPickOne()">${P1.all?'Only '+esc(i.trade||''):'Show every trade'}</button>`:''}<button class="ubtn small" onclick="addContractor(ITEMS.find(x=>x.id===P1.id).trade).then(c=>{ if(c){ const id=P1.id; P1=null; renderPickOne(); assign(id, c.id); } })">＋ Someone new</button><span class="sp"></span><button class="ubtn small" onclick="P1=null;renderPickOne()">Cancel</button></div>
+  </div></div>`;
 }
 // Tom 10/14: one row per item, four columns: what it is · where it stands · the ONE next step.
 function row(i, b){
@@ -500,7 +527,11 @@ function row(i, b){
     const who = i.maint_status ? "Maintenance (Jeriel)" : (i.contractor_name || i.cc_contractor_text || "");
     const pill = i.maint_status ? (()=>{ const p = MAINT_PILL[i.maint_status]||["chase","maint: "+i.maint_status]; return `<span class="pill ${p[0]==='t1'?'yes':p[0]}">${esc(p[1])}${i.maint_start?' '+esc(String(i.maint_start).slice(5).replace('-','/')):''}</span>`; })() : st.pill;
     const unmatched = i.cc_contractor_text && !i.contractor_id;
-    stand = `<div class="whoname">${esc(who)}${unmatched?' <span class="unmatched" style="font-size:11px;color:var(--warn)">(from CompanyCam — not in directory)</span>':''}</div>${pill}${noPhone}${lw}${invoiceLine(i)}${report}`;
+    const day = i.maint_start ? String(i.maint_start).slice(0,10) : i.scheduled_start;
+    const dayLine = day
+      ? `<div class="agreed">📅 Agreed to start <b>${new Date(day+"T12:00:00").toLocaleDateString("en-US",{weekday:"long",month:"numeric",day:"numeric"})}</b></div>`
+      : `<div class="agreed none">📅 No day yet — get a day from them</div>`;
+    stand = dayLine + `<div class="whoname">${esc(who)}${unmatched?' <span class="unmatched" style="font-size:11px;color:var(--warn)">(from CompanyCam — not in directory)</span>':''}</div>${pill}${noPhone}${lw}${invoiceLine(i)}${report}`;
   } else {
     stand = i.cc_done
       ? `<span class="pill yes">checked off ${i.cc_completed_at?ago(i.cc_completed_at):""}</span>${i.contractor_name?`<div class="cctext">${esc(i.contractor_name)}</div>`:""}`
@@ -705,7 +736,8 @@ function bids(id){
 function renderPicker(){
   if(!PICK){ $("#picker").innerHTML=""; return; }
   const i = ITEMS.find(x=>x.id===PICK.id);
-  const list = PICK.all ? ranked(null) : ranked(i.trade);
+  const pq = (PICK.q||"").toLowerCase();
+  const list = (PICK.all || pq ? ranked(null) : ranked(i.trade)).filter(c=>!pq || PICK.slots.includes(c.id) || [c.name,c.contact_name,c.trade,c.phone].join(" ").toLowerCase().includes(pq));
   const label = c => `${c.name}${PICK.all?' — '+c.trade:''} · ${c.tracker_props_n?c.tracker_props_n+' houses with us, last '+lastMon(c.tracker_last_date):tierShort(c.vetting_tier)+(c.jobs_done_n?' · '+c.jobs_done_n+' jobs':'')}${c.phone?'':' · NO PHONE (tap to add)'}`;
   const slot = k => {
     const taken = PICK.slots.filter((v,j)=>j!==k && v);
@@ -723,6 +755,7 @@ function renderPicker(){
   $("#picker").innerHTML = `<div class="modal-bg" onclick="if(event.target===this){PICK=null;renderPicker()}"><div class="modal">
     <div class="modal-h"><b>Get 3 bids — who should we text?</b><p>${esc(i.address)} #${i.item_no??""} — ${esc(i.description.slice(0,140))}</p>
       <p>Pick your first, second and third choice. The list shows each contractor's rating and how many jobs they've done with us. Pick three. If there aren't three in the list, pick everyone there is.</p></div>
+    <div class="dir-tools"><input id="pick-q" placeholder="Search contractors by name, trade or phone…" value="${esc(PICK.q||"")}" oninput="PICK.q=this.value;renderPicker();const e=$('#pick-q');e.focus();e.setSelectionRange(e.value.length,e.value.length)"></div>
     <div class="modal-b">${list.length ? [0,1,2].map(slot).join("") : `<div class="sched-empty">No ${esc(i.trade)} contractors in the directory. Tap "Show other trades".</div>`}${sibBlock}</div>
     <div class="modal-f"><button class="ubtn small" onclick="PICK.all=!PICK.all;renderPicker()">${PICK.all?'Only '+esc(i.trade):'Show other trades'}</button>
       <button class="ubtn small" onclick="pickNew()">＋ Someone not on the list</button>
@@ -993,33 +1026,56 @@ function ngGroups(){
   for(const t of NG.texts){ const k = (t.contractor||t.phone)+"|"+(t.item_id||""); if(!g.has(k)) g.set(k, []); g.get(k).push(t); }
   return [...g.values()];
 }
+// Tom 10/14: Gabe's list — very basic. One line per thing, a box to check, at most one button.
+const NG_SEC = [
+  [/DATES/i, "Fix these dates first"], [/SCOPE CHECK/i, "Answer: was it on the old scope?"], [/PICK BIDDERS/i, "Send these out for bids"],
+  [/AWARD/i, "Pick the winning bid"], [/PICK 3 MORE/i, "Ask more contractors"], [/WAITING YES/i, "Waiting on their YES — nudge them"],
+  [/NO START DATE/i, "Get a start day"], [/WARRANTY/i, "Warranty jobs"], [/WALK IT/i, null], [/LOCKBOX/i, "Add the lockbox code"],
+  [/OVERDUE/i, "Late — call them"], [/INVOICE/i, "Invoices"], [/MAINTENANCE/i, "FYI — maintenance (nothing to do)"],
+];
+const todayKey = () => "gabe-done-" + isoD(today);
+function ngChecked(){ try { return new Set(JSON.parse(localStorage.getItem(todayKey())||"[]")); } catch { return new Set(); } }
+function ngCheck(key, on){ const s = ngChecked(); on ? s.add(key) : s.delete(key); try { localStorage.setItem(todayKey(), JSON.stringify([...s])); } catch {} renderNG(); renderNGBar(); }
+function gabeList(){
+  const rows = [], add = (group, key, text, sub, btn, onCheck) => rows.push({ group, key, text, sub, btn, onCheck });
+  const name = s => esc((s||"").replace(/\s*\(.*?\)\s*/g," ").trim());
+  const short = t => esc((t||"").replace(/\s*:\s*Seller Agrees\s*/i,": ").slice(0,55));
+  ngGroups().forEach((g,k)=>{ const t0 = g[0];
+    const ds = t0.item_id ? [...new Set(g.flatMap(t=>datesIn(t.body, t.created_at)))].slice(0,2) : [];
+    add("Text these people back", "t:"+g.map(t=>t.id).join(","), `Text back ${name(t0.contractor)||esc(t0.phone)}${t0.item_no?` — ${esc(t0.address)} #${t0.item_no}`:""}`,
+      `They said: "${esc((g[0].body||"[photo]").slice(0,90))}"`,
+      (t0.deeplink?`<a class="ubtn small primary" href="${esc(t0.deeplink)}" target="_blank" rel="noopener">Open Quo</a>`:"") + ds.map(d=>` <button class="ubtn small" style="border-color:var(--ok);color:var(--ok)" onclick="scheduleFromText('${t0.item_id}', ${esc(JSON.stringify(t0.contractor||""))}, '${d}')">📅 ${new Date(d+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"numeric",day:"numeric"})}</button>`).join(""),
+      `ngHandled(${k})`);
+  });
+  const ti = isoD(today);
+  ITEMS.filter(i=>!i.cc_done && i.status!=="done" && (i.scheduled_start===ti || String(i.maint_start||"").slice(0,10)===ti)).forEach(i=>
+    add("Starting today", "s:"+i.id, `${name(i.contractor_name)||"Maintenance"} starts today — ${esc(i.address)} #${i.item_no}`, `Call and make sure they show up. ${short(i.description)}`, `<button class="ubtn small" onclick="goItem('${i.id}')">See it</button>`));
+  ITEMS.filter(i=>!i.cc_done && i.status==="done").forEach(i=>
+    add("Walk these, then check off in CompanyCam", "w:"+i.id, `Walk ${esc(i.address)} #${i.item_no}`, `${name(i.contractor_name)||"Contractor"} says it's done. ${short(i.description)}`, `<a class="ubtn small primary" href="${esc(i.companycam_todo_url)}" target="_blank" rel="noopener">Open CompanyCam</a>`));
+  for(const d of NG.todo){ const m = NG_SEC.find(x=>x[0].test(d.section)); if(m && m[1]===null) continue;
+    add(m ? m[1] : d.section.replace(/^\d+\.\s*/,""), "o:"+d.section+"|"+d.line, esc(d.line), d.age_days?`waiting ${d.age_days} day${d.age_days===1?'':'s'}`:"", ""); }
+  return rows;
+}
 function renderNGBar(){
-  const nt = ngGroups().length, nd = NG.todo.length, n = nt + nd;
-  $("#ngbar").innerHTML = n
-    ? `<button class="ngbar" onclick="openNG()"><span class="t">⚠ Needs Gabe</span><span class="n">${n}</span><span class="s">${nt?`${nt} text${nt===1?'':'s'} to answer`:''}${nt&&nd?' · ':''}${nd?`${nd} other thing${nd===1?'':'s'} to do`:''}</span><span class="s" style="flex:0;color:var(--bad);white-space:nowrap">Open →</span></button>`
-    : `<div class="ngbar clear"><span class="t">✓ Nothing needs Gabe right now</span></div>`;
+  const done = ngChecked(), rows = gabeList(), left = rows.filter(r=>!done.has(r.key)).length;
+  $("#ngbar").innerHTML = left
+    ? `<button class="ngbar" onclick="openNG()"><span class="t">⚠ Needs Gabe</span><span class="n">${left}</span><span class="s">Open Gabe's list for today</span><span class="s" style="flex:0;color:var(--bad);white-space:nowrap">Open →</span></button>`
+    : `<button class="ngbar clear" onclick="openNG()"><span class="t">✓ Gabe's list is done for today</span></button>`;
   if(NG_OPEN) renderNG();
 }
 function openNG(){ NG_OPEN = true; renderNG(); }
 function renderNG(){
   if(!NG_OPEN){ $("#picker").innerHTML=""; return; }
-  const ago2 = iso => ago(iso);
-  const groups = ngGroups();
-  const texts = groups.map((g,k)=>{ const t0 = g[0];
-    return `<div class="ng-t"><div><div class="who">${esc(t0.contractor || t0.phone || "Unknown number")}</div>
-      ${t0.item_id?`<div class="job" onclick="goItem('${t0.item_id}')">#${t0.item_no??""} ${esc(t0.address||"")} — go to the item →</div>`:`<div class="why">${esc(t0.phone||"")} — not tied to a job</div>`}
-      ${g.slice().reverse().map(t=>`<div class="msg">"${esc(t.body||"[photo]")}"<span>${ago2(t.created_at)}</span></div>`).join("")}
-      <div class="why">${esc(t0.reason||"")}</div>
-      ${t0.item_id ? (()=>{ const ds = [...new Set(g.flatMap(t=>datesIn(t.body, t.created_at)))].slice(0,3); return ds.length ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">${ds.map(d=>`<button class="ubtn small" style="border-color:var(--ok);color:var(--ok)" onclick="scheduleFromText('${t0.item_id}', ${esc(JSON.stringify(t0.contractor||""))}, '${d}')">📅 Schedule ${new Date(d+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"numeric",day:"numeric"})}</button>`).join("")}</div>` : ""; })() : ""}</div>
-      <div class="btns">${t0.deeplink?`<a class="ubtn small primary" href="${esc(t0.deeplink)}" target="_blank" rel="noopener">Answer in Quo ↗</a>`:""}
-        <button class="ubtn small" onclick="ngHandled(${k})">Handled ✓</button></div></div>`; }).join("");
-  const secs = {}; for(const d of NG.todo){ (secs[d.section] = secs[d.section]||[]).push(d); }
-  const todo = Object.entries(secs).map(([sec, rows])=>`<div class="ng-h soft">${esc(sec)}</div>` + rows.map(r=>`<div class="ng-l">${esc(r.line)}${r.age_days?`<span>${r.age_days}d</span>`:""}</div>`).join("")).join("");
+  const done = ngChecked(), rows = gabeList();
+  const open = rows.filter(r=>!done.has(r.key)), fin = rows.filter(r=>done.has(r.key));
+  const groups = [...new Set(open.map(r=>r.group))];
+  const line = (r, on) => `<label class="gl ${on?'on':''}"><input type="checkbox" ${on?'checked':''} onchange="${!on && r.onCheck ? r.onCheck : `ngCheck(${esc(JSON.stringify(r.key))}, this.checked)`}">
+      <span class="gt">${r.text}${r.sub?`<small>${r.sub}</small>`:""}</span>${!on && r.btn?`<span class="gb" onclick="event.stopPropagation()">${r.btn}</span>`:""}</label>`;
   $("#picker").innerHTML = `<div class="modal-bg" onclick="if(event.target===this){NG_OPEN=false;renderNG()}"><div class="modal wide">
-    <div class="modal-h"><b style="color:var(--bad)">⚠ Needs Gabe</b><p>Everything the system flagged for a person. Texts clear when Gabe replies in Quo (or taps Handled). Everything else clears itself once the item moves on.</p></div>
-    <div class="modal-b" style="max-height:68vh">
-      <div class="ng-h">Texts to answer · ${groups.length}</div>${texts || '<div class="ng-l">None — all caught up.</div>'}
-      ${todo}
+    <div class="modal-h"><b style="color:var(--bad);font-size:17px">Gabe's list — ${today.toLocaleDateString("en-US",{weekday:"long",month:"numeric",day:"numeric"})}</b><p>Do these. Check each one off when it's done. ${open.length} left.</p></div>
+    <div class="modal-b" style="max-height:70vh">
+      ${groups.map(g=>`<div class="ng-h">${esc(g)}</div>`+open.filter(r=>r.group===g).map(r=>line(r,false)).join("")).join("") || '<div class="sched-empty" style="font-size:15px;color:var(--ok)">✓ All done for today.</div>'}
+      ${fin.length?`<div class="ng-h soft">Done today · ${fin.length}</div>`+fin.map(r=>line(r,true)).join(""):""}
     </div>
     <div class="modal-f"><span class="sp"></span><button class="ubtn small primary" onclick="NG_OPEN=false;renderNG()">Close</button></div>
   </div></div>`;
