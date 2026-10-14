@@ -156,6 +156,27 @@ td.act .ubtn{margin-left:4px}
 .step:not(:last-child)::after{content:"→";position:absolute;right:-9px;top:50%;transform:translateY(-50%);color:var(--dim);font-size:13px;z-index:1}
 a.ubtn{text-decoration:none}
 .prop table{table-layout:fixed}.prop th:nth-child(1){width:44px}.prop th:nth-child(3){width:30%}.prop th:nth-child(4){width:250px}
+.act a.byhand{color:var(--mute);text-decoration:none;border-bottom:1px dotted var(--dim)}
+.act a.byhand:hover{color:#fff}
+.hand-k{display:flex;gap:6px;padding:10px 16px;flex-wrap:wrap}
+.hand-k label{flex:1;min-width:140px;border:1px solid var(--line2);border-radius:8px;padding:8px 10px;cursor:pointer;font-size:12.5px;color:var(--mute)}
+.hand-k label b{display:block;color:var(--fg);font-size:13px;margin-bottom:2px}
+.hand-k label.on{border-color:#fff;background:var(--panel2)}
+.hand-k input{display:none}
+.hand-f{display:grid;grid-template-columns:110px 1fr;gap:8px 10px;padding:4px 16px 12px;align-items:center;font-size:12.5px;color:var(--mute)}
+.hand-f input,.hand-f select,.hand-f textarea{width:100%;background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:6px 8px;font-size:12.5px;font-family:inherit}
+.hand-f .chk{display:flex;gap:6px;align-items:center;grid-column:2}
+.hand-f .chk input{width:auto}
+.modal.wide{max-width:980px}
+.dir-tools{display:flex;gap:8px;padding:10px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.dir-tools input,.dir-tools select{background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:6px 8px;font-size:12.5px}
+.dir-tools input{flex:1;min-width:160px}
+.dir-g{padding:8px 16px 4px;font-size:11px;letter-spacing:.5px;color:var(--mute);text-transform:uppercase;background:var(--panel2);border-bottom:1px solid var(--line);position:sticky;top:0}
+.dir-r{display:grid;grid-template-columns:minmax(0,2fr) 120px 110px 190px auto;gap:8px;align-items:center;padding:7px 16px;border-bottom:1px solid var(--line);font-size:12.5px}
+.dir-r small{display:block;color:var(--dim);font-size:11px}
+.dir-r select{background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:4px 6px;font-size:12px;width:100%}
+.dir-r .nophone{color:var(--warn)}
+@media (max-width:700px){.dir-r{grid-template-columns:1fr 1fr}}
 .bucket-help{font-size:12.5px;color:var(--mute);margin:-4px 0 12px;line-height:1.4}
 .bucket-help b{color:var(--fg);font-weight:600}
 .controls select{background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:4px 6px;font-size:12.5px}
@@ -192,6 +213,7 @@ td.act .ubtn{margin:0 0 6px 4px;white-space:normal;text-align:center;max-width:1
   <div class="site-title">Legacy Homes PM Dashboard</div>
   <div class="util-right">
     <a class="ubtn" href="/">Dashboard</a>
+    <button class="ubtn" onclick="openDir()">Contractors by trade</button>
     <button class="ubtn" id="btn-sync">Pull from CompanyCam</button>
   </div>
 </div>
@@ -448,7 +470,7 @@ function row(i, b){
       ${i.warranty?'<span class="trade" style="color:var(--ok);border-color:#3a6b4a">warranty · no charge</span>':''}
     </td>
     <td class="stand">${stand}</td>
-    <td class="act">${actionCell(i, b)}</td>
+    <td class="act">${actionCell(i, b)}${b<4 && !isHold(i) && !(i.bundle_id && !i.bundle_primary) ? `<div class="or"><a href="#" class="byhand" onclick="logHand('${i.id}');return false">✍ Log it by hand</a></div>` : ""}</td>
   </tr>`;
 }
 
@@ -741,6 +763,113 @@ async function sendInternal(id){
 }
 const MAINT_PILL = { queued:["chase","maint: posting…"], posted:["chase","maint: waiting on Jeriel"], acked:["t2","maint: Jeriel on it"], scheduled:["t1","maint: scheduled"], done:["t1","maint: done"], cancelled:["chase","maint: cancelled"] };
 
+// ---- Tom 10/14: when the system wasn't followed — a price by phone, a job handed out in person, work finished — log it by hand.
+// Nothing is texted except the invoice link (if you leave that box checked) when a job with a price is logged.
+let HAND = null;
+function logHand(id){
+  const i = ITEMS.find(x=>x.id===id); if(!i) return;
+  HAND = { id, kind: bucketOf(i)===3 ? "done" : "bid", contractor: i.contractor_id || "", price: "", start: "", note: "", warranty: false, invoice: true };
+  renderHand();
+}
+function renderHand(){
+  if(!HAND){ $("#picker").innerHTML=""; return; }
+  const i = ITEMS.find(x=>x.id===HAND.id), b = bucketOf(i);
+  const kinds = [
+    ["bid","Got a price","by phone, in person, email", b<3],
+    ["job","Gave someone the job","they said yes off the system", b<3],
+    ["done","It's finished","they did the work", true],
+  ].filter(k=>k[3]);
+  const seen = new Set();
+  const list = [...ranked(i.trade), ...CONTRACTORS.filter(c=>c.is_internal), ...ranked(null)].filter(c=>{ if(seen.has(c.id)) return false; seen.add(c.id); return true; });
+  const opts = list.map(c=>`<option value="${c.id}" ${HAND.contractor===c.id?'selected':''}>${esc(c.name)}${c.trade!==i.trade?' — '+esc(c.trade):''}${c.phone||c.is_internal?'':' (no phone)'}</option>`).join("");
+  const k = HAND.kind;
+  const who = `<span>${k==="done"?"Who did it":"Contractor"}</span><div style="display:flex;gap:6px"><select onchange="HAND.contractor=this.value;renderHand()"><option value="">${k==="done"?"— optional —":"— pick —"}</option>${opts}</select><button class="ubtn small" onclick="addContractor(ITEMS.find(x=>x.id===HAND.id).trade).then(c=>{ if(c){HAND.contractor=c.id;} renderHand(); })">＋ New</button></div>`;
+  const price = `<span>Price${k==="job"?" (if any)":""}</span><input inputmode="decimal" placeholder="$ labor + materials" value="${esc(HAND.price)}" oninput="HAND.price=this.value">`;
+  const start = `<span>Start date${k==="bid"?" (if known)":""}</span><input type="date" value="${esc(HAND.start)}" onchange="HAND.start=this.value">`;
+  const note = `<span>Note</span><input placeholder="optional — what was said" value="${esc(HAND.note)}" oninput="HAND.note=this.value">`;
+  const extra = k==="job" ? `<label class="chk"><input type="checkbox" ${HAND.warranty?'checked':''} onchange="HAND.warranty=this.checked;renderHand()"> Warranty — the rehab contractor is fixing it free</label>`
+      + (!HAND.warranty ? `<label class="chk"><input type="checkbox" ${HAND.invoice?'checked':''} onchange="HAND.invoice=this.checked"> Text them an invoice to sign (only if there's a price)</label>` : "") : "";
+  const fields = k==="bid" ? who+price+start+note : k==="job" ? who+price+start+note+extra : who+note;
+  const where = {bid:"Stays in <b>2 · Get bids</b> with the price listed and an Award button.", job:"Moves to <b>3 · In progress</b>, confirmed" + " and on the schedule if there's a date. The day-before reminder and DONE handling run as normal.", done:"Moves to <b>4 · Done</b> — walk it, then check it off in CompanyCam."}[k];
+  $("#picker").innerHTML = `<div class="modal-bg" onclick="if(event.target===this){HAND=null;renderHand()}"><div class="modal">
+    <div class="modal-h"><b>Log it by hand</b><p>#${i.item_no??""} ${esc(i.address)} — ${esc((i.description||"").slice(0,140))}</p><p>Nobody gets a text from this${k==="job"?" (except the invoice, if checked)":""}. It's marked "logged by hand" here and in CompanyCam.</p></div>
+    <div class="hand-k">${kinds.map(x=>`<label class="${x[0]===k?'on':''}"><input type="radio" name="hk" ${x[0]===k?'checked':''} onchange="HAND.kind='${x[0]}';renderHand()"><b>${x[1]}</b>${x[2]}</label>`).join("")}</div>
+    <div class="hand-f">${fields}</div>
+    <div class="modal-f"><span class="cnt" style="flex:1">${where}</span>
+      <button class="ubtn small" onclick="HAND=null;renderHand()">Cancel</button>
+      <button class="ubtn small primary" onclick="saveHand()">Save</button></div>
+  </div></div>`;
+}
+async function saveHand(){
+  const h = HAND, i = ITEMS.find(x=>x.id===h.id);
+  if(h.kind!=="done" && !h.contractor) return toast("Pick the contractor");
+  if(h.kind==="bid" && !h.price) return toast("Enter the price");
+  const c = CONTRACTORS.find(x=>x.id===h.contractor);
+  const body = { action:"manual", kind:h.kind, item_id:h.id, contractor_id:h.contractor||null, price:h.price||null, start_date:h.start||null, note:h.note,
+    warranty: h.kind==="job" && h.warranty, send_invoice: h.invoice, by: (SESSION?.user?.email||"Gabe").split("@")[0] };
+  if(h.kind==="job" && h.price && !h.warranty && h.invoice && c && !c.phone) body.send_invoice = false;
+  HAND=null; renderHand(); toast("Saving…");
+  const r = await fn("rtr-dispatch", body);
+  if(r.error) return toast(r.error);
+  toast(h.kind==="bid" ? `Bid logged for ${c?.name}` : h.kind==="job" ? `${c?.name} has it — moved to 3 · In progress${r.invoice?.invoice_no?` · invoice ${r.invoice.invoice_no} texted`:""}` : "Marked done — moved to 4 · Done");
+  await load();
+}
+// ---- Tom 10/14: see every contractor by trade and fix the ones in the wrong dropdown, right here (saves to the directory) ----
+let DIR = null;
+function openDir(){ DIR = { q:"", trade:"" }; renderDir(); }
+function renderDir(){
+  if(!DIR){ $("#picker").innerHTML=""; return; }
+  const q = DIR.q.toLowerCase();
+  const rows = CONTRACTORS.filter(c=>(!DIR.trade || c.trade===DIR.trade) && (!q || [c.name,c.contact_name,c.phone,c.trade].join(" ").toLowerCase().includes(q)))
+    .sort((a,b)=>(a.trade||"").localeCompare(b.trade||"") || (b.tracker_props_n||0)-(a.tracker_props_n||0) || a.name.localeCompare(b.name));
+  const tOpts = sel => TRADES.map(t=>`<option ${t===sel?'selected':''}>${esc(t)}</option>`).join("");
+  let html = "", last = null;
+  for(const c of rows){
+    if(c.trade!==last){ last=c.trade; html += `<div class="dir-g">${esc(c.trade||"No trade")} · ${rows.filter(x=>x.trade===c.trade).length}</div>`; }
+    html += `<div class="dir-r"><span>${esc(c.name)}${c.is_internal?' <span class="pill yes">maintenance</span>':''}<small>${esc(c.contact_name||"")}</small></span>
+      <span>${c.phone?esc(c.phone):'<span class="nophone">no phone</span>'} <a href="#" style="color:var(--info);font-size:11px" onclick="addPhone('${c.id}').then(renderDir);return false">${c.phone?'edit':'add'}</a></span>
+      <span>${c.tracker_props_n?`${c.tracker_props_n} houses<small>last ${lastMon(c.tracker_last_date)}</small>`:'<small>not in trackers</small>'}</span>
+      <select title="Move to a different trade" onchange="dirMove('${c.id}',this.value)">${tOpts(c.trade)}</select>
+      <span style="white-space:nowrap"><button class="ubtn small" onclick="dirAdd('${c.id}')" title="Also list them under another trade">＋ trade</button> <button class="ubtn small" onclick="dirRemove('${c.id}')" title="Take them out of this trade's list">Remove</button></span></div>`;
+  }
+  $("#picker").innerHTML = `<div class="modal-bg" onclick="if(event.target===this){DIR=null;renderDir()}"><div class="modal wide">
+    <div class="modal-h"><b>Contractors by trade</b><p>This is the list behind every dropdown. Change someone's trade to move them, ＋ trade to list them in another one too, or Remove to take them out of a trade. Order inside a trade = most houses with us first.</p></div>
+    <div class="dir-tools"><input id="dir-q" placeholder="Search name, phone, contact…" value="${esc(DIR.q)}" oninput="DIR.q=this.value;renderDir();const e=$('#dir-q');e.focus();e.setSelectionRange(e.value.length,e.value.length)">
+      <select onchange="DIR.trade=this.value;renderDir()"><option value="">All trades (${CONTRACTORS.length})</option>${tOpts(DIR.trade)}</select>
+      <button class="ubtn small" onclick="addContractor(DIR.trade||'').then(renderDir)">＋ New contractor</button></div>
+    <div class="modal-b" style="max-height:65vh">${html||'<div class="sched-empty">No one matches.</div>'}</div>
+    <div class="modal-f"><span class="sp"></span><button class="ubtn small primary" onclick="DIR=null;renderDir();load()">Done</button></div>
+  </div></div>`;
+}
+async function dirMove(id, t){
+  const c = CONTRACTORS.find(x=>x.id===id); if(!c || c.trade===t) return;
+  if(CONTRACTORS.some(x=>x.id!==id && x.name===c.name && x.trade===t)){ // already listed there → just drop this row
+    const { error } = await sb.from("contractor_directory").update({ is_archived:true }).eq("id", id);
+    if(error) return toast("Couldn't save: "+error.message);
+    CONTRACTORS = CONTRACTORS.filter(x=>x.id!==id); toast(`${c.name} was already in ${t} — removed from ${c.trade}`); return renderDir();
+  }
+  const { error } = await sb.from("contractor_directory").update({ trade:t }).eq("id", id);
+  if(error) return toast("Couldn't save: "+error.message);
+  toast(`${c.name}: ${c.trade} → ${t}`); c.trade = t; renderDir();
+}
+async function dirAdd(id){
+  const c = CONTRACTORS.find(x=>x.id===id); if(!c) return;
+  const t = prompt(`Also list ${c.name} under which trade?\n\n${TRADES.join(" · ")}`, ""); if(!t) return;
+  const tt = TRADES.find(x=>x.toLowerCase()===t.trim().toLowerCase()) || t.trim();
+  if(CONTRACTORS.some(x=>x.name===c.name && x.trade===tt)) return toast(`${c.name} is already in ${tt}`);
+  const row = { name:c.name, trade:tt, phone:c.phone, contact_name:c.contact_name, vetting_tier:c.vetting_tier||"Unrated", tracker_props_n:c.tracker_props_n, tracker_last_date:c.tracker_last_date, tracker_name:c.tracker_name, active:true, is_archived:false, source_list:"added on Remedies page" };
+  const { data, error } = await sb.from("contractor_directory").insert(row).select("id,name,trade,phone,vetting_tier,jobs_done_n,is_internal,tracker_props_n,tracker_last_date,contact_name,tracker_name").single();
+  if(error) return toast("Couldn't add: "+error.message);
+  CONTRACTORS.push(data); if(!TRADES.includes(tt)){ TRADES.push(tt); TRADES.sort(); }
+  toast(`${c.name} added to ${tt}`); renderDir();
+}
+async function dirRemove(id){
+  const c = CONTRACTORS.find(x=>x.id===id); if(!c) return;
+  if(!confirm(`Take ${c.name} out of ${c.trade}?\n\nThey stop showing in the ${c.trade} dropdown. Any other trades they're in stay.`)) return;
+  const { error } = await sb.from("contractor_directory").update({ is_archived:true }).eq("id", id);
+  if(error) return toast("Couldn't save: "+error.message);
+  CONTRACTORS = CONTRACTORS.filter(x=>x.id!==id); toast(`${c.name} removed from ${c.trade}`); renderDir();
+}
 // ---- invoices made for the contractor (Tom 10/8) ----
 function invoiceLine(i){
   if(i.cc_done && !i.invoice_status) return "";
