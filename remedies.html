@@ -600,7 +600,8 @@ async function assign(id, contractor_id){
   }
   let c = CONTRACTORS.find(x=>x.id===contractor_id);
   if(c && !c.phone && !c.is_internal){ if(!(await addPhone(c.id))) return load(); c = CONTRACTORS.find(x=>x.id===contractor_id); }
-  if(!confirm(c.is_internal ? `Send this to maintenance (Slack work order for Jeriel)?\n\n${i.description}` : `Ask ${c.name} to bid this job?\n\n${i.description}\n\nat ${i.address}\n\nSame as Get 3 bids, just one contractor: "interested?" → job details → their price → you award it.`)) return load();
+  if(!c.is_internal) return previewSend({ id, ids:[contractor_id], action:"assign" });
+  if(!confirm(`Send this to maintenance (Slack work order for Jeriel)?\n\n${i.description}`)) return load();
   toast("Sending…");
   const r = await fn("rtr-dispatch", { action:"assign", item_id:id, contractor_id });
   toast(r.error ? r.error : r.maintenance ? "Queued for maintenance — moved to 3 · In progress" : `Asked ${c.name} for a bid — waiting on their price`);
@@ -615,7 +616,8 @@ function actionCell(i, b){
   if(b===2){
     if(biddingOut(i)){
       const nb = (i.bids||[]).length;
-      return `<div class="wait">${nb ? "Tap <b>Award</b> on the bid you want. It moves to In progress." : "Waiting on prices. The system follows up for you (8h, 8h, then daily)."}</div>`;
+      return `<div class="wait">${nb ? "Tap <b>Award</b> on the bid you want. It moves to In progress." : "Waiting on prices. The system follows up for you (8h, 8h, then daily)."}</div>
+        <div class="or"><a href="#" style="color:var(--info)" onclick="fixSent('${i.id}');return false">✏️ Something wrong in the text? Fix it</a></div>`;
     }
     if(internalFor(i.trade)) return `<button class="ubtn small primary" onclick="sendInternal('${i.id}')">Send to maintenance</button>
       <div class="or">or text one contractor:</div>${contractorSelect(i, "— pick one —")}`;
@@ -828,13 +830,103 @@ async function pickNew(){
 }
 async function sendPicked(){
   const ids = PICK.slots.filter(Boolean), id = PICK.id, extra = [...PICK.extra];
-  const names = ids.map((x,k)=>`${k+1}. ${CONTRACTORS.find(c=>c.id===x)?.name||""}`);
-  const bundleNote = extra.length ? `\n\nOne text covering ${extra.length+1} items (#${[PICK.id,...extra].map(x=>ITEMS.find(i=>i.id===x)?.item_no).join(", #")}).` : "";
-  if(!confirm(`Text these ${ids.length} to ask if they want to bid?\n\n${names.join("\n")}${bundleNote}`)) return;
-  PICK=null; renderPicker(); toast("Sending…");
-  const r = await fn("rtr-dispatch", { action:"dispatch", item_id:id, contractor_ids: ids, extra_item_ids: extra });
+  PICK=null; renderPicker();
+  previewSend({ id, ids, extra, action:"dispatch" });
+}
+// ---- Tom 10/14: Gabe sees the exact text before any bid request goes out, and can fix the wording ----
+let PREV = null;
+async function previewSend(o){
+  PREV = { ...o, loading:true }; renderPreview();
+  const r = await fn("rtr-dispatch", { action:"preview", item_id:o.id, contractor_ids:o.ids, extra_item_ids:o.extra||[] });
+  if(!PREV) return;
+  if(r.error){ PREV=null; renderPreview(); return toast(r.error); }
+  Object.assign(PREV, { loading:false, to:r.to||[], trade:r.trade, orig:r.invite_rest||"", text:r.invite_rest||"", details:r.step3_details||"" });
+  renderPreview();
+}
+function renderPreview(){
+  if(!PREV){ $("#picker").innerHTML=""; return; }
+  const i = ITEMS.find(x=>x.id===PREV.id);
+  const box = "width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--line2);color:inherit;border-radius:6px;padding:10px;font:inherit;font-size:13.5px;line-height:1.45";
+  const body = PREV.loading ? `<div class="sched-empty">Building the text…</div>` : `
+    <div style="padding:12px 16px">
+      <div style="font-size:12px;color:var(--mute);margin-bottom:6px">GOES TO</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px">${PREV.to.map(t=>`<span class="pill">${esc(t.name)}</span>`).join("") || '<span class="said none">Nobody can be texted</span>'}</div>
+      <div style="font-size:12px;color:var(--mute);margin-bottom:6px">THE TEXT <span style="color:var(--info)">— edit anything that's wrong before it goes out</span></div>
+      <div style="font-size:13px;margin-bottom:4px">${esc((PREV.to[0]||{}).greeting||"Hey there,")} <span style="font-size:11.5px;color:var(--mute)">(each person gets their own name)</span></div>
+      <textarea id="prev-text" rows="11" style="${box}" oninput="PREV.text=this.value">${esc(PREV.text)}</textarea>
+      <div style="display:flex;gap:10px;align-items:center;margin-top:6px;font-size:12.5px;color:var(--mute)">
+        <span>Trade: <b style="color:inherit">${esc(PREV.trade||"")}</b></span>
+        <a href="#" style="color:var(--info)" onclick="const id=PREV.id;PREV=null;renderPreview();askTrade(id);return false">Wrong trade? Change it</a>
+        <span class="sp" style="flex:1"></span>
+        ${PREV.text!==PREV.orig?`<a href="#" style="color:var(--info)" onclick="PREV.text=PREV.orig;renderPreview();return false">Undo my edits</a>`:""}
+      </div>
+      <details style="margin-top:12px"><summary style="cursor:pointer;font-size:12.5px;color:var(--mute)">If they reply YES, they get this next</summary>
+        <pre style="white-space:pre-wrap;font:inherit;font-size:12.5px;color:var(--mute);margin:8px 0 0">${esc(PREV.details)}</pre>
+        <div style="font-size:11.5px;color:var(--mute);margin-top:4px">That part is built from the remedy item's description.</div></details>
+    </div>`;
+  $("#picker").innerHTML = `<div class="modal-bg" onclick="if(event.target===this){PREV=null;renderPreview()}"><div class="modal">
+    <div class="modal-h"><b>Check the text before it goes out</b><p>#${i?.item_no??""} ${esc(i?.address||"")} — ${esc((i?.description||"").slice(0,140))}</p></div>
+    <div class="modal-b" style="max-height:70vh">${body}</div>
+    <div class="modal-f"><span class="sp"></span><button class="ubtn small" onclick="PREV=null;renderPreview()">Cancel</button>
+      <button class="ubtn small primary" ${PREV.loading||!(PREV.to||[]).length?'disabled':''} onclick="sendPreview()">Looks good — send${(PREV.to||[]).length?" to "+PREV.to.length:""}</button></div>
+  </div></div>`;
+}
+async function sendPreview(){
+  const o = PREV; if(!o) return;
+  const text = (o.text||"").trim();
+  if(!text) return toast("The text is empty");
+  PREV=null; renderPreview(); toast("Sending…");
+  const edited = text !== (o.orig||"").trim();
+  const r = o.action==="assign"
+    ? await fn("rtr-dispatch", { action:"assign", item_id:o.id, contractor_id:o.ids[0], ...(edited?{invite_text:text}:{}) })
+    : await fn("rtr-dispatch", { action:"dispatch", item_id:o.id, contractor_ids:o.ids, extra_item_ids:o.extra||[], ...(edited?{invite_text:text}:{}) });
   if(r.error) return toast(r.error);
   toast(r.sent?.length ? `Sent to ${r.sent.join(", ")}${r.skipped?.length?` (skipped: ${r.skipped.join("; ")})`:""}` : `Couldn't send — ${(r.failed||r.skipped||[])[0]||"nobody picked"}`);
+  await load();
+}
+// ---- Tom 10/14: a bid text already went out with something wrong in it. A text can't be unsent, so this sends a
+// correction (or "disregard that" and takes them off the job). Gabe sees and can edit each one first. ----
+let FIX = null;
+async function fixSent(id){
+  FIX = { id, loading:true, mode:"correct", rows:[] }; renderFix();
+  const r = await fn("rtr-dispatch", { action:"fix_preview", item_id:id });
+  if(!FIX) return;
+  if(r.error){ FIX=null; renderFix(); return toast(r.error); }
+  FIX.loading=false; FIX.rows=(r.dispatches||[]).map(d=>({ ...d, on:true, text:d.correction })); renderFix();
+}
+function fixMode(m){ FIX.mode=m; FIX.rows.forEach(r=>r.text = m==="cancel" ? r.cancel : r.correction); renderFix(); }
+function renderFix(){
+  if(!FIX){ $("#picker").innerHTML=""; return; }
+  const i = ITEMS.find(x=>x.id===FIX.id);
+  const box = "width:100%;box-sizing:border-box;background:var(--bg);border:1px solid var(--line2);color:inherit;border-radius:6px;padding:8px;font:inherit;font-size:13px;line-height:1.4";
+  const rows = FIX.loading ? `<div class="sched-empty">Pulling up what was sent…</div>`
+    : !FIX.rows.length ? `<div class="sched-empty">Nobody is waiting on a bid text for this item, so there's nothing to fix.</div>`
+    : FIX.rows.map((r,k)=>`<div style="padding:12px 16px;border-bottom:1px solid var(--line)">
+        <label style="display:flex;gap:8px;align-items:center;font-weight:600"><input type="checkbox" ${r.on?'checked':''} onchange="FIX.rows[${k}].on=this.checked;renderFix()"> ${esc(r.name)} <span style="font-weight:400;font-size:12px;color:var(--mute)">${r.stage==="invited"?"hasn't answered yet":r.stage==="interested"?"has the job details, bid not in":"bid is in"}</span></label>
+        <details style="margin:6px 0"><summary style="cursor:pointer;font-size:12px;color:var(--mute)">What they got ${ago(r.sent_at)}</summary><pre style="white-space:pre-wrap;font:inherit;font-size:12.5px;color:var(--mute);margin:6px 0 0">${esc(r.sent||"")}</pre></details>
+        ${r.on?`<div style="font-size:12px;color:var(--mute);margin:6px 0 4px">${esc(r.greeting)}</div><textarea rows="5" style="${box}" oninput="FIX.rows[${k}].text=this.value">${esc(r.text)}</textarea>`:""}
+      </div>`).join("");
+  const n = FIX.rows.filter(r=>r.on).length;
+  $("#picker").innerHTML = `<div class="modal-bg" onclick="if(event.target===this){FIX=null;renderFix()}"><div class="modal">
+    <div class="modal-h"><b>Fix a text that already went out</b><p>#${i?.item_no??""} ${esc(i?.address||"")} — ${esc((i?.description||"").slice(0,120))}</p>
+      <p>A text can't be unsent. Pick what to do and check the wording:</p>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="ubtn small ${FIX.mode==="correct"?"primary":""}" onclick="fixMode('correct')">Send a correction</button>
+        <button class="ubtn small ${FIX.mode==="cancel"?"primary":""}" onclick="fixMode('cancel')">Take it back (they're off this job)</button></div></div>
+    <div class="modal-b" style="max-height:60vh">${rows}</div>
+    <div class="modal-f"><span class="cnt" style="flex:1">${FIX.mode==="cancel"?"They're taken off the bid list for this item. If nobody's left, it goes back to Get bids.":"Their bid request stays open. Follow-ups keep going."}</span>
+      <button class="ubtn small" onclick="FIX=null;renderFix()">Cancel</button>
+      <button class="ubtn small primary" ${n?'':'disabled'} onclick="sendFix()">Send to ${n}</button></div>
+  </div></div>`;
+}
+async function sendFix(){
+  const f = FIX; if(!f) return;
+  const messages = f.rows.filter(r=>r.on && (r.text||"").trim()).map(r=>({ id:r.id, text:r.text }));
+  if(!messages.length) return toast("Nothing to send");
+  FIX=null; renderFix(); toast("Sending…");
+  const r = await fn("rtr-dispatch", { action:"fix_sent", item_id:f.id, mode:f.mode, messages });
+  if(r.error) return toast(r.error);
+  toast(r.sent?.length ? `${f.mode==="cancel"?"Took it back from":"Correction sent to"} ${r.sent.join(", ")}${r.failed?.length?` (failed: ${r.failed.join("; ")})`:""}` : `Couldn't send — ${(r.failed||[])[0]||"nobody"}`);
   await load();
 }
 // ---- scope check (Tom 10/9): first step on every item. If it was on the rehab contractor's scope it goes back to them
