@@ -225,6 +225,15 @@ tr.flash td{background:rgba(239,111,111,.15);transition:background 1.5s}
 .gl .gt small{display:block;color:var(--mute);font-size:12px;margin-top:2px}
 .gl .gb{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
 .gl.on .gt{text-decoration:line-through;color:var(--dim)}
+.ubtn.flagbtn{border-color:var(--bad);color:var(--bad)}
+.ubtn.flagbtn:hover{background:rgba(239,111,111,.15)}
+.sboard{background:var(--panel);border:1px solid #3a6b4a;border-radius:10px;margin-bottom:14px;overflow:hidden}
+.sb-h{padding:11px 14px;font-size:15px;font-weight:600;background:rgba(95,207,128,.08);border-bottom:1px solid var(--line)}
+.sb-r{display:flex;gap:14px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line);cursor:pointer;font-size:13.5px}
+.sb-r:last-child{border-bottom:none}.sb-r:hover{background:var(--panel2)}
+.sb-d{width:110px;font-weight:700;font-size:14.5px;color:var(--ok);white-space:nowrap}
+.sb-r.nod .sb-d{color:var(--warn)}
+.sb-w{flex:1;color:var(--mute);min-width:0}.sb-w b{color:var(--fg)}
 .bucket-help{font-size:12.5px;color:var(--mute);margin:-4px 0 12px;line-height:1.4}
 .bucket-help b{color:var(--fg);font-weight:600}
 .controls select{background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:4px 6px;font-size:12.5px}
@@ -298,6 +307,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, 
 const authSb = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 let SESSION = null, ACCESS = {}, EDIT_ACCESS = null, CAL_URL = "";
 
+let FLAGS = {};
 let ITEMS = [], CONTRACTORS = [], TRADES = []; const SHOW_ALL = {};
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -314,6 +324,7 @@ async function load(){
   if(a.error){ $("#list").innerHTML=`<div class="empty">Couldn't load remedies: ${esc(a.error.message)}</div>`; return; }
   ITEMS = a.data||[]; CONTRACTORS = b.data||[];
   await loadNeedsGabe();
+  try { const f = await sb.from("rtr_items").select("id,mgmt_flagged_at").not("mgmt_flagged_at","is",null); FLAGS = Object.fromEntries((f.data||[]).map(x=>[x.id,x.mgmt_flagged_at])); } catch { FLAGS = {}; }
   TRADES = [...new Set([...CONTRACTORS.map(c=>c.trade), ...ITEMS.map(i=>i.trade)])].filter(Boolean).sort();
   try { SESSION = (await authSb.auth.getSession()).data.session; } catch { SESSION = null; }
   ACCESS = {};
@@ -423,8 +434,20 @@ function render(){
     </div>`);
   }
   const empty = ["", "Nothing waiting on a scope check.", "Nothing to send out for bids.", "Nothing in progress.", "Nothing done in the last 14 days."][BUCKET];
+  // Tom 10/14: In progress opens with the schedule — every job, the day they agreed to, soonest first
+  if(BUCKET===3){
+    const jobs = Object.values(shown).flat().filter(i=>bucketOf(i)===3 && !(i.bundle_id && !i.bundle_primary));
+    const dayOf = i => i.scheduled_start || (i.maint_start ? String(i.maint_start).slice(0,10) : null);
+    jobs.sort((a,b)=>(dayOf(a)||"9999").localeCompare(dayOf(b)||"9999") || a.address.localeCompare(b.address));
+    const ti = isoD(today);
+    const r = i => { const d = dayOf(i); const who = i.maint_status ? "Maintenance" : (i.contractor_name || i.cc_contractor_text || "");
+      const tag = !d ? `<span class="pill chase">no day yet</span>` : d===ti ? `<span class="pill yes">TODAY</span>` : d<ti ? `<span class="pill chase">was ${fmt(d)} — not done</span>` : "";
+      return `<div class="sb-r ${d?'':'nod'}" onclick="goItem('${i.id}')"><span class="sb-d">${d?new Date(d+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"numeric",day:"numeric"}):"—"}</span>
+        <span class="sb-w"><b>${esc(who)}</b> · ${esc(i.address)} #${i.item_no??""} · ${esc((i.description||"").replace(/\s*:\s*Seller Agrees\s*/i,": ").slice(0,70))}</span>${tag}</div>`; };
+    if(jobs.length) blocks.unshift(`<div class="sboard"><div class="sb-h">📅 Schedule — when each contractor said they'd do the work</div>${jobs.map(r).join("")}</div>`);
+  }
   $("#list").innerHTML = blocks.join("") || `<div class="empty">${empty}${HOUSE?" (for this house)":""}</div>`;
-  $("#sched").style.display = BUCKET===3 ? "" : "none";
+  $("#sched").style.display = "none";
   renderSchedule();
 }
 
@@ -500,7 +523,7 @@ function renderPickOne(){
     <div class="modal-h"><b>Ask one contractor for a bid</b><p>#${i.item_no??""} ${esc(i.address)} — ${esc((i.description||"").slice(0,120))}</p></div>
     <div class="dir-tools"><input id="p1-q" placeholder="Search any name, trade or phone…" value="${esc(P1.q)}" oninput="P1.q=this.value;renderPickOne();const e=$('#p1-q');e.focus();e.setSelectionRange(e.value.length,e.value.length)"></div>
     <div class="modal-b">${list.map(c=>`<div class="pick" onclick="P1=null;renderPickOne();assign('${i.id}','${c.id}')"><span class="nm">${esc(c.name)}<small>${esc(c.trade)}${c.tracker_props_n?` · ${c.tracker_props_n} houses with us`:''}</small></span><span class="tier ${c.phone?'t1':''}">${c.phone?esc(c.phone):'no phone'}</span></div>`).join("") || '<div class="sched-empty">No one matches. Try another name, or add them under Contractors by trade.</div>'}</div>
-    <div class="modal-f">${!q?`<button class="ubtn small" onclick="P1.all=!P1.all;renderPickOne()">${P1.all?'Only '+esc(i.trade||''):'Show every trade'}</button>`:''}<button class="ubtn small" onclick="addContractor(ITEMS.find(x=>x.id===P1.id).trade).then(c=>{ if(c){ const id=P1.id; P1=null; renderPickOne(); assign(id, c.id); } })">＋ Someone new</button><span class="sp"></span><button class="ubtn small" onclick="P1=null;renderPickOne()">Cancel</button></div>
+    <div class="modal-f">${!q?`<button class="ubtn small" onclick="P1.all=!P1.all;renderPickOne()">${P1.all?'Only '+esc(i.trade||''):'Show every trade'}</button>`:''}<button class="ubtn small" onclick="addContractor(ITEMS.find(x=>x.id===P1.id).trade).then(c=>{ if(c){ const id=P1.id; P1=null; renderPickOne(); assign(id, c.id); } })">＋ Someone new</button><button class="ubtn small flagbtn" onclick="const id=P1.id;P1=null;renderPickOne();flagMgmt(id)">🚩 Flag management</button><span class="sp"></span><button class="ubtn small" onclick="P1=null;renderPickOne()">Cancel</button></div>
   </div></div>`;
 }
 // Tom 10/14: one row per item, four columns: what it is · where it stands · the ONE next step.
@@ -522,7 +545,8 @@ function row(i, b){
   } else if(b===2){
     const sent = biddingOut(i);
     const named = i.contractor_name || i.cc_contractor_text;
-    stand = (sent ? st.pill : named ? `<span class="pill chase">${esc(named)} named in CompanyCam — no bid yet</span>` : `<span class="pill">not sent yet</span>`) + bidList(i) + (sent||named ? lw : "") + report;
+    const flagged = FLAGS[i.id] ? `<div class="cctext" style="color:var(--bad)">🚩 Asked Bruce for referrals ${ago(FLAGS[i.id])}</div>` : "";
+    stand = flagged + (sent ? st.pill : named ? `<span class="pill chase">${esc(named)} named in CompanyCam — no bid yet</span>` : `<span class="pill">not sent yet</span>`) + bidList(i) + (sent||named ? lw : "") + report;
   } else if(b===3){
     const who = i.maint_status ? "Maintenance (Jeriel)" : (i.contractor_name || i.cc_contractor_text || "");
     const pill = i.maint_status ? (()=>{ const p = MAINT_PILL[i.maint_status]||["chase","maint: "+i.maint_status]; return `<span class="pill ${p[0]==='t1'?'yes':p[0]}">${esc(p[1])}${i.maint_start?' '+esc(String(i.maint_start).slice(5).replace('-','/')):''}</span>`; })() : st.pill;
@@ -598,7 +622,8 @@ function actionCell(i, b){
     const named = i.contractor_id && CONTRACTORS.find(c=>c.id===i.contractor_id);
     return (named ? `<button class="ubtn small primary" onclick="assign('${i.id}','${named.id}')">Ask ${esc(named.name)} for a bid</button>` : "")
       + `<button class="ubtn small ${named?'':'primary'}" onclick="bids('${i.id}')">Get 3 bids</button>
-      <div class="or">or ask just one contractor for a bid:</div>${contractorSelect(i, "— pick one —")}`;
+      <div class="or">or ask just one contractor for a bid:</div>${contractorSelect(i, "— pick one —")}
+      <div class="or">nobody for this?</div><button class="ubtn small flagbtn" onclick="flagMgmt('${i.id}')">🚩 Flag management</button>`;
   }
   if(b===3){
     if(i.maint_status) return `<div class="wait">Jeriel's work order in #project-maint-requests. Updates come from that Slack thread.</div>`;
@@ -680,7 +705,7 @@ function renderNewTrade(){
   $("#picker").innerHTML = `<div class="modal-bg" onclick="if(event.target===this){NEWT=null;renderNewTrade()}"><div class="modal">
     <div class="modal-h"><b>New trade: ${esc(NEWT.name)}</b><p>These are the contractors we've paid for this kind of work (from the project tracker invoices). Check who should be in the ${esc(NEWT.name)} dropdown. You can add or fix people later under Contractors by trade.</p></div>
     <div class="modal-b">${list}</div>
-    <div class="modal-f"><button class="ubtn small" onclick="addContractor(NEWT.name).then(c=>{ if(c){ NEWT.vendors.unshift({vendor:c.name,n:0,last:'',total:0,eg:'added just now',c}); NEWT.picked.add(c.name);} renderNewTrade(); })">＋ Someone not on the list</button>
+    <div class="modal-f"><button class="ubtn small flagbtn" onclick="const id=NEWT.id, w=NEWT.name;NEWT=null;renderNewTrade();flagMgmt(id, w)">🚩 Flag management</button><button class="ubtn small" onclick="addContractor(NEWT.name).then(c=>{ if(c){ NEWT.vendors.unshift({vendor:c.name,n:0,last:'',total:0,eg:'added just now',c}); NEWT.picked.add(c.name);} renderNewTrade(); })">＋ Someone not on the list</button>
       <span class="sp"></span><button class="ubtn small" onclick="NEWT=null;renderNewTrade()">Cancel</button>
       <button class="ubtn small primary" ${NEWT.loading?'disabled':''} onclick="saveNewTrade()">Create ${esc(NEWT.name)}${NEWT.picked.size?` with ${NEWT.picked.size}`:''}</button></div>
   </div></div>`;
@@ -759,6 +784,7 @@ function renderPicker(){
     <div class="modal-b">${list.length ? [0,1,2].map(slot).join("") : `<div class="sched-empty">No ${esc(i.trade)} contractors in the directory. Tap "Show other trades".</div>`}${sibBlock}</div>
     <div class="modal-f"><button class="ubtn small" onclick="PICK.all=!PICK.all;renderPicker()">${PICK.all?'Only '+esc(i.trade):'Show other trades'}</button>
       <button class="ubtn small" onclick="pickNew()">＋ Someone not on the list</button>
+      <button class="ubtn small flagbtn" onclick="const id=PICK.id;PICK=null;renderPicker();flagMgmt(id)">🚩 Flag management</button>
       <span class="sp"></span><span class="cnt">${n} of 3 picked</span>
       <button class="ubtn small" onclick="PICK=null;renderPicker()">Cancel</button>
       <button class="ubtn small primary" ${n && n>=need?'':'disabled'} onclick="sendPicked()">Text ${n||3} for bids</button></div>
@@ -1151,6 +1177,16 @@ function scheduleFromText(item_id, contractor, date){
   const c = CONTRACTORS.find(x=>x.name===contractor);
   NG_OPEN = false; renderNG();
   logHand(item_id); HAND.kind = "job"; HAND.contractor = c?.id || HAND.contractor; HAND.start = date; HAND.note = "date from their text"; renderHand();
+}
+// ---- Tom 10/14: no contractor for this? Text Bruce for 2-3 referrals. His answer shows up on Gabe's list. ----
+async function flagMgmt(id, what){
+  const i = ITEMS.find(x=>x.id===id); if(!i) return;
+  const w = prompt(`What do you need someone for? (this goes in the text to Bruce)\n\n"Hey Bruce, for my remedy at ${i.address} I need someone to remedy ___. Can you send me 2-3 referrals here please?"`, (what || i.trade || "").toLowerCase());
+  if(w===null || !w.trim()) return;
+  toast("Sending…");
+  const r = await fn("rtr-dispatch", { action:"flag_management", item_id:id, what:w.trim() });
+  toast(r.error ? r.error : `Texted ${r.to} for referrals — his answer will show up on Gabe's list`);
+  await load();
 }
 // ---- invoices made for the contractor (Tom 10/8) ----
 function invoiceLine(i){
