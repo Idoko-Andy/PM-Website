@@ -136,11 +136,43 @@ td.act .ubtn{margin-left:4px}
 .toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:#fff;color:#111;padding:9px 14px;border-radius:8px;font-size:13px;box-shadow:0 6px 24px rgba(0,0,0,.5);display:none}
 .toast.show{display:block}
 
+/* Tom 10/14: four buckets, left to right. Each item lives in one and has one next step. */
+.steps{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}
+.step{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;cursor:pointer;text-align:left;color:var(--fg)}
+.step:hover{border-color:#555}
+.step.on{border-color:#fff;background:var(--panel2);box-shadow:0 0 0 1px #fff inset}
+.step .n{display:inline-grid;place-items:center;width:22px;height:22px;border-radius:50%;border:1.5px solid var(--mute);font-size:12px;font-weight:600;margin-right:8px;vertical-align:middle}
+.step.on .n{background:#fff;color:#111;border-color:#fff}
+.step .t{font-size:14.5px;font-weight:600;vertical-align:middle}
+.step .c{float:right;font-size:22px;font-weight:600;line-height:1}
+.step .c.zero{color:var(--dim)}
+.step .q{display:block;font-size:12px;color:var(--mute);margin-top:6px;line-height:1.3}
+.step:not(:last-child)::after{content:"→";position:absolute;right:-9px;top:50%;transform:translateY(-50%);color:var(--dim);font-size:13px;z-index:1}
+a.ubtn{text-decoration:none}
+.prop table{table-layout:fixed}.prop th:nth-child(1){width:44px}.prop th:nth-child(3){width:30%}.prop th:nth-child(4){width:250px}
+.bucket-help{font-size:12.5px;color:var(--mute);margin:-4px 0 12px;line-height:1.4}
+.bucket-help b{color:var(--fg);font-weight:600}
+.controls select{background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:4px 6px;font-size:12.5px}
+td.stand{min-width:260px}
+td.stand .whoname{font-size:13px;font-weight:500;margin-bottom:3px}
+td.stand .lw{font-size:12.5px;margin-top:3px}
+td.stand .lw .k{font-size:11px;color:var(--dim);margin-right:6px}
+td.act{width:230px;white-space:normal}
+td.act .ubtn{margin:0 0 6px 4px}
+.act .or{font-size:11px;color:var(--dim);margin:2px 0 3px}
+.act select{width:100%;background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:5px 6px;font-size:12px}
+.act details summary{font-size:11.5px;color:var(--dim);cursor:pointer;margin-top:4px}
+.act .wait{font-size:12px;color:var(--mute);text-align:left;line-height:1.35}
+
+@media (max-width:700px){
+  .steps{grid-template-columns:1fr 1fr}.step:nth-child(2)::after{display:none}
+  .step{padding:9px 10px}.step .t{font-size:13px}.step .c{font-size:18px}.step .q{font-size:11px}
+}
 @media (max-width:600px){
   .strip{gap:6px}.stat{min-width:0;padding:6px 8px;flex:1 1 30%}.stat b{font-size:16px}.stat span{font-size:10.5px}
 }
 @media (max-width:900px){
-  td.who{width:auto}.truth{min-width:0}.act{text-align:left}
+  td.who{width:auto}.truth{min-width:0}.act{text-align:left}td.stand{min-width:0}td.act{width:auto}td.act .ubtn{margin:0 6px 6px 0}
   table,thead,tbody,tr,td{display:block}
   thead{display:none}
   tr{padding:10px;border-bottom:1px solid var(--line)}
@@ -165,14 +197,15 @@ td.act .ubtn{margin-left:4px}
 </div>
 
 <div class="wrap">
-  <div class="strip" id="strip"></div>
-  <div class="sched" id="sched"></div>
+  <div class="steps" id="steps"></div>
   <div class="controls">
-    <label><input type="checkbox" id="show-done"> Show completed items</label>
+    <label>House <select id="house" onchange="HOUSE=this.value;render()"><option value="">All houses</option></select></label>
     <span class="sp"></span>
     <span class="synced" id="synced"></span>
   </div>
+  <div class="bucket-help" id="bucket-help"></div>
   <div id="list"><div class="empty">Loading…</div></div>
+  <div class="sched" id="sched" style="display:none"></div>
 </div>
 <div class="toast" id="toast"></div>
 <div id="picker"></div>
@@ -227,48 +260,86 @@ function stateOf(i){
   if(i.warranty) return {key:"chase", pill:`<span class="pill yes">warranty · ${i.rehab_contractor_name||i.contractor_name||"rehab contractor"}${i.scheduled_start?" on "+fmt(i.scheduled_start):" — waiting on their date"}</span>`};
   if(i.contractor_internal) return {key:"chase", pill:`<span class="pill yes">maintenance on it</span>`};
   if(i.awarded_bid_id && !i.award_confirmed_at) return {key:"chase", pill:`<span class="pill chase">awarded — waiting on their YES</span>`};
+  if(i.direct_assign && !i.award_confirmed_at) return {key:"chase", pill:`<span class="pill chase">job texted — waiting on their YES</span>`};
+  if(i.award_confirmed_at && !i.scheduled_start) return {key:"chase", pill:`<span class="pill chase">said YES — waiting on a start date</span>`};
+  if(!i.contractor_id && i.cc_contractor_text) return {key:"chase", pill:`<span class="pill chase">assigned in CompanyCam</span>`};
   if(i.award_confirmed_at && i.scheduled_start) return {key:"chase", pill:`<span class="pill yes">confirmed · starts ${fmt(i.scheduled_start)}</span>`};
   return {key:"chase", pill:`<span class="pill chase">in progress</span>`};
 }
 
+// ---- Tom 10/14: four buckets. Every item is in exactly one, and moves right on its own when its step is done. ----
+const BUCKETS = [
+  { k:1, name:"Scope check", q:"Was this on the old scope?",
+    help:"<b>Every new item starts here.</b> YES → find who did the rehab; they fix it free and it jumps to <b>In progress</b>. NO → it moves to <b>Get bids</b>." },
+  { k:2, name:"Get bids", q:"Find contractors, get prices, award",
+    help:"<b>Pick who does it.</b> Text up to 3 contractors for bids, text one contractor directly, or send it to maintenance. Award a bid (or text one contractor) and it moves to <b>In progress</b>." },
+  { k:3, name:"In progress", q:"Someone has it — we're talking to them",
+    help:"<b>The job is out.</b> The system gets their YES and start date, reminds them the day before, and checks in. When they text DONE it moves to <b>Done</b>." },
+  { k:4, name:"Done", q:"Walk it, check it off",
+    help:"<b>Says done → walk the house, then check it off in CompanyCam.</b> Checked-off items stay here 14 days." },
+];
+let BUCKET = 0, HOUSE = "";
+try { BUCKET = Number(localStorage.getItem("rtr-bucket")) || 0; } catch {}
+function setBucket(k){ BUCKET = k; try { localStorage.setItem("rtr-bucket", String(k)); } catch {} render(); window.scrollTo({top:0}); }
+function bucketOf(i){
+  if(i.cc_done || i.status==="done" || i.status==="verified") return 4;
+  if(i.contractor_id || i.cc_contractor_text || i.maint_status || i.warranty) return 3;
+  if(i.scope_check==="pending" && !(i.dispatched_n>0)) return 1;
+  return 2;
+}
+const recentDone = i => i.cc_done && (!i.cc_completed_at || (Date.now()-new Date(i.cc_completed_at))/864e5 <= 14);
+
 function render(){
-  const showDone = $("#show-done").checked, onlyActive = true;
   const byAddr = {};
   for(const i of ITEMS){ (byAddr[i.address] = byAddr[i.address]||[]).push(i); }
-  let open=0, unassigned=0, chase=0, walk=0, bids=0;
-  const blocks=[];
+  // which houses are live (old, abandoned items stay off the board)
+  const live = {};
   for(const [addr, items] of Object.entries(byAddr)){
     const wt = items[0].walkthrough_date, close = items[0].closing_date_sell;
     const openItems = items.filter(i=>!i.cc_done);
-    const activeProp = (wt && new Date(wt+"T12:00:00")>=today) || (close && new Date(close+"T12:00:00")>=today) || openItems.some(i=>i.contractor_id||i.dispatched_n>0);
-    if(onlyActive && !activeProp && openItems.length) continue;
-    if(!openItems.length && !showDone) continue;
-    for(const i of openItems){ open++; const s=stateOf(i).key; if(s==="unassigned")unassigned++; else if(s==="chase")chase++; else if(s==="walk")walk++; else bids++; }
-    const rows = items.filter(i=>showDone||!i.cc_done).map(row).join("");
-    if(!rows) continue;
+    const activeProp = (wt && new Date(wt+"T12:00:00")>=today) || (close && new Date(close+"T12:00:00")>=today) || openItems.some(i=>i.contractor_id||i.dispatched_n>0||i.scope_check!=="pending"||i.status==="done");
+    const keep = items.filter(i=> i.cc_done ? recentDone(i) : activeProp);
+    if(keep.length) live[addr] = keep;
+  }
+  const hs = $("#house"), addrs = Object.keys(live).sort();
+  if(HOUSE && !live[HOUSE]) HOUSE = "";
+  hs.innerHTML = `<option value="">All houses (${addrs.length})</option>` + addrs.map(a=>`<option value="${esc(a)}" ${a===HOUSE?'selected':''}>${esc(a)}</option>`).join("");
+  const shown = HOUSE ? { [HOUSE]: live[HOUSE] } : live;
+  const counts = {1:0,2:0,3:0,4:0}; let walk = 0;
+  for(const items of Object.values(shown)) for(const i of items){ const b = bucketOf(i); counts[b]++; if(b===4 && !i.cc_done) walk++; }
+  if(!BUCKET) BUCKET = [1,2,3,4].find(k=>counts[k]) || 1;
+  $("#steps").innerHTML = BUCKETS.map(s=>`<button class="step ${s.k===BUCKET?'on':''}" onclick="setBucket(${s.k})">
+      <span class="n">${s.k}</span><span class="t">${s.name}</span><span class="c ${counts[s.k]?'':'zero'}">${counts[s.k]}</span>
+      <span class="q">${s.q}${s.k===4&&walk?` · <b style="color:var(--ok)">${walk} to walk</b>`:""}</span></button>`).join("");
+  $("#bucket-help").innerHTML = BUCKETS[BUCKET-1].help;
+  const blocks=[];
+  for(const [addr, all] of Object.entries(shown)){
+    const items = all.filter(i=>bucketOf(i)===BUCKET);
+    if(!items.length) continue;
+    // walk-it items before checked-off ones
+    if(BUCKET===4) items.sort((a,b)=>(a.cc_done?1:0)-(b.cc_done?1:0) || (a.item_no||0)-(b.item_no||0));
+    const rows = items.map(i=>row(i, BUCKET)).join("");
+    const openItems = all.filter(i=>!i.cc_done);
+    const wt = all[0].walkthrough_date, close = all[0].closing_date_sell;
     const daysTo = wt ? Math.round((new Date(wt+"T12:00:00")-today)/864e5) : null;
     blocks.push(`<div class="prop">
       <div class="prop-h">
         <span class="addr">${esc(addr)}</span>
-        ${items[0].rtr_owner?`<span class="meta">owner ${esc(items[0].rtr_owner)}</span>`:""}
-        ${wt?`<span class="meta ${daysTo!==null&&daysTo<3?'red':''}">walk-through ${fmt(wt)}${daysTo!==null?` (${daysTo<0?'past':daysTo+' days'})`:''}</span>`:""}
+        ${all[0].rtr_owner?`<span class="meta">owner ${esc(all[0].rtr_owner)}</span>`:""}
+        ${wt?`<span class="meta ${daysTo!==null&&daysTo<3?'red':''}">walk-through ${fmt(wt)}${daysTo!==null?` (${daysTo<0?'past':daysTo===0?'today':daysTo===1?'tomorrow':daysTo+' days'})`:''}</span>`:""}
         ${close?`<span class="meta">closes ${fmt(close)}</span>`:""}
         <span class="sp"></span>
-        <span class="done-frac"><b>${items.length-openItems.length}</b> of ${items.length} done</span>
-        ${reportBtn(items)}
-        <a href="${esc(items[0].companycam_todo_url)}" target="_blank" rel="noopener">Open in CompanyCam</a>
+        <span class="done-frac"><b>${all.length-openItems.length}</b> of ${all.length} done</span>
+        ${reportBtn(all)}
+        <a href="${esc(all[0].companycam_todo_url)}" target="_blank" rel="noopener">Open in CompanyCam</a>
       </div>
-      ${accessRow(items[0])}
-      <table><thead><tr><th>#</th><th>Remedy</th><th>CompanyCam · contractor · last word</th><th>Assigned to</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+      ${BUCKET===2||BUCKET===3?accessRow(all[0]):""}
+      <table><thead><tr><th>#</th><th>Remedy</th><th>${["","Rehab contractor","Bids","Who has it · last word","Status"][BUCKET]}</th><th>Next step</th></tr></thead><tbody>${rows}</tbody></table>
     </div>`);
   }
-  $("#strip").innerHTML = `
-    <div class="stat"><b>${open}</b><span>open remedy items</span></div>
-    <div class="stat ${unassigned?'bad':''}"><b>${unassigned}</b><span>no contractor yet</span></div>
-    <div class="stat"><b>${bids}</b><span>out for bids</span></div>
-    <div class="stat ${chase?'warn':''}"><b>${chase}</b><span>contractor on it</span></div>
-    <div class="stat ${walk?'ok':''}"><b>${walk}</b><span>need a walk-through</span></div>`;
-  $("#list").innerHTML = blocks.join("") || `<div class="empty">Nothing open. Pull from CompanyCam to refresh.</div>`;
+  const empty = ["", "Nothing waiting on a scope check.", "Nothing to send out for bids.", "Nothing in progress.", "Nothing done in the last 14 days."][BUCKET];
+  $("#list").innerHTML = blocks.join("") || `<div class="empty">${empty}${HOUSE?" (for this house)":""}</div>`;
+  $("#sched").style.display = BUCKET===3 ? "" : "none";
   renderSchedule();
 }
 
@@ -320,42 +391,52 @@ async function saveAccess(e, pid){
   EDIT_ACCESS = null; toast("Lockbox saved"); await load();
 }
 
-function row(i){
-  const st = stateOf(i);
-  const stale = i.last_contact_at && (Date.now()-new Date(i.last_contact_at))/36e5 > 48;
-  const said = i.cc_done
-    ? `<span class="said">Checked off in CompanyCam ${i.cc_completed_at?ago(i.cc_completed_at):""}</span>`
-    : i.last_contact_summary
-      ? `<span class="said ${stale?'stale':''}">${esc(i.last_contact_summary)}<span class="when">${ago(i.last_contact_at)}</span></span>`
-      : (i.contractor_id||i.cc_contractor_text) ? `<span class="said none">No word from contractor yet</span>` : `<span class="said none">—</span>`;
-  const ccFields = [i.cc_price_text?`price ${esc(i.cc_price_text)}`:null, i.cc_finish_date_text?`finish ${esc(i.cc_finish_date_text)}`:null, i.cc_has_been_done?`done? ${esc(i.cc_has_been_done)}`:null].filter(Boolean).join(" · ");
+function contractorSelect(i, first){
   const inTrade = CONTRACTORS.filter(c=>c.trade===i.trade || c.id===i.contractor_id);
   const pool = (SHOW_ALL[i.id] || !i.trade || inTrade.length===0) ? CONTRACTORS : inTrade;
-  const opts = pool.map(c=>`<option value="${c.id}" ${c.id===i.contractor_id?'selected':''}>${esc(c.name)}${pool===CONTRACTORS?' — '+esc(c.trade):''}${c.phone?'':' (no phone)'}</option>`).join("")
+  const seen = new Set();
+  const opts = pool.filter(c=>{ const k=c.name+"|"+(pool===CONTRACTORS?c.trade:""); if(seen.has(k)) return false; seen.add(k); return true; })
+    .map(c=>`<option value="${c.id}" ${c.id===i.contractor_id?'selected':''}>${esc(c.name)}${pool===CONTRACTORS?' — '+esc(c.trade):''}${c.phone||c.is_internal?'':' (no phone)'}</option>`).join("")
     + (pool!==CONTRACTORS ? `<option value="__all__">Show everyone…</option>` : "");
-  const unmatched = i.cc_contractor_text && !i.contractor_id;
+  return `<select onchange="assign('${i.id}', this.value)"><option value="">${first}</option>${opts}</select>`;
+}
+// Tom 10/14: one row per item, four columns: what it is · where it stands · the ONE next step.
+function row(i, b){
+  const st = stateOf(i);
+  const stale = i.last_contact_at && (Date.now()-new Date(i.last_contact_at))/36e5 > 48;
+  const said = i.last_contact_summary
+      ? `<span class="said ${stale?'stale':''}">${esc(i.last_contact_summary)}<span class="when">${ago(i.last_contact_at)}</span></span>`
+      : `<span class="said none">No word yet</span>`;
+  const lw = `<div class="lw"><span class="k">Last word</span>${said}</div>`;
+  const noPhone = i.contractor_id && !i.cc_done && !i.contractor_internal && !(CONTRACTORS.find(c=>c.id===i.contractor_id)||{}).phone
+    ? `<div><button class="ubtn small" onclick="addPhone('${i.contractor_id}').then(ok=>ok&&load())">📞 Add ${esc(i.contractor_name||'their')} phone</button></div>` : "";
+  const report = i.report_excerpt_url ? `<div class="cctext"><a href="${esc(i.report_excerpt_url)}" target="_blank" rel="noopener" style="color:var(--info)">Inspection report${i.report_section?" "+esc(i.report_section):""} (highlighted)</a></div>` : "";
+  let stand = "";
+  if(b===1){
+    stand = i.rehab_contractor_name ? `<div class="whoname">${esc(i.rehab_contractor_name)}</div>` : `<span class="said none">Not answered yet</span>`;
+    if(i.rehab_scope_url) stand += `<div class="cctext"><a href="${esc(i.rehab_scope_url)}" target="_blank" rel="noopener" style="color:var(--info)">Old scope of work ↗</a></div>`;
+  } else if(b===2){
+    const sent = i.dispatched_n>0;
+    stand = (sent ? st.pill : `<span class="pill">not sent yet</span>`) + bidList(i) + (sent ? lw : "") + report;
+  } else if(b===3){
+    const who = i.maint_status ? "Maintenance (Jeriel)" : (i.contractor_name || i.cc_contractor_text || "");
+    const pill = i.maint_status ? (()=>{ const p = MAINT_PILL[i.maint_status]||["chase","maint: "+i.maint_status]; return `<span class="pill ${p[0]==='t1'?'yes':p[0]}">${esc(p[1])}${i.maint_start?' '+esc(String(i.maint_start).slice(5).replace('-','/')):''}</span>`; })() : st.pill;
+    const unmatched = i.cc_contractor_text && !i.contractor_id;
+    stand = `<div class="whoname">${esc(who)}${unmatched?' <span class="unmatched" style="font-size:11px;color:var(--warn)">(from CompanyCam — not in directory)</span>':''}</div>${pill}${noPhone}${lw}${invoiceLine(i)}${report}`;
+  } else {
+    stand = i.cc_done
+      ? `<span class="pill yes">checked off ${i.cc_completed_at?ago(i.cc_completed_at):""}</span>${i.contractor_name?`<div class="cctext">${esc(i.contractor_name)}</div>`:""}`
+      : `<span class="pill walk">says done — walk it</span><div class="whoname">${esc(i.contractor_name||(i.maint_status?"Maintenance":""))}</div>`;
+    stand += (i.cc_photo_count?`<div class="cctext">${i.cc_photo_count} photo${i.cc_photo_count===1?'':'s'} in CompanyCam</div>`:"") + invoiceLine(i);
+  }
   return `<tr class="${i.cc_done?'done':''}" data-id="${i.id}">
     <td class="no">#${i.item_no??""}</td>
     <td class="desc">${esc(i.description)}<br>
       ${i.trade?`<span class="trade" onclick="askTrade('${i.id}')" title="Change trade" style="cursor:pointer">${esc(i.trade)}</span>`:`<span class="trade ask" onclick="askTrade('${i.id}')">set trade</span>`}
+      ${i.warranty?'<span class="trade" style="color:var(--ok);border-color:#3a6b4a">warranty · no charge</span>':''}
     </td>
-    <td><div class="truth">
-      <span class="k">CompanyCam</span><span class="v cc"><span class="box ${i.cc_done?'on':''}">${i.cc_done?'✓':''}</span>${i.cc_done?'done':'not done'}${i.cc_photo_count?`<span class="photos">· ${i.cc_photo_count} photo${i.cc_photo_count===1?'':'s'}</span>`:''}${ccFields?`<span class="photos">· ${ccFields}</span>`:''}</span>
-      <span class="k">Last word</span><span class="v">${said}</span>
-    </div></td>
-    <td class="who">
-      ${st.pill}
-      <select onchange="assign('${i.id}', this.value)" ${i.cc_done?'disabled':''}>
-        <option value="">— pick a contractor —</option>${opts}
-      </select>
-      ${i.contractor_id && !i.cc_done && !(CONTRACTORS.find(c=>c.id===i.contractor_id)||{}).phone ? `<div><button class="ubtn small" onclick="addPhone('${i.contractor_id}').then(ok=>ok&&load())">📞 Add ${esc(i.contractor_name||'their')} phone</button></div>` : ""}
-      ${i.cc_contractor_text?`<div class="cctext ${unmatched?'unmatched':''}">CompanyCam says: <b>${esc(i.cc_contractor_text)}</b>${unmatched?' — not in directory':''}</div>`:""}
-      ${bidList(i)}
-      ${invoiceLine(i)}
-      ${i.report_excerpt_url?`<div class="cctext"><a href="${esc(i.report_excerpt_url)}" target="_blank" rel="noopener" style="color:var(--info)">Inspection report${i.report_section?" "+esc(i.report_section):""} (highlighted)</a></div>`:""}
-    </td>
-    <td class="act">${actionCell(i)}
-    </td>
+    <td class="stand">${stand}</td>
+    <td class="act">${actionCell(i, b)}</td>
   </tr>`;
 }
 
@@ -370,7 +451,7 @@ async function awardBid(itemId, bidId){
   if (!confirm(`Award ${i.address} #${i.item_no} to ${b.contractor} for $${Number(b.price).toLocaleString()}?\n\n${b.start_date ? `They said they can start ${fmt(b.start_date)}. They'll be asked to reply YES.` : `They'll be asked to reply YES with their start date.`}`)) return;
   toast("Sending…");
   const r = await fn("rtr-dispatch", { action:"award", bid_id:bidId });
-  toast(r.error ? r.error : `Awarded to ${r.contractor} — waiting on their YES`);
+  toast(r.error ? r.error : `Awarded to ${r.contractor} — moved to 3 · In progress`);
   await load();
 }
 // Tom 10/14: picking a contractor from the dropdown texts them the job RIGHT AWAY (job, photos, report, lockbox,
@@ -388,21 +469,34 @@ async function assign(id, contractor_id){
   if(!confirm(c.is_internal ? `Send this to maintenance (Slack work order for Jeriel)?\n\n${i.description}` : `Text ${c.name} this job now?\n\n${i.description}\n\nat ${i.address}\n\nThey'll get the job, photos, report and access, and be asked to reply YES with a day.`)) return load();
   toast("Sending…");
   const r = await fn("rtr-dispatch", { action:"assign", item_id:id, contractor_id });
-  toast(r.error ? r.error : r.maintenance ? "Queued for maintenance" : `Texted ${c.name} — waiting on their YES`);
+  toast(r.error ? r.error : r.maintenance ? "Queued for maintenance — moved to 3 · In progress" : `Texted ${c.name} — moved to 3 · In progress`);
   await load();
 }
 const isHold = i => /^HOLD\b/i.test(i.description||"");
-function actionCell(i){
-  if(i.cc_done) return "";
+function actionCell(i, b){
   if(isHold(i)) return `<span class="pill chase">on hold</span> <button class="ubtn small" onclick="releaseHold('${i.id}')">Release hold</button>`;
-  if(i.bundle_id && !i.bundle_primary) return `<span class="pill bids">in one text with #${i.bundle_primary_no??""}</span>`;
-  if(i.scope_check==="pending" && !i.contractor_id && !(i.dispatched_n>0)) return `<button class="ubtn small primary" onclick="scopeCheck('${i.id}')">Was this on the old scope?</button>`;
-  if(i.maint_status){ const p = MAINT_PILL[i.maint_status]||["chase","maint: "+i.maint_status]; return `<span class="pill ${p[0]}">${esc(p[1])}${i.maint_start?' '+esc(String(i.maint_start).slice(5).replace('-','/')):''}</span>`; }
-  if(i.contractor_id) return `<button class="ubtn small" onclick="chase('${i.id}')">Text for status</button>`;
-  const sent = i.dispatched_n>0;
-  if(internalFor(i.trade)) return `<button class="ubtn small primary" onclick="sendInternal('${i.id}')" ${sent?'disabled':''}>${sent?'Sent to maintenance (Slack)':'Send to maintenance'}</button>`;
-  return `<button class="ubtn small primary" onclick="bids('${i.id}')" ${sent?'disabled':''}>${sent?'Bids requested':'Get 3 bids'}</button>`;
+  if(i.bundle_id && !i.bundle_primary && b<4) return `<div class="wait">Goes with #${i.bundle_primary_no??""} (same text, same price). Work it from #${i.bundle_primary_no??""}.</div>`;
+  if(b===1) return `<button class="ubtn small primary" onclick="scopeCheck('${i.id}')">Yes — it was</button><button class="ubtn small" onclick="scopeNoId('${i.id}')">No — get bids</button>
+    <div class="or"><a href="#" style="color:var(--info)" onclick="scopeCheck('${i.id}');return false">Not sure? Look at the old scope</a></div>`;
+  if(b===2){
+    if(i.dispatched_n>0){
+      const nb = (i.bids||[]).length;
+      return `<div class="wait">${nb ? "Tap <b>Award</b> on the bid you want. It moves to In progress." : "Waiting on prices. The system follows up for you (8h, 8h, then daily)."}</div>`;
+    }
+    if(internalFor(i.trade)) return `<button class="ubtn small primary" onclick="sendInternal('${i.id}')">Send to maintenance</button>
+      <div class="or">or text one contractor:</div>${contractorSelect(i, "— pick one —")}`;
+    return `<button class="ubtn small primary" onclick="bids('${i.id}')">Get 3 bids</button>
+      <div class="or">or skip bidding and text one contractor:</div>${contractorSelect(i, "— pick one —")}`;
+  }
+  if(b===3){
+    if(i.maint_status) return `<div class="wait">Jeriel's work order in #project-maint-requests. Updates come from that Slack thread.</div>`;
+    return `${i.contractor_id?`<button class="ubtn small" onclick="chase('${i.id}')">Text for status</button>`:""}
+      <details><summary>Change who has it</summary>${contractorSelect(i, "— pick someone else —")}</details>`;
+  }
+  if(i.cc_done) return "";
+  return `<a class="ubtn small primary" href="${esc(i.companycam_todo_url)}" target="_blank" rel="noopener">Walked it → check off in CompanyCam</a>`;
 }
+async function scopeNoId(id){ SCOPE = { id }; await scopeNo(); }
 // Tom 10/8: items loaded as "HOLD until <reason>: ..." sit until Gabe releases them (e.g. the buyer's chimney report came in).
 async function releaseHold(id){
   const i = ITEMS.find(x=>x.id===id);
@@ -607,7 +701,7 @@ async function scopeNo(){
   const id = SCOPE.id; SCOPE=null; renderScope();
   const { error } = await sb.from("rtr_items").update({ scope_check: "not_on_scope", scope_checked_at: new Date().toISOString(), scope_checked_by: "Remedies page" }).eq("id", id);
   if(error) return toast("Couldn't save: "+error.message);
-  toast("Not on the old scope — now pick bidders or send to maintenance"); await load();
+  toast("Not on the old scope — moved to 2 · Get bids"); await load();
 }
 async function scopeYes(){
   const i = ITEMS.find(x=>x.id===SCOPE.id); const gc = CONTRACTORS.find(c=>c.id===SCOPE.gc); const picked = SCOPE.lines.find(l=>l.line_id===SCOPE.pick);
@@ -615,7 +709,7 @@ async function scopeYes(){
   const body = { action:"warranty", item_id: SCOPE.id, contractor_id: SCOPE.gc, scope_match: picked ? [picked.section, picked.description].filter(Boolean).join(": ") : "" };
   SCOPE=null; renderScope(); toast("Sending…");
   const r = await fn("rtr-dispatch", body);
-  toast(r.error ? r.error : `Sent to ${(r.sent||[]).join(", ")} — waiting on their date`);
+  toast(r.error ? r.error : `Sent to ${(r.sent||[]).join(", ")} — moved to 3 · In progress`);
   await load();
 }
 // ---- maintenance (Tom 10/8): Handyman / General goes to the internal team, same texts, no bid ----
@@ -773,7 +867,7 @@ async function chase(id){
   await load();
 }
 $("#btn-sync").onclick = async () => { $("#btn-sync").disabled=true; $("#btn-sync").textContent="Pulling…"; const r = await fn("cc-rtr",{action:"sync"}); $("#btn-sync").disabled=false; $("#btn-sync").textContent="Pull from CompanyCam"; toast(r.ok?`Pulled ${r.synced} properties`:(r.error||"Pull failed")); await load(); };
-$("#show-done").onchange = render;
+
 load();
 </script>
 </body>
