@@ -66,8 +66,14 @@ tr:last-child td{border-bottom:none}
 tr.done td{opacity:.55}
 td.no{width:34px;color:var(--mute);white-space:nowrap}
 td.desc{max-width:520px;line-height:1.35}
-td.desc .trade{display:inline-block;margin-top:4px;font-size:11px;color:var(--dim);border:1px solid var(--line2);border-radius:4px;padding:1px 6px}
-td.desc .trade.ask{border-style:dashed;color:var(--warn);cursor:pointer}
+td.desc .trade{display:inline-block;margin-top:6px;font-size:11px;color:var(--dim);border:1px solid var(--line2);border-radius:4px;padding:1px 6px}
+/* Tom 10/14: the trade is a real button — bright, with a caret, says it can be changed */
+td.desc button.tradebtn{display:inline-flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;font-weight:500;color:#cfe3ff;background:rgba(124,183,255,.12);border:1px solid #4a7fbf;border-radius:6px;padding:3px 8px 3px 10px;cursor:pointer}
+td.desc button.tradebtn:hover{background:rgba(124,183,255,.25);border-color:var(--info);color:#fff}
+td.desc button.tradebtn .car{font-size:10px;opacity:.9}
+td.desc button.tradebtn .chg{font-size:10.5px;font-weight:400;color:var(--info);border-left:1px solid #4a7fbf;padding-left:6px}
+td.desc button.tradebtn.ask{color:var(--warn);background:rgba(240,179,90,.12);border:1px dashed var(--warn)}
+td.desc button.tradebtn.ask .chg{color:var(--warn);border-color:var(--warn)}
 
 /* the truth line */
 .truth{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;min-width:280px}
@@ -438,7 +444,7 @@ function row(i, b){
   return `<tr class="${i.cc_done?'done':''}" data-id="${i.id}">
     <td class="no">#${i.item_no??""}</td>
     <td class="desc">${esc(i.description)}<br>
-      ${i.trade?`<span class="trade" onclick="askTrade('${i.id}')" title="Change trade" style="cursor:pointer">${esc(i.trade)}</span>`:`<span class="trade ask" onclick="askTrade('${i.id}')">set trade</span>`}
+      ${i.trade?`<button class="tradebtn" onclick="askTrade('${i.id}')" title="Change the trade">${esc(i.trade)} <span class="car">▾</span><span class="chg">change</span></button>`:`<button class="tradebtn ask" onclick="askTrade('${i.id}')">Pick a trade <span class="car">▾</span></button>`}
       ${i.warranty?'<span class="trade" style="color:var(--ok);border-color:#3a6b4a">warranty · no charge</span>':''}
     </td>
     <td class="stand">${stand}</td>
