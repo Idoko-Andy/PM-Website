@@ -234,6 +234,41 @@ tr.flash td{background:rgba(239,111,111,.15);transition:background 1.5s}
 .sb-d{width:110px;font-weight:700;font-size:14.5px;color:var(--ok);white-space:nowrap}
 .sb-r.nod .sb-d{color:var(--warn)}
 .sb-w{flex:1;color:var(--mute);min-width:0}.sb-w b{color:var(--fg)}
+/* Tom 10/14: phone-friendly — big tap targets, everything stacks, nothing wider than the screen */
+@media (max-width:700px){
+  html,body{overflow-x:hidden}
+  .util-bar{padding:6px 10px;flex-wrap:wrap;gap:6px}
+  .site-title{display:none}
+  .util-right{flex-wrap:wrap;gap:6px;width:100%}
+  .util-right .ubtn{flex:1;justify-content:center;padding:8px 6px;font-size:12px}
+  .brand-bar{padding:10px 12px}.brand-sub{display:none}
+  .wrap{padding:12px 12px 60px}
+  .ngbar{flex-wrap:wrap;gap:8px}.ngbar .s{flex-basis:100%}
+  .controls{gap:8px}.controls label{flex:1}.controls select{flex:1;min-height:38px}
+  #cal-btn{min-height:38px}
+  .prop-h{gap:8px 12px;padding:10px 12px}.prop-h .sp{display:none}.prop-h .desk{display:none}
+  .access{padding:8px 12px}
+  tr{padding:12px}
+  td.act{text-align:left!important;padding-top:8px}
+  td.act .ubtn,td.act .pickone,td.act a.ubtn{display:flex;width:100%;justify-content:center;min-height:42px;margin:0 0 8px 0;font-size:14px}
+  td.act .or{text-align:left;margin:4px 0}
+  td.desc button.tradebtn{font-size:13px;padding:6px 10px}
+  .agreed{font-size:15px}
+  .sb-r{flex-wrap:wrap;gap:4px 10px;padding:10px 12px}.sb-d{width:auto}.sb-w{flex-basis:100%}
+  .modal-bg{padding:8px}
+  .modal{max-width:100%}
+  .modal-f{gap:6px}.modal-f .ubtn{min-height:40px;font-size:13px}
+  .gl{flex-wrap:wrap;padding:12px}
+  .gl .gt{flex:1 1 0;min-width:0}
+  .gl .gb{flex-basis:100%;justify-content:flex-start;padding-left:34px}
+  .gl .gb .ubtn{min-height:40px;font-size:13px}
+  .ng-t{grid-template-columns:1fr}.ng-t .btns{align-items:flex-start;flex-direction:row;flex-wrap:wrap}
+  .pick{padding:12px}
+  .dir-tools input,.dir-tools select{min-height:42px;font-size:15px}
+  .hand-f{grid-template-columns:1fr;gap:4px 0}.hand-f > span{margin-top:6px}.hand-f .chk{grid-column:1}
+  .hand-f input,.hand-f select{min-height:42px;font-size:15px}
+  .cal-nav b{flex-basis:100%}
+}
 .bucket-help{font-size:12.5px;color:var(--mute);margin:-4px 0 12px;line-height:1.4}
 .bucket-help b{color:var(--fg);font-weight:600}
 .controls select{background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:4px 6px;font-size:12.5px}
@@ -1160,7 +1195,8 @@ function gabeList(){
   const short = t => esc((t||"").replace(/\s*:\s*Seller Agrees\s*/i,": ").slice(0,55));
   ngGroups().forEach((g,k)=>{ const t0 = g[0];
     const ds = t0.item_id ? [...new Set(g.flatMap(t=>datesIn(t.body, t.created_at)))].slice(0,2) : [];
-    add("Text these people back", "t:"+g.map(t=>t.id).join(","), `Text back ${name(t0.contractor)||esc(t0.phone)}${t0.item_no?` — ${esc(t0.address)} #${t0.item_no}`:""}`,
+    const mg = (t0.reason||"").match(/^(.+?) sent referrals/);
+    add("Text these people back", "t:"+g.map(t=>t.id).join(","), `${mg?"Referrals from ":"Text back "}${name(t0.contractor)||(mg?esc(mg[1]):esc(t0.phone))}${t0.item_no?` — ${esc(t0.address)} #${t0.item_no}`:""}`,
       `They said: "${esc((g[0].body||"[photo]").slice(0,90))}"`,
       (t0.deeplink?`<a class="ubtn small primary" href="${esc(t0.deeplink)}" target="_blank" rel="noopener">Open Quo</a>`:"") + ds.map(d=>` <button class="ubtn small" style="border-color:var(--ok);color:var(--ok)" onclick="scheduleFromText('${t0.item_id}', ${esc(JSON.stringify(t0.contractor||""))}, '${d}')">📅 ${new Date(d+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"numeric",day:"numeric"})}</button>`).join(""),
       `ngHandled(${k})`);
@@ -1300,7 +1336,7 @@ function reportBtn(items){
   const it = items[0]; if(!it.property_id) return "";
   const n = items.filter(i=>i.report_excerpt_url).length;
   return it.report_url
-    ? `<a href="${esc(it.report_url)}" target="_blank" rel="noopener">Inspection report</a><span class="meta">${n} of ${items.length} highlighted</span><a href="#" onclick="pickReport('${it.property_id}',true);return false">Redo highlights</a><a href="#" onclick="pickReport('${it.property_id}');return false">Replace report</a>`
+    ? `<a href="${esc(it.report_url)}" target="_blank" rel="noopener">Inspection report</a><span class="meta">${n} of ${items.length} highlighted</span><a class="desk" href="#" onclick="pickReport('${it.property_id}',true);return false">Redo highlights</a><a class="desk" href="#" onclick="pickReport('${it.property_id}');return false">Replace report</a>`
     : `<button class="ubtn small" onclick="pickReport('${it.property_id}')">Upload inspection report</button>`;
 }
 let LIBS = null;
