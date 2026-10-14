@@ -373,11 +373,23 @@ async function awardBid(itemId, bidId){
   toast(r.error ? r.error : `Awarded to ${r.contractor} — waiting on their YES`);
   await load();
 }
+// Tom 10/14: picking a contractor from the dropdown texts them the job RIGHT AWAY (job, photos, report, lockbox,
+// "reply YES and what day"). Before, it only saved the name and the first text they got was a "checking in" the next morning.
 async function assign(id, contractor_id){
   if(contractor_id==="__all__"){ SHOW_ALL[id]=true; render(); return; }
-  const { error } = await sb.from("rtr_items").update({ contractor_id: contractor_id||null, status: contractor_id?"awarded":"new" }).eq("id", id);
-  if(error) return toast("Couldn't save: "+error.message);
-  toast(contractor_id ? "Assigned" : "Unassigned"); await load();
+  const i = ITEMS.find(x=>x.id===id);
+  if(!contractor_id){
+    const { error } = await sb.from("rtr_items").update({ contractor_id: null, status: "new", direct_assign: false }).eq("id", id);
+    if(error) return toast("Couldn't save: "+error.message);
+    toast("Unassigned"); return load();
+  }
+  let c = CONTRACTORS.find(x=>x.id===contractor_id);
+  if(c && !c.phone && !c.is_internal){ if(!(await addPhone(c.id))) return load(); c = CONTRACTORS.find(x=>x.id===contractor_id); }
+  if(!confirm(c.is_internal ? `Send this to maintenance (Slack work order for Jeriel)?\n\n${i.description}` : `Text ${c.name} this job now?\n\n${i.description}\n\nat ${i.address}\n\nThey'll get the job, photos, report and access, and be asked to reply YES with a day.`)) return load();
+  toast("Sending…");
+  const r = await fn("rtr-dispatch", { action:"assign", item_id:id, contractor_id });
+  toast(r.error ? r.error : r.maintenance ? "Queued for maintenance" : `Texted ${c.name} — waiting on their YES`);
+  await load();
 }
 const isHold = i => /^HOLD\b/i.test(i.description||"");
 function actionCell(i){
