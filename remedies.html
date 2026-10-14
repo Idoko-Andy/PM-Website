@@ -158,7 +158,7 @@ td.stand .whoname{font-size:13px;font-weight:500;margin-bottom:3px}
 td.stand .lw{font-size:12.5px;margin-top:3px}
 td.stand .lw .k{font-size:11px;color:var(--dim);margin-right:6px}
 td.act{width:230px;white-space:normal}
-td.act .ubtn{margin:0 0 6px 4px}
+td.act .ubtn{margin:0 0 6px 4px;white-space:normal;text-align:center;max-width:100%}
 .act .or{font-size:11px;color:var(--dim);margin:2px 0 3px}
 .act select{width:100%;background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:5px 6px;font-size:12px}
 .act details summary{font-size:11.5px;color:var(--dim);cursor:pointer;margin-top:4px}
@@ -272,7 +272,7 @@ const BUCKETS = [
   { k:1, name:"Scope check", q:"Was this on the old scope?",
     help:"<b>Every new item starts here.</b> YES → find who did the rehab; they fix it free and it jumps to <b>In progress</b>. NO → it moves to <b>Get bids</b>." },
   { k:2, name:"Get bids", q:"Find contractors, get prices, award",
-    help:"<b>Pick who does it.</b> Text up to 3 contractors for bids, text one contractor directly, or send it to maintenance. Award a bid (or text one contractor) and it moves to <b>In progress</b>." },
+    help:"<b>Everything gets a bid first.</b> Ask up to 3 contractors (or just one) for a price, or send it to maintenance. When you tap <b>Award</b> on a bid it moves to <b>In progress</b>." },
   { k:3, name:"In progress", q:"Someone has it — we're talking to them",
     help:"<b>The job is out.</b> The system gets their YES and start date, reminds them the day before, and checks in. When they text DONE it moves to <b>Done</b>." },
   { k:4, name:"Done", q:"Walk it, check it off",
@@ -281,10 +281,14 @@ const BUCKETS = [
 let BUCKET = 0, HOUSE = "";
 try { BUCKET = Number(localStorage.getItem("rtr-bucket")) || 0; } catch {}
 function setBucket(k){ BUCKET = k; try { localStorage.setItem("rtr-bucket", String(k)); } catch {} render(); window.scrollTo({top:0}); }
+// Tom 10/14: everything is a bid first. "In progress" only once a bid is awarded (or it's warranty / maintenance).
+// Someone just named in CompanyCam with no bid is still in step 1 or 2.
+const awarded = i => !!(i.awarded_bid_id || i.warranty || i.maint_status || i.contractor_internal || i.award_confirmed_at);
+const biddingOut = i => ["dispatched","bids_in"].includes(i.status) || (i.bids||[]).length>0 || i.dispatched_n>0;
 function bucketOf(i){
   if(i.cc_done || i.status==="done" || i.status==="verified") return 4;
-  if(i.contractor_id || i.cc_contractor_text || i.maint_status || i.warranty) return 3;
-  if(i.scope_check==="pending" && !(i.dispatched_n>0)) return 1;
+  if(awarded(i)) return 3;
+  if(i.scope_check==="pending" && !biddingOut(i)) return 1;
   return 2;
 }
 const recentDone = i => i.cc_done && (!i.cc_completed_at || (Date.now()-new Date(i.cc_completed_at))/864e5 <= 14);
@@ -414,10 +418,12 @@ function row(i, b){
   let stand = "";
   if(b===1){
     stand = i.rehab_contractor_name ? `<div class="whoname">${esc(i.rehab_contractor_name)}</div>` : `<span class="said none">Not answered yet</span>`;
+    if(i.contractor_name||i.cc_contractor_text) stand += `<div class="cctext">${esc(i.contractor_name||i.cc_contractor_text)} named in CompanyCam — after this, ask them for a bid</div>`;
     if(i.rehab_scope_url) stand += `<div class="cctext"><a href="${esc(i.rehab_scope_url)}" target="_blank" rel="noopener" style="color:var(--info)">Old scope of work ↗</a></div>`;
   } else if(b===2){
-    const sent = i.dispatched_n>0;
-    stand = (sent ? st.pill : `<span class="pill">not sent yet</span>`) + bidList(i) + (sent ? lw : "") + report;
+    const sent = biddingOut(i);
+    const named = i.contractor_name || i.cc_contractor_text;
+    stand = (sent ? st.pill : named ? `<span class="pill chase">${esc(named)} named in CompanyCam — no bid yet</span>` : `<span class="pill">not sent yet</span>`) + bidList(i) + (sent||named ? lw : "") + report;
   } else if(b===3){
     const who = i.maint_status ? "Maintenance (Jeriel)" : (i.contractor_name || i.cc_contractor_text || "");
     const pill = i.maint_status ? (()=>{ const p = MAINT_PILL[i.maint_status]||["chase","maint: "+i.maint_status]; return `<span class="pill ${p[0]==='t1'?'yes':p[0]}">${esc(p[1])}${i.maint_start?' '+esc(String(i.maint_start).slice(5).replace('-','/')):''}</span>`; })() : st.pill;
@@ -466,10 +472,10 @@ async function assign(id, contractor_id){
   }
   let c = CONTRACTORS.find(x=>x.id===contractor_id);
   if(c && !c.phone && !c.is_internal){ if(!(await addPhone(c.id))) return load(); c = CONTRACTORS.find(x=>x.id===contractor_id); }
-  if(!confirm(c.is_internal ? `Send this to maintenance (Slack work order for Jeriel)?\n\n${i.description}` : `Text ${c.name} this job now?\n\n${i.description}\n\nat ${i.address}\n\nThey'll get the job, photos, report and access, and be asked to reply YES with a day.`)) return load();
+  if(!confirm(c.is_internal ? `Send this to maintenance (Slack work order for Jeriel)?\n\n${i.description}` : `Ask ${c.name} to bid this job?\n\n${i.description}\n\nat ${i.address}\n\nSame as Get 3 bids, just one contractor: "interested?" → job details → their price → you award it.`)) return load();
   toast("Sending…");
   const r = await fn("rtr-dispatch", { action:"assign", item_id:id, contractor_id });
-  toast(r.error ? r.error : r.maintenance ? "Queued for maintenance — moved to 3 · In progress" : `Texted ${c.name} — moved to 3 · In progress`);
+  toast(r.error ? r.error : r.maintenance ? "Queued for maintenance — moved to 3 · In progress" : `Asked ${c.name} for a bid — waiting on their price`);
   await load();
 }
 const isHold = i => /^HOLD\b/i.test(i.description||"");
@@ -479,19 +485,20 @@ function actionCell(i, b){
   if(b===1) return `<button class="ubtn small primary" onclick="scopeCheck('${i.id}')">Yes — it was</button><button class="ubtn small" onclick="scopeNoId('${i.id}')">No — get bids</button>
     <div class="or"><a href="#" style="color:var(--info)" onclick="scopeCheck('${i.id}');return false">Not sure? Look at the old scope</a></div>`;
   if(b===2){
-    if(i.dispatched_n>0){
+    if(biddingOut(i)){
       const nb = (i.bids||[]).length;
       return `<div class="wait">${nb ? "Tap <b>Award</b> on the bid you want. It moves to In progress." : "Waiting on prices. The system follows up for you (8h, 8h, then daily)."}</div>`;
     }
     if(internalFor(i.trade)) return `<button class="ubtn small primary" onclick="sendInternal('${i.id}')">Send to maintenance</button>
       <div class="or">or text one contractor:</div>${contractorSelect(i, "— pick one —")}`;
-    return `<button class="ubtn small primary" onclick="bids('${i.id}')">Get 3 bids</button>
-      <div class="or">or skip bidding and text one contractor:</div>${contractorSelect(i, "— pick one —")}`;
+    const named = i.contractor_id && CONTRACTORS.find(c=>c.id===i.contractor_id);
+    return (named ? `<button class="ubtn small primary" onclick="assign('${i.id}','${named.id}')">Ask ${esc(named.name)} for a bid</button>` : "")
+      + `<button class="ubtn small ${named?'':'primary'}" onclick="bids('${i.id}')">Get 3 bids</button>
+      <div class="or">or ask just one contractor for a bid:</div>${contractorSelect(i, "— pick one —")}`;
   }
   if(b===3){
     if(i.maint_status) return `<div class="wait">Jeriel's work order in #project-maint-requests. Updates come from that Slack thread.</div>`;
-    return `${i.contractor_id?`<button class="ubtn small" onclick="chase('${i.id}')">Text for status</button>`:""}
-      <details><summary>Change who has it</summary>${contractorSelect(i, "— pick someone else —")}</details>`;
+    return `${i.contractor_id?`<button class="ubtn small" onclick="chase('${i.id}')">Text for status</button>`:""}`;
   }
   if(i.cc_done) return "";
   return `<a class="ubtn small primary" href="${esc(i.companycam_todo_url)}" target="_blank" rel="noopener">Walked it → check off in CompanyCam</a>`;
