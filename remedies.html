@@ -172,7 +172,7 @@ a.ubtn{text-decoration:none}
 .dir-tools input,.dir-tools select{background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:6px 8px;font-size:12.5px}
 .dir-tools input{flex:1;min-width:160px}
 .dir-g{padding:8px 16px 4px;font-size:11px;letter-spacing:.5px;color:var(--mute);text-transform:uppercase;background:var(--panel2);border-bottom:1px solid var(--line);position:sticky;top:0}
-.dir-r{display:grid;grid-template-columns:minmax(0,2fr) 120px 110px 190px auto;gap:8px;align-items:center;padding:7px 16px;border-bottom:1px solid var(--line);font-size:12.5px}
+.dir-r{display:grid;grid-template-columns:minmax(0,2fr) 120px 110px 170px 150px auto;gap:8px;align-items:center;padding:7px 16px;border-bottom:1px solid var(--line);font-size:12.5px}
 .dir-r small{display:block;color:var(--dim);font-size:11px}
 .dir-r select{background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:4px 6px;font-size:12px;width:100%}
 .dir-r .nophone{color:var(--warn)}
@@ -354,7 +354,7 @@ function toast(m){ const t=$("#toast"); t.textContent=m; t.classList.add("show")
 async function load(){
   const [a,b] = await Promise.all([
     sb.from("v_rtr_tracker").select("*").not("cc_task_id","is",null).neq("status","cancelled").order("address").order("item_no"),
-    sb.from("contractor_directory").select("id,name,trade,phone,vetting_tier,jobs_done_n,is_internal,tracker_props_n,tracker_last_date,contact_name,tracker_name").eq("is_archived",false).eq("active",true).order("trade").order("vetting_tier").order("jobs_done_n",{ascending:false,nullsFirst:false}),
+    sb.from("contractor_directory").select("id,name,trade,phone,vetting_tier,jobs_done_n,is_internal,tracker_props_n,tracker_last_date,contact_name,tracker_name,contact_pref,email").eq("is_archived",false).eq("active",true).order("trade").order("vetting_tier").order("jobs_done_n",{ascending:false,nullsFirst:false}),
   ]);
   if(a.error){ $("#list").innerHTML=`<div class="empty">Couldn't load remedies: ${esc(a.error.message)}</div>`; return; }
   ITEMS = a.data||[]; CONTRACTORS = b.data||[];
@@ -557,7 +557,7 @@ function renderPickOne(){
   $("#picker").innerHTML = `<div class="modal-bg" onclick="if(event.target===this){P1=null;renderPickOne()}"><div class="modal">
     <div class="modal-h"><b>Ask one contractor for a bid</b><p>#${i.item_no??""} ${esc(i.address)} — ${esc((i.description||"").slice(0,120))}</p></div>
     <div class="dir-tools"><input id="p1-q" placeholder="Search any name, trade or phone…" value="${esc(P1.q)}" oninput="P1.q=this.value;renderPickOne();const e=$('#p1-q');e.focus();e.setSelectionRange(e.value.length,e.value.length)"></div>
-    <div class="modal-b">${list.map(c=>`<div class="pick" onclick="P1=null;renderPickOne();assign('${i.id}','${c.id}')"><span class="nm">${esc(c.name)}<small>${esc(c.trade)}${c.tracker_props_n?` · ${c.tracker_props_n} houses with us`:''}</small></span><span class="tier ${c.phone?'t1':''}">${c.phone?esc(c.phone):'no phone'}</span></div>`).join("") || '<div class="sched-empty">No one matches. Try another name, or add them under Contractors by trade.</div>'}</div>
+    <div class="modal-b">${list.map(c=>`<div class="pick" onclick="P1=null;renderPickOne();assign('${i.id}','${c.id}')"><span class="nm">${esc(c.name)}<small>${esc(c.trade)}${c.tracker_props_n?` · ${c.tracker_props_n} houses with us`:''}</small></span><span class="tier ${c.phone?'t1':''}">${(c.contact_pref||'text')!=='text'?'📞 '+c.contact_pref+' only':c.phone?esc(c.phone):'no phone'}</span></div>`).join("") || '<div class="sched-empty">No one matches. Try another name, or add them under Contractors by trade.</div>'}</div>
     <div class="modal-f">${!q?`<button class="ubtn small" onclick="P1.all=!P1.all;renderPickOne()">${P1.all?'Only '+esc(i.trade||''):'Show every trade'}</button>`:''}<button class="ubtn small" onclick="addContractor(ITEMS.find(x=>x.id===P1.id).trade).then(c=>{ if(c){ const id=P1.id; P1=null; renderPickOne(); assign(id, c.id); } })">＋ Someone new</button><button class="ubtn small flagbtn" onclick="const id=P1.id;P1=null;renderPickOne();flagMgmt(id)">🚩 Flag management</button><span class="sp"></span><button class="ubtn small" onclick="P1=null;renderPickOne()">Cancel</button></div>
   </div></div>`;
 }
@@ -634,7 +634,7 @@ async function assign(id, contractor_id){
     toast("Unassigned"); return load();
   }
   let c = CONTRACTORS.find(x=>x.id===contractor_id);
-  if(c && !c.phone && !c.is_internal){ if(!(await addPhone(c.id))) return load(); c = CONTRACTORS.find(x=>x.id===contractor_id); }
+  if(c && !c.phone && !c.is_internal && (c.contact_pref||"text")==="text"){ if(!(await addPhone(c.id))) return load(); c = CONTRACTORS.find(x=>x.id===contractor_id); }
   if(!c.is_internal) return previewSend({ id, ids:[contractor_id], action:"assign" });
   if(!confirm(`Send this to maintenance (Slack work order for Jeriel)?\n\n${i.description}`)) return load();
   toast("Sending…");
@@ -664,6 +664,7 @@ function actionCell(i, b){
   }
   if(b===3){
     if(i.maint_status) return `<div class="wait">Jeriel's work order in #project-maint-requests. Updates come from that Slack thread.</div>`;
+    if(i.warranty && !i.scheduled_start && (!i.bundle_id || i.bundle_primary)) return `${/didn't go through/.test(i.last_contact_summary||"")?`<div class="wait" style="color:var(--bad)">⚠️ The text didn't go through.</div>`:""}<button class="ubtn small ${/didn't go through/.test(i.last_contact_summary||"")?'primary':''}" onclick="resendScope('${i.id}')">↻ Send the job text again</button>${i.contractor_id?`<button class="ubtn small" onclick="chase('${i.id}')">Text for status</button>`:""}`;
     return `${i.contractor_id?`<button class="ubtn small" onclick="chase('${i.id}')">Text for status</button>`:""}`;
   }
   if(i.cc_done) return "";
@@ -800,7 +801,7 @@ function renderPicker(){
   const i = ITEMS.find(x=>x.id===PICK.id);
   const pq = (PICK.q||"").toLowerCase();
   const list = (PICK.all || pq ? ranked(null) : ranked(i.trade)).filter(c=>!pq || PICK.slots.includes(c.id) || [c.name,c.contact_name,c.trade,c.phone].join(" ").toLowerCase().includes(pq));
-  const label = c => `${c.name}${PICK.all?' — '+c.trade:''} · ${c.tracker_props_n?c.tracker_props_n+' houses with us, last '+lastMon(c.tracker_last_date):tierShort(c.vetting_tier)+(c.jobs_done_n?' · '+c.jobs_done_n+' jobs':'')}${c.phone?'':' · NO PHONE (tap to add)'}`;
+  const label = c => `${c.name}${PICK.all?' — '+c.trade:''} · ${c.tracker_props_n?c.tracker_props_n+' houses with us, last '+lastMon(c.tracker_last_date):tierShort(c.vetting_tier)+(c.jobs_done_n?' · '+c.jobs_done_n+' jobs':'')}${(c.contact_pref||'text')!=='text'?' · 📞 '+c.contact_pref.toUpperCase()+' ONLY — goes on Gabe\'s list':c.phone?'':' · NO PHONE (tap to add)'}`;
   const slot = k => {
     const taken = PICK.slots.filter((v,j)=>j!==k && v);
     const opts = list.map(c=>`<option value="${c.id}" ${PICK.slots[k]===c.id?'selected':''} ${taken.includes(c.id)?'disabled':''}>${esc(label(c))}</option>`).join("");
@@ -813,7 +814,7 @@ function renderPicker(){
     PICK.sibs.map(x=>`<label class="pick" style="cursor:pointer"><input type="checkbox" ${PICK.extra.has(x.id)?'checked':''} onchange="this.checked?PICK.extra.add('${x.id}'):PICK.extra.delete('${x.id}');renderPicker()" style="accent-color:#5ad17a">
       <span class="nm">#${x.item_no??""} ${esc((x.description||"").slice(0,110))}<small>${x.scope_check==="pending"?"scope check not answered yet — including it counts as NOT on the old scope":"one bid covers all items checked"}</small></span></label>`).join("") : "";
   const n = PICK.slots.filter(Boolean).length;
-  const need = Math.min(3, list.filter(c=>c.phone).length); // Tom 10/12: TRY for 3; fewer only when fewer exist (adding a phone to a NO PHONE guy counts)
+  const need = Math.min(3, list.filter(c=>c.phone||(c.contact_pref||"text")!=="text").length); // Tom 10/12: TRY for 3; fewer only when fewer exist (adding a phone to a NO PHONE guy counts)
   $("#picker").innerHTML = `<div class="modal-bg" onclick="if(event.target===this){PICK=null;renderPicker()}"><div class="modal">
     <div class="modal-h"><b>Get 3 bids — who should we text?</b><p>${esc(i.address)} #${i.item_no??""} — ${esc(i.description.slice(0,140))}</p>
       <p>Pick your first, second and third choice. The list shows each contractor's rating and how many jobs they've done with us. Pick three. If there aren't three in the list, pick everyone there is.</p></div>
@@ -849,14 +850,14 @@ async function addContractor(trade){
   if(!name) return null;
   const pretty = tidyPhone(prompt(`${name}'s cell number:`, "")||"");
   if(!pretty){ toast("That doesn't look like a 10-digit number"); return null; }
-  const { data, error } = await sb.from("contractor_directory").insert({ name, trade: trade||"Handyman / General", phone: pretty, active: true, is_archived: false, vetting_tier: "Unrated", source_list: "added on Remedies page" }).select("id,name,trade,phone,vetting_tier,jobs_done_n,is_internal,tracker_props_n,tracker_last_date,contact_name,tracker_name").single();
+  const { data, error } = await sb.from("contractor_directory").insert({ name, trade: trade||"Handyman / General", phone: pretty, active: true, is_archived: false, vetting_tier: "Unrated", source_list: "added on Remedies page" }).select("id,name,trade,phone,vetting_tier,jobs_done_n,is_internal,tracker_props_n,tracker_last_date,contact_name,tracker_name,contact_pref,email").single();
   if(error){ toast("Couldn't add: "+error.message); return null; }
   CONTRACTORS.push(data); toast(`Added ${name}: ${pretty}`);
   return data;
 }
 async function pickSlot(k, id){
   const c = CONTRACTORS.find(x=>x.id===id);
-  if(c && !c.phone && !(await addPhone(id))){ PICK.slots[k]=""; renderPicker(); return; }
+  if(c && !c.phone && (c.contact_pref||"text")==="text" && !(await addPhone(id))){ PICK.slots[k]=""; renderPicker(); return; }
   PICK.slots[k]=id; renderPicker();
 }
 async function pickNew(){
@@ -1016,14 +1017,17 @@ function renderScope(){
   $("#picker").innerHTML = `<div class="modal-bg" onclick="if(event.target===this){SCOPE=null;renderScope()}"><div class="modal">
     <div class="modal-h"><b>Was this on the old scope of work?</b><p>#${i.item_no??""} ${esc(i.address)} — ${esc((i.description||"").slice(0,160))}</p>
       <p>If the rehab contractor was already paid to do this, it goes back to them to fix for free. Tap the matching scope line if you see it (optional), then answer.${i.rehab_scope_url?` <a href="${esc(i.rehab_scope_url)}" target="_blank" style="color:var(--info)">Open the full scope doc ↗</a>`:""}</p></div>
-    <div class="modal-b">${lines}${who}</div>
+    <div class="modal-b">${lines}${who}${(()=>{ const sib = ITEMS.filter(x=>x.id!==i.id && x.property_id===i.property_id && x.scope_check==="pending" && !x.cc_done && !x.contractor_id && !x.bundle_id);
+      if(!sib.length) return "";
+      SCOPE.extra = SCOPE.extra || new Set();
+      return `<div class="ddl" style="padding:10px 16px 2px;font-size:11px;letter-spacing:.4px;color:var(--mute)">ALSO ON THEIR SCOPE? CHECK THEM — IT ALL GOES IN ONE TEXT</div>` + sib.map(x=>`<label class="pick" style="cursor:pointer"><input type="checkbox" ${SCOPE.extra.has(x.id)?'checked':''} onchange="this.checked?SCOPE.extra.add('${x.id}'):SCOPE.extra.delete('${x.id}');renderScope()" style="accent-color:#5ad17a;width:18px;height:18px"><span class="nm">#${x.item_no??""} ${esc((x.description||"").slice(0,110))}</span></label>`).join(""); })()}</div>
     <div class="modal-f" style="flex-wrap:wrap;gap:8px">
       <label style="font-size:12.5px;color:var(--mute)">Who did the rehab?${SCOPE.guess?` <span style="color:var(--info)">(looks like ${esc(SCOPE.guess)})</span>`:''} <select style="background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:5px 6px;font-size:12.5px;max-width:220px" onchange="SCOPE.gc=this.value;renderScope()"><option value="">— pick —</option>${gcOpts}</select></label>
       ${gcSel ? `<button class="ubtn small" onclick="addPhone('${gcSel.id}').then(renderScope)">${gcSel.phone?'📞 '+esc(gcSel.phone):'📞 Add phone'}</button>` : `<button class="ubtn small" onclick="addContractor('GC / Full Reno').then(c=>{ if(c){ SCOPE.gc=c.id; } renderScope(); })">＋ Not on the list</button>`}
       <span class="sp"></span>
       <button class="ubtn small" onclick="SCOPE=null;renderScope()">Cancel</button>
       <button class="ubtn small" onclick="scopeNo()">NO — not on scope</button>
-      <button class="ubtn small primary" ${gcSel&&gcSel.phone?'':'disabled'} title="${gcSel&&!gcSel.phone?'Add their phone first':''}" onclick="scopeYes()">YES — send back to them, no charge</button></div>
+      <button class="ubtn small primary" ${gcSel&&(gcSel.phone||(gcSel.contact_pref||"text")!=="text")?'':'disabled'} title="${gcSel&&!gcSel.phone?'Add their phone first':''}" onclick="scopeYes()">YES — send back to them, no charge</button></div>
   </div></div>`;
 }
 async function scopeNo(){
@@ -1034,11 +1038,13 @@ async function scopeNo(){
 }
 async function scopeYes(){
   const i = ITEMS.find(x=>x.id===SCOPE.id); const gc = CONTRACTORS.find(c=>c.id===SCOPE.gc); const picked = SCOPE.lines.find(l=>l.line_id===SCOPE.pick);
-  if(!confirm(`Text ${gc.name} that this was on their scope and they need to fix it at no charge?\n\n${i.description}\n\nat ${i.address}`)) return;
-  const body = { action:"warranty", item_id: SCOPE.id, contractor_id: SCOPE.gc, scope_match: picked ? [picked.section, picked.description].filter(Boolean).join(": ") : "" };
+  const extra = [...(SCOPE.extra||[])];
+  const list = [i, ...extra.map(x=>ITEMS.find(y=>y.id===x))].filter(Boolean).map(x=>"#"+(x.item_no??"")+" "+(x.description||"").slice(0,70)).join("\n");
+  if(!confirm(`${(gc.contact_pref||"text")!=="text" ? `${gc.name} doesn't do texts — this goes on Gabe's list to call them about:` : `Text ${gc.name} that ${extra.length?"these were":"this was"} on their scope and they need to fix ${extra.length?"them":"it"} at no charge?`}\n\n${list}\n\nat ${i.address}${extra.length?"\n\nAll in ONE text.":""}`)) return;
+  const body = { action:"warranty", item_id: SCOPE.id, contractor_id: SCOPE.gc, extra_item_ids: extra, scope_match: picked ? [picked.section, picked.description].filter(Boolean).join(": ") : "" };
   SCOPE=null; renderScope(); toast("Sending…");
   const r = await fn("rtr-dispatch", body);
-  toast(r.error ? r.error : `Sent to ${(r.sent||[]).join(", ")} — moved to 3 · In progress`);
+  toast(r.error ? r.error : r.manual?.length ? `${r.manual[0]} doesn't text — it's on Gabe's list to call them` : `Sent to ${(r.sent||[]).join(", ")}${r.items>1?` (${r.items} items in one text)`:""} — moved to 3 · In progress`);
   await load();
 }
 // ---- maintenance (Tom 10/8): Handyman / General goes to the internal team, same texts, no bid ----
@@ -1124,6 +1130,7 @@ function renderDir(){
       <span>${c.phone?esc(c.phone):'<span class="nophone">no phone</span>'} <a href="#" style="color:var(--info);font-size:11px" onclick="addPhone('${c.id}').then(renderDir);return false">${c.phone?'edit':'add'}</a></span>
       <span>${c.tracker_props_n?`${c.tracker_props_n} houses<small>last ${lastMon(c.tracker_last_date)}</small>`:'<small>not in trackers</small>'}</span>
       <select title="Move to a different trade" onchange="dirMove('${c.id}',this.value)">${tOpts(c.trade)}</select>
+      <select title="How they want to be reached" onchange="dirPref('${c.id}',this.value)" style="${(c.contact_pref||'text')!=='text'?'border-color:var(--warn);color:var(--warn)':''}"><option value="text" ${(c.contact_pref||'text')==='text'?'selected':''}>Texts ✓</option><option value="call" ${c.contact_pref==='call'?'selected':''}>Call only — no texts</option><option value="email" ${c.contact_pref==='email'?'selected':''}>Email only — no texts</option></select>
       <span style="white-space:nowrap"><button class="ubtn small" onclick="dirAdd('${c.id}')" title="Also list them under another trade">＋ trade</button> <button class="ubtn small" onclick="dirRemove('${c.id}')" title="Take them out of this trade's list">Remove</button></span></div>`;
   }
   $("#picker").innerHTML = `<div class="modal-bg" onclick="if(event.target===this){DIR=null;renderDir()}"><div class="modal wide">
@@ -1134,6 +1141,13 @@ function renderDir(){
     <div class="modal-b" style="max-height:65vh">${html||'<div class="sched-empty">No one matches.</div>'}</div>
     <div class="modal-f"><span class="sp"></span><button class="ubtn small primary" onclick="DIR=null;renderDir();load()">Done</button></div>
   </div></div>`;
+}
+async function dirPref(id, v){
+  const c = CONTRACTORS.find(x=>x.id===id); if(!c) return;
+  const { error } = await sb.from("contractor_directory").update({ contact_pref: v }).eq("name", c.name);
+  if(error) return toast("Couldn't save: "+error.message);
+  CONTRACTORS.forEach(x=>{ if(x.name===c.name) x.contact_pref = v; });
+  toast(v==="text" ? `${c.name}: texts` : `${c.name}: no texts — their jobs go on Gabe's list to ${v}`); renderDir();
 }
 async function dirMove(id, t){
   const c = CONTRACTORS.find(x=>x.id===id); if(!c || c.trade===t) return;
@@ -1152,7 +1166,7 @@ async function dirAdd(id){
   const tt = TRADES.find(x=>x.toLowerCase()===t.trim().toLowerCase()) || t.trim();
   if(CONTRACTORS.some(x=>x.name===c.name && x.trade===tt)) return toast(`${c.name} is already in ${tt}`);
   const row = { name:c.name, trade:tt, phone:c.phone, contact_name:c.contact_name, vetting_tier:c.vetting_tier||"Unrated", tracker_props_n:c.tracker_props_n, tracker_last_date:c.tracker_last_date, tracker_name:c.tracker_name, active:true, is_archived:false, source_list:"added on Remedies page" };
-  const { data, error } = await sb.from("contractor_directory").insert(row).select("id,name,trade,phone,vetting_tier,jobs_done_n,is_internal,tracker_props_n,tracker_last_date,contact_name,tracker_name").single();
+  const { data, error } = await sb.from("contractor_directory").insert(row).select("id,name,trade,phone,vetting_tier,jobs_done_n,is_internal,tracker_props_n,tracker_last_date,contact_name,tracker_name,contact_pref,email").single();
   if(error) return toast("Couldn't add: "+error.message);
   CONTRACTORS.push(data); if(!TRADES.includes(tt)){ TRADES.push(tt); TRADES.sort(); }
   toast(`${c.name} added to ${tt}`); renderDir();
@@ -1169,10 +1183,10 @@ async function dirRemove(id){
 let NG = { texts: [], todo: [] }, NG_OPEN = false;
 async function loadNeedsGabe(){
   try {
-    const [t, d] = await Promise.all([ sb.rpc("rtr_needs_gabe_texts"), sb.rpc("rtr_gabe_todo_page") ]);
-    NG.texts = t.data || [];
+    const [t, d, cl] = await Promise.all([ sb.rpc("rtr_needs_gabe_texts"), sb.rpc("rtr_gabe_todo_page"), sb.rpc("rtr_needs_gabe_calls") ]);
+    NG.texts = t.data || []; NG.calls = cl.data || [];
     NG.todo = (d.data || []).filter(x=>!/ANSWER IN QUO/i.test(x.section));
-  } catch { NG = { texts: [], todo: [] }; }
+  } catch { NG = { texts: [], todo: [], calls: [] }; }
 }
 function ngGroups(){
   const g = new Map();
@@ -1201,6 +1215,12 @@ function gabeList(){
       (t0.deeplink?`<a class="ubtn small primary" href="${esc(t0.deeplink)}" target="_blank" rel="noopener">Open Quo</a>`:"") + ds.map(d=>` <button class="ubtn small" style="border-color:var(--ok);color:var(--ok)" onclick="scheduleFromText('${t0.item_id}', ${esc(JSON.stringify(t0.contractor||""))}, '${d}')">📅 ${new Date(d+"T12:00:00").toLocaleDateString("en-US",{weekday:"short",month:"numeric",day:"numeric"})}</button>`).join(""),
       `ngHandled(${k})`);
   });
+  // Tom 10/15: companies that don't text (EPM, CPR...) — Gabe calls or emails them with the same job details
+  (NG.calls||[]).forEach((c,k)=>add("Call or email these — they don't text", "c:"+c.id,
+    `${c.stage==="invited"?"Ask":"Tell"} ${name(c.contractor)} ${c.stage==="invited"?"for a bid on":"about"} ${esc(c.address)} #${c.item_no??""}${c.phone?` — ${esc(c.phone)}`:""}`,
+    `Read them the job (Copy button). After you talk, use ✍ Log it by hand on the item to enter their price or their day.`,
+    `<button class="ubtn small primary" onclick="copyJob(${k})">Copy the job</button>${c.email?` <a class="ubtn small" href="mailto:${esc(c.email)}?subject=${encodeURIComponent("Job at "+(c.address||""))}&body=${encodeURIComponent((c.body||"").replace(/^Hey [^,\n]*,\s*/,""))}">Email</a>`:""}${c.phone?` <a class="ubtn small" href="tel:${esc(c.phone)}">Call</a>`:""}`,
+    `ngContacted('${c.id}')`));
   const ti = isoD(today);
   ITEMS.filter(i=>!i.cc_done && i.status!=="done" && (i.scheduled_start===ti || String(i.maint_start||"").slice(0,10)===ti)).forEach(i=>
     add("Starting today", "s:"+i.id, `${name(i.contractor_name)||"Maintenance"} starts today — ${esc(i.address)} #${i.item_no}`, `Call and make sure they show up. ${short(i.description)}`, `<button class="ubtn small" onclick="goItem('${i.id}')">See it</button>`));
@@ -1314,6 +1334,18 @@ async function flagMgmt(id, what){
   toast("Sending…");
   const r = await fn("rtr-dispatch", { action:"flag_management", item_id:id, what:w.trim() });
   toast(r.error ? r.error : `Texted ${r.to} for referrals — his answer will show up on Gabe's list`);
+  await load();
+}
+async function copyJob(k){ const c = (NG.calls||[])[k]; if(!c) return; const t = (c.body||"").replace(/^Hey [^,\n]*,\s*/,"");
+  try { await navigator.clipboard.writeText(t); toast("Copied — paste it into an email or read it to them"); } catch { prompt("Copy this:", t); } }
+async function ngContacted(id){ const { error } = await sb.rpc("rtr_mark_contacted", { p_id: id }); if(error) return toast("Couldn't save: "+error.message); toast("Marked as reached"); await loadNeedsGabe(); render(); }
+// Tom 10/15: rehab-scope texts that the carrier blocked can be sent again (new wording)
+async function resendScope(id){
+  const i = ITEMS.find(x=>x.id===id); if(!i) return;
+  if(!confirm(`Send the job text to ${i.contractor_name||"them"} again?\n\n${i.description}\n\nat ${i.address}`)) return;
+  toast("Sending…");
+  const r = await fn("rtr-dispatch", { action:"warranty", item_id:id, resend:true });
+  toast(r.error ? r.error : r.manual?.length ? `${r.manual[0]} doesn't text — it's on Gabe's list to call` : `Sent again to ${(r.sent||[]).join(", ")}`);
   await load();
 }
 // ---- invoices made for the contractor (Tom 10/8) ----
