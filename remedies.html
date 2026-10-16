@@ -143,7 +143,7 @@ td.act .ubtn{margin-left:4px}
 .toast.show{display:block}
 
 /* Tom 10/14: four buckets, left to right. Each item lives in one and has one next step. */
-.steps{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:14px}
+.steps{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:14px}
 .step{position:relative;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px;cursor:pointer;text-align:left;color:var(--fg)}
 .step:hover{border-color:#555}
 .step.on{border-color:#fff;background:var(--panel2);box-shadow:0 0 0 1px #fff inset}
@@ -269,6 +269,23 @@ tr.flash td{background:rgba(239,111,111,.15);transition:background 1.5s}
   .hand-f input,.hand-f select{min-height:42px;font-size:15px}
   .cal-nav b{flex-basis:100%}
 }
+.rv-wrap{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:10px;padding:12px}
+.rv-g{border:1px solid var(--line2);border-radius:10px;background:var(--panel2);overflow:hidden}
+.rv-g.hold{opacity:.7;border-style:dashed}
+.rv-h{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:9px 12px;border-bottom:1px solid var(--line)}
+.rv-t{font-weight:700;font-size:13px;letter-spacing:.3px}
+.rv-n{font-size:11.5px;color:var(--ok);flex:1}
+.rv-g.hold .rv-n{color:var(--warn)}
+.rv-i{display:flex;gap:8px;align-items:flex-start;padding:8px 12px;border-bottom:1px solid var(--line);font-size:13px;flex-wrap:wrap}
+.rv-i:last-child{border-bottom:none}
+.rv-no{color:var(--mute);font-weight:600;min-width:28px}
+.rv-d{flex:1;min-width:0;line-height:1.35}
+.rv-sel{background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:4px 6px;font-size:12px;max-width:100%}
+.rv-f{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:10px 12px 14px;font-size:12.5px;color:var(--mute)}
+.rv-go{font-size:14px;padding:9px 16px}
+.grp-tag{font-size:10.5px;letter-spacing:.5px;color:var(--ok);font-weight:700;margin-bottom:4px}
+.grp-li{margin-bottom:4px;line-height:1.35}
+@media (max-width:700px){ .steps{grid-template-columns:1fr 1fr} .rv-wrap{grid-template-columns:1fr} .rv-go{width:100%} }
 .bucket-help{font-size:12.5px;color:var(--mute);margin:-4px 0 12px;line-height:1.4}
 .bucket-help b{color:var(--fg);font-weight:600}
 .controls select{background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:4px 6px;font-size:12.5px}
@@ -342,7 +359,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, 
 const authSb = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
 let SESSION = null, ACCESS = {}, EDIT_ACCESS = null, CAL_URL = "";
 
-let FLAGS = {};
+let FLAGS = {}, REVIEW_P = new Set(), REV = {};
 let ITEMS = [], CONTRACTORS = [], TRADES = []; const SHOW_ALL = {};
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -359,6 +376,7 @@ async function load(){
   if(a.error){ $("#list").innerHTML=`<div class="empty">Couldn't load remedies: ${esc(a.error.message)}</div>`; return; }
   ITEMS = a.data||[]; CONTRACTORS = b.data||[];
   await loadNeedsGabe();
+  try { const rv = await sb.from("rtr_items").select("id").eq("review_status","pending"); REVIEW_P = new Set((rv.data||[]).map(x=>x.id)); } catch { REVIEW_P = new Set(); }
   try { const f = await sb.from("rtr_items").select("id,mgmt_flagged_at").not("mgmt_flagged_at","is",null); FLAGS = Object.fromEntries((f.data||[]).map(x=>[x.id,x.mgmt_flagged_at])); } catch { FLAGS = {}; }
   TRADES = [...new Set([...CONTRACTORS.map(c=>c.trade), ...ITEMS.map(i=>i.trade)])].filter(Boolean).sort();
   try { SESSION = (await authSb.auth.getSession()).data.session; } catch { SESSION = null; }
@@ -394,8 +412,10 @@ function stateOf(i){
 
 // ---- Tom 10/14: four buckets. Every item is in exactly one, and moves right on its own when its step is done. ----
 const BUCKETS = [
+  { k:5, n:1, name:"Review", q:"Group items for the same person",
+    help:"<b>New items start here.</b> Put items that will go to the same contractor in one group — they go out in ONE text, one price, one invoice. Tap <b>Looks good</b> and the groups move to <b>Scope check</b>." },
   { k:1, name:"Scope check", q:"Was this on the old scope?",
-    help:"<b>Every new item starts here.</b> YES → find who did the rehab; they fix it free and it jumps to <b>In progress</b>. NO → it moves to <b>Get bids</b>." },
+    help:"<b>Answer once per group.</b> YES → find who did the rehab; they fix it free and it jumps to <b>In progress</b>. NO → it moves to <b>Get bids</b>." },
   { k:2, name:"Get bids", q:"Find contractors, get prices, award",
     help:"<b>Everything gets a bid first.</b> Ask up to 3 contractors (or just one) for a price, or send it to maintenance. When you tap <b>Award</b> on a bid it moves to <b>In progress</b>." },
   { k:3, name:"In progress", q:"Someone has it — we're talking to them",
@@ -411,7 +431,10 @@ function setBucket(k){ BUCKET = k; try { localStorage.setItem("rtr-bucket", Stri
 const awarded = i => !!(i.awarded_bid_id || i.warranty || i.maint_status || i.contractor_internal || i.award_confirmed_at);
 const biddingOut = i => ["dispatched","bids_in"].includes(i.status) || (i.bids||[]).length>0 || i.dispatched_n>0;
 function bucketOf(i){
+  // a grouped item travels with its group's first item
+  if(i.bundle_id && !i.bundle_primary && !i.cc_done){ const pr = ITEMS.find(x=>x.bundle_id===i.bundle_id && x.bundle_primary && x.id!==i.id); if(pr) return bucketOf(pr); }
   if(i.cc_done || i.status==="done" || i.status==="verified") return 4;
+  if(REVIEW_P.has(i.id) && !awarded(i) && !biddingOut(i)) return 5;
   if(awarded(i)) return 3;
   if(i.scope_check==="pending" && !biddingOut(i)) return 1;
   return 2;
@@ -434,19 +457,22 @@ function render(){
   if(HOUSE && !live[HOUSE]) HOUSE = "";
   hs.innerHTML = `<option value="">All houses (${addrs.length})</option>` + addrs.map(a=>`<option value="${esc(a)}" ${a===HOUSE?'selected':''}>${esc(a)}</option>`).join("");
   const shown = HOUSE ? { [HOUSE]: live[HOUSE] } : live;
-  const counts = {1:0,2:0,3:0,4:0}; let walk = 0;
+  const counts = {1:0,2:0,3:0,4:0,5:0}; let walk = 0;
   for(const items of Object.values(shown)) for(const i of items){ const b = bucketOf(i); counts[b]++; if(b===4 && !i.cc_done) walk++; }
-  if(!BUCKET) BUCKET = [1,2,3,4].find(k=>counts[k]) || 1;
+  if(!BUCKET) BUCKET = [5,1,2,3,4].find(k=>counts[k]) || 1;
   $("#steps").innerHTML = BUCKETS.map(s=>`<button class="step ${s.k===BUCKET?'on':''}" onclick="setBucket(${s.k})">
-      <span class="n">${s.k}</span><span class="t">${s.name}</span><span class="c ${counts[s.k]?'':'zero'}">${counts[s.k]}</span>
+      <span class="n">${s.n||s.k+1}</span><span class="t">${s.name}</span><span class="c ${counts[s.k]?'':'zero'}">${counts[s.k]}</span>
       <span class="q">${s.q}${s.k===4&&walk?` · <b style="color:var(--ok)">${walk} to walk</b>`:""}</span></button>`).join("");
-  $("#bucket-help").innerHTML = BUCKETS[BUCKET-1].help;
+  $("#bucket-help").innerHTML = (BUCKETS.find(b=>b.k===BUCKET)||BUCKETS[0]).help;
   renderNGBar();
   if(CAL_MODE){ document.querySelectorAll(".step.on").forEach(e=>e.classList.remove("on")); $("#bucket-help").innerHTML=""; $("#sched").style.display="none"; renderCal(shown); return; }
   const blocks=[];
   for(const [addr, all] of Object.entries(shown)){
-    const items = all.filter(i=>bucketOf(i)===BUCKET);
+    let items = all.filter(i=>bucketOf(i)===BUCKET);
     if(!items.length) continue;
+    if(BUCKET===5){ blocks.push(reviewBlock(addr, all, items)); continue; }
+    // groups show as ONE row (the first item lists the rest) — except in Done, where each is checked off on its own
+    if(BUCKET!==4) items = items.filter(i=>!(i.bundle_id && !i.bundle_primary && items.some(x=>x.bundle_id===i.bundle_id && x.bundle_primary)));
     // walk-it items before checked-off ones
     if(BUCKET===4) items.sort((a,b)=>(a.cc_done?1:0)-(b.cc_done?1:0) || (a.item_no||0)-(b.item_no||0));
     const rows = items.map(i=>row(i, BUCKET)).join("");
@@ -468,7 +494,7 @@ function render(){
       <table><thead><tr><th>#</th><th>Remedy</th><th>${["","Rehab contractor","Bids","Who has it · last word","Status"][BUCKET]}</th><th>Next step</th></tr></thead><tbody>${rows}</tbody></table>
     </div>`);
   }
-  const empty = ["", "Nothing waiting on a scope check.", "Nothing to send out for bids.", "Nothing in progress.", "Nothing done in the last 14 days."][BUCKET];
+  const empty = BUCKET===5 ? "Nothing to review." : ["", "Nothing waiting on a scope check.", "Nothing to send out for bids.", "Nothing in progress.", "Nothing done in the last 14 days."][BUCKET];
   // Tom 10/14: In progress opens with the schedule — every job, the day they agreed to, soonest first
   if(BUCKET===3){
     const jobs = Object.values(shown).flat().filter(i=>bucketOf(i)===3 && !(i.bundle_id && !i.bundle_primary));
@@ -598,8 +624,9 @@ function row(i, b){
     stand += (i.cc_photo_count?`<div class="cctext">${i.cc_photo_count} photo${i.cc_photo_count===1?'':'s'} in CompanyCam</div>`:"") + invoiceLine(i);
   }
   return `<tr class="${i.cc_done?'done':''}" data-id="${i.id}">
-    <td class="no">#${i.item_no??""}</td>
-    <td class="desc">${esc(i.description)}<br>
+    <td class="no">#${i.bundle_id && i.bundle_primary && b!==4 ? ITEMS.filter(x=>x.bundle_id===i.bundle_id && x.status!=="cancelled").map(x=>x.item_no).sort((a,c)=>a-c).join(", #") : (i.item_no??"")}</td>
+    <td class="desc">${(()=>{ const mem = i.bundle_id && i.bundle_primary && b!==4 ? ITEMS.filter(x=>x.bundle_id===i.bundle_id && x.status!=="cancelled").sort((a,c)=>(a.item_no||0)-(c.item_no||0)) : [];
+        return mem.length>1 ? `<div class="grp-tag">ONE TEXT · ${mem.length} ITEMS</div>${mem.map(x=>`<div class="grp-li"><b>#${x.item_no??""}</b> ${esc(x.description)}</div>`).join("")}` : esc(i.description); })()}<br>
       ${i.trade?`<button class="tradebtn" onclick="askTrade('${i.id}')" title="Change the trade">${esc(i.trade)} <span class="car">▾</span><span class="chg">change</span></button>`:`<button class="tradebtn ask" onclick="askTrade('${i.id}')">Pick a trade <span class="car">▾</span></button>`}
       ${i.warranty?'<span class="trade" style="color:var(--ok);border-color:#3a6b4a">warranty · no charge</span>':''}
       ${NG.texts.some(t=>t.item_id===i.id)?`<button class="ngtag" onclick="openNG()">💬 Needs Gabe</button>`:''}
@@ -620,7 +647,7 @@ async function awardBid(itemId, bidId){
   if (!confirm(`Award ${i.address} #${i.item_no} to ${b.contractor} for $${Number(b.price).toLocaleString()}?\n\n${b.start_date ? `They said they can start ${fmt(b.start_date)}. They'll be asked to reply YES.` : `They'll be asked to reply YES with their start date.`}`)) return;
   toast("Sending…");
   const r = await fn("rtr-dispatch", { action:"award", bid_id:bidId });
-  toast(r.error ? r.error : `Awarded to ${r.contractor} — moved to 3 · In progress`);
+  toast(r.error ? r.error : `Awarded to ${r.contractor} — moved to 4 · In progress`);
   await load();
 }
 // Tom 10/14: picking a contractor from the dropdown texts them the job RIGHT AWAY (job, photos, report, lockbox,
@@ -639,7 +666,7 @@ async function assign(id, contractor_id){
   if(!confirm(`Send this to maintenance (Slack work order for Jeriel)?\n\n${i.description}`)) return load();
   toast("Sending…");
   const r = await fn("rtr-dispatch", { action:"assign", item_id:id, contractor_id });
-  toast(r.error ? r.error : r.maintenance ? "Queued for maintenance — moved to 3 · In progress" : `Asked ${c.name} for a bid — waiting on their price`);
+  toast(r.error ? r.error : r.maintenance ? "Queued for maintenance — moved to 4 · In progress" : `Asked ${c.name} for a bid — waiting on their price`);
   await load();
 }
 const isHold = i => /^HOLD\b/i.test(i.description||"");
@@ -1032,9 +1059,11 @@ function renderScope(){
 }
 async function scopeNo(){
   const id = SCOPE.id; SCOPE=null; renderScope();
-  const { error } = await sb.from("rtr_items").update({ scope_check: "not_on_scope", scope_checked_at: new Date().toISOString(), scope_checked_by: "Remedies page" }).eq("id", id);
+  const it0 = ITEMS.find(x=>x.id===id);   // a group answers together
+  const q = sb.from("rtr_items").update({ scope_check: "not_on_scope", scope_checked_at: new Date().toISOString(), scope_checked_by: "Remedies page" });
+  const { error } = it0?.bundle_id ? await q.eq("bundle_id", it0.bundle_id) : await q.eq("id", id);
   if(error) return toast("Couldn't save: "+error.message);
-  toast("Not on the old scope — moved to 2 · Get bids"); await load();
+  toast("Not on the old scope — moved to 3 · Get bids"); await load();
 }
 async function scopeYes(){
   const i = ITEMS.find(x=>x.id===SCOPE.id); const gc = CONTRACTORS.find(c=>c.id===SCOPE.gc); const picked = SCOPE.lines.find(l=>l.line_id===SCOPE.pick);
@@ -1044,7 +1073,7 @@ async function scopeYes(){
   const body = { action:"warranty", item_id: SCOPE.id, contractor_id: SCOPE.gc, extra_item_ids: extra, scope_match: picked ? [picked.section, picked.description].filter(Boolean).join(": ") : "" };
   SCOPE=null; renderScope(); toast("Sending…");
   const r = await fn("rtr-dispatch", body);
-  toast(r.error ? r.error : r.manual?.length ? `${r.manual[0]} doesn't text — it's on Gabe's list to call them` : `Sent to ${(r.sent||[]).join(", ")}${r.items>1?` (${r.items} items in one text)`:""} — moved to 3 · In progress`);
+  toast(r.error ? r.error : r.manual?.length ? `${r.manual[0]} doesn't text — it's on Gabe's list to call them` : `Sent to ${(r.sent||[]).join(", ")}${r.items>1?` (${r.items} items in one text)`:""} — moved to 4 · In progress`);
   await load();
 }
 // ---- maintenance (Tom 10/8): Handyman / General goes to the internal team, same texts, no bid ----
@@ -1111,7 +1140,7 @@ async function saveHand(){
   HAND=null; renderHand(); toast("Saving…");
   const r = await fn("rtr-dispatch", body);
   if(r.error) return toast(r.error);
-  toast(h.kind==="bid" ? `Bid logged for ${c?.name}` : h.kind==="job" ? `${c?.name} has it — moved to 3 · In progress${r.invoice?.invoice_no?` · invoice ${r.invoice.invoice_no} texted`:""}` : "Marked done — moved to 4 · Done");
+  toast(h.kind==="bid" ? `Bid logged for ${c?.name}` : h.kind==="job" ? `${c?.name} has it — moved to 4 · In progress${r.invoice?.invoice_no?` · invoice ${r.invoice.invoice_no} texted`:""}` : "Marked done — moved to 5 · Done");
   await load();
 }
 // ---- Tom 10/14: see every contractor by trade and fix the ones in the wrong dropdown, right here (saves to the directory) ----
@@ -1221,12 +1250,17 @@ function gabeList(){
     `Read them the job (Copy button). After you talk, use ✍ Log it by hand on the item to enter their price or their day.`,
     `<button class="ubtn small primary" onclick="copyJob(${k})">Copy the job</button>${c.email?` <a class="ubtn small" href="mailto:${esc(c.email)}?subject=${encodeURIComponent("Job at "+(c.address||""))}&body=${encodeURIComponent((c.body||"").replace(/^Hey [^,\n]*,\s*/,""))}">Email</a>`:""}${c.phone?` <a class="ubtn small" href="tel:${esc(c.phone)}">Call</a>`:""}`,
     `ngContacted('${c.id}')`));
+  { const hs = {}; ITEMS.filter(i=>REVIEW_P.has(i.id) && bucketOf(i)===5).forEach(i=>{ hs[i.address]=(hs[i.address]||0)+1; });
+    Object.entries(hs).forEach(([a,n])=>add("Review these houses first", "r:"+a, `Review ${esc(a)} — ${n} new item${n===1?"":"s"}`, "Put items for the same contractor together so they get one text.", `<button class="ubtn small primary" onclick="NG_OPEN=false;renderNG();HOUSE=${esc(JSON.stringify(a))};setBucket(5)">Open</button>`)); }
   const ti = isoD(today);
   ITEMS.filter(i=>!i.cc_done && i.status!=="done" && (i.scheduled_start===ti || String(i.maint_start||"").slice(0,10)===ti)).forEach(i=>
     add("Starting today", "s:"+i.id, `${name(i.contractor_name)||"Maintenance"} starts today — ${esc(i.address)} #${i.item_no}`, `Call and make sure they show up. ${short(i.description)}`, `<button class="ubtn small" onclick="goItem('${i.id}')">See it</button>`));
   ITEMS.filter(i=>!i.cc_done && i.status==="done").forEach(i=>
     add("Walk these, then check off in CompanyCam", "w:"+i.id, `Walk ${esc(i.address)} #${i.item_no}`, `${name(i.contractor_name)||"Contractor"} says it's done. ${short(i.description)}`, `<a class="ubtn small primary" href="${esc(i.companycam_todo_url)}" target="_blank" rel="noopener">Open CompanyCam</a>`));
   for(const d of NG.todo){ const m = NG_SEC.find(x=>x[0].test(d.section)); if(m && m[1]===null) continue;
+    const ref = (d.line||"").match(/^#(\d+)\s+(.+?)\s+—/);
+    if(ref){ const it = ITEMS.find(x=>String(x.item_no)===ref[1] && x.address===ref[2] && x.status!=="cancelled");
+      if(it && (bucketOf(it)===5 || (it.bundle_id && !it.bundle_primary))) continue; }
     add(m ? m[1] : d.section.replace(/^\d+\.\s*/,""), "o:"+d.section+"|"+d.line, esc(d.line), d.age_days?`waiting ${d.age_days} day${d.age_days===1?'':'s'}`:"", ""); }
   return rows;
 }
@@ -1347,6 +1381,72 @@ async function resendScope(id){
   const r = await fn("rtr-dispatch", { action:"warranty", item_id:id, resend:true });
   toast(r.error ? r.error : r.manual?.length ? `${r.manual[0]} doesn't text — it's on Gabe's list to call` : `Sent again to ${(r.sent||[]).join(", ")}`);
   await load();
+}
+// ---- Tom 10/16: Review — group a house's new items by who'll do them, so each group goes out as ONE text ----
+const TRADE_ICON = t => /electr/i.test(t)?"⚡":/plumb|water heater/i.test(t)?"🚿":/hvac|furnace|duct/i.test(t)?"🔥":/roof|gutter/i.test(t)?"🏠":/mold/i.test(t)?"🧪":/pest|wildlife/i.test(t)?"🐀":/mason|chimney|concrete|foundation/i.test(t)?"🧱":"🔧";
+function revState(addr, items){
+  const ids = items.map(i=>i.id).sort().join(",");
+  if(REV[addr] && REV[addr].sig===ids) return REV[addr];
+  const groups = [], byKey = {};
+  for(const i of items.sort((a,b)=>(a.item_no||0)-(b.item_no||0))){
+    const key = isHold(i) ? "hold:"+i.id : i.bundle_id ? "b:"+i.bundle_id : "t:"+(i.trade||"Other");
+    if(!byKey[key]){ byKey[key] = { id: key, ids: [], hold: isHold(i) }; groups.push(byKey[key]); }
+    byKey[key].ids.push(i.id);
+  }
+  return REV[addr] = { sig: ids, groups };
+}
+function reviewBlock(addr, all, items){
+  const st = revState(addr, items);
+  const it = id => ITEMS.find(x=>x.id===id);
+  const gName = g => { const tr = [...new Set(g.ids.map(id=>it(id)?.trade||"No trade"))]; return tr.join(" + "); };
+  const live = st.groups.filter(g=>g.ids.length);
+  const moveOpts = (g, id) => `<option value="">Move to…</option>` + live.filter(x=>x!==g && !x.hold).map(x=>`<option value="${esc(x.id)}">${esc(gName(x))} group</option>`).join("") + (g.ids.length>1?`<option value="__own">Its own text</option>`:"");
+  const cards = live.map(g=>`<div class="rv-g ${g.hold?'hold':''}">
+      <div class="rv-h"><span class="rv-t">${TRADE_ICON(gName(g))} ${esc(gName(g).toUpperCase())}</span>
+        <span class="rv-n">${g.hold?"on hold — stays by itself":g.ids.length>1?`ONE TEXT · ${g.ids.length} items`:"1 item"}</span>
+        ${!g.hold && live.filter(x=>x!==g && !x.hold).length ? `<select class="rv-sel" onchange="revCombine(${esc(JSON.stringify(addr))}, ${esc(JSON.stringify(g.id))}, this.value)"><option value="">＋ Same person as…</option>${live.filter(x=>x!==g && !x.hold).map(x=>`<option value="${esc(x.id)}">${esc(gName(x))}</option>`).join("")}</select>` : ""}</div>
+      ${g.ids.map(id=>{ const i = it(id); return `<div class="rv-i"><span class="rv-no">#${i.item_no??""}</span><span class="rv-d">${esc(i.description)}</span>
+        ${!g.hold && (live.length>1 || g.ids.length>1) ? `<select class="rv-sel" onchange="revMove(${esc(JSON.stringify(addr))}, '${id}', this.value)">${moveOpts(g, id)}</select>` : ""}</div>`; }).join("")}
+    </div>`).join("");
+  const texts = live.filter(g=>!g.hold).length;
+  return `<div class="prop"><div class="prop-h"><span class="addr">${esc(addr)}</span><span class="meta">${items.length} item${items.length===1?"":"s"} to review → <b style="color:var(--fg)">${texts} text${texts===1?"":"s"}</b></span><span class="sp"></span>
+      <a href="${esc(all[0].companycam_todo_url)}" target="_blank" rel="noopener">Open in CompanyCam</a></div>
+    <div class="rv-wrap">${cards}</div>
+    <div class="rv-f"><span>Same person does two of these groups? Use <b>＋ Same person as…</b> to put them in one text.</span><button class="ubtn primary rv-go" onclick="saveReview(${esc(JSON.stringify(addr))})">Looks good → Scope check</button></div></div>`;
+}
+function revMove(addr, id, to){
+  const st = REV[addr]; if(!to) return;
+  const from = st.groups.find(g=>g.ids.includes(id)); from.ids = from.ids.filter(x=>x!==id);
+  if(to==="__own"){ st.groups.push({ id: "own:"+id, ids:[id] }); } else st.groups.find(g=>g.id===to).ids.push(id);
+  render();
+}
+function revCombine(addr, gid, into){
+  const st = REV[addr]; if(!into) return;
+  const g = st.groups.find(x=>x.id===gid), t = st.groups.find(x=>x.id===into);
+  t.ids.push(...g.ids); g.ids = []; render();
+}
+async function saveReview(addr){
+  const st = REV[addr]; if(!st) return;
+  const groups = st.groups.filter(g=>g.ids.length);
+  toast("Saving…");
+  for(const g of groups){
+    if(g.ids.length>1){
+      const prim = g.ids.map(id=>ITEMS.find(x=>x.id===id)).sort((a,b)=>(a.item_no||0)-(b.item_no||0))[0];
+      const bid = (crypto.randomUUID ? crypto.randomUUID() : ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g,c=>(c^crypto.getRandomValues(new Uint8Array(1))[0]&15>>c/4).toString(16)));
+      const a = await sb.from("rtr_items").update({ bundle_id: bid, bundle_primary: false }).in("id", g.ids.filter(id=>id!==prim.id));
+      const b = await sb.from("rtr_items").update({ bundle_id: bid, bundle_primary: true }).eq("id", prim.id);
+      if(a.error||b.error) return toast("Couldn't save: "+(a.error||b.error).message);
+    } else {
+      const i = ITEMS.find(x=>x.id===g.ids[0]);
+      if(i.bundle_id){ const r = await sb.from("rtr_items").update({ bundle_id: null, bundle_primary: false }).eq("id", i.id); if(r.error) return toast("Couldn't save: "+r.error.message); }
+    }
+  }
+  const all = groups.flatMap(g=>g.ids);
+  const r = await sb.from("rtr_items").update({ review_status: "done" }).in("id", all);
+  if(r.error) return toast("Couldn't save: "+r.error.message);
+  delete REV[addr];
+  toast(`Reviewed — ${groups.filter(g=>!g.hold).length} text${groups.length===1?"":"s"} instead of ${all.length}. Now answer the scope check.`);
+  await load(); setBucket(1);
 }
 // ---- invoices made for the contractor (Tom 10/8) ----
 function invoiceLine(i){
