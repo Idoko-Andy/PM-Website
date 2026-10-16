@@ -280,6 +280,17 @@ tr.flash td{background:rgba(239,111,111,.15);transition:background 1.5s}
 .rv-i:last-child{border-bottom:none}
 .rv-no{color:var(--mute);font-weight:600;min-width:28px}
 .rv-d{flex:1;min-width:0;line-height:1.35}
+.rv-how{display:flex;gap:8px 16px;align-items:center;flex-wrap:wrap;padding:10px 12px 0;font-size:12.5px;color:var(--mute)}
+.rv-how b{color:var(--fg)}
+.rv-g.multi{border-color:#3a6b4a;box-shadow:0 0 0 1px #3a6b4a inset}
+.rv-cb{width:20px;height:20px;flex:none;margin-top:2px;accent-color:#5ad17a;cursor:pointer}
+.rv-body{flex:1;min-width:0}
+.rv-acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px}
+td.desc button.tradebtn.sm, .rv-acts .tradebtn{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:500;color:#cfe3ff;background:rgba(124,183,255,.12);border:1px solid #4a7fbf;border-radius:6px;padding:2px 8px;cursor:pointer}
+.rv-acts .tradebtn .chg{font-size:10.5px;color:var(--info);border-left:1px solid #4a7fbf;padding-left:6px}
+.rv-acts .tradebtn.ask{color:var(--warn);background:rgba(240,179,90,.12);border:1px dashed var(--warn)}
+.rv-link{font-size:12px;color:var(--info);text-decoration:none}
+.rv-x{background:none;border:none;color:var(--bad);font-size:12px;cursor:pointer;padding:0}
 .rv-sel{background:var(--bg);border:1px solid var(--line2);color:#fff;border-radius:6px;padding:4px 6px;font-size:12px;max-width:100%}
 .rv-f{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:10px 12px 14px;font-size:12.5px;color:var(--mute)}
 .rv-go{font-size:14px;padding:9px 16px}
@@ -702,11 +713,10 @@ async function scopeNoId(id){ SCOPE = { id }; await scopeNo(); }
 async function releaseHold(id){
   const i = ITEMS.find(x=>x.id===id);
   const clean = (i.description||"").replace(/^HOLD[^:]*:\s*/i, "");
-  const t = prompt(`Release this item for bids?\n\n${clean}\n\nTrade (type one):\n${TRADES.join(" · ")}`, i.trade || "");
-  if(!t) return;
-  const { error } = await sb.from("rtr_items").update({ description: clean, trade: t, desc_locked: true }).eq("id", id);
+  if(!confirm(`Take this off hold?\n\n${clean}`)) return;
+  const { error } = await sb.from("rtr_items").update({ description: clean, desc_locked: true }).eq("id", id);
   if(error) return toast("Couldn't save: "+error.message);
-  toast("Released — now pick bidders"); await load();
+  toast("Off hold — check the trade, then group it"); await load();
 }
 // Tom 10/9: clicking the trade opens a clickable list of trades (with how many contractors each has);
 // picking one saves it and goes straight into the Choice 1/2/3 contractor picker.
@@ -792,7 +802,7 @@ async function setTrade(id, t){
   if(error) return toast("Couldn't save: "+error.message);
   await load();
   const i = ITEMS.find(x=>x.id===id);
-  if(i && !i.cc_done && !i.contractor_id && !(i.dispatched_n>0) && !isHold(i)){
+  if(i && !i.cc_done && !i.contractor_id && !(i.dispatched_n>0) && !isHold(i) && bucketOf(i)!==5){
     if(i.scope_check==="pending") scopeCheck(id);
     else if(internalFor(t)) toast(`${t} → tap "Send to maintenance"`); else bids(id);
   }
@@ -1396,23 +1406,41 @@ function revState(addr, items){
   return REV[addr] = { sig: ids, groups };
 }
 function reviewBlock(addr, all, items){
-  const st = revState(addr, items);
+  const st = revState(addr, items); st.sel = st.sel || new Set();
   const it = id => ITEMS.find(x=>x.id===id);
-  const gName = g => { const tr = [...new Set(g.ids.map(id=>it(id)?.trade||"No trade"))]; return tr.join(" + "); };
+  const gName = g => [...new Set(g.ids.map(id=>it(id)?.trade||"No trade"))].join(" + ");
   const live = st.groups.filter(g=>g.ids.length);
-  const moveOpts = (g, id) => `<option value="">Move to…</option>` + live.filter(x=>x!==g && !x.hold).map(x=>`<option value="${esc(x.id)}">${esc(gName(x))} group</option>`).join("") + (g.ids.length>1?`<option value="__own">Its own text</option>`:"");
-  const cards = live.map(g=>`<div class="rv-g ${g.hold?'hold':''}">
-      <div class="rv-h"><span class="rv-t">${TRADE_ICON(gName(g))} ${esc(gName(g).toUpperCase())}</span>
-        <span class="rv-n">${g.hold?"on hold — stays by itself":g.ids.length>1?`ONE TEXT · ${g.ids.length} items`:"1 item"}</span>
-        ${!g.hold && live.filter(x=>x!==g && !x.hold).length ? `<select class="rv-sel" onchange="revCombine(${esc(JSON.stringify(addr))}, ${esc(JSON.stringify(g.id))}, this.value)"><option value="">＋ Same person as…</option>${live.filter(x=>x!==g && !x.hold).map(x=>`<option value="${esc(x.id)}">${esc(gName(x))}</option>`).join("")}</select>` : ""}</div>
-      ${g.ids.map(id=>{ const i = it(id); return `<div class="rv-i"><span class="rv-no">#${i.item_no??""}</span><span class="rv-d">${esc(i.description)}</span>
-        ${!g.hold && (live.length>1 || g.ids.length>1) ? `<select class="rv-sel" onchange="revMove(${esc(JSON.stringify(addr))}, '${id}', this.value)">${moveOpts(g, id)}</select>` : ""}</div>`; }).join("")}
+  live.forEach(g=>g.hold = g.ids.every(id=>isHold(it(id))));
+  const A = esc(JSON.stringify(addr));
+  const nSel = st.sel.size, texts = live.filter(g=>!g.hold).length;
+  const itemRow = (g, id) => { const i = it(id); const hold = isHold(i);
+    return `<div class="rv-i">
+      ${hold ? `<span class="rv-cb"></span>` : `<input type="checkbox" class="rv-cb" ${st.sel.has(id)?'checked':''} onchange="revSel(${A}, '${id}', this.checked)" title="Check the items one contractor will do">`}
+      <div class="rv-body"><div class="rv-d"><b>#${i.item_no??""}</b> ${esc(i.description)}</div>
+        <div class="rv-acts">
+          ${i.trade?`<button class="tradebtn sm" onclick="askTrade('${i.id}')">${esc(i.trade)} <span class="car">▾</span><span class="chg">change</span></button>`:`<button class="tradebtn sm ask" onclick="askTrade('${i.id}')">Pick a trade ▾</button>`}
+          ${i.report_excerpt_url?`<a class="rv-link" href="${esc(i.report_excerpt_url)}" target="_blank" rel="noopener">📄 Report (highlighted)</a>`:""}
+          ${hold?`<button class="ubtn small" onclick="releaseHold('${i.id}')">Release hold</button>`:""}
+          ${g.ids.length>1?`<button class="rv-x" onclick="revMove(${A}, '${id}', '__own')" title="Send this one in its own text">✕ Take out of this text</button>`:""}
+        </div></div></div>`; };
+  const cards = live.map(g=>`<div class="rv-g ${g.hold?'hold':''} ${g.ids.length>1?'multi':''}">
+      <div class="rv-h"><span class="rv-t">${TRADE_ICON(gName(g))} ${esc(gName(g))}</span>
+        <span class="rv-n">${g.hold?"On hold — not sent yet":g.ids.length>1?`✔ ONE TEXT · ${g.ids.length} items`:"Its own text"}</span></div>
+      ${g.ids.map(id=>itemRow(g,id)).join("")}
     </div>`).join("");
-  const texts = live.filter(g=>!g.hold).length;
-  return `<div class="prop"><div class="prop-h"><span class="addr">${esc(addr)}</span><span class="meta">${items.length} item${items.length===1?"":"s"} to review → <b style="color:var(--fg)">${texts} text${texts===1?"":"s"}</b></span><span class="sp"></span>
-      <a href="${esc(all[0].companycam_todo_url)}" target="_blank" rel="noopener">Open in CompanyCam</a></div>
+  return `<div class="prop"><div class="prop-h"><span class="addr">${esc(addr)}</span><span class="meta">${items.length} item${items.length===1?"":"s"} → <b style="color:var(--fg)">${texts} text${texts===1?"":"s"}</b> to contractors</span><span class="sp"></span>
+      ${reportBtn(all)}<a href="${esc(all[0].companycam_todo_url)}" target="_blank" rel="noopener">Open in CompanyCam</a></div>
+    <div class="rv-how"><span><b>1.</b> Check the items one contractor will do</span><span><b>2.</b> Tap <b>Put in one text</b></span><span><b>3.</b> Tap <b>Looks good</b></span>
+      <button class="ubtn small ${nSel>=2?'primary':''}" ${nSel>=2?'':'disabled'} onclick="revJoin(${A})">🔗 Put ${nSel>=2?nSel+" ":""}checked items in one text</button>
+      ${nSel?`<button class="ubtn small" onclick="REV[${A}].sel.clear();render()">Clear</button>`:""}</div>
     <div class="rv-wrap">${cards}</div>
-    <div class="rv-f"><span>Same person does two of these groups? Use <b>＋ Same person as…</b> to put them in one text.</span><button class="ubtn primary rv-go" onclick="saveReview(${esc(JSON.stringify(addr))})">Looks good → Scope check</button></div></div>`;
+    <div class="rv-f"><span>Each card = one text. Items on hold wait until you release them.</span><button class="ubtn primary rv-go" onclick="saveReview(${A})">Looks good → Scope check</button></div></div>`;
+}
+function revSel(addr, id, on){ const st = REV[addr]; on ? st.sel.add(id) : st.sel.delete(id); render(); }
+function revJoin(addr){
+  const st = REV[addr]; const ids = [...st.sel]; if(ids.length<2) return;
+  st.groups.forEach(g=>g.ids = g.ids.filter(x=>!ids.includes(x)));
+  st.groups.unshift({ id: "join:"+ids.join(""), ids }); st.sel.clear(); render();
 }
 function revMove(addr, id, to){
   const st = REV[addr]; if(!to) return;
