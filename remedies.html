@@ -1403,6 +1403,7 @@ async function processReport(pid, file, existingUrl){
       const refs = RC.parseRefs(i.description);
       const spots = refs.sections.map(sec=>RC.locate(pages, sec, refs.pages)).filter(Boolean);
       if(!spots.length && refs.pages.length) spots.push({ page: refs.pages[0], top:null, bottom:null, extra: refs.pages.slice(1).map(n=>({n,bottom:36})) });
+      if(!spots.length) spots.push(...RC.byWords(pages, i.description));   // no section numbers → match by the words
       const valid = spots.filter(sp=>sp.page>=1 && sp.page<=doc.numPages).map(sp=>({ ...sp, extra: sp.extra.filter(e=>e.n<=doc.numPages) }));
       if(!valid.length){ saved.push({ item_id:i.id, section: refs.sections.join(", ")||null, pages:null, path:null }); continue; }
       toast(`Highlighting #${i.item_no}…`);
@@ -1411,11 +1412,11 @@ async function processReport(pid, file, existingUrl){
       const up = await sb.storage.from("rtr-photos").uploadToSignedUrl(slot.path, slot.token, new Blob([out],{type:"application/pdf"}));
       if(up.error) throw new Error(up.error.message);
       const pgs = [...new Set(valid.flatMap(v=>[v.page, ...v.extra.map(e=>e.n)]))];
-      saved.push({ item_id:i.id, section: refs.sections.join(", ")||null, pages: pgs, path: slot.path }); hit++;
+      saved.push({ item_id:i.id, section: refs.sections.join(", ")||valid.map(v=>v.label).filter(Boolean).join(", ")||null, pages: pgs, path: slot.path }); hit++;
     }
     const r = await fn("rtr-dispatch", { action:"report_save", property_id: pid, report_path: file ? slots.report.path : null, filename: file?.name, page_count: doc.numPages, items: saved, note: `${hit}/${items.length} items highlighted` });
     if(r.error) throw new Error(r.error);
-    toast(`Done: ${hit} of ${items.length} items highlighted${hit<items.length?" (the rest have no section number)":""}`);
+    toast(`Done: ${hit} of ${items.length} items highlighted${hit<items.length?" (the rest didn't match anything in the report)":""}`);
     await load();
   } catch(e){ console.error(e); toast("Report problem: " + (e.message||e)); }
 }
@@ -1477,7 +1478,35 @@ const RC = (() => {
     });
     return await out.save();
   }
-  return { parseRefs, toLines, locate, buildExcerpt };
+  // Tom 10/16: reports with no section numbers (Willow Run style: "Comment 26 / Deficiency / Suspected organic growth...")
+  // — find the comment blocks whose words best match the remedy item and highlight those.
+  const STOPW = new Set("the and for with that this from have been were will shall seller sellers agrees agree buyer buyers have qualified licensed professional contractor recommend repair repairs replace evaluate evaluation further area areas noted report inspection home house property including any all all; complete appropriate their there they into also more than other should could would needs need note present observed".split(" "));
+  const stem = w => w.replace(/(ings|ing|ed|es|s)$/,"");
+  const wordsOf = t => [...new Set((t||"").toLowerCase().replace(/[^a-z0-9 ]/g," ").split(/\s+/).filter(w=>w.length>=4 && !STOPW.has(w)).map(stem))];
+  function byWords(pages, desc){
+    const title = new Set(wordsOf(((desc||"").split(":")[0]||"").slice(0,40)));
+    const want = new Set(wordsOf(desc)); if(want.size<2) return [];
+    const blocks = [];
+    for(const p of pages){
+      if(p.lines.some(l=>/^Report Summary/i.test(l.text))) continue;          // skip the summary pages, use the detailed section
+      const head = (p.lines[0]?.text||"").replace(/\bCont\.?/i,"");
+      p.lines.forEach((l,idx)=>{ if(!/^Comment\s+\d+/i.test(l.text)) return;
+        let end = p.lines.length, txt = [head];
+        for(let k=idx+1;k<p.lines.length;k++){ if(/^Comment\s+\d+/i.test(p.lines[k].text) || /\bPage\s+\d+\s*$/.test(p.lines[k].text)){ end=k; break; } txt.push(p.lines[k].text); }
+        const nxt = p.lines[end];
+        if(/^(Information|Limitations)\b/i.test(p.lines[idx+1]?.text||"") || /^Additional Item/i.test(head)) return;   // FYI lists, not repairs
+        blocks.push({ page:p.n, words: new Set(wordsOf(txt.join(" "))), label: l.text.match(/Comment\s+\d+/i)[0], top: l.y + l.h + 3, bottom: nxt ? nxt.y + nxt.h + 2 : 36 });
+      });
+    }
+    if(!blocks.length) return [];
+    const df = {}; blocks.forEach(b=>b.words.forEach(w=>df[w]=(df[w]||0)+1));
+    const idf = w => Math.log((blocks.length+1)/((df[w]||0)+0.5));
+    blocks.forEach(b=>{ b.score = [...want].filter(w=>b.words.has(w)).reduce((t,w)=>t+idf(w),0) + [...title].filter(w=>b.words.has(w)).reduce((t,w)=>t+1.5*idf(w),0); });
+    const best = Math.max(...blocks.map(b=>b.score)); if(best<3) return [];
+    return blocks.filter(b=>b.score>=best*0.6).sort((a,b)=>b.score-a.score).slice(0,4)
+      .sort((a,b)=>a.page-b.page || b.top-a.top).map(b=>({ page:b.page, top:b.top, bottom:b.bottom, extra:[], label:b.label }));
+  }
+  return { parseRefs, toLines, locate, buildExcerpt, byWords };
 })();
 
 async function chase(id){
