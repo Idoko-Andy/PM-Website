@@ -14000,7 +14000,27 @@ function _mktMeetingBody(wk, kind, notes, prevNotes, roNow){
            </div>`
         + sec('Lag times and why', ta(c.id,'lag','What slipped this week, and the reason. This carries into next week as a question.'))
         + sec('Closing notes', ta(c.id,'closing','Title, lender, payoff, anything that could move the close date.'))
-        + sec('Check-in dates', tx(c.id,'checkins','e.g. 9/3, 9/10',260))
+        // Katie's Tuesday doc records these on EVERY house, in contract included, and
+        // marks where they came from: "Check in Dates: 6.23.26, 7.8.26, 7.23.26,
+        // 8.25.26 (company cam)". The real ones are the on-market checklists actually
+        // completed, which the site already knows - Active Listings has shown them as
+        // chips for weeks. In Contract was still asking somebody to type them from
+        // memory into a one-line box. Same chips here, with the typed box kept
+        // underneath for the visits that never reached a checklist.
+        + (function(){
+            const ic=_mktCheckins(c);
+            return '<div style="margin-top:11px;border:0.5px solid #e6e8ee;border-radius:9px;padding:9px 12px">'
+              +'<div style="font-size:11.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">Check-in dates</div>'
+              +(ic.length
+                ? '<div style="display:flex;flex-wrap:wrap;gap:6px">'+ic.map(function(d,i){
+                    return '<span style="font-size:12px;background:'+(i===ic.length-1?'#EAF4EE':'#F2F5F9')+';border:0.5px solid '+(i===ic.length-1?'#BBDCC8':'#e0e4ec')+';color:#333;border-radius:99px;padding:3px 10px;font-variant-numeric:tabular-nums">'+_calEsc(d)+'</span>';
+                  }).join('')+'</div>'
+                : '<div style="font-size:12.5px;color:#636b7a">No on-market checklist was ever completed on this house.</div>')
+              +'<div style="font-size:10px;color:#636b7a;margin:5px 0 7px">These write themselves from the checklists that were actually finished.</div>'
+              +'<div style="font-size:11px;color:#566070;margin-bottom:3px">Anything else \u2014 a walk, an open house, a visit that never reached a checklist:</div>'
+              +tx(c.id,'checkins','e.g. 9/3 open house, 9/10 KH walk',300)
+            +'</div>';
+          })()
         + `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
             <button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">＋ Add task</button>
             <button onclick="_miAddQuick('q','${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#8A5A10;cursor:pointer;font-weight:600">＋ Question for Bruce / Tommy</button>
@@ -34568,4 +34588,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-17m her-desk-five-buckets-notes -->
+<!-- build: 2026-10-17n in-contract-checkin-dates -->
