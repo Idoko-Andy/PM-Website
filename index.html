@@ -7250,17 +7250,33 @@ function _pdLinked(c, which){
   const tDone=tasks.filter(function(t){ return t.status==='done'; });
   const openN=tOpen.length;
   const lateN=tOpen.filter(function(t){ return t.due_date && t.due_date<today; }).length;
+  // Bruce, 17 Oct: "it's showing me tasks that were already marked completed, but it's
+  // showing not completed and overdue."
+  // A task shared by several people stays OPEN until the last of them ticks - that is
+  // deliberate, it is how a job with four names on it stops being everybody's and
+  // nobody's. But this row never said so, so a task Bruce had personally ticked sat
+  // there in red looking untouched. The task calendar and the phone app have always
+  // shown "Off your list - still with X"; the property card simply never did.
+  // On 17 Oct eleven live tasks were in that state, including the 8am Project TEAM
+  // MEETING with six of its eight names already ticked.
+  const _meNow=(typeof _miWho==='function')?_miWho():'';
   const taskRow=(t)=>{
     const done=t.status==='done';
-    const late=!done && t.due_date && t.due_date<today;
+    const mineDone=!done && _meNow && (typeof _tkTicked==='function') && _tkTicked(t,_meNow);
+    const still=(!done && _meNow && typeof _tkStillWithNote==='function') ? _tkStillWithNote(t,_meNow) : '';
+    // Still late for the house, but not a red flag aimed at somebody who has done their part.
+    const late=!done && !mineDone && t.due_date && t.due_date<today;
     const who=(typeof taskAssignees==='function'?taskAssignees(t):[]).join(', ');
+    const mark=done?'&#9745;':(mineDone?'&#9745;':'&#9744;');
+    const markCol=done?'#0F7B54':(mineDone?'#0F7B54':(late?'#B42318':'#636b7a'));
     return `<div onclick="openTaskDetail('${t.id}')" style="display:flex;align-items:baseline;gap:9px;padding:6px 0;border-bottom:0.5px solid #f4f5f7;cursor:pointer">
-      <span style="font-size:13px;flex-shrink:0;color:${done?'#0F7B54':(late?'#B42318':'#636b7a')}">${done?'&#9745;':'&#9744;'}</span>
+      <span style="font-size:13px;flex-shrink:0;color:${markCol}">${mark}</span>
       <div style="flex:1;min-width:0">
         <div style="font-size:13px;color:${done?'#566070':'#111'};${done?'text-decoration:line-through':''};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(t.title||'')}</div>
         <div style="font-size:11px;color:#566070">${_calEsc(t.category||'')}${who?(' &middot; '+_calEsc(who)):''}</div>
+        ${still?`<div style="font-size:11px;color:#0F7B54;margin-top:1px">${_calEsc(still)}</div>`:''}
       </div>
-      <div style="font-size:11.5px;flex-shrink:0;color:${late?'#B42318':'#566070'};font-weight:${late?'600':'400'}">${_calEsc(t.due_date||'')}${late?' late':''}</div>
+      <div style="font-size:11.5px;flex-shrink:0;color:${late?'#B42318':(mineDone?'#0F7B54':'#566070')};font-weight:${late?'600':'400'}">${_calEsc(t.due_date||'')}${late?' late':(mineDone?' \u2713 yours':'')}</div>
     </div>`;
   };
   const taskRows=tOpen.slice(0,12).map(taskRow).join('')
@@ -7471,7 +7487,7 @@ function _pdLinked(c, which){
     host.innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"></div></div>`;
   }
   document.getElementById("pd-content").innerHTML = `
-    <div style="background:#fff;min-height:520px;border-radius:8px;overflow:hidden;margin-top:0">
+    <div data-screen="prop-card" data-pid="${c.id}" style="background:#fff;min-height:520px;border-radius:8px;overflow:hidden;margin-top:0">
       <div style="padding:10px 18px;border-bottom:0.5px solid #e0e4ec;display:flex;align-items:center;gap:8px;background:#fafafa">
         <button onclick="_goPropBack()" style="display:flex;align-items:center;gap:5px;font-size:13px;color:#566070;cursor:pointer;padding:4px 8px;border-radius:5px;background:none;border:none">← Back</button>
       </div>
@@ -29760,7 +29776,23 @@ function _fdConfirmSchedule(assignees, ds){
   return confirm(ds+" is marked FULL for:\n\n"+lines.join("\n")+"\n\nSchedule this task anyway?");
 }
 const _taskCal = { y:null, m:null, day:null, view:"month", assignee:"all", loaded:false };
-function _taskRerender(){ const el=document.getElementById("pd-content"); if(el) el.innerHTML=renderTaskCalendar(); }
+// Bruce, 17 Oct: "when I click on them and click mark done, it takes me back to the
+// construction calendar for some reason, like it's a bug."
+// It was. The property card and the task calendar are drawn into the SAME container
+// (#pd-content), and this function replaced whatever was in it with the task calendar -
+// so marking a task done from a card threw the card away mid-read. Every caller that
+// really is the task calendar still redraws it; a card redraws itself instead, keeping
+// the tab the person was on (window.__pcTab remembers it).
+function _taskRerender(){
+  const el=document.getElementById("pd-content");
+  if(!el) return;
+  const card=el.querySelector('[data-screen="prop-card"][data-pid]');
+  if(card){
+    const pid=card.getAttribute('data-pid');
+    if(pid && typeof openPropDetail==='function'){ try{ openPropDetail(pid); return; }catch(e){} }
+  }
+  el.innerHTML=renderTaskCalendar();
+}
 function taskCalPrev(){ _taskCal.m--; if(_taskCal.m<0){_taskCal.m=11;_taskCal.y--;} _taskRerender(); }
 function taskCalNext(){ _taskCal.m++; if(_taskCal.m>11){_taskCal.m=0;_taskCal.y++;} _taskRerender(); }
 function taskSetAssignee(a){ _taskCal.assignee=a; _taskRerender(); }
@@ -33422,4 +33454,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-17c sweeps-actually-wired-up -->
+<!-- build: 2026-10-17d propcard-task-row-and-navigation -->
