@@ -27352,53 +27352,8 @@ function _vaTrackers(){
   // A contractor fills a W-9 in as EITHER himself or his company, so the tracker leads
   // with whichever one the W-9 was actually filled out as and shows the other underneath
   // as the cross-reference. The Jobs column is gone - it belongs on the directory.
-  const _w9on=(c)=>!!(d.w9||{})[c.id];
-  // ---- Catching a bad entry at the point it is typed ---------------------------------
-  // Bruce, 4 Oct: "Antonio deck build and siding ripoff. That's not a contractor name. He
-  // just explained a contractor task ... BP, who's that? Is that BP Remodeling? Carlos
-  // Granite, that needs corrected. Chris Har, Tree Guy, that needs corrected."
-  // None of these were caught because nothing ever looked at what was typed. These rules
-  // look, and they only ever FLAG - nothing is renamed, merged or deleted automatically.
-  const _W9_TASKWORDS=/\b(rip\s*off|ripoff|tear\s*out|build|install|installation|repair|haul|hauling|removal|remove|clean\s*out|cleaning|siding|deck|roofing|granite|concrete|drywall|framing|paint|painting|plumbing|electrical|hvac|dumpster|tree|stump|mow|mowing|trim|window|door|flooring|tile|insulation|demo|demolition)\b/i;
-  const _w9Digits=(v)=>String(v||'').replace(/\D+/g,'').slice(-10);
-  const _w9Flags=(c)=>{
-    const out=[];
-    const nm=String(c.name||'').trim();
-    const biz=String(c.business_name||'').trim();
-    const w9n=String(_trkVal('w9info',c.id,'w9name')||'').trim();
-    const first=String(_trkVal('w9info',c.id,'first')||'').trim();
-    const last=String(_trkVal('w9info',c.id,'last')||'').trim();
-    const words=nm.split(/\s+/).filter(Boolean);
-    // 1. The name field is describing a job rather than naming a person or a company.
-    if(nm && _W9_TASKWORDS.test(nm) && words.length>=3)
-      out.push('Reads like a job or a nickname, not a name');
-    // 2. One word and nothing else to go on - "BP", "Devon", "gladis".
-    else if(nm && words.length===1 && !biz && !w9n)
-      out.push('First name only, no business and no W-9 name');
-    // 3. A nickname carried into the name field - "Chris Harr Tree Guy", "Doug Dumpster".
-    else if(nm && _W9_TASKWORDS.test(nm) && words.length===2 && !biz)
-      out.push('Looks like a nickname - needs the real name');
-    // 4. The W-9 is ticked but we never captured whose legal name is on it.
-    if(_w9on(c) && !first && !last && !w9n)
-      out.push('W-9 ticked but no name recorded for it');
-    // 5. The typed W-9 name matches neither the person nor the company.
-    if(w9n && nm && biz){
-      const t=w9n.toLowerCase();
-      if(t.indexOf(nm.toLowerCase())<0 && t.indexOf(biz.toLowerCase())<0 &&
-         nm.toLowerCase().indexOf(t)<0 && biz.toLowerCase().indexOf(t)<0)
-        out.push('W-9 name matches neither the person nor the business');
-    }
-    // 6. Somebody else in the directory has the same phone, or the same name.
-    const dup=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).find(o=>{
-      if(!o || o.id===c.id) return false;
-      const ph=_w9Digits(c.phone);
-      if(ph && ph.length===10 && _w9Digits(o.phone)===ph) return true;
-      const a=(nm||biz).toLowerCase(), b=String(o.name||o.business_name||'').toLowerCase();
-      return !!a && a===b;
-    });
-    if(dup) out.push('Looks like a duplicate of "'+String(dup.name||dup.business_name||'')+'"');
-    return out;
-  };
+  // _w9on and _w9Flags now live at the top level and are shared with the Contractor
+  // Directory, so both screens mark the same contractor for the same reason.
   // Split a plain "Firstname Lastname" so she is not retyping what is already there.
   const _w9Guess=(c,which)=>{
     const nm=String(c.name||'').trim();
@@ -29210,6 +29165,14 @@ function _confirmDelete(what, consequence){
 // bookings, so a brand new contractor is born at 0 on its own. What was missing was
 // being able to FIND anybody in a directory of 75 - and searching by the business name,
 // which is how half of them are known.
+// Clicking a count at the top is the same as typing it into the search box.
+function _ctSearchFor(q){
+  const box=document.getElementById('ct-search');
+  if(!box) return;
+  box.value=(String(box.value||'').trim().toLowerCase()===String(q).toLowerCase())?'':q;
+  _ctFilter();
+  try{ box.scrollIntoView({block:'center'}); }catch(e){}
+}
 function _ctFilter(){
   const box=document.getElementById('ct-search');
   const t=((box&&box.value)||'').trim().toLowerCase();
@@ -29585,9 +29548,70 @@ function _tradeCell(c, ro){
 // ---- the W-9, on the contractor's own row ------------------------------------
 // It was already kept per contractor in the trackers record; it was just only visible
 // from the tracker screen. Same record, shown where you are looking at the man.
-// The W-9 tracker keeps a FLAT map - trkData.w9[contractorId] is a boolean, not a row of
-// fields - so _trkOn(kind,id,field) is the wrong reader for it and always says no.
+// ---- the W-9 tracker and the directory are ONE record ------------------------
+// Bruce, 17 Oct: "make sure that the contractor directory also links with the W9
+// tracker ... and that it is cross referencing and marking for us."
+// It is the same record and always was - the W-9 Tracker is this same contractor list
+// with W-9 fields beside it, and trkData.w9[contractorId] is the tick on both screens.
+// What was missing was that only the tracker could SEE it. These rules used to live
+// inside the tracker's renderer as locals, which is why the directory could not mark
+// anybody; they are shared now, so both screens flag the same contractor for the same
+// reason and a tick in either place is a tick in both.
+// trkData.w9 is a FLAT map - w9[id] is a boolean, not a row of fields - so
+// _trkOn(kind,id,field) is the wrong reader for it and always says no.
+function _w9on(c){ return !!(((window._trkData||{}).w9||{})[(c&&c.id)]); }
+  // ---- Catching a bad entry at the point it is typed ---------------------------------
+  // Bruce, 4 Oct: "Antonio deck build and siding ripoff. That's not a contractor name. He
+  // just explained a contractor task ... BP, who's that? Is that BP Remodeling? Carlos
+  // Granite, that needs corrected. Chris Har, Tree Guy, that needs corrected."
+  // None of these were caught because nothing ever looked at what was typed. These rules
+  // look, and they only ever FLAG - nothing is renamed, merged or deleted automatically.
+const _W9_TASKWORDS=/\b(rip\s*off|ripoff|tear\s*out|build|install|installation|repair|haul|hauling|removal|remove|clean\s*out|cleaning|siding|deck|roofing|granite|concrete|drywall|framing|paint|painting|plumbing|electrical|hvac|dumpster|tree|stump|mow|mowing|trim|window|door|flooring|tile|insulation|demo|demolition)\b/i;
+function _w9Digits(v){ return String(v||'').replace(/\D+/g,'').slice(-10); }
+function _w9Flags(c){
+    const out=[];
+    const nm=String(c.name||'').trim();
+    const biz=String(c.business_name||'').trim();
+    const w9n=String(_trkVal('w9info',c.id,'w9name')||'').trim();
+    const first=String(_trkVal('w9info',c.id,'first')||'').trim();
+    const last=String(_trkVal('w9info',c.id,'last')||'').trim();
+    const words=nm.split(/\s+/).filter(Boolean);
+    // 1. The name field is describing a job rather than naming a person or a company.
+    if(nm && _W9_TASKWORDS.test(nm) && words.length>=3)
+      out.push('Reads like a job or a nickname, not a name');
+    // 2. One word and nothing else to go on - "BP", "Devon", "gladis".
+    else if(nm && words.length===1 && !biz && !w9n)
+      out.push('First name only, no business and no W-9 name');
+    // 3. A nickname carried into the name field - "Chris Harr Tree Guy", "Doug Dumpster".
+    else if(nm && _W9_TASKWORDS.test(nm) && words.length===2 && !biz)
+      out.push('Looks like a nickname - needs the real name');
+    // 4. The W-9 is ticked but we never captured whose legal name is on it.
+    if(_w9on(c) && !first && !last && !w9n)
+      out.push('W-9 ticked but no name recorded for it');
+    // 5. The typed W-9 name matches neither the person nor the company.
+    if(w9n && nm && biz){
+      const t=w9n.toLowerCase();
+      if(t.indexOf(nm.toLowerCase())<0 && t.indexOf(biz.toLowerCase())<0 &&
+         nm.toLowerCase().indexOf(t)<0 && biz.toLowerCase().indexOf(t)<0)
+        out.push('W-9 name matches neither the person nor the business');
+    }
+    // 6. Somebody else in the directory has the same phone, or the same name.
+    const dup=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).find(o=>{
+      if(!o || o.id===c.id) return false;
+      const ph=_w9Digits(c.phone);
+      if(ph && ph.length===10 && _w9Digits(o.phone)===ph) return true;
+      const a=(nm||biz).toLowerCase(), b=String(o.name||o.business_name||'').toLowerCase();
+      return !!a && a===b;
+    });
+    if(dup) out.push('Looks like a duplicate of "'+String(dup.name||dup.business_name||'')+'"');
+    return out;
+}
 function _ctW9On(id){ return !!(((window._trkData||{}).w9||{})[id]); }
+// What the directory shows beside the tick: whose legal name the W-9 is under, and
+// anything the shared rules say is wrong with the entry.
+function _ctW9Issues(c){
+  try{ return (typeof _w9Flags==='function') ? (_w9Flags(c)||[]) : []; }catch(e){ return []; }
+}
 function _ctW9Name(id){ return (((window._trkData||{}).w9info||{})[id]||{}).w9name||''; }
 async function _ctW9Toggle(id){
   if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
@@ -29602,11 +29626,19 @@ async function _ctW9Toggle(id){
 }
 function _ctW9Cell(c, ro){
   const on=_ctW9On(c.id), nm=_ctW9Name(c.id);
-  const face=on?'#0F7B54':'#8A94A6';
-  const mark=ro ? (on?'✓':'—')
-    : '<span onclick="_ctW9Toggle(\''+c.id+'\')" title="'+(on?'W-9 is on file — click to un-tick':'No W-9 on file — click once it is collected')+'" style="cursor:pointer;font-size:16px;color:'+face+'">'+(on?'☑':'☐')+'</span>';
+  const issues=_ctW9Issues(c);
+  const face=on?'#0F7B54':'#8A5A10';
+  const mark=ro ? (on?'\u2713':'\u2014')
+    : '<span onclick="_ctW9Toggle(\''+c.id+'\')" title="'+(on?'W-9 is on file \u2014 click to un-tick':'No W-9 on file \u2014 click once it is collected')+'" style="cursor:pointer;font-size:16px;color:'+face+'">'+(on?'\u2611':'\u2610')+'</span>';
   return '<div style="font-size:15px;color:'+face+'">'+mark+'</div>'
-    + (nm?'<div style="font-size:10px;color:#636b7a;max-width:120px;margin:1px auto 0;line-height:1.2">'+_calEsc(nm)+'</div>':'');
+    + (nm?'<div style="font-size:10px;color:#636b7a;max-width:124px;margin:1px auto 0;line-height:1.2">'+_calEsc(nm)+'</div>':'')
+    + (on?'':'<div style="font-size:9.5px;color:#8A5A10;margin-top:1px">still needed</div>')
+    + (issues.length?('<div onclick="_ctToW9()" title="'+_calEsc(issues.join(' \u00b7 '))+'" style="font-size:9.5px;color:#B42318;font-weight:700;margin-top:1px;cursor:pointer">\u{1F6A9} '+issues.length+' to fix</div>'):'');
+}
+// Straight through to this same contractor on the W-9 Tracker - same record, more fields.
+function _ctToW9(){
+  window._trkView='w9';
+  if(typeof openVAAdminDashboard==='function') openVAAdminDashboard('trackers');
 }
 
 // ---- by trade, and the sheet you hand somebody -------------------------------
@@ -30485,7 +30517,9 @@ function renderContractorDirectory(view){
     // Bruce, 25 Sept: he goes looking for "A Solis framing" as often as "Antonio".
     // Searching only the person's name meant half the directory was unfindable.
     const tiers=_ctTrades(c).map(function(t){ const d=_ctTierDef(_ctTier(c.id,t)); return d?(d.label+' '+t):''; }).filter(Boolean).join(' ');
-    const hay=[c.name,c.business_name,c.trade,c.phone,c.email,tiers,(_ctW9On(c.id)?'w9 w-9':'')].filter(Boolean).join(' ');
+    const w9bits=_ctW9On(c.id) ? 'w9 w-9 on file' : 'no w9 needs w9 w-9 missing';
+    const hay=[c.name,c.business_name,c.trade,c.phone,c.email,tiers,w9bits,
+               (_ctW9Issues(c).length?'flagged needs fixing':'')].filter(Boolean).join(' ');
     return `<tr data-ct="${_calEsc(hay)}" style="${c.red_flag?'background:#FDF3F2;':''}">
       <td style="padding:9px 12px;border-bottom:0.5px solid #eee;font-weight:600;color:${c.red_flag?'#B42318':'#111'}">${c.red_flag?'🚩 ':''}${inp(c,'name','Person','100%')}</td>
       <td style="padding:9px 12px;border-bottom:0.5px solid #eee">${inp(c,'business_name','Business')}</td>
@@ -30523,11 +30557,20 @@ function renderContractorDirectory(view){
     ? 'Everybody we have, grouped by the trade they do and ranked within it \u2014 <b>top option</b>, <b>mid option</b>, <b>just an option</b>. A man can be the top option for one trade and only an option for another, so the ranking is set per trade on the Directory tab. <b>Save as PDF</b> prints this whole thing to hand to somebody.'
     : cdView==='lineups'
     ? 'Named teams built out of the directory — who we call first, second and third for each trade, foundation to finish. Make as many as you like for different kinds of job, and print one off for whoever is running it. <b>Reference only</b> — nothing on the site books off a lineup.'
-    : 'One record per contractor. <b>Times used</b> counts their bookings on the construction calendar and updates itself. The same record feeds the W-9 tracker, the mowing tracker and every contractor dropdown — fix a number here and it is fixed everywhere.';
+    : 'One record per contractor. <b>Times used</b> counts their bookings on the construction calendar and updates itself. The <b>W-9</b> column <i>is</i> the W-9 Tracker — the same tick, cross-referenced both ways, so collecting one there marks him here and ticking it here marks him there, and an entry either screen thinks is wrong is flagged on both. The same record also feeds the mowing tracker and every contractor dropdown — fix a number here and it is fixed everywhere.';
   const _cdDirBody = `
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
           <span style="font-size:12px;background:#EEF3FA;color:#185FA5;padding:3px 10px;border-radius:99px">${list.length} contractor${list.length===1?'':'s'}</span>
           ${flagged?`<span style="font-size:12px;background:#FBEAE8;color:#B42318;padding:3px 10px;border-radius:99px">🚩 ${flagged} red-flagged — do not hire</span>`:''}
+          ${(function(){
+              const noW9=list.filter(function(x){ return !_ctW9On(x.id); }).length;
+              const bad=list.filter(function(x){ return _ctW9Issues(x).length; }).length;
+              return (noW9
+                ? `<span onclick="_ctSearchFor('no w9')" title="Show only these" style="cursor:pointer;font-size:12px;background:#FBF3E2;color:#8A5A10;padding:3px 10px;border-radius:99px">🧾 ${noW9} with no W-9 on file</span>`
+                : `<span style="font-size:12px;background:#E6F4ED;color:#0F7B54;padding:3px 10px;border-radius:99px">🧾 every contractor has a W-9 on file</span>`)
+               + (bad?`<span onclick="_ctSearchFor('flagged')" title="Show only these" style="cursor:pointer;font-size:12px;background:#FBEAE8;color:#B42318;padding:3px 10px;border-radius:99px">🚩 ${bad} W-9 ${bad===1?'entry needs':'entries need'} fixing</span>`:'');
+            })()}
+          <span onclick="_ctToW9()" style="cursor:pointer;font-size:12px;background:#F3E8FB;color:#7A3FA8;padding:3px 10px;border-radius:99px">🧾 Open the W-9 Tracker &rarr;</span>
           <span style="font-size:12px;background:#F1F2F6;color:#566070;padding:3px 10px;border-radius:99px">Need a category that is not here? Add it under Trade → ＋ Other…</span>
         </div>
         ${_ctDupPanel()}
@@ -33778,6 +33821,130 @@ function _syncBanner(f){
     <div style="margin-top:4px;font-size:13px;line-height:1.5">Vacancy dates and closing dates stop updating when this happens, so property cards drift out of step with what the team is posting in Slack. These run from a scheduled task on Bruce's machine \u2014 if it has been off or Claude has not been running, that is why. Last successful sync: ${_calEsc(f.when)}.</div>
   </div>`;
 }
+// ---- removing Tommy's baseline schedule --------------------------------------
+// Bruce, 12 Oct: "Tommy created an automated construction schedule for each property
+// ... can we go ahead and remove that ... it's essentially that baseline schedule I'm
+// talking about. It's like on the property cards as well."
+// And on 17 Oct, on the 910 rows left behind: "go ahead and remove the baseline schedule
+// Tommy created and added that like pre-schedules the whole project. Go ahead and remove
+// that completely for now. We will kind of work with that through the sub phases."
+//
+// The plan was switched off in October - BASELINE_OFF on the property card, and the
+// construction calendar skips kind='baseline' - so nothing in the app has read these
+// rows since. They are three quarters of the calendar table and they are dead weight.
+//
+// Deleting 910 rows is not something to do quietly, so this does three things in order:
+// it saves every row to a file on your machine FIRST, it tells you exactly what is about
+// to go and asks, and only then does it delete - in batches, checking the database
+// actually removed each one rather than trusting a silent success. If the backup cannot
+// be written, nothing is deleted.
+function _baselineRows(){
+  return ((typeof _calEventsCache!=='undefined'?_calEventsCache:[])||[])
+    .filter(function(e){ return String((e&&e.kind)||'')==='baseline'; });
+}
+function _baselineStats(){
+  const rows=_baselineRows();
+  const by={};
+  rows.forEach(function(e){
+    const c=(typeof propCards!=='undefined'?propCards:[]).find(function(p){ return p.id===e.property_id; });
+    const k=(c&&c.addr)||'(not tied to a house)';
+    by[k]=(by[k]||0)+1;
+  });
+  const houses=Object.keys(by).sort();
+  return { rows:rows.length, houses:houses.length, by:by, names:houses,
+           done:rows.filter(function(e){ return e.completed; }).length };
+}
+// The backup is the whole row, exactly as the database has it, so it can be put back.
+function _baselineBackup(rows){
+  try{
+    const stamp=(typeof _ymd==='function'?_ymd(new Date()):new Date().toISOString().slice(0,10));
+    const payload={
+      what:'pm_calendar_events rows with kind=baseline, removed from the Legacy Homes project site',
+      when:new Date().toISOString(),
+      by:(typeof _miWho==='function'?_miWho():''),
+      count:rows.length,
+      restore:'Put these back by inserting them into pm_calendar_events exactly as they are here.',
+      rows:rows
+    };
+    const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url; a.download='baseline-schedule-backup-'+stamp+'.json';
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){ try{ document.body.removeChild(a); URL.revokeObjectURL(url); }catch(e){} }, 1500);
+    return a.download;
+  }catch(e){ return null; }
+}
+async function _baselinePurge(){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
+  const u=(typeof currentUser==='function')?currentUser():null;
+  if(!u || !(u.isSuperAdmin || (typeof isBruce==='function' && isBruce(u)))){
+    alert('Only a director can remove the baseline schedule.'); return;
+  }
+  const rows=_baselineRows();
+  if(!rows.length){ alert('There is no baseline schedule left in the calendar.'); return; }
+  const s=_baselineStats();
+  const top=s.names.slice(0,10).map(function(n){ return '• '+n+' — '+s.by[n]+' step'+(s.by[n]===1?'':'s'); });
+  if(!confirm('Remove the baseline schedule from the calendar for good?\n\n'
+    + s.rows+' row'+(s.rows===1?'':'s')+' across '+s.houses+' house'+(s.houses===1?'':'s')+'.\n\n'
+    + top.join('\n') + (s.names.length>10?('\n…and '+(s.names.length-10)+' more houses'):'')
+    + '\n\nNothing in the app has read these since the baseline was switched off in October, so no screen changes.\n\n'
+    + 'A file with every row in it is saved to your downloads FIRST, so this can be put back. '
+    + 'If that file cannot be saved, nothing is deleted.\n\nThis cannot be undone from inside the app.')) return;
+
+  const file=_baselineBackup(rows);
+  if(!file){ alert('The backup file could not be saved, so nothing was deleted.\n\nAllow downloads for this site and try again.'); return; }
+  if(!confirm('Saved "'+file+'" to your downloads.\n\nCheck it is there, then press OK to delete the '
+    + rows.length+' row'+(rows.length===1?'':'s')+'. Cancel leaves everything as it is.')) return;
+
+  // Batched, and every batch checks what actually came back. A delete the database
+  // refused returns error:null with no rows - that is what an RLS block looks like, and
+  // reporting it as success is how a cleanup silently does nothing.
+  const ids=rows.map(function(e){ return e.id; });
+  let gone=0; const failed=[];
+  for(let i=0;i<ids.length;i+=100){
+    const batch=ids.slice(i,i+100);
+    try{
+      const r=await supabase.from('pm_calendar_events').delete().in('id',batch).select('id');
+      if(r.error || !r.data){ failed.push.apply(failed,batch); continue; }
+      gone+=r.data.length;
+      if(r.data.length<batch.length){
+        const got={}; r.data.forEach(function(x){ got[x.id]=1; });
+        batch.forEach(function(id){ if(!got[id]) failed.push(id); });
+      }
+    }catch(e){ failed.push.apply(failed,batch); }
+  }
+  if(typeof _logAudit==='function'){
+    _logAudit('deleted','calendar','Baseline schedule',
+      'Removed '+gone+' baseline row'+(gone===1?'':'s')+' across '+s.houses+' houses '
+      +'(Tommy’s pre-scheduled plan). Backed up to '+file+' first.'
+      +(failed.length?(' '+failed.length+' could not be removed.'):''));
+  }
+  try{ if(typeof loadCalendarEventsFromSupabase==='function') await loadCalendarEventsFromSupabase(); }catch(e){}
+  alert(failed.length
+    ? (gone+' removed. '+failed.length+' could not be — the database refused them. Your backup is in "'+file+'", and nothing else changed.')
+    : (gone+' baseline row'+(gone===1?'':'s')+' removed. The backup is in "'+file+'" if it is ever wanted back.'));
+  try{ if(typeof openAutomations==='function') openAutomations(); }catch(e){}
+}
+// The panel, at the bottom of Automations. Only shown while there is something to remove.
+function _housekeepingPanel(){
+  const u=(typeof currentUser==='function')?currentUser():null;
+  if(!u || !(u.isSuperAdmin || (typeof isBruce==='function' && isBruce(u)))) return '';
+  const s=_baselineStats();
+  if(!s.rows) return '';
+  return '<div style="margin-bottom:18px">'
+    +'<div style="font-size:14px;font-weight:600;color:#111;margin-bottom:8px">Housekeeping</div>'
+    +'<div data-hk="baseline" style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid #BA7517;border-radius:10px;padding:13px 15px">'
+      +'<div style="font-size:14px;font-weight:600;color:#111">\u{1F5D1} Tommy’s baseline schedule</div>'
+      +'<div style="font-size:13px;color:#566070;margin-top:3px;line-height:1.5">'
+        +s.rows+' pre-scheduled step'+(s.rows===1?'':'s')+' across '+s.houses+' house'+(s.houses===1?'':'s')
+        +' are still sitting in the construction calendar. The baseline was switched off in October — '
+        +'nothing on any screen reads them any more — so they are dead weight on the biggest table in the database. '
+        +'Removing them changes nothing you can see. A file with every row is saved to your downloads first, so it can be put back.'
+      +'</div>'
+      +'<button onclick="_baselinePurge()" style="margin-top:10px;padding:8px 15px;background:#122A4A;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Back up and remove '+s.rows+' row'+(s.rows===1?'':'s')+'</button>'
+    +'</div></div>';
+}
 async function openAutomations(){
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
@@ -33801,6 +33968,7 @@ async function openAutomations(){
         <div style="font-size:13px;color:#566070;margin-bottom:16px">Everything the system does automatically or at the click of a button, by category. This list grows as we build more.</div>
         ${_syncBanner(_fresh)}
         ${sections}
+        ${_housekeepingPanel()}
       </div>
     </div>`;
 }
@@ -35405,4 +35573,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-17s inspection-dates-not-invented booked-date-reaches-card stamp-cleanup -->
+<!-- build: 2026-10-17t baseline-purge-backed-up w9-cross-referenced -->
