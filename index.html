@@ -23263,7 +23263,7 @@ function _vaDeskView(vaName){
   return _vaBoard(vaName);
 }
 // ---- Trackers (W-9 / Mowing / Checklists) — persisted in pm_settings key 'trackers'. ----
-async function _trkLoad(){ window._trkLoaded=true; try{ const r=await supabase.from("pm_settings").select("data").eq("key","trackers").maybeSingle(); if(r.error){ window._trkLoadOk=false; window._trkData={}; window._trkBase={}; return; } window._trkLoadOk=true; window._trkData=(r.data&&r.data.data)||{}; window._trkBase=JSON.parse(JSON.stringify(window._trkData)); try{ if(typeof _permitAutoTickOnce==='function') await _permitAutoTickOnce(); }catch(e){} }catch(e){ window._trkLoadOk=false; window._trkData={}; window._trkBase={}; } }
+async function _trkLoad(){ window._trkLoaded=true; try{ const r=await supabase.from("pm_settings").select("data").eq("key","trackers").maybeSingle(); if(r.error){ window._trkLoadOk=false; window._trkData={}; window._trkBase={}; return; } window._trkLoadOk=true; window._trkData=(r.data&&r.data.data)||{}; window._trkBase=JSON.parse(JSON.stringify(window._trkData)); try{ if(typeof _permitCatchUpOnce==='function') await _permitCatchUpOnce(); }catch(e){} }catch(e){ window._trkLoadOk=false; window._trkData={}; window._trkBase={}; } }
 // ---- Saving a tracker without wiping out what somebody else just did -----------------
 // All six trackers live in ONE row of the database. Every save used to send that entire
 // object as this browser happened to remember it - so if Jen changed a permit at 9am and
@@ -24874,10 +24874,11 @@ async function _permitCatchUpOnce(){
   if(!_permitList().length) return;
   if(typeof isReadOnly==="function" && isReadOnly()) return;
   window.__permCaught=true;
-  try{ await _permitCatchUpCards({quiet:true}); }catch(e){}
-  // the tick first, so a house the tracker knows about is permitted before anything
-  // reads that flag; then the tasks that the tracker finished but never closed
+  // Order matters. The permitted tick first, so a house the tracker knows about is
+  // marked permitted before anything reads that flag. Then the cards are brought into
+  // line with the tracker. Then any task the tracker had finished but never closed.
   try{ await _permitAutoTickOnce(); }catch(e){}
+  try{ await _permitCatchUpCards({quiet:true}); }catch(e){}
   try{ await _spTaskCatchUpOnce(); }catch(e){}
 }
 // Revisions means Jen has drawings to redo. That is real work with a date on it,
@@ -33454,4 +33455,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-17d propcard-task-row-and-navigation -->
+<!-- build: 2026-10-17e permit-catchup-enabled -->
