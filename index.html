@@ -12578,7 +12578,8 @@ const MKT_PDF_FIELDS = {
          ['walk_realtor','Realtor walk'],['walk_npi','NPI inspection walk'],['clean_final','Final clean'],
          ['stage_date','Staging'],['pics_date','Photos'],['list_date','Target list date'],
          ['cma_text','CMA / comps'],['left','What is left before it can be listed']],
-  active:[['punch_done','All punch out checklists completed'],['date_listed','Date listed'],
+  active:[['punch_done','All punch out checklists completed'],
+          ['cc_done','Listing process done & in CompanyCam'],['date_listed','Date listed'],
           ['list_price','Current list price'],['drops','Price drops'],
           ['sh_total','Showings total'],['sh_7','Showings last 7 days'],
           ['margin_manual','Margin at list price'],['feedback','Repeated feedback'],
@@ -13553,6 +13554,7 @@ function _mktMarginNote(c){
 // repeated and automated and moved over as we build this out" - so this list is meant to be
 // argued with. Change it here and the whole cycle follows.
 const MKT_CARRY = [
+  'cc_done',          // the PM's date for the listing process being done
   'date_listed',      // the day it went on
   'list_date',
   'list_price',       // what we are asking
@@ -13880,6 +13882,10 @@ function _mktMeetingBody(wk, kind, notes, prevNotes, roNow){
           // Bruce, 10 Oct: the CompanyCam box nobody could explain is gone. This answer
           // is given once on Coming Soon and carries straight through to here.
           + fld('All punch out checklists completed', sel(c.id,'punch_done',['','Yes','No'],96), 'carried from Coming Soon')
+          // Katie's Tuesday doc asks for a DATE on this line, not a yes/no - it reads
+          // "Listing process completed and in company cam: DATE FROM PMS" on every
+          // active listing. The yes/no above is the punch-out; this is the PM's date.
+          + fld('Listing process done &amp; in CompanyCam', dt(c.id,'cc_done'), 'the date from the PM')
           + fld('Realtor', roNow?roShow(V(c.id,'realtor')||c.listingAgent||''):`<input id="${id(c.id,'realtor')}" value="${_calEsc(V(c.id,'realtor')||c.listingAgent||'')}" placeholder="Who is listing it" style="${box};width:100%"/>`)
           + fld('Date listed', dt(c.id,'date_listed'), (listed&&!V(c.id,'date_listed'))?('listing clock says '+_calEsc(listed)):'')
           + fld('Current list price', tx(c.id,'list_price','$0',110),
@@ -19163,6 +19169,47 @@ function _plRerender(pid){
   if(typeof openPropDetail==='function') openPropDetail(pid);
 }
 
+// Where the answers actually live. Bruce, 17 Oct, asked where the pre-listing form
+// should pull from: "pull the scope of work from MULTIPLE Places - whole tail flip
+// drive its what we link each property too, our internal SOW builder and the official
+// SOW builder tommy and andy made that the project team will eventually use."
+//
+// Two of those three this app cannot read, and saying otherwise would be a promise it
+// cannot keep. The Drive folder is Google's and this app holds no Google credentials -
+// it can store a link, it can never go and fetch what is inside one. Renovation Pricing
+// is a separate site on another origin, so the browser will not let this page read it
+// either. The internal scope of work is the one source that IS in this database, and
+// that is the one already answering four of the questions on its own.
+//
+// So all three sit at the top of the form as doors, one click from the box being filled
+// in, with the one that can answer for itself marked as the one that does.
+function _plSources(c){
+  const E=_calEsc;
+  const sc=_plScope(c);
+  const link=function(icon, label, sub, href, onclick, live){
+    const inner='<div style="display:flex;gap:9px;align-items:flex-start">'
+      +'<span style="font-size:16px;line-height:1.2;flex-shrink:0">'+icon+'</span>'
+      +'<div style="min-width:0"><div style="font-size:12.5px;font-weight:700;color:'+(href||onclick?'#185FA5':'#8A94A6')+'">'+label
+        +(live?'<span style="font-size:9.5px;font-weight:700;color:#0F7B54;background:#E6F4ED;padding:1px 6px;border-radius:99px;margin-left:6px;vertical-align:middle">fills the form</span>':'')+'</div>'
+      +'<div style="font-size:11px;color:#566070;line-height:1.45">'+sub+'</div></div></div>';
+    const box='display:block;text-decoration:none;background:#fff;border:0.5px solid '+(href||onclick?'#cdd7e6':'#e8eaf0')+';border-radius:9px;padding:10px 12px;'+(href||onclick?'cursor:pointer':'opacity:.7');
+    if(href)    return '<a href="'+E(href)+'" target="_blank" style="'+box+'">'+inner+'</a>';
+    if(onclick) return '<div onclick="'+onclick+'" style="'+box+'">'+inner+'</div>';
+    return '<div style="'+box+'">'+inner+'</div>';
+  };
+  const a=c.driveUrl
+    ? link('\u{1F4C1}','Wholetail Flip drive folder','Everything filed on this house — opens in a new tab', c.driveUrl, '', false)
+    : link('\u{1F4C1}','Wholetail Flip drive folder','No folder is linked to this house yet — add one on the property card', '', '', false);
+  const b=sc
+    ? link('\u{1F4CB}','Scope of work — ours','Revision '+E(String(sc.revision||'1'))+(sc.phase?(' · '+E(String(sc.phase))):''), '', "_scOpen('"+_argEsc(sc.id)+"')", true)
+    : link('\u{1F4CB}','Scope of work — ours','No scope of work has been written for this house yet', '', '', false);
+  const d=link('\u{1F4B2}','Renovation Pricing','The official SOW builder — opens in a new tab',
+               'https://renovation-pricing.vercel.app/', '', false);
+  return '<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:13px 16px;margin-bottom:11px">'
+    +'<div style="font-size:13px;font-weight:700;color:#111">\u{1F50E} Where the answers live</div>'
+    +'<div style="font-size:11.5px;color:#566070;margin:2px 0 8px">Three places hold the detail for this house. The scope of work is the one this site can read, and it is already answering four of the questions below. The other two open in their own tab.</div>'
+    +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:9px">'+a+b+d+'</div></div>';
+}
 function _plBar(c, w){
   const k=_plCounts(c);
   const col=k.done?'#0F7B54':(k.pct>=70?'#185FA5':(k.pct>=30?'#8A5A10':'#B42318'));
@@ -19240,7 +19287,7 @@ function _plBody(c, ro, where){
       : '<button onclick="_plMark(\''+pid+'\',true)" style="padding:8px 15px;background:#122A4A;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">✓ Mark the pre-listing form complete</button>')
     +'<span style="font-size:11.5px;color:#636b7a;align-self:center">Every box saves itself as you leave it.</span></div>';
 
-  return head+groups+foot;
+  return head+_plSources(c)+groups+foot;
 }
 // A save redraws the screen it was made on, but only after the write lands - otherwise
 // a half-typed box can be painted back over the top of itself.
@@ -34279,4 +34326,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-17i prelisting-form-four-doors -->
+<!-- build: 2026-10-17j prelist-sources listings-meeting-cc-date -->
