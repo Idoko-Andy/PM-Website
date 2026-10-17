@@ -1620,7 +1620,11 @@ function applyPermissionsUI() {
   const setMenu = (id, show) => { const e = document.getElementById(id); if (e) e.style.display = show ? "" : "none"; };
   // Reporting is no longer one switch: the menu appears if the person can see any
   // single thing inside it, and the items gate themselves individually above.
-  setMenu("rep-t", ["rep_all","rep_team","rep_kickoff","rep_company","rep_ceo","rep_va"].some(k=>hasPerm(u,k)));
+  // Bug, found 17 Oct: rep_market (the listings meeting) and rep_eop (end of project)
+  // were missing from this list, so somebody whose ONLY meeting permissions are those
+  // two - which is exactly a Realtor - had the whole Meetings menu hidden from them.
+  // They could reach the listings meeting from the realtor dashboard and nowhere else.
+  setMenu("rep-t", ["rep_all","rep_team","rep_market","rep_kickoff","rep_eop","rep_company","rep_ceo","rep_va"].some(k=>hasPerm(u,k)));
   setMenu("sop-t",  hasPerm(u,"sops_view")); // SOPs = single toggle (default on)
   const _hb=document.getElementById("hist-box"); if(_hb) _hb.style.display = hasPerm(u,"edit_history") ? "flex" : "none"; // Edit History box beside search
   if(typeof _confirmNavRefresh==='function') _confirmNavRefresh();
@@ -11572,6 +11576,141 @@ function _wmEstDrift(c){
   if(!est||!com) return null;
   return Math.round((Date.parse(est+"T00:00:00")-Date.parse(com+"T00:00:00"))/86400000);
 }
+// ===================== THE TIMELINE BLOCK ON MONDAY ==============================
+// Bruce, 17 Oct: "once we have a locked timeline, like finish date set, I want to see
+// that at the top where it says 'no estimated finish yet' right now. And then below
+// that would be yes on time or no, not on time, new scheduled date. And then below
+// that it'll show the original date and then all the rescheduled dates from there in
+// order from top to bottom and the reasonings beside it. And then make sure it shows
+// clear at the bottom what the new finish date is in bold with the words 'new finish
+// date' beside it ... update it, clean it up, make it look more legible."
+//
+// Every piece of this was already being stored. It was being PRINTED as a yes/no
+// question above a 10.5px monospace strip of the last four moves, with the committed
+// finish nowhere in sight and the date actually in force never stated. In a room, on a
+// screen, that is unreadable. Same data, read top to bottom: what we committed to,
+// whether we are still on it, every time it moved and why, and the date in force now.
+function _wmDateLong(ds){
+  const s=String(ds||''); if(!s) return '';
+  try{ const d=new Date(s+'T00:00:00'); if(isNaN(d.getTime())) return s;
+       return d.toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric',year:'numeric'}); }
+  catch(e){ return s; }
+}
+function _wmDaysApart(a,b){
+  if(!a||!b) return null;
+  const x=Date.parse(String(a)+'T00:00:00'), y=Date.parse(String(b)+'T00:00:00');
+  if(isNaN(x)||isNaN(y)) return null;
+  return Math.round((y-x)/86400000);
+}
+function _wmLate(n){
+  if(n==null) return '';
+  if(n===0) return 'same day';
+  return Math.abs(n)+' day'+(Math.abs(n)===1?'':'s')+(n>0?' later':' earlier');
+}
+function _wmTimelineBlock(c, ro){
+  const committed=String(c.end||'');
+  const est=_wmEst(c);
+  const pushes=_wmPushes(c);
+  // The date actually in force: the newest estimate if one has been set, otherwise the
+  // committed finish. This is the number the room wants and never had on the screen.
+  const current=est||committed;
+  const checkedOn=(c.checklists||{}).est_checked||'';
+  const drift=(est&&committed)?_wmDaysApart(committed,est):null;
+  const E=_calEsc;
+
+  // ---- 1. the locked finish date, at the top ----
+  const top = committed
+    ? '<div style="background:#F2F6FC;border:1px solid #D4E0F2;border-radius:11px;padding:13px 16px">'
+      
+      +'<div style="font-size:10.5px;font-weight:700;color:#55607A;text-transform:uppercase;letter-spacing:.06em">&#128274; Committed finish &mdash; locked</div>'
+      +'<div style="font-size:22px;font-weight:700;color:#122A4A;margin-top:2px;font-variant-numeric:tabular-nums">'+E(_wmDateLong(committed))+'</div>'
+      +'<div style="font-size:11.5px;color:#566070;margin-top:2px">On time or late is measured against this date. It only moves in this meeting, or by '+E((typeof COMMIT_OVERRIDE!=='undefined'?COMMIT_OVERRIDE:[]).join(', '))+'.</div>'
+      +'</div>'
+    : '<div style="background:#FFF7E6;border:1px solid #EAD9A8;border-radius:11px;padding:13px 16px">'
+      +'<div style="font-size:10.5px;font-weight:700;color:#8A5A10;text-transform:uppercase;letter-spacing:.06em">No committed finish date yet</div>'
+      +'<div style="font-size:12.5px;color:#6b5310;margin-top:3px;line-height:1.5">Nothing on this house is being measured on time or late until one is set.'
+        +(ro?'':' This is the one the PM gets to choose &mdash; after it is set it only moves in this meeting.')+'</div>'
+      +(ro?'':'<input type="date" value="" onchange="_wmCommitSet(\''+c.id+'\',this.value,this)" style="margin-top:8px;padding:6px 10px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px"/>')
+      +'</div>';
+
+  // ---- 2. are we on time? ----
+  const onTime=(committed && current) ? (current<=committed) : null;
+  const verdict = (onTime===null)
+    ? '<span style="font-size:15px;font-weight:700;color:#8A5A10">Nothing to measure yet</span>'
+    : (onTime
+       ? '<span style="font-size:15px;font-weight:700;color:#0F7B54">&#10003; Yes &mdash; on time</span>'
+       : '<span style="font-size:15px;font-weight:700;color:#B42318">&#10007; No &mdash; not on time</span>'
+         +'<span style="font-size:12.5px;color:#B42318;margin-left:8px">'+E(_wmLate(drift))+' than committed</span>');
+  const ask = ro
+    ? '<div style="margin-top:4px">'+verdict
+      +(checkedOn?'<div style="font-size:11.5px;color:#566070;margin-top:3px">Last confirmed on pace '+E(_wmDateLong(checkedOn))+'</div>':'')+'</div>'
+    : '<div style="margin-top:4px">'+verdict
+      +'<div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-top:9px">'
+      +(current?'<button onclick="_wmPaceOk(\''+c.id+'\')" style="padding:6px 14px;border:0.5px solid #BFE5D4;border-radius:8px;background:#EAF7F1;font-size:12.5px;color:#0F7B54;cursor:pointer;font-weight:700">Yes &mdash; still on time, no change</button>':'')
+      +'<span style="font-size:12.5px;color:#566070;font-weight:600">No &mdash; new scheduled date:</span>'
+      +'<input type="date" value="'+E(est||'')+'" onchange="_wmEstSet(\''+c.id+'\',this.value)" style="padding:6px 10px;border:0.5px solid #d8dce6;border-radius:8px;font-size:12.5px"/>'
+      +'</div>'
+      +'<div style="font-size:11px;color:#636b7a;margin-top:5px">You will be asked what pushed it. The reason is what shows in the trail below and in Tommy\'s summary.</div>'
+      +(checkedOn?'<div style="font-size:11.5px;color:#566070;margin-top:4px">Last confirmed on pace '+E(_wmDateLong(checkedOn))+'</div>':'')
+      +'</div>';
+
+  // ---- 3. every date this house has had, oldest at the top ----
+  // The first row is where it started: the 'from' on the first push if one was recorded,
+  // otherwise the committed finish itself. Then one row per move, in the order they
+  // happened, with the reason beside it.
+  const trailRows=[];
+  const origin=(pushes.length && pushes[0].from) ? pushes[0].from : committed;
+  if(origin) trailRows.push({d:origin, kind:'orig'});
+  pushes.forEach(function(p){ trailRows.push({d:p.to, kind:'push', at:p.at||'', why:p.why||'', by:p.by||''}); });
+  // A date set before moves were being recorded still has to appear.
+  if(est && !pushes.length && committed && est!==committed) trailRows.push({d:est, kind:'push', at:'', why:'', by:''});
+
+  let prevD=null;
+  const rows=trailRows.map(function(r,i){
+    const gap=(r.kind==='push')?_wmDaysApart(prevD, r.d):null;
+    prevD=r.d;
+    const isLast=(i===trailRows.length-1);
+    const label=(r.kind==='orig')?'Original committed finish':'Rescheduled to';
+    return '<div style="display:flex;gap:12px;align-items:flex-start;padding:9px 0;border-top:'+(i?'0.5px solid #eef0f6':'none')+'">'
+      +'<div style="flex-shrink:0;width:14px;padding-top:3px;text-align:center;color:'+(r.kind==='orig'?'#8A94A6':(isLast?'#B42318':'#BA7517'))+';font-size:13px">'
+        +(r.kind==='orig'?'&#9679;':'&#8627;')+'</div>'
+      +'<div style="flex-shrink:0;min-width:168px">'
+        +'<div style="font-size:10px;font-weight:700;color:#7A8294;text-transform:uppercase;letter-spacing:.05em">'+label+'</div>'
+        +'<div style="font-size:14px;font-weight:'+(r.kind==='orig'?'600':'700')+';color:'+(r.kind==='orig'?'#566070':'#111')+';font-variant-numeric:tabular-nums">'+E(_wmDateLong(r.d))+'</div>'
+        +((gap!=null&&gap!==0)?'<div style="font-size:10.5px;color:'+(gap>0?'#B42318':'#0F7B54')+';font-weight:600">'+E(_wmLate(gap))+'</div>':'')
+      +'</div>'
+      +'<div style="flex:1;min-width:0;padding-top:12px">'
+        +(r.kind==='orig'
+          ? '<div style="font-size:12.5px;color:#636b7a">Where this house started.</div>'
+          : '<div style="font-size:13.5px;color:#111;line-height:1.5;overflow-wrap:anywhere">'
+            +(r.why?('&ldquo;'+E(r.why)+'&rdquo;'):'<span style="color:#B42318">No reason was written down</span>')+'</div>'
+            +((r.at||r.by)?('<div style="font-size:11px;color:#636b7a;margin-top:2px">moved '+E(_wmDateLong(r.at))+(r.by?(' by '+E(r.by)):'')+'</div>'):''))
+      +'</div></div>';
+  }).join('');
+
+  const trail = trailRows.length
+    ? '<div style="margin-top:13px">'
+      +'<div style="font-size:10.5px;font-weight:700;color:#55607A;text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px">How the date has moved'
+      +(pushes.length?('<span style="text-transform:none;letter-spacing:0;color:#8A94A6;font-weight:400"> &middot; pushed '+pushes.length+' time'+(pushes.length===1?'':'s')+'</span>'):'')+'</div>'
+      +rows+'</div>'
+    : '';
+
+  // ---- 4. the date in force, said plainly, at the bottom ----
+  const moved=!!(current && origin && current!==origin);
+  const bottom = current
+    ? '<div style="margin-top:13px;display:flex;align-items:baseline;gap:11px;flex-wrap:wrap;background:'+(moved?'#FFF7E6':'#EAF7F1')+';border:1px solid '+(moved?'#EAD9A8':'#BFE5D4')+';border-radius:11px;padding:13px 16px">'
+      +'<span style="font-size:23px;font-weight:800;color:'+(moved?'#8A5A10':'#0F7B54')+';font-variant-numeric:tabular-nums">'+E(_wmDateLong(current))+'</span>'
+      +'<span style="font-size:13.5px;font-weight:700;color:'+(moved?'#8A5A10':'#0F7B54')+'">'+(moved?'New finish date':'Finish date &mdash; unchanged')+'</span>'
+      +(moved&&drift!=null?'<span style="font-size:12px;color:#8A5A10">'+E(_wmLate(drift))+' than the committed finish</span>':'')
+      +'</div>'
+    : '';
+
+  return '<div style="display:flex;flex-direction:column;gap:11px">'+top
+    +'<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:13px 16px">'
+      +'<div style="font-size:10.5px;font-weight:700;color:#55607A;text-transform:uppercase;letter-spacing:.06em">Are we on time?</div>'
+      +ask+trail+bottom
+    +'</div></div>';
+}
 async function _wmChecklistPatch(pid, patch){
   const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid); if(!c) return false;
   const cl=Object.assign({}, c.checklists||{}, patch);
@@ -12131,7 +12270,17 @@ function _wmSummaryText(wk){
   }));
   // Same shape as the sheet: no unassigned tasks, no over-budget section, lag
   // grouped by house, bookings led by the trade, wins labelled for last week.
-  sect('Timelines moved this week', D.moved.map(m=>m.addr+': '+(m.from||'--')+' -> '+(m.to||'--')));
+  // Bug, found 17 Oct: D.moved holds {c:card, p:push} pairs - the HTML sheet reads them
+  // correctly, this line read m.addr / m.from / m.to, which do not exist on that shape.
+  // Every pushed timeline in the EMAILED summary therefore printed as
+  // "undefined: -- -> --", which is what Tommy has been receiving.
+  sect('Timelines moved this week', D.moved.map(function(m){
+    const addr=((m.c||{}).addr)||'(property)';
+    const from=((m.c||{}).end)||((m.p||{}).from)||'--';
+    const to=((m.p||{}).to)||'--';
+    const why=((m.p||{}).why)||'';
+    return addr+': '+from+' -> '+to+(why?('  ("'+why+'")'):'  (no reason given)');
+  }));
   sect('Booked this week', D.bookByProp.map(g=>
     g.c.addr+': '+g.items.map(it=>
       (it.trade||it.title||'Scheduled')+(it.who&&it.who!==it.trade?(' ('+it.who+')'):'')
@@ -16433,15 +16582,10 @@ function openWeeklyMeeting(kind, week){
       const qAdd=_miBlockAdd('q', c, roNow);
 
       // ---- timeline check ----
-      const trail=pushes.length?`<div style="font-family:ui-monospace,Menlo,monospace;font-size:10.5px;color:#566070;line-height:1.7;margin-top:7px">${pushes.slice(-4).map(p=>`<b style="color:#111">&rarr; ${_calEsc(p.to)}</b> ${_calEsc(p.at||'')}${p.why?(' &middot; "'+_calEsc(p.why)+'"'):''}`).join('<br>')}${pushes.length>4?`<div style="color:#636b7a">+ ${pushes.length-4} earlier</div>`:''}</div>`:'';
-      const pace=roNow?`<div style="font-size:12.5px;color:#555">${paceDate?('Estimate '+_calEsc(paceDate)):'No estimate set'}${checkedOn?(' &middot; confirmed '+_calEsc(checkedOn)):''}</div>`
-        :`<div style="font-size:12.5px;color:#111;font-weight:600;margin-bottom:6px">${paceDate?('Are we still on pace for '+_calEsc(paceDate)+'?'):'No estimated finish yet &mdash; set one:'}</div>
-          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-            ${paceDate?`<button onclick="_wmPaceOk('${c.id}')" style="padding:5px 12px;border:0.5px solid #BFE5D4;border-radius:7px;background:#EAF7F1;font-size:12.5px;color:#0F7B54;cursor:pointer;font-weight:600">Yes &mdash; no change</button>`:''}
-            <span style="font-size:12.5px;color:#566070">No &mdash; new estimate</span>
-            <input type="date" value="${_calEsc(est||'')}" onchange="_wmEstSet('${c.id}',this.value)" style="padding:5px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px"/>
-          </div>
-          ${checkedOn?`<div style="font-size:11px;color:#566070;margin-top:5px">Last confirmed on pace ${_calEsc(checkedOn)}</div>`:''}`;
+      // The whole block now lives in _wmTimelineBlock(), built from the same three
+      // pieces this used to print as a yes/no question over a monospace strip:
+      // the committed finish (c.end), the current estimate (checklists.est_finish)
+      // and the full move trail (checklists.est_pushes).
 
       // The one-line header the room scans before deciding to open a card.
       const openLag=_miFor('lag',c.id).length, openQ=_miFor('q',c.id).length;
@@ -16539,7 +16683,7 @@ function openWeeklyMeeting(kind, week){
           body.lag = _sub('Lag-time items &middot; carried until they close') + lagRows + lagAdd
             + _sub('Questions for Bruce / Tommy &middot; carried until answered') + qRows + qAdd;
 
-          body.money = pace + trail
+          body.money = _wmTimelineBlock(c, roNow)
             + `<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:11px;padding-top:10px;border-top:0.5px solid #eef0f6">
                  <div><div style="font-size:9.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em">Goes vacant</div><div style="font-size:13px;font-weight:600;color:${c.vacancyDate?'#111':'#8A5A10'}">${_dt(c.vacancyDate)}</div></div>
                  <div><div style="font-size:9.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em">Closing &middot; us buying</div><div style="font-size:13px;font-weight:600;color:${c.closingDate?'#111':'#8A5A10'}">${_dt(c.closingDate)}</div></div>
@@ -33772,4 +33916,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-17f realtor-stage-boards back-where-you-came-from -->
+<!-- build: 2026-10-17g monday-timeline-rebuilt summary-and-menu-bugs -->
