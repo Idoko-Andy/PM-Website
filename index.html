@@ -24331,7 +24331,11 @@ function _vaDeskView(vaName){
   return _vaBoard(vaName);
 }
 // ---- Trackers (W-9 / Mowing / Checklists) — persisted in pm_settings key 'trackers'. ----
-async function _trkLoad(){ window._trkLoaded=true; try{ const r=await supabase.from("pm_settings").select("data").eq("key","trackers").maybeSingle(); if(r.error){ window._trkLoadOk=false; window._trkData={}; window._trkBase={}; return; } window._trkLoadOk=true; window._trkData=(r.data&&r.data.data)||{}; window._trkBase=JSON.parse(JSON.stringify(window._trkData)); try{ if(typeof _permitCatchUpOnce==='function') await _permitCatchUpOnce(); }catch(e){} }catch(e){ window._trkLoadOk=false; window._trkData={}; window._trkBase={}; } }
+async function _trkLoad(){ window._trkLoaded=true; try{ const r=await supabase.from("pm_settings").select("data").eq("key","trackers").maybeSingle(); if(r.error){ window._trkLoadOk=false; window._trkData={}; window._trkBase={}; return; } window._trkLoadOk=true; window._trkData=(r.data&&r.data.data)||{}; window._trkBase=JSON.parse(JSON.stringify(window._trkData)); try{ if(typeof _permitCatchUpOnce==='function') await _permitCatchUpOnce(); }catch(e){}
+  // The window chase reads the tracker, so it runs once the tracker is actually loaded -
+  // a failed load looks exactly like an empty tracker, and chasing off that would raise
+  // tasks on every house at once.
+  try{ if(typeof _winChaseOnce==='function') await _winChaseOnce(); }catch(e){} }catch(e){ window._trkLoadOk=false; window._trkData={}; window._trkBase={}; } }
 // ---- Saving a tracker without wiping out what somebody else just did -----------------
 // All six trackers live in ONE row of the database. Every save used to send that entire
 // object as this browser happened to remember it - so if Jen changed a permit at 9am and
@@ -24491,7 +24495,7 @@ async function _trkWinDate(id,field,val){
   try{
     const ex=(typeof _calEventsCache!=='undefined'?_calEventsCache:[]).find(e=>e.property_id===id && (e.title||'')===title);
     if(ex){ await supabase.from("pm_calendar_events").update({ event_date:val }).eq("id",ex.id); }
-    else  { await supabase.from("pm_calendar_events").insert({ property_id:id, event_date:val, kind:'material', title:title, notes:'Auto-added from the Window Tracker.' }); }
+    else  { await supabase.from("pm_calendar_events").insert({ property_id:id, event_date:val, kind:'material', title:title, notes:_winEventNotes(_winNotes(id)) }); }
     if(typeof loadCalendarEventsFromSupabase==='function') await loadCalendarEventsFromSupabase();
   }catch(e){}
 }
@@ -25060,6 +25064,176 @@ function _winStageMeta(k){ return WIN_STAGES.find(x=>x.k===k)||WIN_STAGES[0]; }
 // finished on the board. `install_confirmed` is the separate question, answered by the
 // project manager AFTER the date, not by the person who typed it in.
 // 48 hours after the install date it becomes a red flag until somebody answers it.
+// ===================== THE WINDOW CHASE, AND NOTES THAT TRAVEL ==================
+// Bruce, 17 Oct, pasting his Grok thread across: "I'm getting ready to add a checkbox
+// on the window tracker to where it'll put date requested to measure for windows ...
+// once Steve confirms, Marlo or the PM will update the window tracker for the date that
+// he's measuring or did measure. Once it's confirmed they've been measured and ordered,
+// somebody will check those boxes. If those dates are passed after 48 hours without the
+// boxes checked it'll follow up with Marlo and the project manager on their task
+// calendars ... All notes need to be automatically pulled from the window tracker and
+// then put into that section."
+//
+// And the rule that governs all of it, in his words: "wherever you input data once, it
+// auto-populates and communicates and translates into any other dashboard, meeting doc,
+// or location that it shows."
+//
+// Three pieces:
+//  1. The REQUEST date - the day a PM texted the contractor to get on the schedule. It
+//     is an office action, not site work, so it deliberately does NOT go on the
+//     construction calendar. It does start a clock, because a request with no measure
+//     date two days later is exactly the thing that rots quietly.
+//  2. The CHASE - a date that has passed by 48 hours with its box still unticked becomes
+//     a real task on the Senior Administrative Assistant's calendar AND the PM's. A red
+//     square on a tracker only works on somebody who goes and looks at the tracker.
+//  3. The NOTES - already typed on the tracker, now carried onto the construction
+//     calendar entries, so the PM reads them where the job is instead of going to find
+//     them.
+const WIN_CHASE_GRACE_H = 48;
+// date field -> the box that answers it. `next` means another date answers it instead:
+// nobody ticks a box to say a measure was booked, the measure date itself says so.
+const WIN_CHASE = [
+  { date:'request_date', box:null,        next:'measure_date', key:'measure',
+    label:'a measure date',
+    why:'A measure was asked for and nobody has come back with a date.' },
+  { date:'measure_date', box:'measured',  next:null, key:'measured',
+    label:'Measured',
+    why:'The measure date has passed and nobody has ticked Measured.' },
+  { date:'order_date',   box:'ordered',   next:null, key:'ordered',
+    label:'Ordered',
+    why:'The order date has passed and nobody has ticked Ordered.' },
+  { date:'arrival_date', box:'arrived',   next:null, key:'arrived',
+    label:'Arrived',
+    why:'The arrival date has passed and nobody has ticked Arrived.' },
+  { date:'install_date', box:'installed', next:null, key:'installed',
+    label:'Installed',
+    why:'The install date has passed and nobody has ticked Installed.' }
+];
+function _winChaseDue(c, st){
+  if(!c || !st) return false;
+  const d=_trkVal('win',c.id,st.date);
+  if(!d) return false;
+  if(st.box && _trkOn('win',c.id,st.box)) return false;      // somebody answered it
+  if(st.next && _trkVal('win',c.id,st.next)) return false;   // the next date answers it
+  const t=Date.parse(String(d)+'T00:00:00');
+  if(isNaN(t)) return false;
+  return Date.now() >= (t + WIN_CHASE_GRACE_H*3600000);
+}
+// Marlo and the PM, by the seat they hold rather than by name - so this keeps working
+// when somebody else takes the chair.
+function _winChaseWho(c){
+  const out=[];
+  try{
+    (typeof getUsers==='function'?getUsers():[])
+      .filter(function(u){ return u.status==='approved' && /senior administrative assistant/i.test(String(u.role||'')); })
+      .forEach(function(u){
+        const n=((u.firstName||'')+' '+(u.lastName||'')).trim();
+        if(n && !out.some(function(x){ return _canonSame(x,n); })) out.push(n);
+      });
+  }catch(e){}
+  const pm=String((c&&c.pm)||'').trim();
+  if(pm && !out.some(function(x){ return _canonSame(x,pm); })) out.push(pm);
+  return out;
+}
+const WIN_CHASE_CATEGORY='Windows';
+function _winChaseTitle(c, st){ return (c.addr||'A property')+' — Windows: '+st.label+' is 48 hours overdue'; }
+function _winChaseOpen(pid, st){
+  const want=_winChaseTitle({addr:''},st).replace(/^\s*—\s*/,'');
+  return (typeof _tasksCache!=='undefined'?_tasksCache:[]).find(function(t){
+    return t.property_id===pid && t.status!=='done' && String(t.title||'').indexOf('Windows: '+st.label)>=0;
+  });
+}
+async function _winChaseTask(c, st){
+  if(_winChaseOpen(c.id, st)) return false;
+  // Re-check the database, not just this tab's cache, so two open tabs cannot both raise it.
+  try{
+    const ex=await supabase.from("pm_tasks").select("id,title,status").eq("property_id",c.id);
+    if(!ex.error && (ex.data||[]).some(function(t){
+      return t.status!=='done' && String(t.title||'').indexOf('Windows: '+st.label)>=0; })) return false;
+  }catch(e){}
+  const who=_winChaseWho(c);
+  if(!who.length) return false;                       // nobody to give it to
+  const when=_trkVal('win',c.id,st.date);
+  const note=_winNotes(c.id);
+  const ins=await supabase.from("pm_tasks").insert({
+    title:_winChaseTitle(c, st),
+    category:WIN_CHASE_CATEGORY,
+    start_date:_ymd(new Date()),
+    due_date:_ymd(new Date()),
+    status:'open',
+    property_id:c.id,
+    assignee:who[0], assignees:who,
+    notes:st.why+' It was set for '+when+'. Check with the contractor, then tick the box on the '
+         +'Window Tracker — that is what closes this.'+(note?('\n\nFrom the window tracker: '+note):'')
+  }).select("id");
+  // A zero-row write comes back with error:null - that is what an RLS block looks like,
+  // so the row count is the only honest check.
+  const rows=ins.data ? (Array.isArray(ins.data)?ins.data:[ins.data]) : [];
+  if(ins.error || !rows.length) return false;
+  if(typeof _logAudit==='function'){
+    _logAudit('created','task', _winChaseTitle(c,st),
+      'Raised automatically for '+who.join(', ')+' — '+WIN_CHASE_GRACE_H+' hours past '+when+' with the box unticked');
+  }
+  return true;
+}
+let _winChasing=false;
+async function _winChaseSweep(opts){
+  opts=opts||{};
+  if(_winChasing) return 0;
+  if(typeof isReadOnly==='function' && isReadOnly()) return 0;
+  if(typeof propCards==='undefined' || !propCards.length) return 0;
+  // A failed tracker load looks exactly like an empty tracker. Never chase off that.
+  if(window._trkLoadOk===false) return 0;
+  if(window._trkLoaded!==true) return 0;
+  _winChasing=true;
+  let made=0;
+  try{
+    const cards=propCards.filter(function(c){ return c && !c.archived; });
+    for(const c of cards){
+      for(const st of WIN_CHASE){
+        const seen='chase_'+st.date;
+        if(!_winChaseDue(c, st)){
+          // It got answered. Clear the marker so a later slip can chase again.
+          if(_trkVal('win',c.id,seen)){ try{ await _trkSet('win',c.id,seen,'',false); }catch(e){} }
+          continue;
+        }
+        if(_trkVal('win',c.id,seen)) continue;        // already raised once for this slip
+        if(await _winChaseTask(c, st)){
+          made++;
+          try{ await _trkSet('win',c.id,seen,_ymd(new Date()),false); }catch(e){}
+        }
+      }
+    }
+    if(made && typeof loadTasks==='function') await loadTasks();
+  } finally { _winChasing=false; }
+  return made;
+}
+function _winChaseOnce(){
+  if(window.__winChased) return Promise.resolve(0);
+  window.__winChased=true;
+  return _winChaseSweep({quiet:true});
+}
+
+// ---- notes travel with the dates ----
+function _winNotes(id){ return String(_trkVal('win',id,'notes')||'').trim(); }
+const WIN_EVENT_TITLES=['Window measure','Windows ordered','Windows arriving','Window install'];
+function _winEventNotes(n){
+  return n ? ('From the Window Tracker: '+n) : 'Auto-added from the Window Tracker.';
+}
+// Typing a note once puts it on every window job already on that house's construction
+// calendar, so the PM reads it where the work is.
+async function _trkWinNotes(id, val){
+  await _trkSet('win',id,'notes',val,false);
+  try{
+    const n=_winEventNotes(String(val||'').trim());
+    const evs=(typeof _calEventsCache!=='undefined'?_calEventsCache:[])
+      .filter(function(e){ return e && e.property_id===id && WIN_EVENT_TITLES.indexOf(e.title||'')>=0; });
+    for(const e of evs){
+      await supabase.from("pm_calendar_events").update({ notes:n }).eq("id",e.id);
+    }
+    if(evs.length && typeof loadCalendarEventsFromSupabase==='function') await loadCalendarEventsFromSupabase();
+  }catch(e){}
+}
 const WIN_CONFIRM_GRACE_H = 48;
 function _winInstallDue(c){
   if(!c) return null;
@@ -27084,7 +27258,8 @@ function _vaTrackers(){
       ${(()=>{const st=_winStage(c),m=_winStageMeta(st);return (st&&st!=='done')?`<div style="margin-top:3px"><span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:99px;background:${m.color}1A;color:${m.color};white-space:nowrap">${m.icon} ${m.label}</span><div style="font-size:10.5px;color:#566070;margin-top:2px">${_calEsc(_winStageNote(c))}</div></div>`:'';})()}
       <div style="margin-top:4px;font-size:11.5px;color:#666;display:flex;gap:9px;align-items:center">
         <span>${fchk('win',c.id,'glass')} Glass</span><span>${fchk('win',c.id,'windows')} Windows</span><span>${fchk('win',c.id,'both')} Both</span>${(!ro && _winStage(c)==='measure' && !_trkVal('win',c.id,'measure_date'))?`<span onclick="_winRemove('${c.id}')" title="Take this house back off the window list" style="cursor:pointer;font-size:10.5px;color:#636b7a">remove</span>`:''}</div></td>
-    <td style="padding:7px;text-align:center">${fchk('win',c.id,'needed')}<div style="font-size:10.5px;color:#636b7a;margin-top:2px">requested</div></td>
+    <td style="padding:7px;text-align:center">${fchk('win',c.id,'needed')}<div style="font-size:10.5px;color:#636b7a;margin-top:2px">requested</div>
+      ${dt('win',c.id,'request_date')}<div style="font-size:10px;color:#636b7a;margin-top:1px">date asked to measure</div></td>
     <td style="padding:7px;text-align:center">${dt('win',c.id,'measure_date',`_trkWinDate('${c.id}','measure_date',this.value)`)}<div style="margin-top:3px">${fchk('win',c.id,'measured')}</div></td>
     <td style="padding:7px;text-align:center">${dt('win',c.id,'order_date',`_trkWinDate('${c.id}','order_date',this.value)`)}<div style="margin-top:3px">${fchk('win',c.id,'ordered')}</div></td>
     <td style="padding:7px;text-align:center">${dt('win',c.id,'arrival_date',`_trkWinDate('${c.id}','arrival_date',this.value)`)}<div style="margin-top:3px">${fchk('win',c.id,'arrived')}</div></td>
@@ -27112,7 +27287,9 @@ function _vaTrackers(){
         if(d) return `<div style="margin-top:4px;font-size:10px;color:#8A94A6;line-height:1.25">confirm 48h after the date</div>`;
         return '';
       })()}</td>
-    <td style="padding:7px;min-width:300px">${nta('win',c.id,'notes','Notes & comments \u2014 type as much as you need',290)}</td></tr>`;
+    <td style="padding:7px;min-width:300px">${ro
+      ? `<div style="max-width:290px;white-space:pre-wrap;font-size:12.5px;color:#333;line-height:1.45">${_calEsc(_winNotes(c.id))||'&mdash;'}</div>`
+      : `<textarea rows="3" placeholder="Notes &amp; comments \u2014 type as much as you need" onchange="_trkWinNotes('${c.id}',this.value)" style="padding:6px 8px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12.5px;line-height:1.45;width:290px;min-height:58px;resize:vertical;font-family:inherit">${_calEsc(_winNotes(c.id))}</textarea><div style="font-size:10px;color:#636b7a;margin-top:2px">Also lands on every window job on this house\u2019s construction calendar.</div>`}</td></tr>`;
   // The front page is the window QUEUE - only houses somebody has actually asked for
   // windows or glass on. Everything else is off it until someone adds it.
   const winQueue=active.filter(_winInQueue);
@@ -34596,4 +34773,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-17o checkins-reach-the-pdf -->
+<!-- build: 2026-10-17p window-request-date chase-48h notes-travel -->
