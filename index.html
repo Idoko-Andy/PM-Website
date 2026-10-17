@@ -2454,6 +2454,7 @@ function openProjectDashboard(activeTab) {
   // recorded as the standing choice rather than living only inside the tab id.
   if(String(activeTab).indexOf('pm:')===0) _pdSetPM(activeTab.slice(3));
   window._pdTab = activeTab;
+  _propFromSet('openProjectDashboard',[activeTab]);
   document.querySelectorAll(".dd").forEach(x => x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x => x.classList.remove("on"));
 
@@ -4946,8 +4947,31 @@ function closePropSidebar(){
 // Remembers which view a property was opened FROM, so the detail Back button
 // returns there (phase page, archive, or the main board) instead of always the board.
 let _propBack = 'trello';
+// Bruce, 17 Oct: "when I'm in my Monday project meeting and I click open a property
+// card and then click back, it takes me to the property dashboard. It doesn't take me
+// back to the meeting tab that I was just in."
+//
+// _propBack has always been a string, and only three screens ever set it - the property
+// board ('trello'), the completed archive ('archive') and a phase page ('phase:id').
+// Every OTHER screen left whatever was there standing, so a card opened out of the
+// Monday meeting, the listings meeting, the realtor dashboard, the trackers, the
+// construction calendar or anybody's own dashboard came back to the property board,
+// because that is what somebody had rendered earlier in the session.
+//
+// So every screen a card can be opened from now records itself - which screen, which
+// tab, which week - and Back replays exactly that. The three old strings still work;
+// they are simply no longer the only thing that can be remembered.
+function _propFromSet(fn, args){
+  try{ _propBack={ fn:String(fn), args:Array.prototype.slice.call(args||[]) }; }catch(e){}
+}
 function _goPropBack(){
   const k = _propBack || 'trello';
+  // A recorded screen: call it back with the arguments it was opened with.
+  if (k && typeof k==='object' && k.fn){
+    const f=window[k.fn];
+    if (typeof f==='function'){ try{ return f.apply(null, k.args||[]); }catch(e){} }
+    return openProjectDashboard('trello');
+  }
   if (k === 'archive') return openCompletedArchive();
   if (k.indexOf('phase:') === 0) return openPMAssistantDashboard(k);      // e.g. "phase:sop-takedowns"
   if (k.indexOf('role:') === 0)  return openPMAssistantDashboard(k.slice(5)); // e.g. "role:sop"
@@ -8777,7 +8801,7 @@ function _dpPersonBody(who){
     <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">${_dpList(locked,'No packages signed off yet.')}</div>
   </div>`;
 }
-function openDesignDashboard(activeTab) {
+function openDesignDashboard(activeTab) { _propFromSet('openDesignDashboard',[activeTab]);
   activeTab = activeTab || 'main';
   window._dpTabNow = activeTab;
   const tabs=[{id:'main',label:'Main Dashboard',icon:'🎨'}].concat(_dpDesignTabs());
@@ -10587,9 +10611,9 @@ function _sepBoard(title, subtitle, phases){
     <div style="font-size:12px;color:#636b7a;margin-top:12px">Counts here match the tiles on your home screen.</div>
   </div></div></div>`;
 }
-function openStartOfProjectDashboard(){ _sepBoard('\ud83d\udea6 Start of Project','Takedowns coming up, houses we own that have gone vacant, and first-time-access work still open.',["Upcoming Takedowns","Occupied / Closed","Vacant / On Standby"]); }
-function openEndOfProjectDashboard(){ _sepBoard('\ud83c\udfc1 End of Project','Punch-out, rental handoff and rent-to-retail work still in flight.',["Pre List / Punchout Process","Rental Handoff Process","RTR In Process","RTR Completed (Pending Closing)"]); }
-function openEndOfDayReports(){
+function openStartOfProjectDashboard(){ _propFromSet('openStartOfProjectDashboard',[]); _sepBoard('\ud83d\udea6 Start of Project','Takedowns coming up, houses we own that have gone vacant, and first-time-access work still open.',["Upcoming Takedowns","Occupied / Closed","Vacant / On Standby"]); }
+function openEndOfProjectDashboard(){ _propFromSet('openEndOfProjectDashboard',[]); _sepBoard('\ud83c\udfc1 End of Project','Punch-out, rental handoff and rent-to-retail work still in flight.',["Pre List / Punchout Process","Rental Handoff Process","RTR In Process","RTR Completed (Pending Closing)"]); }
+function openEndOfDayReports(){ _propFromSet('openEndOfDayReports',[]);
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
   document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div style="padding:24px;max-width:760px;margin:0 auto">
@@ -10597,7 +10621,7 @@ function openEndOfDayReports(){
     <div style="font-size:13.5px;color:#666;margin-top:8px;line-height:1.7;background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:16px 18px">Each PM will close out the day from the field app with a short set of automatic questions plus their own notes. Those answers roll straight into Monday's Project Team Meeting, so the meeting doc is mostly written before anyone sits down — and nobody has to be chased for an update. Send me the exact questions you want on the form and I'll wire it up.</div>
   </div></div></div>`;
 }
-function openDailyReports(){
+function openDailyReports(){ _propFromSet('openDailyReports',[]);
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
   document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div style="padding:24px;max-width:760px;margin:0 auto">
@@ -16212,6 +16236,7 @@ function openWeeklyMeeting(kind, week){
   const wk = week || liveWk;
   const isPast = wk!==liveWk;
   window.__wmLastKind=kind; window.__wmLastWeek=week||null;
+  _propFromSet('openWeeklyMeeting',[kind, week||undefined]);
   const notes=(((window._wmData||{})[wk]||{})[kind])||{};
   const prevNotes=(((window._wmData||{})[_wmPrevWeek(wk)]||{})[kind])||{};
   const money=(v)=>{const n=parseFloat(String(v||"").replace(/[^0-9.\-]/g,""));return isNaN(n)?null:n;};
@@ -16900,7 +16925,7 @@ function openPermitDataHousing(){
       </div>
     </div>`;
 }
-function openClosedByYear(){
+function openClosedByYear(){ _propFromSet('openClosedByYear',[]);
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
   const all=_cbyClosed();
@@ -17023,7 +17048,7 @@ function _notBuiltYet(name){
     <p style="color:#566070;font-size:16px;font-weight:500">${_calEsc(name)}</p>
     <p style="color:#555;font-size:14px;margin-top:6px;max-width:430px;margin-left:auto;margin-right:auto">This one has not been built yet &mdash; it is on the list, not lost. Tell Bruce what you would want on it and it moves up the queue.</p></div>`;
 }
-function openDataSection(type) {
+function openDataSection(type) { _propFromSet('openDataSection',[type]);
   const u = currentUser();
   document.querySelectorAll(".dd").forEach(x => x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x => x.classList.remove("on"));
@@ -17280,7 +17305,7 @@ function pmCard(name, d, liveName, role) {
     </div>`;
 }
 
-function openPMDashboard() {
+function openPMDashboard() { _propFromSet('openPMDashboard',[]);
   document.querySelectorAll(".dd").forEach(x => x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x => x.classList.remove("on"));
 
@@ -18841,6 +18866,289 @@ function _rltClosedYear(){
   return `<div style="font-size:12.5px;color:#566070;margin-bottom:10px">Every house closed in ${yr}, newest first, grouped by who listed it. <b style="color:#111">${all.length} closed so far this year.</b></div>`
     + (all.length?blocks:'<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:16px;font-size:13px;color:#636b7a">Nothing has closed yet this year.</div>');
 }
+// ===================== THE FIVE STAGE BOARDS (realtor dashboard) =================
+// Bruce, 17 Oct: "on the realtor dashboard go ahead and continue building that out ...
+// a Coming Soon tab ... on the left side it lists only the properties that belong in
+// Coming Soon. You click a property and on the right it shows all the open punch-out
+// items still to complete, plus the pre-listing information form the PM filled out ...
+// On the Market ... a middle section shows only on-market checklists past the two week
+// mark. Another section shows open punch-out items carried over from the previous stage
+// that are still open, plus any new punch-out or scheduled tasks assigned by anybody for
+// that property if it's on the calendar. Also a construction calendar view ... Pre-List /
+// Punch Out also gets the construction calendar and task calendar views ... In Contract,
+// Request a Remedy and Cleared to Close get kind of sort of the same setup."
+//
+// Andrew is building a separate realtor portal that will eventually plug in here, so
+// nothing below keeps state of its own. Every pane reads the same caches the rest of the
+// site reads - propCards, _tasksCache, _calEventsCache, checklists.pof - which means
+// swapping a pane for Andrew's later costs one function, not a migration.
+//
+// The stage is a SECOND selection, not a sixth tab. That is deliberate: Bruce wants these
+// on the main dashboard AND on each realtor's own tab, and the realtor tab already scopes
+// every pool through _rOnly(). Keeping the stage separate means Katie's Coming Soon is
+// Katie's houses without a single extra filter anywhere.
+const RLT_STAGE_TABS=[
+  ['soon',    '⏳ Coming Soon',           'Punch out and the pre-listing form, before it goes live'],
+  ['active',  '🏡 On the Market',   'The two-weekly checklist, what carried over, and what is booked'],
+  ['contract','🤝 In Contract',     'Inspection, remedy request, and what is still open'],
+  ['rtr',     '🛠 Request a Remedy','Remedy work booked, and what is still open'],
+  ['ctc',     '✅ Cleared to Close',      'Waiting on the closing table']
+];
+function _rltStage(){ const s=window._rltStageSel||''; return RLT_STAGE_TABS.some(x=>x[0]===s)?s:''; }
+// Clicking the stage you are already on takes you back to the overview, so the row is
+// both the way in and the way out.
+function _rltStageGo(s){
+  window._rltStageSel=(_rltStage()===String(s||''))?'':String(s||'');
+  window._rltStagePid=null;
+  openRealtorDashboard();
+}
+function _rltPickProp(pid){ window._rltStagePid=pid; openRealtorDashboard(); }
+
+// ---- the missing primitive: WHICH punch-out items are still open ----
+// _poCount and _poComplete have always answered "how many" and "is it finished". Nothing
+// answered "which ones", which is exactly what a realtor standing in the house needs.
+// Same semantics as everywhere else: a property's position is its BEST walk-through, so
+// an item ticked on any walk that got furthest counts as done.
+function _poBestForm(c){
+  const fs=_poForms(c);
+  if(!fs.length) return null;
+  return fs.slice().sort(function(a,b){ return _poFormCount(b)-_poFormCount(a); })[0];
+}
+function _poOpenItems(c){
+  const best=_poBestForm(c);
+  if(!best) return PUNCH_ITEMS.slice();
+  return PUNCH_ITEMS.filter(function(it){ return !_poFormDone(best, it[0]); });
+}
+// Days since a yyyy-mm-dd, or null if it never happened.
+function _rltDaysSince(ds){
+  if(!ds) return null;
+  const a=new Date(ds), b=new Date(_ymd(new Date()));
+  a.setHours(0,0,0,0); b.setHours(0,0,0,0);
+  const n=Math.floor((b-a)/86400000);
+  return isNaN(n)?null:n;
+}
+// The on-the-market checklist is due every two weeks. Three places in this file had
+// grown their own copy of that rule; this is the one the stage boards use.
+function _rltChkLate(c){
+  const ds=_rltDaysSince(c&&c.checklistMarketLast);
+  return (ds===null || ds>=14);
+}
+
+function _rltStagePane(which, cards){
+  const meta=RLT_STAGE_TABS.find(function(x){ return x[0]===which; })||RLT_STAGE_TABS[0];
+  const blank=function(msg){
+    return '<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:26px;text-align:center;color:#636b7a;font-size:13.5px">'+msg+'</div>';
+  };
+  if(!cards.length) return blank('Nothing is at <b>'+_calEsc(meta[1].replace(/^\S+\s/,''))+'</b> right now.');
+  let sel=cards.find(function(c){ return c.id===window._rltStagePid; });
+  if(!sel) sel=cards[0];
+  const today=_ymd(new Date());
+
+  // ---------- left: only the properties that belong at this stage ----------
+  const badge=function(c){
+    const n=_poCount(c), tot=PUNCH_ITEMS.length;
+    if(which==='soon'){
+      const col=(n===tot)?'#0F7B54':(n?'#8A5A10':'#B42318');
+      const bg =(n===tot)?'#E6F4ED':(n?'#FBF3E2':'#FBEAE8');
+      return '<span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:99px;background:'+bg+';color:'+col+'">punch out '+n+' / '+tot+'</span>';
+    }
+    if(which==='active'){
+      const d=_rltDaysSince(c.checklistMarketLast);
+      const late=_rltChkLate(c);
+      return '<span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:99px;background:'+(late?'#FBEAE8':'#E6F4ED')+';color:'+(late?'#B42318':'#0F7B54')+'">'
+        +(d===null?'checklist never done':(late?('checklist '+d+' days ago'):('checklist '+d+'d ago')))+'</span>';
+    }
+    if(which==='contract'){
+      const needs=(typeof _icNoInspection==='function')?_icNoInspection(c):false;
+      return '<span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:99px;background:'+(needs?'#FBF3E2':'#E6F4ED')+';color:'+(needs?'#8a6d1a':'#0F7B54')+'">'+(needs?'no inspection yet':'inspected')+'</span>'
+        + (((typeof _icRem==='function')&&_icRem(c)==='yes')?'<span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:99px;background:#FBEAE8;color:#B42318;margin-left:4px">remedy asked</span>':'');
+    }
+    if(which==='rtr'){
+      const nx=_ppEventsOn(c.id).filter(function(e){ return !e.completed && e.event_date>=today; })[0];
+      return '<span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:99px;background:'+(nx?'#FBF3E2':'#FBEAE8')+';color:'+(nx?'#BA7517':'#B42318')+'">'+(nx?('next '+_calEsc(nx.event_date)):'nothing booked')+'</span>';
+    }
+    return '<span style="font-size:10px;font-weight:700;padding:1px 7px;border-radius:99px;background:'+(c.closingDateSell?'#EEECFB':'#FBEAE8')+';color:'+(c.closingDateSell?'#534AB7':'#B42318')+'">'+(c.closingDateSell?('closes '+_calEsc(c.closingDateSell)):'no closing date')+'</span>';
+  };
+  const left=cards.map(function(c){
+    const on=(c.id===sel.id);
+    return '<div onclick="_rltPickProp(\''+c.id+'\')" style="cursor:pointer;padding:10px 13px;border-left:3px solid '+(on?'#122A4A':'transparent')+';background:'+(on?'#F2F5FA':'#fff')+';border-bottom:0.5px solid #f1f3f7">'
+      +'<div style="font-size:13.5px;font-weight:600;color:'+(on?'#111':'#185FA5')+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+_calEsc(c.addr||'')+'</div>'
+      +'<div style="margin-top:3px">'+badge(c)+'</div>'
+      +'<div style="font-size:10.5px;color:#566070;margin-top:2px">'+(c.pm?('PM '+_calEsc(c.pm)):'no PM')+(c.listingAgent?(' · '+_calEsc(c.listingAgent)):'')+'</div>'
+    +'</div>';
+  }).join('');
+
+  // ---------- right: sections ----------
+  const sec=function(title, hint, body, btn){
+    return '<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:13px 16px;margin-bottom:11px">'
+      +'<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">'
+      +'<div style="font-size:14px;font-weight:700;color:#111">'+title+'</div>'+(btn||'')+'</div>'
+      +(hint?'<div style="font-size:11.5px;color:#566070;margin:2px 0 6px">'+hint+'</div>':'<div style="height:5px"></div>')
+      +body+'</div>';
+  };
+  const ok=function(m){ return '<div style="font-size:12.5px;color:#0F7B54;padding:5px 0">&#10003; '+m+'</div>'; };
+  const link=function(label, fn){ return '<span onclick="'+fn+'" style="cursor:pointer;font-size:12px;color:#185FA5;font-weight:600;white-space:nowrap">'+label+' &rsaquo;</span>'; };
+
+  // --- open punch-out items (every stage; "carried over" once it is past pre-list) ---
+  const openItems=_poOpenItems(sel);
+  const best=_poBestForm(sel);
+  const poRows=openItems.length
+    ? openItems.map(function(it){
+        return '<div style="display:flex;gap:9px;align-items:baseline;padding:6px 0;border-bottom:0.5px solid #f4f5f7">'
+          +'<span style="flex-shrink:0;color:#B42318">&#9744;</span>'
+          +'<div style="flex:1;min-width:0"><div style="font-size:13px;color:#111">'+_calEsc(it[1])+'</div>'
+          +'<div style="font-size:11px;color:#566070">'+_calEsc(it[2])+'</div></div></div>';
+      }).join('')
+    : ok('Every punch-out item is ticked on this house.');
+  const poFrom=best
+    ? ('Counted from <b>'+_calEsc(best.title||'a walk-through')+'</b>'+(best.by?(' by '+_calEsc(best.by)):'')+(best.on?(' on '+_calEsc(best.on)):'')+' — the walk that got furthest.')
+    : 'Nobody has opened a punch-out walk-through on this house yet, so all '+PUNCH_ITEMS.length+' are still open.';
+  const poSec=sec(
+    (which==='soon'?'&#9744; Open punch-out items':'&#9744; Punch out carried over'),
+    (which==='soon'?poFrom:('What was still open when this house left pre-list. '+poFrom)),
+    poRows,
+    link('Open the punch-out forms', "_poOpen('"+sel.id+"')"));
+
+  // --- on-market checklist: ONLY the ones past two weeks ---
+  let chkSec='';
+  if(which==='active'){
+    const lateOnes=cards.map(function(c){ return {c:c, ds:_rltDaysSince(c.checklistMarketLast)}; })
+                        .filter(function(x){ return x.ds===null || x.ds>=14; })
+                        .sort(function(a,b){ return (b.ds==null?99999:b.ds)-(a.ds==null?99999:a.ds); });
+    const rows=lateOnes.length
+      ? lateOnes.map(function(x){
+          const on=(x.c.id===sel.id);
+          return '<div onclick="_rltPickProp(\''+x.c.id+'\')" style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;padding:7px 0;border-bottom:0.5px solid #f4f5f7;cursor:pointer;'+(on?'background:#F7F9FD':'')+'">'
+            +'<div style="min-width:0"><div style="font-size:13px;font-weight:600;color:#185FA5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+_calEsc(x.c.addr||'')+'</div>'
+            +'<div style="font-size:11px;color:#566070">'+(x.c.listingAgent?_calEsc(x.c.listingAgent):'no listing agent')+'</div></div>'
+            +'<div style="font-size:11.5px;font-weight:700;color:#B42318;white-space:nowrap;text-align:right">'+(x.ds==null?'never done':(x.ds+' days ago'))+'</div></div>';
+        }).join('')
+      : ok('Every on-market checklist here is inside the two weeks.');
+    chkSec='<div data-rlt-chk="1">'+sec('&#128197; Checklists past two weeks',
+      'The on-the-market checklist is due every two weeks. Only the ones that have run out are listed — '+lateOnes.length+' of '+cards.length+'.',
+      rows, link('On the market meeting', "openWeeklyMeeting('market')"))+'</div>';
+  }
+
+  // --- stage-specific line ---
+  let stageSec='';
+  if(which==='contract'){
+    const needs=(typeof _icNoInspection==='function')?_icNoInspection(sel):false;
+    stageSec=sec('&#129309; Inspection and remedy','Answered on the in-contract board — that is where the notes live too.',
+      '<div style="display:flex;gap:18px;flex-wrap:wrap;padding:4px 0">'
+      +'<div><div style="font-size:11.5px;color:#566070">Home inspection</div><div style="font-size:13.5px;font-weight:700;color:'+(needs?'#8a6d1a':'#0F7B54')+'">'+(needs?'not recorded yet':'done')+'</div></div>'
+      +'<div><div style="font-size:11.5px;color:#566070">Request to remedy</div><div style="font-size:13.5px;font-weight:700;color:'+(((typeof _icRem==='function')&&_icRem(sel)==='yes')?'#B42318':'#566070')+'">'+(((typeof _icRem==='function')&&_icRem(sel)==='yes')?'asked for':'not asked')+'</div></div>'
+      +(sel.closingDateSell?'<div><div style="font-size:11.5px;color:#566070">Closing</div><div style="font-size:13.5px;font-weight:700;color:#534AB7">'+_calEsc(sel.closingDateSell)+'</div></div>':'')
+      +'</div>',
+      link('Open the in-contract board', "_rltGo('contract');window._icSel='"+sel.id+"'"));
+  } else if(which==='ctc'){
+    stageSec=sec('&#9989; Closing','Remedies are finished — this one is waiting on the table.',
+      '<div style="padding:4px 0;font-size:13.5px;font-weight:700;color:'+(sel.closingDateSell?'#534AB7':'#B42318')+'">'
+      +(sel.closingDateSell?('Closes '+_calEsc(sel.closingDateSell)):'No closing date set yet')+'</div>');
+  }
+
+  // --- tasks on the calendar for this house, whoever put them there ---
+  const tAll=_ppTasksOn(sel.id);
+  const tOpen=tAll.filter(function(t){ return t.status!=='done'; });
+  const taskRows=tOpen.length
+    ? tOpen.slice(0,12).map(function(t){
+        const who=(typeof taskAssignees==='function'?taskAssignees(t):[]).join(', ');
+        const late=t.due_date && t.due_date<today;
+        return '<div onclick="openTaskDetail(\''+t.id+'\')" style="display:flex;align-items:baseline;gap:9px;padding:6px 0;border-bottom:0.5px solid #f4f5f7;cursor:pointer">'
+          +'<span style="flex-shrink:0;color:'+(late?'#B42318':'#636b7a')+'">&#9744;</span>'
+          +'<div style="flex:1;min-width:0"><div style="font-size:13px;color:#111;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+_calEsc(t.title||'')+'</div>'
+          +'<div style="font-size:11px;color:#566070">'+_calEsc(t.category||'')+(who?(' · '+_calEsc(who)):' · unassigned')+'</div></div>'
+          +'<div style="font-size:11.5px;flex-shrink:0;color:'+(late?'#B42318':'#566070')+';font-weight:'+(late?'600':'400')+'">'+_calEsc(t.due_date||'')+(late?' late':'')+'</div></div>';
+      }).join('') + (tOpen.length>12?'<div style="padding:7px 0;font-size:11.5px;color:#566070">+ '+(tOpen.length-12)+' more</div>':'')
+    : ok(tAll.length?'Nothing open on this house — everything on it is finished.':'Nothing on the task calendar for this house.');
+  const taskSec=sec('&#9989; Scheduled tasks on this house',
+    'Anything anybody scheduled against this address — punch-out jobs, remedy work, follow-ups.'+(tOpen.length?(' <b>'+tOpen.length+' open.</b>'):''),
+    taskRows, link('Task calendar', "openProjectDashboard('taskcal')"));
+
+  // --- construction calendar ---
+  const evAll=_ppEventsOn(sel.id);
+  const evOpen=evAll.filter(function(e){ return !e.completed; });
+  const evRows=evOpen.length
+    ? evOpen.slice(0,10).map(function(e){
+        const con=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).find(function(x){ return x.id===e.contractor_id; });
+        const label=con?(con.business_name||con.name):(e.title||'');
+        const icon=(e.kind==='material')?'&#128230;':((e.kind==='contractor')?'&#9733;':'&bull;');
+        return '<div style="display:flex;align-items:baseline;gap:9px;padding:6px 0;border-bottom:0.5px solid #f4f5f7">'
+          +'<span style="flex-shrink:0">'+icon+'</span>'
+          +'<div style="flex:1;min-width:0;font-size:13px;color:#111;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(_calEsc(label)||'&mdash;')+'</div>'
+          +'<div style="font-size:11.5px;color:#566070;flex-shrink:0">'+_calEsc(e.event_date||'')+(e.end_date&&e.end_date!==e.event_date?(' → '+_calEsc(e.end_date)):'')+'</div></div>';
+      }).join('') + (evOpen.length>10?'<div style="padding:7px 0;font-size:11.5px;color:#566070">+ '+(evOpen.length-10)+' more</div>':'')
+    : ok(evAll.length?'Nothing still booked — every booking on this house is done.':'Nothing booked on the construction calendar for this house.');
+  const evSec=sec('&#128197; Construction calendar',
+    'What is booked on site'+(evOpen.length?(' — <b>'+evOpen.length+' still to happen</b>'):'')+'.',
+    evRows, link('Construction calendar', "openProjectDashboard('construction')"));
+
+  // --- pre-listing information form (Coming Soon) ---
+  const preSec=(which==='soon')?_rltPreListSection(sel):'';
+
+  const head='<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:13px 16px;margin-bottom:11px">'
+    +'<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">'
+    +'<span onclick="openPropDetail(\''+sel.id+'\')" style="cursor:pointer;font-size:16px;font-weight:700;color:#185FA5">'+_calEsc(sel.addr||'')+'</span>'
+    +'<span style="font-size:11.5px;color:#566070">'+_calEsc(_phLabel(sel.phase))+(sel.pm?(' · PM '+_calEsc(sel.pm)):'')+(sel.listingAgent?(' · '+_calEsc(sel.listingAgent)):' · no listing agent')+'</span></div>'
+    +'<div style="display:flex;gap:8px;margin-top:9px;flex-wrap:wrap">'
+    +'<button onclick="openPropDetail(\''+sel.id+'\')" style="padding:7px 14px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">Open the property card</button>'
+    +'</div></div>';
+
+  const right='<div>'+head+chkSec+poSec+preSec+stageSec+taskSec+evSec+'</div>';
+  return '<div style="display:grid;grid-template-columns:minmax(200px,260px) 1fr;gap:14px;align-items:start">'
+    +'<div data-rlt-left="1" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;overflow:hidden">'
+    +'<div style="padding:9px 13px;border-bottom:0.5px solid #e0e4ec;font-size:12px;font-weight:700;color:#566070;text-transform:uppercase;letter-spacing:.05em">'+_calEsc(meta[1])+' &middot; '+cards.length+'</div>'
+    +left+'</div>'+right+'</div>';
+}
+
+// The pre-listing information form the PM fills in. Bruce, 17 Oct: "Automated and
+// manual, but we want to automate as much as possible using the data from the website
+// that we already have in there." The form itself lands in the next build; this panel
+// is the hand-off point it plugs into, and it already shows what the site can answer
+// on its own so nobody types those four again.
+function _rltPreListSection(c){
+  const sc=(typeof _scAll==='function')
+    ? _scAll().filter(function(x){ return x.sc && x.sc.property_id===c.id; })
+        .sort(function(a,b){ return String(b.sc.last_updated_at||'').localeCompare(String(a.sc.last_updated_at||'')); })[0]
+    : null;
+  const h=sc?sc.sc:null;
+  const row=function(label, val, from){
+    return '<div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;padding:6px 0;border-bottom:0.5px solid #f4f5f7">'
+      +'<div style="font-size:12.5px;color:#566070">'+label+'</div>'
+      +'<div style="font-size:13px;font-weight:600;color:'+(val?'#111':'#b0b6c0')+';text-align:right">'+(val?_calEsc(val):'not set')
+      +(from?'<div style="font-size:10px;font-weight:400;color:#636b7a">from '+from+'</div>':'')+'</div></div>';
+  };
+  const cl=(c&&c.checklists)||{};
+  const body=row('House type', (h&&h.house_type)||c.type||'', (h&&h.house_type)?'the scope of work':'the property card')
+    + row('Square feet', (h&&h.sqft)||cl.sqft||'', (h&&h.sqft)?'the scope of work':'the property card')
+    + row('Finishes', (h&&h.finishes)||cl.finishes||'', (h&&h.finishes)?'the scope of work':'the property card')
+    + row('Lockbox', (h&&h.lockbox)||cl.lockbox||'', (h&&h.lockbox)?'the scope of work':'the property card')
+    + row('Goal ARV', c.goalArv||'', 'the property card')
+    + row('Target list date', c.targetListDate||'', 'the property card')
+    + '<div style="margin-top:9px;background:#F7F9FD;border:0.5px solid #e0e4ec;border-radius:9px;padding:9px 11px;font-size:12px;color:#566070">'
+    + 'The rest of the pre-listing form — the questions the PM answers by hand — is the next build. It will fill itself in from these before anybody types anything.</div>';
+  return _rltPreSec('&#128221; Pre-listing information', (h?'Pulled from the scope of work and the property card.':'No scope of work on this house yet, so this is the property card only.'), body);
+}
+function _rltPreSec(title, hint, body){
+  return '<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:13px 16px;margin-bottom:11px">'
+    +'<div style="font-size:14px;font-weight:700;color:#111">'+title+'</div>'
+    +'<div style="font-size:11.5px;color:#566070;margin:2px 0 6px">'+hint+'</div>'+body+'</div>';
+}
+// The row of five. It sits under the tab bar on the main dashboard and on every
+// realtor's own tab, so "Coming Soon" means Katie's coming soon when you are on
+// Katie's tab and everybody's when you are on the front one.
+function _rltStageRow(pools){
+  const cur=_rltStage();
+  const btns=RLT_STAGE_TABS.map(function(t){
+    const on=(t[0]===cur);
+    const n=((pools&&pools[t[0]])||[]).length;
+    return '<div onclick="_rltStageGo(\''+t[0]+'\')" title="'+_calEsc(t[2])+'" style="padding:7px 13px;border-radius:9px;font-size:12.5px;font-weight:600;cursor:pointer;'
+      +(on?'background:#185FA5;color:#fff':'background:#fff;color:#444;border:0.5px solid #dde2ea')+'">'+_calEsc(t[1])
+      +'<span style="font-weight:700;margin-left:6px;opacity:'+(on?'.85':'.6')+'">'+n+'</span></div>';
+  }).join('');
+  return '<div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-bottom:12px">'
+    +(cur?'<div onclick="_rltStageGo(\''+cur+'\')" style="padding:7px 12px;border-radius:9px;font-size:12.5px;font-weight:600;cursor:pointer;background:#fff;color:#185FA5;border:0.5px solid #cdd7e6">&lsaquo; Overview</div>':'')
+    +btns+'</div>';
+}
 function _rltTabs(){
   const t=[['main','\uD83D\uDD11 Main Dashboard','Listings, contracts and what is coming up']];
   _rltVisible().forEach(n=>t.push([_rltKey(n),'\uD83C\uDFE0 '+n,'Every house '+n+' is holding, by stage']));
@@ -19146,6 +19454,7 @@ function openRealtorDashboard(tab){
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
   if(tab) window._rltTabSel=tab;
+  _propFromSet('openRealtorDashboard',[window._rltTabSel||'main']);
   // Showings and feedback live in two places: what the Slack sync wrote, and what a
   // person corrected in the trackers row. Both are loaded lazily, once, and the page
   // redraws itself when they land - so a realtor who opens this first does not see
@@ -19281,7 +19590,7 @@ function openRealtorDashboard(tab){
         : `<span style="font-weight:700;color:#B42318">no closing date set</span>`)).join('')
     : nothing('Nothing is cleared to close.');
 
-  const mainBody=`
+  const overviewBody=`
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:10px;margin-bottom:16px">
       ${tile('⏳','Coming soon',soon.length,poOpen.length?(poOpen.length+' punch-out'+(poOpen.length===1?'':'s')+' open'):'about to be listed','#8A5A10',"_rltGo('stages')")}
       ${tile('🏡','On the market',act.length,mktLate.length?(mktLate.length+' checklist'+(mktLate.length===1?'':'s')+' overdue'):'checklists current','#185FA5',"_rltGo('stages')")}
@@ -19296,6 +19605,14 @@ function openRealtorDashboard(tab){
     ${need('🤝 In contract', icNo.length, '#0E7460', 'No home inspection recorded yet. Open the in-contract board to answer inspection, remedy and notes on each one.', icBody, 'Open the in-contract board', "_rltGo('contract')")}
     ${need('🛠 Request a remedy', rtr.length, '#BA7517', 'Remedy lists being worked, and the next thing booked on each house.', rtrBody, 'Construction calendar', "openProjectDashboard('construction')")}
     ${need('✅ Cleared to close', ctc.length, '#534AB7', 'Remedies finished — these are waiting on a closing date.', ctcBody, 'See every stage', "_rltGo('stages')")}`;
+
+  // Bruce, 17 Oct: the five stage boards sit on the main dashboard AND on every
+  // realtor's own tab. The pools below were already run through _rOnly(), so a realtor's
+  // Coming Soon is their Coming Soon without a single extra filter.
+  const _stagePools={soon:soon, active:act, contract:ctr, rtr:rtr, ctc:ctc};
+  const _stageNow=_rltStage();
+  const mainBody=_rltStageRow(_stagePools)
+    + (_stageNow ? _rltStagePane(_stageNow, _stagePools[_stageNow]||[]) : overviewBody);
 
   document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div style="padding:20px;max-width:1000px;margin:0 auto">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
@@ -19317,8 +19634,8 @@ function openRealtorDashboard(tab){
             return `<div style="font-size:12.5px;color:#566070;margin-bottom:10px"><b style="color:#111">${_calEsc(who)}</b> &mdash; ${mine.length} house${mine.length===1?'':'s'}. The squares and the chase lists below are theirs only.</div>`
               + (mine.length?'':`<div style="background:#FFF7E0;border:1px solid #EAD9A8;border-radius:11px;padding:12px 15px;margin-bottom:12px;font-size:13px;color:#6b5310">No houses are listed under this name yet. A house shows up here once <b>${_calEsc(who)}</b> is set as the listing agent on its property card.</div>`)
               + mainBody
-              + `<div style="font-size:13px;font-weight:700;color:#111;margin:18px 0 8px">Every house ${_calEsc(who)} is holding, by stage</div>`
-              + _stageBlockFor(who); })()
+              + (_stageNow ? '' : `<div style="font-size:13px;font-weight:700;color:#111;margin:18px 0 8px">Every house ${_calEsc(who)} is holding, by stage</div>`
+              + _stageBlockFor(who)); })()
         : mainBody)}
   </div></div></div>`;
 }
@@ -19560,7 +19877,7 @@ async function pmaToggleEvent(id){
   _logAudit(now?"completed":"reopened","calendar", _locLabel(e), (e.title||e.kind||"event"));
   await loadCalendarEventsFromSupabase(); _pmaRerender();
 }
-function openPMAssistantDashboard(activeTab){
+function openPMAssistantDashboard(activeTab){ _propFromSet('openPMAssistantDashboard',[activeTab]);
   activeTab = activeTab || 'main';
   _pmaActiveTab = activeTab;
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
@@ -21065,7 +21382,7 @@ function _marloTab(){
 // It used to open Marlo's Admin Dashboard on its Trackers tab, so a PM landed inside
 // somebody else's dashboard - every one of her tabs sitting there across the top - just
 // to tick a permit. This is the same tracker screen with none of that.
-function openTrackers(){
+function openTrackers(){ _propFromSet('openTrackers',[]);
   const u=_viewUser();
   if(!(u&&(u.isSuperAdmin||hasPerm(u,'trk_all')))){
     _execShell('openTrackers',[{id:'trackers',label:'Trackers',icon:'\uD83D\uDCCB'}],'trackers',
@@ -21077,7 +21394,7 @@ function openTrackers(){
   _execShell('openTrackers',[{id:'trackers',label:'Trackers',icon:'\uD83D\uDCCB'}],'trackers',_vaTrackers());
   if(!window._trkLoaded){ Promise.all([_trkLoad(), loadContractorsFromSupabase()]).then(()=>_permitSeedIfEmpty()).then(()=>openTrackers()); }
 }
-function openAdminDashboard(activeTab) {
+function openAdminDashboard(activeTab) { _propFromSet('openAdminDashboard',[activeTab]);
   activeTab = activeTab || 'main';
   const tabs=[
     {id:'main',label:'Main Dashboard',icon:'📊'},
@@ -21727,7 +22044,7 @@ function _confirmNavRefresh(){
   box.title=n+" waiting to be confirmed";
   if(typeof _nfBadge==='function') _nfBadge();
 }
-function openConfirmations(){
+function openConfirmations(){ _propFromSet('openConfirmations',[]);
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
   const d=_confirmItems();
@@ -22171,7 +22488,7 @@ function renderDailyReport(){
     +'</div>';
 }
 
-function openDirectorCEODashboard(activeTab) {
+function openDirectorCEODashboard(activeTab) { _propFromSet('openDirectorCEODashboard',[activeTab]);
   activeTab = activeTab || 'main';
   window._pdTab = activeTab;
   const tabs=[
@@ -22220,7 +22537,7 @@ function _srVAName(){
   if(u) return ((u.firstName||'')+' '+(u.lastName||'')).trim()||u.email;
   return 'Idoko Andrew';
 }
-function openSeniorVADashboard(activeTab) {
+function openSeniorVADashboard(activeTab) { _propFromSet('openSeniorVADashboard',[activeTab]);
   activeTab = activeTab || 'main';
   const name=_srVAName();
   const first=String(name).split(' ')[0] || name;
@@ -22251,7 +22568,7 @@ function openSeniorVADashboard(activeTab) {
   }
   _execShell('openSeniorVADashboard', tabs, activeTab, content);
 }
-function openVAAdminDashboard(activeTab) {
+function openVAAdminDashboard(activeTab) { _propFromSet('openVAAdminDashboard',[activeTab]);
   activeTab = activeTab || 'main';
   // The old standalone Utilities tab is gone - the Utility Tracker under Trackers
   // replaced it. Old links (dashboard tiles, bookmarks) redirect there.
@@ -26866,7 +27183,7 @@ function _permitClosedCards(list){
   });
   return out;
 }
-function openPermitDashboard(activeTab){
+function openPermitDashboard(activeTab){ _propFromSet('openPermitDashboard',[activeTab]);
   activeTab = PERMIT_DASH_TABS.some(t=>t.id===activeTab) ? activeTab : 'tracker';
   // Re-render through this dashboard, keeping the horizontal scroll position, so
   // editing a cell does not throw the table back to the far left.
@@ -26898,7 +27215,7 @@ function openPermitDashboard(activeTab){
   }
 }
 
-function openArchitectDashboard(activeTab) {
+function openArchitectDashboard(activeTab) { _propFromSet('openArchitectDashboard',[activeTab]);
   activeTab = activeTab || 'main';
   const tabs=[
     {id:'main',label:'Main Dashboard',icon:'📊'},
@@ -27074,7 +27391,7 @@ function saveMRData(_d) {
   console.warn("saveMRData() is deprecated — writes now go through upsertMonthlyReport()");
 }
 
-function openMonthlyReports() {
+function openMonthlyReports() { _propFromSet('openMonthlyReports',[]);
   document.querySelectorAll(".dd").forEach(x => x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x => x.classList.remove("on"));
   renderMRSidebar();
@@ -33455,4 +33772,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-17e permit-catchup-enabled -->
+<!-- build: 2026-10-17f realtor-stage-boards back-where-you-came-from -->
