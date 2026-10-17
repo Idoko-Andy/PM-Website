@@ -10230,6 +10230,34 @@ async function _wmDeal(pid, col, val, el){
   try{ _wmRefreshMetrics(pid); }catch(e){}
   _wmFlash(el,true);
 }
+// Bruce, 17 Oct: "you know how we have goal ARV, we also need to have goal B and L
+// value ... if we fill one out in one meeting, it needs to populate and carry over to
+// the other meeting."
+// B&L is "buy and list" - what the house is worth sold as it stands, no work. Goal ARV
+// already carries between meetings because it lives on the PROPERTY CARD rather than in
+// one week's meeting notes, so Goal B&L is stored the same way and inherits the same
+// behaviour for free. It goes in the card's `checklists` blob (where acqBudget and the
+// other per-property extras already live) rather than a new column, so it works without
+// a schema change.
+// Bruce chose to LINK this to the kickoff's "buy and list" target price rather than add
+// a second number beside it - one figure for the house, typed in either meeting.
+function _goalBl(c){ return String(((c&&c.checklists)||{}).goalBl||''); }
+async function _wmGoalBl(pid, val, el){
+  if(_blockIfReadOnly()) return;
+  const card=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===pid);
+  if(!card){ _wmFlash(el,false,'that property is not loaded — refresh and try again'); return; }
+  const cl=Object.assign({}, card.checklists||{});
+  const v=String(val==null?'':val).trim();
+  if(v) cl.goalBl=v; else delete cl.goalBl;
+  const { data, error }=await supabase.from("pm_properties").update({ checklists:cl }).eq("id",pid).select("id");
+  // a zero-row update returns error null - that is what a row hidden by row-level
+  // security looks like, so check something actually changed (same guard as _wmDeal)
+  if(error || !data || !data.length){ _wmFlash(el,false, error?(error.message||''):'nothing was saved — refresh and try again'); return; }
+  card.checklists=cl;
+  _logAudit("updated","property", card.addr||"", "Goal B&L value "+(v?('set to '+v):'cleared'));
+  try{ _wmRefreshMetrics(pid); }catch(e){}
+  _wmFlash(el,true);
+}
 function _wmFlash(el, ok, msg){
   if(!el) { if(!ok) alert("Not saved: "+(msg||"")); return; }
   const host=el.parentNode; if(!host) return;
@@ -13877,8 +13905,14 @@ function _kickAddProperty(){
   if(typeof openPropModal==='function') openPropModal();
 }
 const KICK_PHASES=["Upcoming Takedowns","Occupied / Closed","Vacant / On Standby","Pre Construction"];
+// Bruce, 17 Oct: "buy and list" is no longer one of the per-week target prices. It is
+// the Goal B&L value on the property card, shared with the full project meeting, so the
+// room types one figure for the house instead of one per meeting. He chose to link the
+// two rather than show a target price and a goal side by side meaning the same thing.
+// Nothing was lost moving it: across all six kickoff weeks on record not one of the
+// three price boxes had ever been filled in.
+// These two stay per-week - they are what the room decides on the day.
 const KICK_PRICES=[
-  ["price_bl",  "Buy and list",   "Sell it as it stands, no work"],
   ["price_qc",  "Quick cosmetic", "Paint, floors, clean - the light touch"],
   ["price_fr",  "Full rehab",     "The whole job"]
 ];
@@ -13934,14 +13968,16 @@ function _kickMeetingBody(wk, notes, prevNotes, roNow){
 
   const blocks=cards.map(c=>{
     const nComps=_kickCompN(notes, c.id);
-    const filled=KICK_PRICES.filter(pr=>V(c.id,pr[0])).length;
+    const goalsFilled=(String(c.goalArv||'').trim()?1:0)+(_goalBl(c).trim()?1:0);
+    const filled=KICK_PRICES.filter(pr=>V(c.id,pr[0])).length+goalsFilled;
+    const priceTotal=KICK_PRICES.length+2;
     const compsFilled=(()=>{ let n=0; for(let i=1;i<=30;i++) if((V(c.id,'comp'+i)||'').trim()) n++; return n; })();
     const notesFilled=KICK_NOTES.filter(n=>V(c.id,n[0])).length;
     const chip=(txt,col,bg)=>`<span style="font-size:10.5px;font-weight:600;color:${col};background:${bg};padding:1px 7px;border-radius:99px;white-space:nowrap">${txt}</span>`;
     const chips=[
       (_kickIsDone(c.id,wk)?chip('&#10003; completed','#0F7B54','#E6F4ED'):''),
       chip(compsFilled+' comp'+(compsFilled===1?'':'s'), compsFilled?'#0F7B54':'#566070', compsFilled?'#E6F4ED':'#F1F2F6'),
-      chip(filled+'/3 prices', filled===3?'#0F7B54':'#8A5A10', filled===3?'#E6F4ED':'#FBF3E2'),
+      chip(filled+'/'+priceTotal+' prices', filled===priceTotal?'#0F7B54':'#8A5A10', filled===priceTotal?'#E6F4ED':'#FBF3E2'),
       chip(notesFilled+'/'+KICK_NOTES.length+' reviewed', notesFilled===KICK_NOTES.length?'#0F7B54':'#566070', notesFilled===KICK_NOTES.length?'#E6F4ED':'#F1F2F6'),
       (c.pm?chip('PM '+_calEsc(c.pm),'#185FA5','#E7EFF8'):chip('no PM yet','#B42318','#FBEAE8'))
     ].join(' ');
@@ -13958,6 +13994,18 @@ function _kickMeetingBody(wk, notes, prevNotes, roNow){
         <button onclick="_kickZillow('${c.id}',${i})" title="Open this comp on Zillow" style="padding:6px 11px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;white-space:nowrap;font-weight:600">Zillow ↗</button>
       </div>`);
     }
+
+    // These two are the property card, not this week's notes, so whatever is typed here
+    // shows up in the full project meeting and vice versa.
+    const goalCell=(label,hint,val,onch)=>`<div style="background:#EEF4FB;border:0.5px solid #D6E3F2;border-radius:8px;padding:8px 11px">
+        <div style="font-size:11px;font-weight:700;color:#2C5A8A;text-transform:uppercase;letter-spacing:.04em">${label}</div>
+        <div style="font-size:10.5px;color:#566070;margin-bottom:4px">${hint}</div>
+        ${roNow?`<div style="font-size:16px;font-weight:700;color:${val?'#111':'#636b7a'}">${_calEsc(val)||'\u2014'}</div>`
+               :`<input value="${_calEsc(val)}" placeholder="$0" onchange="${onch}" style="${box};width:100%;font-size:15px;font-weight:700"/>`}
+      </div>`;
+    const goalCells=
+        goalCell('Goal ARV','After the full rehab', c.goalArv||'', `_wmDeal('${c.id}','goal_arv',this.value,this)`)
+      + goalCell('Goal B&amp;L value','Buy and list &mdash; sold as it stands, no work', _goalBl(c), `_wmGoalBl('${c.id}',this.value,this)`);
 
     const priceCells=KICK_PRICES.map(pr=>`<div style="background:#f7f8fb;border-radius:8px;padding:8px 11px">
         <div style="font-size:11px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em">${pr[1]}</div>
@@ -13989,13 +14037,16 @@ function _kickMeetingBody(wk, notes, prevNotes, roNow){
           </span>
           <span style="font-size:12px;color:#666">${_calEsc(c.type||'no type set')}${(c.checklists&&c.checklists.permitted)==='yes'?' · 🏛 Permitted':''}${(c.checklists&&c.checklists.acqBudget)?(' · ACQ budget '+_calEsc(c.checklists.acqBudget)):''}</span>
         </div>
-        <div style="font-size:12.5px;color:#8a6d1a;background:#FFF7E0;border-radius:7px;padding:7px 10px;margin-bottom:11px">Run the room in this order: comps → the three target prices → demo and clean out → buy-and-list scope → budget → rehab scope → timeline → who is running it.</div>
+        <div style="font-size:12.5px;color:#8a6d1a;background:#FFF7E0;border-radius:7px;padding:7px 10px;margin-bottom:11px">Run the room in this order: comps → the goal values and target prices → demo and clean out → buy-and-list scope → budget → rehab scope → timeline → who is running it.</div>
 
         <div style="font-size:11.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em;margin-bottom:6px">Comps</div>
         ${compRows.join('')}
         ${roNow?'':`<button onclick="_kickAddComp('${c.id}','${wk}')" style="padding:6px 13px;background:#fff;border:0.5px dashed #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">＋ Add a comp</button>`}
 
-        <div style="font-size:11.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em;margin:14px 0 6px">Target listing price — the three ways this could go</div>
+        <div style="font-size:11.5px;font-weight:700;color:#2C5A8A;text-transform:uppercase;letter-spacing:.04em;margin:14px 0 6px">Goal values <span style="text-transform:none;letter-spacing:0;font-weight:400;color:#566070">— shared with the full project meeting, type them in either one</span></div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:9px">${goalCells}</div>
+
+        <div style="font-size:11.5px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em;margin:14px 0 6px">Target listing price <span style="text-transform:none;letter-spacing:0;font-weight:400;color:#566070">— the other two ways this could go, decided in this meeting</span></div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:9px">${priceCells}</div>
 
         ${noteSecs}
@@ -14660,6 +14711,16 @@ function _kickPdfHtml(pid){
       <div class="pl">${esc(pr[1])}</div>
       <div class="pv">${esc(N[pr[0]])||'&mdash;'}</div>
       <div class="ps">${esc(pr[2])}</div></div>`).join('');
+  // Goal ARV and Goal B&L come off the property card, not this week's notes, so the
+  // printed page carries the same two figures the meetings share.
+  const goalRow=`<div class="pc">
+      <div class="pl">Goal ARV</div>
+      <div class="pv">${esc(c.goalArv||'')||'&mdash;'}</div>
+      <div class="ps">After the full rehab</div></div>
+    <div class="pc">
+      <div class="pl">Goal B&amp;L value</div>
+      <div class="pv">${esc(_goalBl(c))||'&mdash;'}</div>
+      <div class="ps">Buy and list &mdash; sold as it stands, no work</div></div>`;
   // Demo and clean out first, deliberately: that is what the assistant standing in
   // the doorway on day one actually needs off this page.
   const secs=KICK_NOTES.map(n=>{
@@ -14708,7 +14769,9 @@ function _kickPdfHtml(pid){
     <div class="m"><div class="mk">Closing &mdash; us buying</div><div class="mv">${esc(c.closingDate||'not set')}</div></div>
     <div class="m"><div class="mk">Vacancy date</div><div class="mv">${esc(c.vacancyDate||'not set')}</div></div>
   </div>
-  <div class="sec"><h2>Target listing price &mdash; the three ways this could go</h2>
+  <div class="sec"><h2>Goal values</h2>
+    <div class="grid">${goalRow}</div></div>
+  <div class="sec"><h2>Target listing price &mdash; the other two ways this could go</h2>
     <div class="grid">${priceRow}</div></div>
   ${comps.length?`<div class="sec"><h2>Comps</h2><ul>${comps.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`:''}
   ${secs}
@@ -16245,6 +16308,9 @@ function openWeeklyMeeting(kind, week){
       const cell=(l,v,color,note,id)=>`<div ${id?`id="${id}" data-label="${l}"`:''} style="background:#f7f8fb;border-radius:6px;padding:5px 9px"><div style="font-size:10.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap">${l}</div><div style="font-size:16px;font-weight:700;color:${color||'#111'}">${v}</div>${note?`<div style="font-size:10.5px;color:#566070">${note}</div>`:''}</div>`;
       const ro=roNow;
       const inp=(col,val,ph,w)=>ro?`<span style="font-size:13px;color:#111">${_calEsc(val)||'&mdash;'}</span>`:`<input value="${_calEsc(val)}" placeholder="${ph}" onchange="_wmDeal('${c.id}','${col}',this.value,this)" style="width:${w||100}px;padding:5px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px"/>`;
+      // Goal B&L lives on the card's checklists blob, not a column, so it needs its
+      // own setter - everything else about it behaves like the inputs above.
+      const inpBl=(val,ph,w)=>ro?`<span style="font-size:13px;color:#111">${_calEsc(val)||'&mdash;'}</span>`:`<input value="${_calEsc(val)}" placeholder="${ph}" onchange="_wmGoalBl('${c.id}',this.value,this)" style="width:${w||100}px;padding:5px 8px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px"/>`;
       // Bruce, 4 Oct: "underneath it ... I want a small brief description of what a start
       // date is. Start date equals hammers swinging. Committed finish means scheduled photos."
       // Three people read these boxes and each had their own idea of what they meant, which is
@@ -16378,6 +16444,7 @@ function openWeeklyMeeting(kind, week){
           ${fld('Estimated finish',estCell)}
           ${fld('Est. profit',inp('est_profit',c.estProfit||'','$0'))}
           ${fld('Goal ARV',inp('goal_arv',c.goalArv||'','$0'))}
+          ${fld('Goal B&amp;L value',inpBl(_goalBl(c),'$0'),'carries to the kickoff')}
           ${fld('Listing on the market',_wmAgentField(c))}
           ${fld('Project manager',_pmField(c,'wm'))}
           ${fld('JV deal',ro?(c.jvDeal?'Yes':'No'):`<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer"><input type="checkbox" ${c.jvDeal?'checked':''} onchange="_wmDeal('${c.id}','jv_deal',this.checked,this)" style="width:15px;height:15px;cursor:pointer"/> Yes</label>`)}
@@ -33199,4 +33266,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-13c window-tracker-add-sold-property -->
+<!-- build: 2026-10-17a goal-bl-value-shared-across-meetings -->
