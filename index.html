@@ -28178,6 +28178,7 @@ function openArchitectDashboard(activeTab) { _propFromSet('openArchitectDashboar
 // The TV Dashboard was removed on 8 Sept at Bruce's request - "we will not have a
 // TV dashboard, at least not at this time." Nothing was built behind it.
 function goHome() {
+  window.__liveScreen=null;   // nothing should redraw over the home screen
   const u = _effectiveUser();
   if (!u) return;
   document.getElementById("dash-body").innerHTML = renderGenericHome(u);
@@ -29103,15 +29104,34 @@ const CONTRACTOR_TRADES=["General","Plumbing","HVAC","Electrical","Roofing","Flo
 // "Brady Pack" and "Brady Packs" on the same number is the same man.
 function _ctNormName(v){ return String(v||'').toLowerCase().replace(/[^a-z0-9]/g,''); }
 function _ctDigits(v){ return String(v||'').replace(/[^0-9]/g,''); }
-function _ctDupFind(name, business, phone, skipId){
-  const nk=_ctNormName(name), bk=_ctNormName(business), pk=_ctDigits(phone);
-  return (typeof _contractorsCache!=='undefined'?_contractorsCache:[]).find(function(c){
+// Bruce, 17 Oct: "when I add a contractor it needs to stop me from adding duplicates. If
+// there's a same business name or same phone number or same first and last name or
+// matching emails, it should stop me or flag me and tell me there's already a contractor
+// with that number in there." Email was the one this never looked at.
+// Returns the match AND why it matched, so the warning can say which field gave it away.
+function _ctDupWhy(name, business, phone, email, skipId){
+  const nk=_ctNormName(name), bk=_ctNormName(business);
+  const pk=_ctDigits(phone), ek=String(email||'').trim().toLowerCase();
+  let out=null;
+  (typeof _contractorsCache!=='undefined'?_contractorsCache:[]).some(function(c){
     if(!c || (skipId && c.id===skipId)) return false;
     const cn=_ctNormName(c.name), cb=_ctNormName(c.business_name);
-    if(nk && (cn===nk || cb===nk)) return true;
-    if(bk && (cb===bk || cn===bk)) return true;
-    return pk.length>=10 && _ctDigits(c.phone)===pk;
-  })||null;
+    const ce=String(c.email||'').trim().toLowerCase();
+    let why='';
+    if(nk && cn===nk) why='the same name';
+    else if(bk && cb===bk) why='the same business name';
+    else if(nk && cb===nk) why='that name is already in as a business name';
+    else if(bk && cn===bk) why='that business name is already in as a person';
+    else if(pk.length>=10 && _ctDigits(c.phone)===pk) why='the same phone number';
+    else if(ek && ce===ek) why='the same email address';
+    if(!why) return false;
+    out={ c:c, why:why }; return true;
+  });
+  return out;
+}
+function _ctDupFind(name, business, phone, skipId, email){
+  const hit=_ctDupWhy(name, business, phone, email, skipId);
+  return hit ? hit.c : null;
 }
 function _ctDupLabel(c){
   return '"'+String((c&&(c.name||c.business_name))||'')+'"'
@@ -29128,14 +29148,325 @@ function _ctDupAsk(name, business, phone){
     + 'OK — use the record that is already there (keeps one record per contractor).\n'
     + 'Cancel — add this as a SECOND, separate record.') ? hit : 'new';
 }
-function _tradeCell(c){
-  const cur=c.trade||"";
-  let opts=`<option value=""${cur?"":" selected"}>— Assign trade —</option>`;
-  if(cur && !CONTRACTOR_TRADES.includes(cur)) opts+=`<option value="${_calEsc(cur)}" selected>${_calEsc(cur)}</option>`;
-  opts+=CONTRACTOR_TRADES.map(t=>`<option value="${_calEsc(t)}"${t===cur?" selected":""}>${_calEsc(t)}</option>`).join("");
-  opts+=`<option value="__other__">＋ Other…</option>`;
-  return `<select onchange="setContractorTrade('${c.id}',this.value)" style="width:100%;max-width:180px;padding:6px 8px;border:1px solid #ddd;border-radius:6px;font-size:13px;color:#333;background:#fff;cursor:pointer">${opts}</select>`;
+// ===================== TRADES, RANKINGS, AND ONE RECORD PER CONTRACTOR =========
+// Bruce, 17 Oct: "for each contractor we need to be able to assign multiple trades to a
+// contractor if needed ... flag duplicates at the top and have an option to combine the
+// two ... top option, mid option, just an option is the three options you can choose for
+// a contractor ... per type of trade that we select them as, since we can select them as
+// multiple ... we want this thing to be amazing to where we can download a PDF and share
+// it to somebody so they can use it too."
+//
+// Multiple trades are stored in the SAME `trade` column, comma separated. That is
+// deliberate: every other screen already reads `trade` as a string - the meeting agenda,
+// the booking boxes, the search - and they all keep working untouched. A new column
+// would have meant a migration and six readers to chase.
+//
+// The ranking is PER TRADE, so it cannot live on the contractor row either: the same man
+// can be the top plumber and only an option for drywall. It is kept in the trackers
+// record under 'ct_tier', keyed contractor id -> trade slug -> top|mid|opt, which is the
+// same machinery the W-9 and mowing trackers already use and needs no migration.
+function _ctTrades(c){
+  return String((c&&c.trade)||'').split(',').map(function(s){ return s.trim(); }).filter(Boolean);
 }
+function _ctTradeStr(list){
+  const seen=[], out=[];
+  (list||[]).forEach(function(t){
+    const k=String(t||'').trim(); if(!k) return;
+    const n=k.toLowerCase();
+    if(seen.indexOf(n)>=0) return;
+    seen.push(n); out.push(k);
+  });
+  return out.join(', ');
+}
+// ---- the three rankings ------------------------------------------------------
+const CT_TIERS=[
+  { k:'top', label:'Top option',     short:'Top',    bg:'#E7F6EE', bd:'#A9DFC5', fg:'#0F7B54', rank:1 },
+  { k:'mid', label:'Mid option',     short:'Mid',    bg:'#FFF6E5', bd:'#EAD9A8', fg:'#8A5A10', rank:2 },
+  { k:'opt', label:'Just an option', short:'Option', bg:'#F1F2F6', bd:'#dfe3ea', fg:'#566070', rank:3 }
+];
+function _ctTierDef(k){ return CT_TIERS.find(function(t){ return t.k===String(k||''); })||null; }
+function _ctTierSlug(trade){ return String(trade||'').toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,''); }
+function _ctTier(id, trade){
+  const v=(typeof _trkVal==='function') ? _trkVal('ct_tier', id, _ctTierSlug(trade)) : '';
+  return _ctTierDef(v) ? String(v) : '';
+}
+function _ctTierRank(id, trade){ const d=_ctTierDef(_ctTier(id,trade)); return d?d.rank:4; }
+async function _ctTierSet(id, trade, val){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()){ renderContractorDirectory(); return; }
+  const c=(_contractorsCache||[]).find(function(x){ return x.id===id; })||{};
+  await _trkSet('ct_tier', id, _ctTierSlug(trade), String(val||''), false);
+  if(typeof _logAudit==='function'){
+    const d=_ctTierDef(val);
+    _logAudit('updated','contractor', (c.name||c.business_name||'contractor'),
+      d ? (trade+' — ranked '+d.label) : (trade+' — ranking cleared'));
+  }
+  renderContractorDirectory();
+}
+async function _ctTradeAdd(id, trade){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
+  let t=String(trade||'').trim();
+  if(t==='__other__'){
+    t=String(prompt('What trade?')||'').trim();
+    if(!t){ renderContractorDirectory(); return; }
+  }
+  if(!t){ renderContractorDirectory(); return; }
+  const c=(_contractorsCache||[]).find(function(x){ return x.id===id; }); if(!c) return;
+  const next=_ctTrades(c); next.push(t);
+  await setContractorField(id,'trade',_ctTradeStr(next));
+  renderContractorDirectory();
+}
+async function _ctTradeRemove(id, trade){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
+  const c=(_contractorsCache||[]).find(function(x){ return x.id===id; }); if(!c) return;
+  const t=String(trade||'').trim().toLowerCase();
+  // the ranking goes with the trade, otherwise it comes back wrong if the trade is re-added
+  try{ if(_ctTier(id,trade)) await _trkSet('ct_tier', id, _ctTierSlug(trade), '', false); }catch(e){}
+  await setContractorField(id,'trade',_ctTradeStr(_ctTrades(c).filter(function(x){ return x.trim().toLowerCase()!==t; })));
+  renderContractorDirectory();
+}
+// Every trade anybody is actually assigned to, plus the standing list.
+// ---- trade types you can add yourself ---------------------------------------
+// Bruce, 17 Oct: "we also need to be able to add trade types to the contractor
+// directory." The seventeen built-in trades stay where they are; anything added here is
+// kept in the trackers record so it is the same list for everybody, on every machine,
+// instead of being invented one contractor at a time through Other...
+function _ctCustomTrades(){
+  const raw=(typeof _trkVal==='function') ? _trkVal('ct_meta','trades','custom') : '';
+  return String(raw||'').split(',').map(function(s){ return s.trim(); }).filter(Boolean);
+}
+async function _ctTradeTypeAdd(){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
+  const el=document.getElementById('ct-newtrade');
+  const t=String((el&&el.value)||'').trim();
+  if(!t){ if(el) el.focus(); return; }
+  if(_ctAllTrades().some(function(x){ return x.toLowerCase()===t.toLowerCase(); })){
+    alert('"'+t+'" is already one of the trade types.');
+    if(el) el.value=''; return;
+  }
+  const next=_ctCustomTrades(); next.push(t);
+  await _trkSet('ct_meta','trades','custom', _ctTradeStr(next), false);
+  if(typeof _logAudit==='function') _logAudit('created','contractor','', 'Added the trade type "'+t+'"');
+  window.__ctTypesOpen=true;
+  renderContractorDirectory();
+}
+async function _ctTradeTypeRemove(t){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
+  const used=_ctByTrade(t).length;
+  if(used){ alert('"'+t+'" cannot be removed \u2014 '+used+' contractor'+(used===1?' is':'s are')+' assigned to it.\n\nTake the trade off them first.'); return; }
+  if(!confirm('Remove "'+t+'" from the list of trade types?\n\nNobody is assigned to it, so nothing else changes.')) return;
+  const next=_ctCustomTrades().filter(function(x){ return x.toLowerCase()!==String(t).toLowerCase(); });
+  await _trkSet('ct_meta','trades','custom', _ctTradeStr(next), false);
+  if(typeof _logAudit==='function') _logAudit('deleted','contractor','', 'Removed the trade type "'+t+'"');
+  window.__ctTypesOpen=true;
+  renderContractorDirectory();
+}
+function _ctTradeTypesPanel(ro){
+  const all=_ctAllTrades();
+  const custom=_ctCustomTrades().map(function(x){ return x.toLowerCase(); });
+  const open=!!window.__ctTypesOpen;
+  const head='<div onclick="window.__ctTypesOpen=!window.__ctTypesOpen;renderContractorDirectory()" style="display:flex;align-items:center;gap:7px;cursor:pointer">'
+    +'<span style="font-size:13px;font-weight:600;color:#111">\u{1F527} Trade types \u00b7 '+all.length+'</span>'
+    +'<span style="font-size:12px;color:#185FA5">'+(open?'hide':'manage')+'</span></div>';
+  if(!open) return '<div data-ct-types="1" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:9px 13px;margin-bottom:12px">'+head+'</div>';
+  const chips=all.map(function(t){
+    const mine=custom.indexOf(t.toLowerCase())>=0;
+    const n=_ctByTrade(t).length;
+    return '<span data-ct-type="'+_calEsc(t)+'" style="display:inline-flex;align-items:center;gap:5px;font-size:12px;background:'+(mine?'#EEF3FA':'#F6F7F9')+';border:0.5px solid '+(mine?'#d6e2f0':'#e6e9f0')+';color:#333;border-radius:99px;padding:3px 10px;margin:0 5px 5px 0">'
+      +_calEsc(t)+'<span style="color:#8A94A6;font-size:11px">'+n+'</span>'
+      +((mine&&!ro)?('<span onclick="_ctTradeTypeRemove(\''+_argEsc(t)+'\')" title="Remove this trade type" style="cursor:pointer;color:#8A94A6;font-weight:700">\u00d7</span>'):'')
+    +'</span>';
+  }).join('');
+  return '<div data-ct-types="1" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:11px 13px;margin-bottom:12px">'+head
+    +'<div style="font-size:11.5px;color:#566070;margin:6px 0 8px">The number beside each one is how many contractors are assigned to it. The seventeen standing trades cannot be removed; one you add yourself can be, as long as nobody is on it.</div>'
+    +'<div style="margin-bottom:8px">'+chips+'</div>'
+    +(ro?'':'<div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center">'
+      +'<input id="ct-newtrade" placeholder="Gutters, Septic, Asbestos\u2026" onkeydown="if(event.key===\'Enter\')_ctTradeTypeAdd()" style="flex:1;max-width:260px;padding:7px 10px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px"/>'
+      +'<button onclick="_ctTradeTypeAdd()" style="padding:7px 14px;background:#111;color:#fff;border:none;border-radius:7px;font-size:13px;cursor:pointer">+ Add trade type</button></div>')
+  +'</div>';
+}
+function _ctAllTrades(){
+  const out=CONTRACTOR_TRADES.slice();
+  _ctCustomTrades().forEach(function(t){
+    if(!out.some(function(x){ return x.toLowerCase()===t.toLowerCase(); })) out.push(t);
+  });
+  (typeof _contractorsCache!=='undefined'?_contractorsCache:[]).forEach(function(c){
+    _ctTrades(c).forEach(function(t){
+      if(!out.some(function(x){ return x.toLowerCase()===t.toLowerCase(); })) out.push(t);
+    });
+  });
+  return out;
+}
+function _ctByTrade(trade){
+  const t=String(trade||'').toLowerCase();
+  return (typeof _contractorsCache!=='undefined'?_contractorsCache:[])
+    .filter(function(c){ return _ctTrades(c).some(function(x){ return x.toLowerCase()===t; }); })
+    .sort(function(a,b){
+      return (!!a.red_flag)-(!!b.red_flag)
+          || _ctTierRank(a.id,trade)-_ctTierRank(b.id,trade)
+          || String(a.business_name||a.name||'').localeCompare(String(b.business_name||b.name||''));
+    });
+}
+// One trade chip: what he does, how he is ranked for it, and a way to take it off.
+function _ctTradeChip(c, t, ro){
+  const cur=_ctTier(c.id,t), d=_ctTierDef(cur);
+  const face=d?{bg:d.bg,bd:d.bd,fg:d.fg}:{bg:'#EEF3FA',bd:'#d6e2f0',fg:'#1d4e7f'};
+  if(ro){
+    return '<span style="display:inline-flex;align-items:center;gap:5px;font-size:11.5px;background:'+face.bg+';border:0.5px solid '+face.bd+';color:'+face.fg+';border-radius:99px;padding:2px 9px;margin:0 4px 4px 0">'
+      +_calEsc(t)+(d?('<b style="font-weight:700">· '+d.short+'</b>'):'')+'</span>';
+  }
+  const opts='<option value=""'+(cur?'':' selected')+'>— rank —</option>'
+    + CT_TIERS.map(function(x){ return '<option value="'+x.k+'"'+(x.k===cur?' selected':'')+'>'+x.label+'</option>'; }).join('');
+  return '<div data-ct-chip="1" style="display:flex;align-items:center;gap:6px;background:'+face.bg+';border:0.5px solid '+face.bd+';border-radius:8px;padding:3px 5px 3px 9px;margin:0 0 5px 0">'
+    +'<span style="font-size:12px;font-weight:600;color:'+face.fg+';white-space:nowrap">'+_calEsc(t)+'</span>'
+    +'<select data-ct-tier="'+_calEsc(_ctTierSlug(t))+'" onchange="_ctTierSet(\''+c.id+'\',\''+_argEsc(t)+'\',this.value)" title="How good is he at this trade?" style="flex:1;min-width:92px;padding:2px 4px;border:0.5px solid '+face.bd+';border-radius:5px;font-size:11.5px;color:'+face.fg+';background:#fff;cursor:pointer">'+opts+'</select>'
+    +'<span onclick="_ctTradeRemove(\''+c.id+'\',\''+_argEsc(t)+'\')" title="Take this trade off him" style="cursor:pointer;color:#8A94A6;font-weight:700;padding:0 3px">&times;</span>'
+  +'</div>';
+}
+// Chips for what he already does, plus one dropdown to add another.
+function _tradeCell(c, ro){
+  const mine=_ctTrades(c);
+  const chips=mine.map(function(t){ return _ctTradeChip(c,t,ro); }).join('');
+  if(ro) return '<div style="min-width:150px">'+(chips||'<span style="color:#636b7a">&mdash;</span>')+'</div>';
+  const left=_ctAllTrades().filter(function(t){
+    return mine.every(function(m){ return m.toLowerCase()!==t.toLowerCase(); });
+  });
+  const opts='<option value="">'+(mine.length?'+ another trade':'&mdash; Assign trade &mdash;')+'</option>'
+    + left.map(function(t){ return '<option value="'+_calEsc(t)+'">'+_calEsc(t)+'</option>'; }).join('')
+    + '<option value="__other__">＋ Other…</option>';
+  return '<div style="min-width:195px">'+chips
+    +'<select onchange="_ctTradeAdd(\''+c.id+'\',this.value)" style="width:100%;max-width:200px;padding:5px 7px;border:1px solid #ddd;border-radius:6px;font-size:12.5px;color:#333;background:#fff;cursor:pointer">'+opts+'</select></div>';
+}
+
+// ---- the W-9, on the contractor's own row ------------------------------------
+// It was already kept per contractor in the trackers record; it was just only visible
+// from the tracker screen. Same record, shown where you are looking at the man.
+// The W-9 tracker keeps a FLAT map - trkData.w9[contractorId] is a boolean, not a row of
+// fields - so _trkOn(kind,id,field) is the wrong reader for it and always says no.
+function _ctW9On(id){ return !!(((window._trkData||{}).w9||{})[id]); }
+function _ctW9Name(id){ return (((window._trkData||{}).w9info||{})[id]||{}).w9name||''; }
+async function _ctW9Toggle(id){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
+  const d=window._trkData||{}; d.w9=d.w9||{};
+  d.w9[id]=!d.w9[id]; window._trkData=d;
+  const ok=await _trkSave();
+  if(ok && typeof _logAudit==='function'){
+    const c=(_contractorsCache||[]).find(function(x){ return x.id===id; })||{};
+    _logAudit('updated','contractor',(c.name||c.business_name||'contractor'), d.w9[id]?'W-9 collected':'W-9 un-ticked');
+  }
+  renderContractorDirectory();
+}
+function _ctW9Cell(c, ro){
+  const on=_ctW9On(c.id), nm=_ctW9Name(c.id);
+  const face=on?'#0F7B54':'#8A94A6';
+  const mark=ro ? (on?'✓':'—')
+    : '<span onclick="_ctW9Toggle(\''+c.id+'\')" title="'+(on?'W-9 is on file — click to un-tick':'No W-9 on file — click once it is collected')+'" style="cursor:pointer;font-size:16px;color:'+face+'">'+(on?'☑':'☐')+'</span>';
+  return '<div style="font-size:15px;color:'+face+'">'+mark+'</div>'
+    + (nm?'<div style="font-size:10px;color:#636b7a;max-width:120px;margin:1px auto 0;line-height:1.2">'+_calEsc(nm)+'</div>':'');
+}
+
+// ---- by trade, and the sheet you hand somebody -------------------------------
+// Bruce, 17 Oct: "we want this thing to be amazing to where we can download a PDF and
+// share it to somebody so they can use it too." The directory table is for editing. This
+// view is for reading and for handing out: every trade, best first.
+function _ctTradeBoard(ro){
+  const trades=_ctAllTrades().filter(function(t){ return _ctByTrade(t).length; })
+    .sort(function(a,b){ return _ctByTrade(b).length-_ctByTrade(a).length || a.localeCompare(b); });
+  if(!trades.length){
+    return '<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:26px;text-align:center;color:#636b7a;font-size:14px">Nobody has a trade assigned yet. Assign trades on the Directory tab and they will group themselves here.</div>';
+  }
+  const card=function(c,t){
+    const d=_ctTierDef(_ctTier(c.id,t));
+    const nm=c.business_name||c.name||'(unnamed)';
+    const sub=[(c.business_name&&c.name&&c.business_name!==c.name)?c.name:'', c.phone||''].filter(Boolean);
+    return '<div data-ct-card="1" style="background:#fff;border:0.5px solid '+(c.red_flag?'#F3C9C4':(d?d.bd:'#e6e9f0'))+';border-left:3px solid '+(c.red_flag?'#B42318':(d?d.fg:'#cdd3dd'))+';border-radius:9px;padding:9px 11px;display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap">'
+      +'<div style="min-width:0;flex:1">'
+        +'<div style="font-size:13.5px;font-weight:600;color:'+(c.red_flag?'#B42318':'#111')+'">'+(c.red_flag?'\u{1F6A9} ':'')+_calEsc(nm)+'</div>'
+        +(sub.length?'<div style="font-size:11.5px;color:#566070">'+_calEsc(sub.join(' · '))+'</div>':'')
+        +'<div style="font-size:11px;color:#8A94A6;margin-top:2px">'+_contractorUses(c.id)+' booking'+(_contractorUses(c.id)===1?'':'s')+(_ctW9On(c.id)?' · W-9 on file':' · no W-9')+'</div>'
+      +'</div>'
+      +'<span style="font-size:11px;font-weight:700;white-space:nowrap;background:'+(d?d.bg:'#F1F2F6')+';color:'+(d?d.fg:'#8A94A6')+';border-radius:99px;padding:2px 9px">'+(d?d.label:'not ranked')+'</span>'
+    +'</div>';
+  };
+  return trades.map(function(t){
+    const men=_ctByTrade(t);
+    const counts=CT_TIERS.map(function(x){
+      const n=men.filter(function(c){ return _ctTier(c.id,t)===x.k; }).length;
+      return n?('<span style="font-size:11px;background:'+x.bg+';color:'+x.fg+';border-radius:99px;padding:2px 8px">'+n+' '+_calEsc(x.short.toLowerCase())+'</span>'):'';
+    }).filter(Boolean).join('');
+    const none=men.filter(function(c){ return !_ctTier(c.id,t); }).length;
+    return '<div data-ct-trade="'+_calEsc(t)+'" style="background:#f8f9fb;border:0.5px solid #e4e7ee;border-radius:12px;padding:12px 14px;margin-bottom:12px">'
+      +'<div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:9px">'
+        +'<div style="font-size:15px;font-weight:700;color:#111">'+_calEsc(t)+'</div>'
+        +'<span style="font-size:11.5px;color:#566070">'+men.length+'</span>'
+        +'<div style="display:flex;gap:5px;flex-wrap:wrap">'+counts
+          +(none?('<span style="font-size:11px;background:#fff;border:0.5px solid #e0e4ec;color:#8A94A6;border-radius:99px;padding:2px 8px">'+none+' not ranked</span>'):'')
+        +'</div>'
+      +'</div>'
+      +'<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:8px">'
+        +men.map(function(c){ return card(c,t); }).join('')
+      +'</div></div>';
+  }).join('');
+}
+// The sheet itself. Plain, printable, and it says where the numbers came from.
+function _ctSheetHtml(){
+  const esc=_calEsc;
+  const trades=_ctAllTrades().filter(function(t){ return _ctByTrade(t).length; })
+    .sort(function(a,b){ return a.localeCompare(b); });
+  const when=new Date().toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  const body=trades.map(function(t){
+    const men=_ctByTrade(t);
+    const rows=men.map(function(c){
+      const d=_ctTierDef(_ctTier(c.id,t));
+      const nm=c.business_name||c.name||'(unnamed)';
+      const who=(c.business_name&&c.name&&c.business_name!==c.name)?c.name:'';
+      return '<tr'+(c.red_flag?' class="fl"':'')+'>'
+        +'<td class="rk"><span class="t'+(d?d.k:'no')+'">'+(d?esc(d.label):'not ranked')+'</span></td>'
+        +'<td><b>'+(c.red_flag?'\u{1F6A9} ':'')+esc(nm)+'</b>'+(who?('<div class="s">'+esc(who)+'</div>'):'')+'</td>'
+        +'<td>'+(esc(c.phone)||'<span class="e">—</span>')+'</td>'
+        +'<td>'+(esc(c.email)||'<span class="e">—</span>')+'</td>'
+        +'<td class="c">'+_contractorUses(c.id)+'</td>'
+        +'<td class="c">'+(_ctW9On(c.id)?'✓':'<span class="e">—</span>')+'</td>'
+      +'</tr>';
+    }).join('');
+    return '<h2>'+esc(t)+' <span class="n">'+men.length+'</span></h2>'
+      +'<table><thead><tr><th>Ranking</th><th>Contractor</th><th>Phone</th><th>Email</th><th class="c">Jobs</th><th class="c">W-9</th></tr></thead><tbody>'+rows+'</tbody></table>';
+  }).join('');
+  const total=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).length;
+  const flagged=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).filter(function(c){ return c.red_flag; }).length;
+  return '<!doctype html><html><head><meta charset="utf-8"><title>Contractor Directory — Legacy Homes</title><style>'
+    + 'body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#111;margin:26px;max-width:980px}'
+    + 'h1{font-size:21px;margin:0 0 3px}.sub{font-size:12.5px;color:#566070;margin-bottom:16px}'
+    + 'h2{font-size:14px;margin:20px 0 6px;padding-bottom:4px;border-bottom:1.5px solid #111;page-break-after:avoid}'
+    + 'h2 .n{font-weight:400;color:#8A94A6;font-size:11.5px}'
+    + 'table{width:100%;border-collapse:collapse;font-size:12.5px;page-break-inside:auto}'
+    + 'thead th{text-align:left;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:#566070;padding:0 8px 5px;border-bottom:0.5px solid #cdd3dd}'
+    + 'td{border-bottom:0.5px solid #eceef3;padding:6px 8px;vertical-align:top}'
+    + 'tr{page-break-inside:avoid}.c{text-align:center}.e{color:#b4bac4}'
+    + '.s{font-size:10.5px;color:#566070;font-weight:400}'
+    + '.rk{width:104px}.rk span{font-size:10px;font-weight:700;border-radius:99px;padding:2px 7px;white-space:nowrap;display:inline-block}'
+    + '.ttop{background:#E7F6EE;color:#0F7B54}.tmid{background:#FFF6E5;color:#8A5A10}'
+    + '.topt{background:#F1F2F6;color:#566070}.tno{background:#fff;color:#b4bac4;border:0.5px solid #e0e4ec}'
+    + '.fl{background:#FDF3F2;color:#B42318}'
+    + '.noprint{margin-bottom:14px}'
+    + 'button{padding:8px 16px;background:#111;color:#fff;border:none;border-radius:7px;font-size:13px;cursor:pointer}'
+    + '.foot{font-size:10.5px;color:#566070;margin-top:22px;border-top:1px solid #e6e8ee;padding-top:8px}'
+    + '@media print{.noprint{display:none}body{margin:0}}'
+    + '</style></head><body>'
+    + '<div class="noprint"><button onclick="window.print()">Save as PDF / Print</button></div>'
+    + '<h1>\u{1F4C7} Contractor Directory</h1>'
+    + '<div class="sub">Legacy Homes · '+total+' contractor'+(total===1?'':'s')+' across '+trades.length+' trade'+(trades.length===1?'':'s')
+    +(flagged?(' · '+flagged+' red-flagged'):'')+' · printed '+esc(when)+'</div>'
+    + (body||'<div style="padding:20px;color:#636b7a">Nobody has a trade assigned yet.</div>')
+    + '<div class="foot">Ranked per trade — a man can be the top option for one trade and just an option for another. \u{1F6A9} means red-flagged: do not hire. Jobs counts bookings on the construction calendar. Printed from the Legacy Homes project site; the directory there is the live copy.</div>'
+    + '</body></html>';
+}
+function _ctSheetPrint(){
+  const html=_ctSheetHtml();
+  const w=window.open('','_blank');
+  if(!w){ alert("Your browser blocked the window. Allow pop-ups for this site and try again."); return; }
+  w.document.open(); w.document.write(html); w.document.close();
+}
+
 // "Times used" was a number you could not open. Every booking, newest first, with the house
 // it was on - and each row goes straight to that property card.
 function _contractorJobs(id){
@@ -29423,21 +29754,51 @@ async function _ctMerge(keepId, dropIds){
   }
   // 2. fill the blanks on the record being kept.
   const patch={};
-  ['name','business_name','phone','email','trade','notes'].forEach(f=>{
+  ['name','business_name','phone','email','notes'].forEach(f=>{
     if(!String(keep[f]||'').trim()){
       const src=drops.find(d=>String(d[f]||'').trim());
       if(src) patch[f]=src[f];
     }
   });
+  // Trades are a LIST now, so they are brought together rather than only filled in when
+  // blank - a man who is in twice is usually in once per trade, and folding him into one
+  // record must not lose the second trade.
+  const allTrades=_ctTradeStr(_ctTrades(keep).concat.apply(_ctTrades(keep), drops.map(_ctTrades)));
+  if(allTrades && allTrades!==String(keep.trade||'').trim()) patch.trade=allTrades;
   if(drops.some(d=>d.red_flag) && !keep.red_flag) patch.red_flag=true;
+  // And the per-trade rankings come across for any trade the kept record has no view on.
+  try{
+    const td=window._trkData||{};
+    const tier=Object.assign({}, (td.ct_tier||{})[keepId]||{});
+    drops.forEach(function(d){
+      const from=(td.ct_tier||{})[d.id]||{};
+      Object.keys(from).forEach(function(k){ if(!tier[k] && from[k]) tier[k]=from[k]; });
+    });
+    td.ct_tier=td.ct_tier||{};
+    if(Object.keys(tier).length) td.ct_tier[keepId]=tier;
+    // a W-9 collected under the copy is still a W-9 collected for this man
+    td.w9=td.w9||{}; td.w9info=td.w9info||{};
+    drops.forEach(function(d){
+      if(td.w9[d.id] && !td.w9[keepId]) td.w9[keepId]=true;
+      if(td.w9info[d.id] && !td.w9info[keepId]) td.w9info[keepId]=td.w9info[d.id];
+      if(td.ct_tier) delete td.ct_tier[d.id];
+      delete td.w9[d.id]; delete td.w9info[d.id];
+    });
+    window._trkData=td;
+    await _trkSave();
+  }catch(e){}
   if(Object.keys(patch).length){
     const r=await supabase.from("pm_contractors").update(patch).eq("id",keepId);
     if(r.error){ alert('The records were merged but the kept one could not be updated: '+(r.error.message||'')); }
   }
   // 3. only now remove the copies.
   for(const d of drops){
-    const r=await supabase.from("pm_contractors").delete().eq("id",d.id);
-    if(r.error){ alert('Could not remove "'+(d.name||'')+'": '+(r.error.message||'')+'\n\nIts bookings have already been moved, so nothing is lost \u2014 the record is just still there.'); }
+    const r=await supabase.from("pm_contractors").delete().eq("id",d.id).select("id");
+    // A delete the database refused comes back with error:null and no rows. Saying
+    // nothing there is how a duplicate quietly survives a merge.
+    if(r.error || !r.data || !r.data.length){
+      alert('Could not remove "'+(d.name||'')+'"'+(r.error?(': '+(r.error.message||'')):' \u2014 the database refused it.')
+        +'\n\nIts bookings have already been moved, so nothing is lost \u2014 the record is just still there.'); }
     else if(typeof _logAudit==='function') _logAudit('merged','contractor', d.name||d.business_name||'',
       'Folded into "'+(keep.name||keep.business_name||'')+'"'+(moving?(' \u2014 bookings moved across'):''));
   }
@@ -29864,7 +30225,8 @@ function renderContractorDirectory(view){
   // and every dropdown. The second tab is the starting lineups, which only POINT at
   // those same records.
   if(view) window.__cdView=view;
-  const cdView = (window.__cdView==='lineups') ? 'lineups' : 'directory';
+  const cdView = (window.__cdView==='lineups') ? 'lineups'
+               : (window.__cdView==='bytrade') ? 'bytrade' : 'directory';
   const ro = isReadOnly();
   const inp=(c,field,ph,w)=>ro?`<span style="color:#333">${_calEsc(c[field])||'<span style="color:#636b7a">—</span>'}</span>`
     :`<input value="${_calEsc(c[field]||'')}" placeholder="${ph}" onchange="setContractorField('${c.id}','${field}',this.value)" style="width:${w||'100%'};padding:6px 8px;border:1px solid #e3e6ec;border-radius:6px;font-size:13px"/>`;
@@ -29877,13 +30239,15 @@ function renderContractorDirectory(view){
     const last=_contractorLastUsed(c.id);
     // Bruce, 25 Sept: he goes looking for "A Solis framing" as often as "Antonio".
     // Searching only the person's name meant half the directory was unfindable.
-    const hay=[c.name,c.business_name,c.trade,c.phone,c.email].filter(Boolean).join(' ');
+    const tiers=_ctTrades(c).map(function(t){ const d=_ctTierDef(_ctTier(c.id,t)); return d?(d.label+' '+t):''; }).filter(Boolean).join(' ');
+    const hay=[c.name,c.business_name,c.trade,c.phone,c.email,tiers,(_ctW9On(c.id)?'w9 w-9':'')].filter(Boolean).join(' ');
     return `<tr data-ct="${_calEsc(hay)}" style="${c.red_flag?'background:#FDF3F2;':''}">
       <td style="padding:9px 12px;border-bottom:0.5px solid #eee;font-weight:600;color:${c.red_flag?'#B42318':'#111'}">${c.red_flag?'🚩 ':''}${inp(c,'name','Person','100%')}</td>
       <td style="padding:9px 12px;border-bottom:0.5px solid #eee">${inp(c,'business_name','Business')}</td>
       <td style="padding:9px 12px;border-bottom:0.5px solid #eee">${inp(c,'phone','Phone')}${c.phone?`<div style="margin-top:2px"><a href="tel:${_calEsc(String(c.phone).replace(/[^0-9+]/g,''))}" style="font-size:11px;color:#185FA5;text-decoration:none">📞 call</a></div>`:''}</td>
       <td style="padding:9px 12px;border-bottom:0.5px solid #eee">${inp(c,'email','Email')}${c.email?`<div style="margin-top:2px"><a href="mailto:${_calEsc(c.email)}" style="font-size:11px;color:#185FA5;text-decoration:none">✉️ email</a></div>`:''}</td>
-      <td style="padding:9px 12px;border-bottom:0.5px solid #eee;color:#566070">${ro?_calEsc(c.trade||"—"):_tradeCell(c)}</td>
+      <td style="padding:9px 12px;border-bottom:0.5px solid #eee;color:#566070">${_tradeCell(c,ro)}</td>
+      <td style="padding:9px 12px;border-bottom:0.5px solid #eee;text-align:center">${_ctW9Cell(c,ro)}</td>
       <td style="padding:9px 12px;border-bottom:0.5px solid #eee;text-align:center">
         <div onclick="${uses?`_contractorJobs('${c.id}')`:''}" style="font-size:16px;font-weight:600;${uses?'color:#185FA5;cursor:pointer;text-decoration:underline':'color:#636b7a'}">${uses}</div>
         <div style="font-size:10.5px;color:#636b7a">${last?('last '+_calEsc(last)):'never booked'}</div></td>
@@ -29907,9 +30271,12 @@ function renderContractorDirectory(view){
   const _cdTab=(k,label,sub)=>`<div onclick="renderContractorDirectory('${k}')" style="padding:8px 15px;border-radius:9px 9px 0 0;cursor:pointer;font-size:13.5px;font-weight:${cdView===k?'600':'400'};color:${cdView===k?'#111':'#566070'};background:${cdView===k?'#fff':'transparent'};border:0.5px solid ${cdView===k?'#e0e4ec':'transparent'};border-bottom:${cdView===k?'0.5px solid #fff':'0.5px solid #e0e4ec'};margin-bottom:-0.5px;white-space:nowrap">${label}${sub?`<span style="font-size:11.5px;color:#8A94A6;font-weight:400"> · ${sub}</span>`:''}</div>`;
   const _cdTabs=`<div style="display:flex;gap:4px;border-bottom:0.5px solid #e0e4ec;margin-bottom:16px;overflow-x:auto">
       ${_cdTab('directory','\u{1F4C7} Directory', list.length+'')}
+      ${_cdTab('bytrade','\u{1F6E0}\uFE0F By Trade', _ctAllTrades().filter(function(t){ return _ctByTrade(t).length; }).length+'')}
       ${_cdTab('lineups','\u2B50 Starting Lineups', (typeof _luList==='function'?_luList().length:0)+'')}
     </div>`;
-  const _cdBlurb = cdView==='lineups'
+  const _cdBlurb = cdView==='bytrade'
+    ? 'Everybody we have, grouped by the trade they do and ranked within it \u2014 <b>top option</b>, <b>mid option</b>, <b>just an option</b>. A man can be the top option for one trade and only an option for another, so the ranking is set per trade on the Directory tab. <b>Save as PDF</b> prints this whole thing to hand to somebody.'
+    : cdView==='lineups'
     ? 'Named teams built out of the directory — who we call first, second and third for each trade, foundation to finish. Make as many as you like for different kinds of job, and print one off for whoever is running it. <b>Reference only</b> — nothing on the site books off a lineup.'
     : 'One record per contractor. <b>Times used</b> counts their bookings on the construction calendar and updates itself. The same record feeds the W-9 tracker, the mowing tracker and every contractor dropdown — fix a number here and it is fixed everywhere.';
   const _cdDirBody = `
@@ -29918,21 +30285,28 @@ function renderContractorDirectory(view){
           ${flagged?`<span style="font-size:12px;background:#FBEAE8;color:#B42318;padding:3px 10px;border-radius:99px">🚩 ${flagged} red-flagged — do not hire</span>`:''}
           <span style="font-size:12px;background:#F1F2F6;color:#566070;padding:3px 10px;border-radius:99px">Need a category that is not here? Add it under Trade → ＋ Other…</span>
         </div>
-        ${_ctImportPanel()}
         ${_ctDupPanel()}
+        ${_ctTradeTypesPanel(ro)}
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
-          <input id="ct-search" placeholder="Search a person, a business name, a trade or a number\u2026" oninput="_ctFilter()" style="flex:1;max-width:380px;padding:8px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:13.5px;outline:none"/>
+          <input id="ct-search" placeholder="Search a name, a business, a trade, a ranking, a number or an email\u2026" oninput="_ctFilter()" style="flex:1;max-width:420px;padding:8px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:13.5px;outline:none"/>
           <span id="ct-search-note" style="font-size:12.5px;color:#566070"></span>
+          <button onclick="_ctSheetPrint()" style="padding:8px 14px;background:#fff;border:0.5px solid #cdd7e6;border-radius:8px;font-size:12.5px;color:#185FA5;font-weight:600;cursor:pointer;white-space:nowrap">\u2193 Save as PDF</button>
         </div>
         ${addForm}
         <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:auto">
           <table style="width:100%;border-collapse:collapse;font-size:14px;color:#111">
             <thead><tr style="background:#fafbfc">
-              ${th('Name')}${th('Business name')}${th('Phone')}${th('Email')}${th('Trade')}${th('Times used','center')}${th('Red flag','center')}${ro?"":"<th></th>"}
+              ${th('Name')}${th('Business name')}${th('Phone')}${th('Email')}${th('Trade &amp; ranking')}${th('W-9','center')}${th('Times used','center')}${th('Red flag','center')}${ro?"":"<th></th>"}
             </tr></thead>
-            <tbody>${rows || `<tr><td colspan="8" style="padding:24px;text-align:center;color:#636b7a;font-size:14px">No contractors yet.${ro?"":" Add your first one above."}</td></tr>`}</tbody>
+            <tbody>${rows || `<tr><td colspan="9" style="padding:24px;text-align:center;color:#636b7a;font-size:14px">No contractors yet.${ro?"":" Add your first one above."}</td></tr>`}</tbody>
           </table>
         </div>`;
+  const _cdTradeBody = `
+        <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:13px">
+          ${CT_TIERS.map(function(x){ return '<span style="font-size:12px;background:'+x.bg+';border:0.5px solid '+x.bd+';color:'+x.fg+';padding:3px 11px;border-radius:99px;font-weight:600">'+x.label+'</span>'; }).join('')}
+          <button onclick="_ctSheetPrint()" style="margin-left:auto;padding:8px 15px;background:#111;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap">\u2193 Save as PDF / Print</button>
+        </div>
+        ${_ctTradeBoard(ro)}`;
   // Saving a lineup goes through the trackers record, so the trackers' own save machinery
   // is what reports success or failure - and its redraw has to come back HERE, not to the
   // tracker screen somebody was last on.
@@ -29944,7 +30318,7 @@ function renderContractorDirectory(view){
         <div style="font-size:19px;font-weight:500;color:#111;margin-bottom:10px">\u{1F4C7} Contractor Directory</div>
         ${_cdTabs}
         <div style="font-size:13px;color:#566070;margin-bottom:14px">${_cdBlurb}</div>
-        ${cdView==='lineups' ? _luBody(ro) : _cdDirBody}
+        ${cdView==='lineups' ? _luBody(ro) : (cdView==='bytrade' ? _cdTradeBody : _cdDirBody)}
       </div>
     </div>`;
   if(cdView==='lineups' && typeof _trkStatus==='function') _trkStatus((window.__trkState||{}).state||'idle',(window.__trkState||{}).detail);
@@ -29959,9 +30333,11 @@ async function saveContractor(){
   // feeds the calendar, the mowing route and the W-9 tracker, so one person entered
   // twice becomes three wrong lists. Catch it at the door - by name OR by phone,
   // because "Brady Pack" and "Brady Packs" on the same number is the same man.
-  const _hit=_ctDupFind(name, business_name, phone);
-  if(_hit && !confirm(_ctDupLabel(_hit)
-      +' is already in the directory.\n\nAdd this as a SECOND record anyway?\n\nSay no if it is the same person — use the existing one so the calendar, the mowing route and the W-9 tracker all point at one record.')) return;
+  const _why=_ctDupWhy(name, business_name, phone, email);
+  if(_why && !confirm('Hold on \u2014 '+_ctDupLabel(_why.c)+' is already in the directory with '+_why.why+'.\n\n'
+      +'Cancel \u2014 go and use the record that is already there. That is almost always the right answer: '
+      +'the construction calendar, the mowing route and the W-9 tracker all point at one record per contractor.\n\n'
+      +'OK \u2014 add this as a SECOND, separate record anyway.')) return;
   const { error } = await supabase.from("pm_contractors").insert({name:name||business_name, business_name, phone, email, trade});
   if(error){ alert("Failed to add contractor: "+(error.message||"unknown error")); return; }
   _logAudit("created","contractor", name, "Added to contractor directory");
@@ -34659,11 +35035,22 @@ const LIVE_MS = 45000;
 // out of whatever you were half way through filling in. The card is a screen like any
 // other and belongs here. Leaving it goes through openProjectDashboard, which re-registers
 // itself, so nothing gets stuck re-opening a card you have closed.
+// Bruce, 17 Oct: "just a second ago I added A Plus Carpet Cleaning and it kicked me out
+// of the contractor directory after I added them."
+// Same fault as the property card on 10 Oct, one screen over. The Contractor Directory
+// owns dash-body but was not on this list, so while it was open __liveScreen still
+// pointed at the dashboard he had come FROM - and the moment the 45-second refresh saw a
+// task or a property move, it redrew that dashboard underneath him. Adding a contractor
+// did not cause it; it just happened to be what he was doing when the timer came round.
+// Every screen that takes over dash-body belongs here. The ones left off deliberately are
+// the login screen, the boot screens and goHome, which clears the pointer instead.
 const LIVE_SCREENS = ['openProjectDashboard','openAdminDashboard','openPMAssistantDashboard',
   'openRealtorDashboard','openDesignDashboard','openArchitectDashboard','openSeniorVADashboard',
   'openVAAdminDashboard','openPermitDashboard','openDirectorCEODashboard','openPMDashboard',
   'openClosedByYear','openDataSection','openTaskDataHousing','openDollarsDayHousing',
-  'openDesignPkgData','openPropDetail'];
+  'openDesignPkgData','openPropDetail',
+  'renderContractorDirectory','renderCompletedArchive','renderEditHistory','openAutomations',
+  'openConfirmations','openDailyReports','openEndOfDayReports','openPermitDataHousing'];
 window.__liveScreen=null;
 LIVE_SCREENS.forEach(function(name){
   const fn=window[name];
@@ -34773,4 +35160,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-17p window-request-date chase-48h notes-travel -->
+<!-- build: 2026-10-17q contractor-trades-ranked trade-types dup-stop directory-pdf live-screen-fix -->
