@@ -11661,7 +11661,8 @@ function _wmTimelineBlock(c, ro){
   const trailRows=[];
   const origin=(pushes.length && pushes[0].from) ? pushes[0].from : committed;
   if(origin) trailRows.push({d:origin, kind:'orig'});
-  pushes.forEach(function(p){ trailRows.push({d:p.to, kind:'push', at:p.at||'', why:p.why||'', by:p.by||''}); });
+  pushes.forEach(function(p){ trailRows.push({d:p.to, kind:'push', at:p.at||'', why:p.why||'', by:p.by||'',
+                                              first:!(p.from)}); });
   // A date set before moves were being recorded still has to appear.
   if(est && !pushes.length && committed && est!==committed) trailRows.push({d:est, kind:'push', at:'', why:'', by:''});
 
@@ -11670,7 +11671,11 @@ function _wmTimelineBlock(c, ro){
     const gap=(r.kind==='push')?_wmDaysApart(prevD, r.d):null;
     prevD=r.d;
     const isLast=(i===trailRows.length-1);
-    const label=(r.kind==='orig')?'Original committed finish':'Rescheduled to';
+    // Found in the live data, 17 Oct: the earliest pushes on several houses carry
+    // from:null - they are the moment an estimate was FIRST set, not a reschedule.
+    // 427-439 Hanford and 279 Ashburton have nothing but one of those. Calling that
+    // "rescheduled to" reads as a slip that never happened.
+    const label=(r.kind==='orig')?'Original committed finish':(r.first?'Estimate first set':'Rescheduled to');
     return '<div style="display:flex;gap:12px;align-items:flex-start;padding:9px 0;border-top:'+(i?'0.5px solid #eef0f6':'none')+'">'
       +'<div style="flex-shrink:0;width:14px;padding-top:3px;text-align:center;color:'+(r.kind==='orig'?'#8A94A6':(isLast?'#B42318':'#BA7517'))+';font-size:13px">'
         +(r.kind==='orig'?'&#9679;':'&#8627;')+'</div>'
@@ -11696,12 +11701,20 @@ function _wmTimelineBlock(c, ro){
     : '';
 
   // ---- 4. the date in force, said plainly, at the bottom ----
-  const moved=!!(current && origin && current!==origin);
+  // The bottom line is measured against the COMMITTED date, because that is the one
+  // the room agreed to. A house with no committed date has nothing to be late against,
+  // so it says what it has - an estimate - rather than claiming nothing has changed.
+  const moved=!!(committed && current && current!==committed);
+  const botLabel = !committed ? 'Estimated finish date' : (moved ? 'New finish date' : 'Finish date &mdash; unchanged');
+  const botCol   = !committed ? '#8A5A10' : (moved ? '#8A5A10' : '#0F7B54');
+  const botBg    = !committed ? '#FFF7E6' : (moved ? '#FFF7E6' : '#EAF7F1');
+  const botBd    = !committed ? '#EAD9A8' : (moved ? '#EAD9A8' : '#BFE5D4');
   const bottom = current
-    ? '<div style="margin-top:13px;display:flex;align-items:baseline;gap:11px;flex-wrap:wrap;background:'+(moved?'#FFF7E6':'#EAF7F1')+';border:1px solid '+(moved?'#EAD9A8':'#BFE5D4')+';border-radius:11px;padding:13px 16px">'
-      +'<span style="font-size:23px;font-weight:800;color:'+(moved?'#8A5A10':'#0F7B54')+';font-variant-numeric:tabular-nums">'+E(_wmDateLong(current))+'</span>'
-      +'<span style="font-size:13.5px;font-weight:700;color:'+(moved?'#8A5A10':'#0F7B54')+'">'+(moved?'New finish date':'Finish date &mdash; unchanged')+'</span>'
+    ? '<div style="margin-top:13px;display:flex;align-items:baseline;gap:11px;flex-wrap:wrap;background:'+botBg+';border:1px solid '+botBd+';border-radius:11px;padding:13px 16px">'
+      +'<span style="font-size:23px;font-weight:800;color:'+botCol+';font-variant-numeric:tabular-nums">'+E(_wmDateLong(current))+'</span>'
+      +'<span style="font-size:13.5px;font-weight:700;color:'+botCol+'">'+botLabel+'</span>'
       +(moved&&drift!=null?'<span style="font-size:12px;color:#8A5A10">'+E(_wmLate(drift))+' than the committed finish</span>':'')
+      +(!committed?'<span style="font-size:12px;color:#8A5A10">nothing to measure it against until a committed finish is set</span>':'')
       +'</div>'
     : '';
 
@@ -33916,4 +33929,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-17g monday-timeline-rebuilt summary-and-menu-bugs -->
+<!-- build: 2026-10-17h timeline-wording-from-live-data -->
