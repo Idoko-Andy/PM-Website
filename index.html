@@ -33293,7 +33293,13 @@ function _mBuildTab(){
   if((!_mProp||!props.some(p=>p.id===_mProp)) && props.length) _mProp=props[0].id;
   const opts=props.map(p=>`<option value="${p.id}" ${p.id===_mProp?"selected":""}>${_calEsc(p.addr)}</option>`).join("");
   const sel=`<div class="m-card" style="padding:12px 14px;margin-bottom:12px"><div class="m-label">Property</div><select class="m-select" onchange="_mSetProp(this.value)">${opts||'<option>No properties</option>'}</select></div>`;
-  const evs=(typeof _calEventsCache!=="undefined"?_calEventsCache:[]).filter(e=>e.property_id===_mProp && e.event_date===_mDay);
+  // The baseline was switched off in October everywhere on the desktop - the property
+  // card, the construction calendar and the per-person tabs all skip kind='baseline'.
+  // The phone never got the same line, so Tommy's pre-scheduled plan was still showing up
+  // on the Build tab as though somebody had booked it. A PM standing in a house was
+  // reading a plan as a day's work.
+  const evs=(typeof _calEventsCache!=="undefined"?_calEventsCache:[])
+    .filter(e=>e.property_id===_mProp && e.event_date===_mDay && e.kind!=='baseline');
   const rows=evs.length?evs.map(_mEventRow).join(""):`<div class="m-card" style="text-align:center;color:#566070;padding:30px">No construction items this day.</div>`;
   return sel+_mDayBar()+rows;
 }
@@ -35634,4 +35640,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-17u do-not-use-per-trade trade-dropdown no-more-kickout -->
+<!-- build: 2026-10-17v field-app-skips-baseline -->
