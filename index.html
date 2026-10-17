@@ -25901,11 +25901,25 @@ async function _permitInspSubphase(permit, ins, passed){
   const label=_permitInspLabel(ins);
   const subs=Array.isArray(c.subPhases)?c.subPhases.map(s=>Object.assign({},s)):[];
   const i=subs.findIndex(s=>String(s.name||"")===label);
+  // Bruce, 17 Oct, on 1060 Glendale: "Jen inputted the inspections, but for the garage
+  // because that was approved. But for some reason it like preset dates for everything."
+  // This is why. Every inspection written onto a card was stamped start = the day it was
+  // typed and due = seven days later. Nobody chose either date; the city had not booked
+  // anything; the number 7 is not from anywhere. But a made-up date on a card is
+  // indistinguishable from a real one, so the whole list read as scheduled work and then
+  // started going overdue a week later - which is what he was looking at.
+  // An inspection has exactly one real date: the appointment, if the city has given us
+  // one, which Jen puts in Scheduled on the tracker. If there is no appointment there is
+  // no date, and the step says so instead of inventing one.
+  const booked=String((ins&&ins.sched)||"").trim();
   if(i<0){
-    subs.push({name:label, start:(typeof _ymdToday==="function"?_ymdToday():_ymd(new Date())),
-               due:(typeof _ymdPlus==="function"?_ymdPlus(7):""), completed:!!passed});
+    subs.push({name:label, start:booked, due:booked, completed:!!passed});
   } else {
     subs[i].completed=!!passed;
+    // a date the city HAS given us is worth carrying across; a blank never wipes a
+    // date somebody typed on the card by hand.
+    if(booked && !String(subs[i].start||"").trim()) subs[i].start=booked;
+    if(booked && !String(subs[i].due||"").trim())   subs[i].due=booked;
   }
   const {data,error}=await supabase.from("pm_properties").update({sub_phases:subs}).eq("id",c.id).select("id");
   if(error||!data||!data.length) return false;
@@ -25916,6 +25930,67 @@ async function _permitInspSubphase(permit, ins, passed){
   // re-opens it), and leaving the task closed would hide work that is live again.
   await _spCloseTasksForSteps(c, [label], !!passed);
   return true;
+}
+// ---- the dates that were never anybody's -------------------------------------
+// Until 17 Oct every inspection written onto a property card was stamped start = the
+// day it was typed, due = seven days later. Nobody chose either one. That is fixed
+// above, but the stamps already written are still sitting on the cards making unbooked
+// inspections look scheduled and then overdue. This finds them and nothing else:
+//   - the step is an inspection that came from the tracker
+//   - it is not ticked off
+//   - the tracker has no appointment for it, so there is no real date it could be
+//   - and the two dates are exactly seven days apart, which is the stamp's signature
+// A date somebody typed by hand almost never lands exactly seven days apart, so this
+// leaves human dates alone. It is never automatic - it lists them and asks.
+function _inspStampedDates(){
+  const out=[];
+  const rows=(typeof _permitList==='function')?_permitList():[];
+  rows.forEach(function(r){
+    const c=(typeof _permitProp==='function')?_permitProp(r):null;
+    if(!c) return;
+    const subs=Array.isArray(c.subPhases)?c.subPhases:[];
+    _permitInsps(r).forEach(function(ins){
+      if(ins.done) return;
+      if(String(ins.sched||'').trim()) return;          // the city HAS booked it
+      const label=_permitInspLabel(ins);
+      const s=subs.find(function(x){ return String(x.name||'')===label; });
+      if(!s || s.completed) return;
+      const a=String(s.start||'').trim(), b=String(s.due||'').trim();
+      if(!a || !b) return;
+      const gap=(Date.parse(b+'T00:00:00')-Date.parse(a+'T00:00:00'))/86400000;
+      if(gap!==7) return;
+      out.push({card:c, label:label, start:a, due:b});
+    });
+  });
+  return out;
+}
+async function _inspClearStamped(){
+  if(_blockIfReadOnly()) return;
+  const hits=_inspStampedDates();
+  if(!hits.length){ alert("No invented inspection dates left on the property cards."); return; }
+  const by={};
+  hits.forEach(function(h){ (by[h.card.addr]=by[h.card.addr]||[]).push(h.label); });
+  const lines=Object.keys(by).sort().map(function(a){ return '\u2022 '+a+' \u2014 '+by[a].length+' inspection'+(by[a].length===1?'':'s'); });
+  if(!confirm("Clear "+hits.length+" invented date"+(hits.length===1?'':'s')+" off the property cards?\n\n"
+    +lines.slice(0,14).join('\n')+(lines.length>14?('\n\u2026and '+(lines.length-14)+' more houses'):'')
+    +"\n\nThese inspections are not ticked off and the city has not booked them, but the card shows a start date and a due date exactly a week apart \u2014 the old automatic stamp. Clearing them leaves the inspection on the card with no date, which is the truth until somebody books it.\n\nNothing is removed and nothing ticked off is touched.")) return;
+  const byCard={};
+  hits.forEach(function(h){ (byCard[h.card.id]=byCard[h.card.id]||{card:h.card,labels:[]}).labels.push(h.label); });
+  let n=0; const bad=[];
+  for(const id of Object.keys(byCard)){
+    const g=byCard[id];
+    const subs=(Array.isArray(g.card.subPhases)?g.card.subPhases:[]).map(function(s){ return Object.assign({},s); });
+    subs.forEach(function(s){ if(g.labels.indexOf(String(s.name||''))>=0){ s.start=''; s.due=''; } });
+    const {data,error}=await supabase.from("pm_properties").update({sub_phases:subs}).eq("id",id).select("id");
+    if(error||!data||!data.length){ bad.push(g.card.addr); continue; }
+    g.card.subPhases=subs; n+=g.labels.length;
+  }
+  try{ await loadPropertiesFromSupabase(); }catch(e){}
+  if(typeof _logAudit==='function') _logAudit("updated","permit","Inspection dates",
+    "Cleared "+n+" automatic start/due date"+(n===1?'':'s')+" the app had stamped onto inspections nobody had booked");
+  alert(bad.length ? (n+" cleared. These could not be saved:\n\n"+bad.slice(0,10).join('\n'))
+                   : (n+" invented date"+(n===1?'':'s')+" cleared. An inspection now shows a date only when the city has booked it."));
+  try{ _permitRerender(); }catch(e){}
 }
 // Every inspection on the tracker that never made it onto its property card. They
 // mostly pre-date the write-through, or were added while the address had not been
@@ -26468,8 +26543,11 @@ async function _inspWrite(pid, insId, mut, auditVerb, auditNote, syncCard){
 // The day it is booked for. Not a result - just the appointment.
 async function _inspSetSched(pid, insId, val){
   const v=String(val||'');
+  // The appointment is now the ONLY date the card gets for this inspection, so booking
+  // one has to reach the card - it did not before, because the card was carrying an
+  // invented date instead and there was nothing to carry across.
   await _inspWrite(pid, insId, ins=>{ ins.sched=v; }, 'updated',
-    v?('Inspection scheduled for '+v):'Scheduled date cleared', false);
+    v?('Inspection scheduled for '+v):'Scheduled date cleared', true);
 }
 // Record an attempt. Every attempt is appended to the log, so a fail that is later
 // passed still shows that it failed first.
@@ -26836,6 +26914,8 @@ function _permitInspBody(){
           <button onclick="_permitInspAdd('${r.id}')" style="padding:5px 13px;border:none;border-radius:6px;background:#122A4A;color:#fff;font-size:12.5px;font-weight:600;cursor:pointer">Add inspection</button>
           ${(function(){ const n=(typeof _inspMissingOnCards==='function')?_inspMissingOnCards().length:0;
             return n?`<button onclick="_inspSyncCards()" title="Some inspections on the tracker are not on their property cards yet" style="margin-left:7px;padding:5px 13px;border:0.5px solid #EAD9A8;border-radius:6px;background:#FFF7E0;color:#633806;font-size:12.5px;font-weight:600;cursor:pointer">Put ${n} onto the property cards</button>`:''; })()}
+          ${(function(){ const n=(typeof _inspStampedDates==='function')?_inspStampedDates().length:0;
+            return n?`<button onclick="_inspClearStamped()" title="The app used to stamp a made-up start and due date on every inspection it wrote to a card" style="padding:5px 13px;border:0.5px solid #EAD9A8;border-radius:6px;background:#FFF7E0;color:#633806;font-size:12.5px;font-weight:600;cursor:pointer">Clear ${n} invented date${n===1?'':'s'}</button>`:''; })()}
           <span style="font-size:11px;color:#566070">added as step ${_permitInsps(r).length+1} &mdash; reorder with the arrows</span>
         </div></td></tr>`;
     const _ih=(t,w)=>`<th style="text-align:center;padding:5px 8px;font-size:9px;font-weight:700;color:#a8b0bd;text-transform:uppercase;letter-spacing:.06em;white-space:nowrap${w?(';width:'+w):''}">${t}</th>`;
@@ -35325,4 +35405,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-17r accounts-payable-boxes grouped-by-contractor-or-trade ap-pdf -->
+<!-- build: 2026-10-17s inspection-dates-not-invented booked-date-reaches-card stamp-cleanup -->
