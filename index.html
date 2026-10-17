@@ -23107,6 +23107,81 @@ function _utilitiesDashboard(){
   </div>`;
 }
 // VA-Admin main: quick overview boxes (no utilities table here — that lives on its own tab).
+// ===================== THE VA MAIN DASHBOARD — WHERE EVERY HOUSE IS ===============
+// Bruce, 17 Oct: "on the main dashboard for the VA administrative assistant it just
+// needs to show squares of properties - total properties in upcoming takedowns, total
+// properties in occupied slash closed, total properties in vacant on standby, total
+// properties that are in the pre-construction, waiting permits, and framings and MEPs,
+// and then total properties that are from drywall and exterior work to finishes, and
+// then total properties that are in the pre-list slash punch out process, total
+// properties of rental handoff process, total properties of listed on the market or
+// listed on the market slash still needing to complete final inspections, total number
+// of properties in contract, and total number of properties in request remedy, total
+// properties cleared to close, and then total properties closed for the month."
+//
+// Twelve squares, in the order a house actually travels, each one clicking through to
+// the checklist that owns that stage. The four generic boxes that were here before
+// (open tasks, utilities pending, end of project, trackers) told her nothing about
+// where the work IS - they are kept underneath, because the task count is still the
+// first thing she looks at.
+const VA_MAIN_SQUARES = [
+  ['Upcoming takedowns',   ["Upcoming Takedowns"],                                              '#AF2C2B', 'pre',  'pre1'],
+  ['Occupied / closed',    ["Occupied / Closed"],                                               '#B5651D', 'pre',  'pre2'],
+  ['Vacant / on standby',  ["Vacant / On Standby"],                                             '#8A5A10', 'pre',  'pre3'],
+  ['Pre-con, permits &amp; framing', ["Pre Construction","Waiting Permits","Framing, MEPS, Insulation"], '#0B7285', 'pre',  'pre4'],
+  ['Drywall to finishes',  ["Drywall / Exterior Work","Finishes"],                               '#639922', 'act',  'act2'],
+  ['Pre-list / punch out', ["Pre List / Punchout Process"],                                      '#4A7318', 'act',  'act4'],
+  ['Rental handoff',       ["Rental Handoff Process"],                                           '#0E7460', 'post', 'post3'],
+  ['Listed on the market', ["Listed on the Market","Listed on the Market / Final Inspections"],  '#185FA5', 'post', 'post1'],
+  ['In contract',          ["In Contract"],                                                      '#0F7B54', 'post', 'post2'],
+  ['Request a remedy',     ["RTR In Process"],                                                   '#BA7517', 'post', 'post3'],
+  ['Cleared to close',     ["RTR Completed (Pending Closing)"],                                  '#534AB7', 'post', 'post3'],
+  ['Closed this month',    ["Closed"],                                                           '#4A1D6E', 'post', 'post4']
+];
+// "Closed for the month" is the calendar month we are in, read off the closed date -
+// not the four-week rolling window the Closed category uses for its own checklist.
+function _vaClosedThisMonth(cards){
+  const m=_ymd(new Date()).slice(0,7);
+  return (cards||[]).filter(function(c){
+    return c.phase==='Closed' && String(c.closedDate||'').slice(0,7)===m;
+  });
+}
+function _vaSquareCards(sq, cards){
+  if(sq[0]==='Closed this month') return _vaClosedThisMonth(cards);
+  return (cards||[]).filter(function(c){ return sq[1].indexOf(c.phase)>=0; });
+}
+// How much of that stage's checklist is still open across the houses standing in it.
+// A square with houses but nothing outstanding is a square she can walk past.
+function _vaSquareOpen(sq, cards){
+  const cat=sq[4];
+  let open=0;
+  _vaSquareCards(sq, cards).forEach(function(c){
+    try{
+      const rows=_vaRows(c, cat);
+      open += rows.filter(function(r){ return !_vaRowDone(c,r); }).length;
+    }catch(e){}
+  });
+  return open;
+}
+function _vaMainSquares(cards){
+  const E=_calEsc;
+  const tiles=VA_MAIN_SQUARES.map(function(sq){
+    const n=_vaSquareCards(sq, cards).length;
+    const open=n?_vaSquareOpen(sq, cards):0;
+    const dim=(n===0);
+    return '<div onclick="_vaGo(\''+sq[3]+'\',\''+sq[4]+'\')" title="Opens the '+E(String(sq[0]).replace(/&amp;/g,'&'))+' checklist"'
+      +' style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid '+sq[2]+';border-radius:10px;padding:11px 13px;cursor:pointer;'+(dim?'opacity:.55':'')+'">'
+      +'<div style="font-size:12.5px;font-weight:600;color:#111;line-height:1.3;min-height:32px">'+sq[0]+'</div>'
+      +'<div style="font-size:26px;font-weight:600;color:'+sq[2]+';margin-top:3px;font-variant-numeric:tabular-nums">'+n+'</div>'
+      +'<div style="font-size:11px;color:'+(open?'#B42318':'#566070')+';font-weight:'+(open?'600':'400')+'">'
+        +(n===0?'nothing here':(open?(open+' step'+(open===1?'':'s')+' open'):'all caught up'))+'</div>'
+    +'</div>';
+  }).join('');
+  const total=(cards||[]).filter(function(c){ return c.phase!=='Closed'; }).length;
+  return '<div style="font-size:14.5px;font-weight:700;color:#111;margin:4px 0 3px">Where every house is</div>'
+    +'<div style="font-size:11.5px;color:#566070;margin-bottom:9px">'+total+' live on the board, in the order a house travels. Click a square for that stage’s checklist.</div>'
+    +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:9px;margin-bottom:16px">'+tiles+'</div>';
+}
 function _vaMainDashboard(vaName){
   const mine=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>_taskOpenFor(t,vaName) && _taskHasAssignee(t,vaName));
   const phases=["Vacant / On Standby","Pre Construction","Waiting Permits","Framing, MEPS, Insulation","Drywall / Exterior Work","Finishes","Pre List / Punchout Process","Listed on the Market"];
@@ -23114,10 +23189,12 @@ function _vaMainDashboard(vaName){
   const utilPending=cards.filter(c=>phases.includes(c.phase) && ["vos_util_electric","vos_util_water","vos_util_gas"].some(k=>!((c.checklists||{})[k]||{}).done)).length;
   const rtr=cards.filter(c=>["RTR In Process","RTR Completed (Pending Closing)","Closed"].includes(c.phase)).length;
   const box=(t,v,sub,color,fn)=>`<div onclick="${fn}" style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${color};border-radius:10px;padding:14px 16px;cursor:pointer"><div style="font-size:13.5px;font-weight:600;color:#111">${t}</div><div style="font-size:27px;font-weight:600;color:${color};margin-top:6px">${v}</div><div style="font-size:11.5px;color:#566070">${sub}</div></div>`;
-  return `<div style="padding:20px;max-width:900px;margin:0 auto;color:#111">
+  return `<div style="padding:20px;max-width:1120px;margin:0 auto;color:#111">
     ${_confirmPanel('Needs confirming')}
     ${_flgPanel()}
     <div style="font-size:17px;font-weight:600;color:#111;margin-bottom:12px">📊 VA Admin — Main</div>
+    ${_vaMainSquares(cards)}
+    <div style="font-size:14.5px;font-weight:700;color:#111;margin:4px 0 9px">Her own work</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px">
       ${box('My Open Tasks', mine.length, 'assigned to '+_calEsc(vaName), '#185FA5', "openVAAdminDashboard('va')")}
       ${box('Utilities Pending', utilPending, 'properties missing a utility', '#8A5A10', "openVAAdminDashboard('utilities')")}
@@ -23188,11 +23265,16 @@ const VA_TPL_SEED = {
   // Bruce, 11 Oct: shorter headings. "Just put label project manager instead of the
   // words find out who the project manager is ... step four, closing info notes ...
   // step five, vacancy info and notes." The behaviour behind each one is unchanged.
+  // Bruce, 17 Oct, read these back with the bracketed halves spelled out: "create the
+  // company cam folder and then put in parentheses using template on company cam ...
+  // closing info notes in parentheses put into the property card, and then vacancy info
+  // and notes also put into the property card." Same five steps, same auto-ticks - the
+  // brackets say WHERE the answer goes, which is the half people kept asking about.
   pre1:["Create the property card @auto:card",
-        "Create the CompanyCam folder @auto:ccam",
+        "Create the CompanyCam folder (using the template on CompanyCam) @auto:ccam",
         "Project manager @14d @auto:pm",
-        "Closing info notes @14d @auto:closing",
-        "Vacancy info and notes @14d @auto:vacancy"],
+        "Closing info notes (put into the property card) @14d @auto:closing",
+        "Vacancy info and notes (put into the property card) @14d @auto:vacancy"],
   // Bruce, 11 Oct, dictated these three in the same sitting as the revised pre1.
   // Anything left open on an earlier category follows the house in on top of these -
   // see _vaCarried - so these lists are only what is NEW at this stage.
@@ -23216,7 +23298,7 @@ const VA_TPL_SEED = {
         "Final budget completed and uploaded @14d @every14d @auto:budget",
         "Permits approved and uploaded @14d @auto:permits",
         "Start date agreed with the PM @14d",
-        "Prices and bids back from contractors @14d",
+        "Prices and bids back from contractors, and into accounts payable @14d",
         "Any other documents - cabinet layouts, design packages @14d"],
   act1:["Rough-in inspections booked","Framing photos in CompanyCam","Exterior scope confirmed with the PM","Material deliveries logged"],
   act2:["Insulation inspection passed","Drywall scheduled","Weekly photos uploaded","Budget against spent checked"],
@@ -23265,7 +23347,11 @@ const VA_TPL_RETIRED = {
   pre1:[
     ["Property card created and the address double-checked","CompanyCam folder created","Closing / takedown date on the card","Utilities ordered in our name","Lockbox on and the code logged"],
     ["Create the property card","Find out who the project manager is @7d","Vacancy info, lockbox info and any other comments up to date @7d","Fill out as much of the property card as possible","Chase the assigned project manager to get it done @14d"],
-    ["Create the property card","Create the CompanyCam folder @auto:ccam","Find out who the project manager is @14d @auto:pm","Closing info and closing date on the card @14d @auto:closing","Vacancy date, vacancy info, lockbox and any other comments on the card @14d @auto:vacancy"]
+    ["Create the property card","Create the CompanyCam folder @auto:ccam","Find out who the project manager is @14d @auto:pm","Closing info and closing date on the card @14d @auto:closing","Vacancy date, vacancy info, lockbox and any other comments on the card @14d @auto:vacancy"],
+    ["Create the property card @auto:card","Create the CompanyCam folder @auto:ccam","Project manager @14d @auto:pm","Closing info notes @14d @auto:closing","Vacancy info and notes @14d @auto:vacancy"]
+  ],
+  pre4:[
+    ["Scope of work uploaded to the card @14d @every14d @auto:scope","Final budget completed and uploaded @14d @every14d @auto:budget","Permits approved and uploaded @14d @auto:permits","Start date agreed with the PM @14d","Prices and bids back from contractors @14d","Any other documents - cabinet layouts, design packages @14d"]
   ]
 };
 function _vaTplIsRetired(cat, lines){
@@ -23500,11 +23586,40 @@ async function _vaHoldClear(pid, cat){
     'Taken off hold on the '+((VA_CATS[cat]||{}).name||cat)+' checklist');
   _vaGo(window._vaSec, cat);
 }
-function _vaChkOn(propId,cat,item){ return _trkOn('va_chk',propId,cat+'|'+_vaSlug(item))===true
-       && _trkVal('va_chk',propId,cat+'|'+_vaSlug(item))!=='na'; }
+// Bruce, 17 Oct, reworded four steps - the brackets saying where each answer goes, and
+// "and into accounts payable" on the bids line. A tick is stored against a hash of the
+// step's WORDS (see _vaSlug), so rewording a step silently throws away every tick
+// anybody had already made on it. Those four renames would have un-ticked finished work
+// across the whole board, on houses nobody was looking at.
+//
+// So each new wording remembers what it used to say. A tick found under the old wording
+// still counts; new ticks are written against the new wording, so the record converges
+// on its own and no migration has to be run against anybody's data.
+const VA_STEP_WAS = {
+  "Create the CompanyCam folder (using the template on CompanyCam) @auto:ccam":
+    ["Create the CompanyCam folder @auto:ccam"],
+  "Closing info notes (put into the property card) @14d @auto:closing":
+    ["Closing info notes @14d @auto:closing"],
+  "Vacancy info and notes (put into the property card) @14d @auto:vacancy":
+    ["Vacancy info and notes @14d @auto:vacancy"],
+  "Prices and bids back from contractors, and into accounts payable @14d":
+    ["Prices and bids back from contractors @14d"]
+};
+function _vaSlugsFor(item){
+  const out=[_vaSlug(item)];
+  (VA_STEP_WAS[String(item||'').trim()]||[]).forEach(function(was){ out.push(_vaSlug(was)); });
+  return out;
+}
+function _vaChkOn(propId,cat,item){
+  return _vaSlugsFor(item).some(function(sl){
+    return _trkOn('va_chk',propId,cat+'|'+sl)===true && _trkVal('va_chk',propId,cat+'|'+sl)!=='na';
+  });
+}
 // Marked "does not apply". Stored in the same place as the tick so it travels with the
 // step, and counted as answered so it stops chasing her.
-function _vaChkNA(propId,cat,item){ return _trkVal('va_chk',propId,cat+'|'+_vaSlug(item))==='na'; }
+function _vaChkNA(propId,cat,item){
+  return _vaSlugsFor(item).some(function(sl){ return _trkVal('va_chk',propId,cat+'|'+sl)==='na'; });
+}
 async function _vaChkNAToggle(propId,cat,itemSlug){
   if(_blockIfReadOnly()) return;
   const cur=_trkVal('va_chk',propId,cat+'|'+itemSlug);
@@ -34326,4 +34441,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-17j prelist-sources listings-meeting-cc-date -->
+<!-- build: 2026-10-17k va-main-squares checklist-wording -->
