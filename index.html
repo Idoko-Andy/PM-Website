@@ -6569,6 +6569,70 @@ function _apAllBody(groupDefault){
     ${body}</div>`;
 }
 // What the tab actually shows.
+// ---- Accounts payable, as boxes you click into --------------------------------
+// Bruce, 17 Oct, looking at 1060 Glendale: "that just looks like shit. Like, that is hard
+// to read. It's, like, editable straight from the thing. Um, like, they need to be their
+// own little boxes. Like, it needs to look like a do invoices thing broken up by contract
+// or trade. You click into it, you know."
+//
+// The old tab was one wide table where every cell on every line was a live input - eight
+// columns of boxes, so nothing read as a number and everything read as a form. Now the
+// money is set out like a stack of invoices: grouped by the contractor who gets paid (or
+// by the trade), each group with its own running totals, and each line a single readable
+// row. Click a line and it opens into the full editable detail, one line at a time.
+// Nothing about what is stored has changed - same rows, same setters, same totals.
+function _apGroupMode(){ return (window.__apGroup==='trade') ? 'trade' : 'con'; }
+function _apSetGroup(m, pid){ window.__apGroup=m; if(typeof openPropDetail==='function') openPropDetail(pid); }
+function _apLineToggle(id, pid){
+  window.__apOpenLine = (window.__apOpenLine===id) ? null : id;
+  if(typeof openPropDetail==='function') openPropDetail(pid);
+}
+function _apGroupToggle(key, pid){
+  const s=window.__apShut||{}; s[key]=!s[key]; window.__apShut=s;
+  if(typeof openPropDetail==='function') openPropDetail(pid);
+}
+// Everything that matters about one group, worked out once.
+function _apGroupSums(rows){
+  const n=(r,f)=>_apNum(r[f])||0;
+  const live=rows.filter(function(r){ return !_apIsQuote(r) && r.status!=='void'; });
+  const agreed=live.reduce(function(a,r){ return a+n(r,'agreed_amount'); },0);
+  const invoiced=live.reduce(function(a,r){ return a+n(r,'invoiced_amount'); },0);
+  const paid=live.reduce(function(a,r){ return a+n(r,'paid_amount'); },0);
+  const quotes=rows.filter(_apIsQuote);
+  return { agreed:agreed, invoiced:invoiced, paid:paid, outstanding:invoiced-paid,
+           lines:rows.length, quotes:quotes.length,
+           quoted:quotes.reduce(function(a,r){ return a+n(r,'agreed_amount'); },0) };
+}
+function _apGroups(pid){
+  const rows=_apFor(pid);
+  const mode=_apGroupMode();
+  const map={}, order=[];
+  rows.forEach(function(r){
+    const name = (mode==='trade')
+      ? (String(r.category||'').trim() || 'No trade set')
+      : (_apWho(r) || 'Nobody named yet');
+    const key=(mode==='trade'?'t:':'c:')+name.toLowerCase();
+    if(!map[key]){ map[key]={ key:key, name:name, rows:[], cid:(mode==='con'?(r.contractor_id||''):'') }; order.push(key); }
+    map[key].rows.push(r);
+  });
+  return order.map(function(k){
+    const g=map[k];
+    g.sums=_apGroupSums(g.rows);
+    // within a group: what is still owed first, then what is agreed, then paid, then
+    // quotes, then the voided ones at the bottom.
+    const rank={ invoiced:0, approved:1, agreed:2, paid:3, quoted:4, void:5 };
+    g.rows.sort(function(a,b){
+      return (rank[String(a.status||'agreed')]||2)-(rank[String(b.status||'agreed')]||2)
+          || (_apNum(b.agreed_amount)||0)-(_apNum(a.agreed_amount)||0);
+    });
+    return g;
+  }).sort(function(a,b){
+    // the people we owe money to come first - that is what this tab is read for
+    return b.sums.outstanding-a.sums.outstanding
+        || b.sums.agreed-a.sums.agreed
+        || String(a.name).localeCompare(String(b.name));
+  });
+}
 function _apBody(c){
   const pid=c.id;
   // The four AP dashboards each set this when they render. The property card's own AP
@@ -6576,18 +6640,20 @@ function _apBody(c){
   // THEIR page instead of this card. Last AP surface rendered wins, which is this one.
   window._apReturn=function(){ if(typeof openPropDetail==='function') openPropDetail(pid); };
   const ro=(typeof isReadOnly==='function') && isReadOnly();
-  const rows=_apFor(pid);
   const T=_apTotals(pid);
   const esc=_calEsc;
+  const mode=_apGroupMode();
+  const shut=window.__apShut||{};
+  const openId=window.__apOpenLine||null;
   const cons=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).slice()
     .sort(function(a,b){ return String(a.name||'').localeCompare(String(b.name||'')); });
-  const conOpts=(cur)=>['<option value="">\u2014 who gets paid \u2014</option>']
+  const conOpts=(cur)=>['<option value="">— who gets paid —</option>']
     .concat(cons.map(function(x){
-      const nm=x.business_name?((x.name||'')+' \u00b7 '+x.business_name):(x.name||'');
+      const nm=x.business_name?((x.name||'')+' · '+x.business_name):(x.name||'');
       return '<option value="'+esc(x.id)+'"'+(cur===x.id?' selected':'')+'>'+esc(nm)+'</option>';
     })).join('');
 
-  const tile=(label,val,col,sub)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${col};border-radius:10px;padding:11px 14px;min-width:150px;flex:1">
+  const tile=(label,val,col,sub)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${col};border-radius:10px;padding:11px 14px;min-width:142px;flex:1">
       <div style="font-size:11.5px;color:#566070">${label}</div>
       <div style="font-size:21px;font-weight:700;color:${col};margin-top:3px">${val}</div>
       ${sub?`<div style="font-size:10.5px;color:#8A94A6;margin-top:2px">${sub}</div>`:''}
@@ -6595,85 +6661,184 @@ function _apBody(c){
 
   // The quote tile is deliberately last and grey: it is not money owed, and it must not
   // read like it is.
-  const head=`<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+  const head=`<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">
       ${tile('Agreed', _apMoney(T.agreed), '#185FA5', T.rows+' line'+(T.rows===1?'':'s'))}
       ${tile('Invoiced', _apMoney(T.invoiced), '#8A5A10', T.leftToBill>0?(_apMoney(T.leftToBill)+' still to bill'):'')}
       ${tile('Paid', _apMoney(T.paid), '#0F7B54', '')}
       ${tile('Outstanding', _apMoney(T.outstanding), T.outstanding>0?'#B42318':'#0F7B54', 'billed and not yet paid')}
       ${T.quotes?tile('Quotes waiting', _apMoney(T.quoted), '#566070', T.quotes+' not agreed yet'):''}
-    </div>
-    ${ro?'':`<div style="margin-bottom:12px"><button onclick="_apQuoteOpen('${pid}','')" style="padding:9px 17px;background:#111;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">&#65291; Add a quote or price</button>
-      <span style="font-size:11.5px;color:#8A94A6;margin-left:9px">contractor, amount, description of work, type of work \u2014 and you can add a contractor who is not in here yet</span></div>`}`;
+    </div>`;
 
+  const grpBtn=(k,label)=>`<span onclick="_apSetGroup('${k}','${pid}')" style="padding:5px 13px;border-radius:99px;cursor:pointer;font-size:12.5px;font-weight:${mode===k?'700':'400'};color:${mode===k?'#fff':'#566070'};background:${mode===k?'#122A4A':'#fff'};border:0.5px solid ${mode===k?'#122A4A':'#d8dce6'}">${label}</span>`;
+  const bar=`<div style="display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-bottom:13px">
+      ${ro?'':`<button onclick="_apQuoteOpen('${pid}','')" style="padding:9px 17px;background:#111;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">&#65291; Add a quote or price</button>`}
+      <span style="font-size:12px;color:#8A94A6;margin-left:2px">Broken up by</span>
+      ${grpBtn('con','Contractor')}${grpBtn('trade','Trade')}
+      <span style="flex:1"></span>
+      <button onclick="_apSheetPrint('${pid}')" style="padding:8px 14px;background:#fff;border:0.5px solid #cdd7e6;border-radius:8px;font-size:12.5px;color:#185FA5;font-weight:600;cursor:pointer;white-space:nowrap">&#8595; Save as PDF</button>
+    </div>`;
+
+  // ---- one line, shut: readable, nothing to misclick ----
+  const shutLine=(r)=>{
+    const st=_apState(r.status);
+    const amt=_apNum(r.invoiced_amount)!=null ? r.invoiced_amount : r.agreed_amount;
+    const owed=(_apNum(r.invoiced_amount)||0)-(_apNum(r.paid_amount)||0);
+    const docs=_apDocs(r).length;
+    return `<div data-ap-line="${esc(r.id)}" onclick="_apLineToggle('${r.id}','${pid}')" style="display:flex;gap:10px;align-items:center;padding:10px 13px;border-top:0.5px solid #eef0f6;cursor:pointer;${r.status==='void'?'opacity:.5;':''}">
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13.5px;font-weight:600;color:#111;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.label||'(no description)')}</div>
+        <div style="font-size:11px;color:#8A94A6;margin-top:1px">${esc(mode==='trade'?(_apWho(r)||'nobody named yet'):(r.category||'no trade set'))}${docs?(' · \u{1F4CE} '+docs):''}${r.notes?' · note':''}</div>
+      </div>
+      <div style="text-align:right;white-space:nowrap">
+        <div style="font-size:14px;font-weight:700;color:#111;font-variant-numeric:tabular-nums">${_apMoney(amt)}</div>
+        ${owed>0?`<div style="font-size:10.5px;color:#B42318;font-variant-numeric:tabular-nums">${_apMoney(owed)} owed</div>`:''}
+      </div>
+      <span style="font-size:11px;font-weight:700;color:${st.col};background:${st.bg};padding:3px 10px;border-radius:99px;white-space:nowrap">${st.label}</span>
+      <span style="color:#c3c9d4;font-size:15px;line-height:1">&rsaquo;</span>
+    </div>`;
+  };
+
+  // ---- one line, open: the whole thing, laid out like a form and not a spreadsheet ----
+  const fld=(label,inner,hint)=>`<div style="min-width:0">
+      <div style="font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#8A94A6;margin-bottom:3px">${label}</div>
+      ${inner}${hint?`<div style="font-size:10.5px;color:#9AA3B2;margin-top:2px">${hint}</div>`:''}
+    </div>`;
   const money=(r,f,ph)=>ro
-    ? `<span style="font-size:13px">${_apMoney(r[f])}</span>`
-    : `<input value="${r[f]==null?'':esc(String(r[f]))}" placeholder="${ph}" onchange="_apField('${r.id}','${f}',this.value,'${pid}')" style="width:96px;padding:5px 7px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px;text-align:right"/>`;
+    ? `<div style="font-size:15px;font-weight:600;font-variant-numeric:tabular-nums">${_apMoney(r[f])}</div>`
+    : `<input value="${r[f]==null?'':esc(String(r[f]))}" placeholder="${ph}" onchange="_apField('${r.id}','${f}',this.value,'${pid}')" style="width:100%;padding:7px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:14px;text-align:right;font-variant-numeric:tabular-nums"/>`;
 
-  // Bruce, 3 Oct: "where it stands, that needs to be a drop down. So you got quoted, agreed,
-  // invoiced, approved, and then paid and then void." Six pills across a table column was a
-  // row of things to misclick; one box says where it is and changes it.
-  const stateChips=(r)=>{
+  const openLine=(r)=>{
     const st=_apState(r.status);
-    if(ro) return `<span style="font-size:11px;font-weight:700;color:${st.col};background:${st.bg};padding:2px 9px;border-radius:99px">${st.label}</span>`;
-    const opts=AP_STATES.map(function(x){
-      return `<option value="${x.k}"${String(r.status||'agreed')===x.k?' selected':''}>${x.label}</option>`;
-    }).join('');
-    return `<select onchange="_apStatus('${r.id}',this.value,'${pid}')" title="${esc(st.sub)}" style="padding:5px 8px;border:0.5px solid ${st.col};border-radius:7px;font-size:12.5px;font-weight:600;color:${st.col};background:${st.bg};min-width:112px">${opts}</select>`;
+    const stateBox=ro
+      ? `<span style="font-size:12px;font-weight:700;color:${st.col};background:${st.bg};padding:4px 12px;border-radius:99px">${st.label}</span>`
+      : `<select onchange="_apStatus('${r.id}',this.value,'${pid}')" title="${esc(st.sub)}" style="width:100%;padding:7px 9px;border:0.5px solid ${st.col};border-radius:7px;font-size:13px;font-weight:600;color:${st.col};background:${st.bg}">`
+        + AP_STATES.map(function(x){ return `<option value="${x.k}"${String(r.status||'agreed')===x.k?' selected':''}>${x.label}</option>`; }).join('')
+        + `</select>`;
+    return `<div data-ap-open="${esc(r.id)}" style="border-top:0.5px solid #eef0f6;background:#FBFCFD;padding:14px 15px">
+      <div onclick="_apLineToggle('${r.id}','${pid}')" style="display:flex;justify-content:space-between;align-items:center;gap:10px;cursor:pointer;margin-bottom:11px">
+        <div style="font-size:14px;font-weight:700;color:#111">${esc(r.label||'(no description)')}</div>
+        <span style="font-size:12px;color:#185FA5;white-space:nowrap">close &and;</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:11px;margin-bottom:11px">
+        ${fld('Description of work', ro?`<div style="font-size:13.5px">${esc(r.label||'—')}</div>`
+          :`<input value="${esc(r.label||'')}" placeholder="What the money is for" onchange="_apField('${r.id}','label',this.value,'${pid}')" style="width:100%;padding:7px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13.5px"/>`)}
+        ${fld('Trade', ro?`<div style="font-size:13.5px">${esc(r.category||'—')}</div>`
+          :`<input value="${esc(r.category||'')}" list="ap-trades-${pid}" placeholder="Type of work" onchange="_apField('${r.id}','category',this.value,'${pid}')" style="width:100%;padding:7px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13.5px"/>`)}
+        ${fld('Who gets paid', ro?`<div style="font-size:13.5px">${esc(_apWho(r))||'—'}</div>`
+          :`<select onchange="_apField('${r.id}','contractor_id',this.value,'${pid}')" style="width:100%;padding:7px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13.5px">${conOpts(r.contractor_id)}</select>`,
+          (!r.contractor_id && r.contractor_name)?('was “'+esc(r.contractor_name)+'”'):'')}
+        ${fld('Where it stands', stateBox, esc(st.sub))}
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:11px;margin-bottom:11px">
+        ${fld('Agreed', money(r,'agreed_amount','0.00'))}
+        ${fld('Invoiced', money(r,'invoiced_amount','0.00'))}
+        ${fld('Paid', money(r,'paid_amount','0.00'))}
+        ${fld('Still owed', `<div style="font-size:15px;font-weight:700;font-variant-numeric:tabular-nums;color:${((_apNum(r.invoiced_amount)||0)-(_apNum(r.paid_amount)||0))>0?'#B42318':'#0F7B54'};padding:7px 0">${_apMoney((_apNum(r.invoiced_amount)||0)-(_apNum(r.paid_amount)||0))}</div>`)}
+      </div>
+      ${fld('Notes', ro
+        ? `<div style="font-size:12.5px;color:#444;white-space:pre-wrap">${esc(r.notes||'—')}</div>`
+        : `<textarea placeholder="What is included, what is not…" onchange="_apField('${r.id}','notes',this.value,'${pid}')" style="width:100%;padding:7px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12.5px;font-family:inherit;resize:vertical" rows="2">${esc(r.notes||'')}</textarea>`)}
+      <div style="margin-top:10px">${_apDocChips(r, ro)}</div>
+      ${ro?'':`<div style="margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input type="file" id="ap-file-${r.id}" accept="application/pdf,image/*" style="font-size:11px;max-width:200px"/>
+          <span onclick="_apAttachTo('${r.id}','${pid}')" style="cursor:pointer;font-size:12px;color:#185FA5;font-weight:600">Attach the invoice or quote</span>
+          <span id="ap-fs-${r.id}" style="display:none;font-size:10.5px;color:#8A5A10"></span>
+          <span style="flex:1"></span>
+          <span onclick="_apDel('${r.id}','${pid}')" title="Delete this line for good" style="cursor:pointer;color:#c0392b;font-size:12px">Remove this line</span>
+        </div>`}
+      <div style="font-size:10.5px;color:#9AA3B2;margin-top:9px">${esc(r.source==='sow'?'Came from the scope of work':(r.source==='field'?'Added from the field app':(r.source==='form'?'Came in on a price form':'Typed in on the site')))}</div>
+    </div>`;
   };
 
-  const row=(r)=>{
-    const st=_apState(r.status);
-    return `<tr style="border-top:0.5px solid #eef0f6;${r.status==='void'?'opacity:.55;':''}">
-      <td style="padding:8px 10px;min-width:180px">
-        ${ro?`<span style="font-size:13.5px;font-weight:600">${esc(r.label||'')}</span>`
-            :`<input value="${esc(r.label||'')}" placeholder="Description of work" onchange="_apField('${r.id}','label',this.value,'${pid}')" style="width:100%;min-width:160px;padding:5px 7px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13.5px;font-weight:600"/>`}
-        ${ro
-          ? (r.category?`<div style="font-size:10.5px;color:#636b7a;margin-top:2px">${esc(r.category)}</div>`:'')
-          : `<input value="${esc(r.category||'')}" list="ap-trades-${pid}" placeholder="Type of work (trade)" onchange="_apField('${r.id}','category',this.value,'${pid}')" style="width:100%;min-width:160px;margin-top:3px;padding:4px 7px;border:0.5px solid #e6e8ee;border-radius:6px;font-size:11.5px"/>`}
-        <div style="font-size:10px;color:#9AA3B2;margin-top:2px">${esc(r.source==='sow'?'from the scope of work':(r.source==='field'?'from the field app':(r.source==='form'?'from a price form':'typed in here')))}</div>
-        ${ro
-          ? (r.notes?`<div style="font-size:11.5px;color:#444;margin-top:3px;white-space:pre-wrap">${esc(r.notes)}</div>`:'')
-          : `<textarea placeholder="Anything worth adding — what is included, what is not…" onchange="_apField('${r.id}','notes',this.value,'${pid}')" style="width:100%;min-width:160px;margin-top:4px;padding:5px 7px;border:0.5px solid #e6e8ee;border-radius:6px;font-size:11.5px;font-family:inherit;resize:vertical" rows="${r.notes?2:1}">${esc(r.notes||'')}</textarea>`}
-        ${_apDocChips(r, ro)}
-        ${ro?'':`<div style="margin-top:4px;display:flex;gap:5px;align-items:center;flex-wrap:wrap">
-            <input type="file" id="ap-file-${r.id}" accept="application/pdf,image/*" style="font-size:10.5px;max-width:168px"/>
-            <span onclick="_apAttachTo('${r.id}','${pid}')" style="cursor:pointer;font-size:11px;color:#185FA5;font-weight:600">Attach</span>
-            <span id="ap-fs-${r.id}" style="display:none;font-size:10.5px;color:#8A5A10"></span>
-          </div>`}
-      </td>
-      <td style="padding:8px">
-        ${ro?`<span style="font-size:13px">${esc(_apWho(r))||'\u2014'}</span>`
-            :`<select onchange="_apField('${r.id}','contractor_id',this.value,'${pid}')" style="padding:5px 7px;border:0.5px solid #d8dce6;border-radius:6px;font-size:13px;max-width:210px">${conOpts(r.contractor_id)}</select>
-              ${(!r.contractor_id && r.contractor_name)?`<div style="font-size:10.5px;color:#8A5A10;margin-top:2px">was &ldquo;${esc(r.contractor_name)}&rdquo;</div>`:''}`}
-      </td>
-      <td style="padding:8px;text-align:right">${money(r,'agreed_amount','agreed')}</td>
-      <td style="padding:8px;text-align:right">${money(r,'invoiced_amount','invoiced')}</td>
-      <td style="padding:8px;text-align:right">${money(r,'paid_amount','paid')}</td>
-      <td style="padding:8px"><div style="display:flex;gap:4px;flex-wrap:wrap;max-width:230px">${stateChips(r)}</div></td>
-      <td style="padding:8px;text-align:right;white-space:nowrap">
-        ${ro?'':`<span onclick="_apDel('${r.id}','${pid}')" title="Delete this line" style="cursor:pointer;color:#c0392b;font-size:12.5px">Remove</span>`}
-      </td></tr>`;
+  // ---- one box per contractor, or per trade ----
+  const groups=_apGroups(pid);
+  const groupBox=(g)=>{
+    const s=g.sums;
+    const isShut=!!shut[g.key];
+    const num=(label,v,col)=>`<div style="min-width:76px"><div style="font-size:10px;color:#8A94A6;text-transform:uppercase;letter-spacing:.04em">${label}</div><div style="font-size:13.5px;font-weight:700;color:${col};font-variant-numeric:tabular-nums">${_apMoney(v)}</div></div>`;
+    return `<div data-ap-group="${esc(g.key)}" style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid ${s.outstanding>0?'#B42318':'#cdd3dd'};border-radius:11px;margin-bottom:11px;overflow:hidden">
+      <div onclick="_apGroupToggle('${esc(g.key)}','${pid}')" style="display:flex;gap:13px;align-items:center;flex-wrap:wrap;padding:12px 14px;cursor:pointer;background:#fafbfc">
+        <div style="flex:1;min-width:150px">
+          <div style="font-size:14.5px;font-weight:700;color:#111">${esc(g.name)}</div>
+          <div style="font-size:11px;color:#8A94A6">${s.lines} line${s.lines===1?'':'s'}${s.quotes?(' · '+s.quotes+' quote'+(s.quotes===1?'':'s')+' waiting'):''}</div>
+        </div>
+        ${num('Agreed', s.agreed, '#185FA5')}
+        ${num('Invoiced', s.invoiced, '#8A5A10')}
+        ${num('Paid', s.paid, '#0F7B54')}
+        ${num('Owed', s.outstanding, s.outstanding>0?'#B42318':'#0F7B54')}
+        <span style="color:#8A94A6;font-size:12px;white-space:nowrap">${isShut?'show':'hide'}</span>
+      </div>
+      ${isShut?'':g.rows.map(function(r){ return (openId===r.id) ? openLine(r) : shutLine(r); }).join('')}
+    </div>`;
   };
 
-  const body=rows.length?rows.map(row).join('')
-    :`<tr><td colspan="7" style="padding:22px;text-align:center;color:#636b7a;font-size:13.5px">Nothing on accounts payable for this property yet.${ro?'':' Use &ldquo;Add a quote or price&rdquo; at the top.'}</td></tr>`;
+  const boxes=groups.length ? groups.map(groupBox).join('')
+    : `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:26px;text-align:center;color:#636b7a;font-size:13.5px">Nothing on accounts payable for this property yet.${ro?'':' Use &ldquo;Add a quote or price&rdquo; above.'}</div>`;
 
-  // Bruce, 3 Oct: "it needs to be set up like it is on the other page as well ... maybe just
-  // put that at the top." So the inline row at the bottom of the table is gone and there is
-  // ONE way to add a line anywhere on the site - the box at the top of this tab, the same
-  // box the dashboard and the field app open. One form means one set of field names.
-  const adder='';
-
-  const th=(t,a)=>`<th style="text-align:${a||'left'};padding:9px 10px;font-size:11.5px;color:#566070;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap">${t}</th>`;
-
-  return head
+  return head + bar
     + `<datalist id="ap-trades-${pid}">${_apTradeOpts()}</datalist>`
-    + `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:auto">
-        <table style="width:100%;border-collapse:collapse;font-size:13px;color:#111">
-          <thead><tr style="background:#fafbfc">
-            ${th('Description of work')}${th('Contractor')}${th('Agreed','right')}${th('Invoiced','right')}${th('Paid','right')}${th('Where it stands')}${th('')}
-          </tr></thead><tbody>${body}${adder}</tbody></table></div>`
-    + `<div style="font-size:12px;color:#566070;margin-top:9px">A <b>quote</b> is a price somebody offered us — it is not counted as money owed until it is marked Agreed. Every figure names the contractor it belongs to, so it feeds the W-9 tracker and the contractor directory rather than sitting on its own. <b>Void</b> keeps a cancelled line on the record; <b>Remove</b> deletes it for good. Attached files are kept privately and open on a link that expires, because a contractor's pricing is not public.</div>`;
+    + boxes
+    + `<div style="font-size:12px;color:#566070;margin-top:11px">Click any line to open it and edit it. A <b>quote</b> is a price somebody offered us — it is not counted as money owed until it is marked Agreed. Every figure names the contractor it belongs to, so it feeds the W-9 tracker and the contractor directory rather than sitting on its own. <b>Void</b> keeps a cancelled line on the record; <b>Remove this line</b> deletes it for good. Attached files are kept privately and open on a link that expires, because a contractor's pricing is not public.</div>`;
+}
+// The same thing on paper, for a contractor, a lender or a file.
+function _apSheetHtml(pid){
+  const esc=_calEsc;
+  const p=(typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===pid; })||{};
+  const T=_apTotals(pid);
+  const groups=_apGroups(pid);
+  const when=new Date().toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  const body=groups.map(function(g){
+    const s=g.sums;
+    const rows=g.rows.map(function(r){
+      const st=_apState(r.status);
+      return '<tr'+(r.status==='void'?' class="v"':'')+'>'
+        +'<td><b>'+esc(r.label||'(no description)')+'</b>'+(r.notes?('<div class="s">'+esc(r.notes)+'</div>'):'')+'</td>'
+        +'<td>'+(esc(_apGroupMode()==='trade'?_apWho(r):(r.category||''))||'<span class="e">—</span>')+'</td>'
+        +'<td class="r">'+_apMoney(r.agreed_amount)+'</td>'
+        +'<td class="r">'+_apMoney(r.invoiced_amount)+'</td>'
+        +'<td class="r">'+_apMoney(r.paid_amount)+'</td>'
+        +'<td>'+esc(st.label)+'</td></tr>';
+    }).join('');
+    return '<h2>'+esc(g.name)+' <span class="n">'+s.lines+' line'+(s.lines===1?'':'s')
+      +(s.outstanding>0?(' · '+_apMoney(s.outstanding)+' owed'):'')+'</span></h2>'
+      +'<table><thead><tr><th>Description of work</th><th>'+(_apGroupMode()==='trade'?'Contractor':'Trade')
+      +'</th><th class="r">Agreed</th><th class="r">Invoiced</th><th class="r">Paid</th><th>Where it stands</th></tr></thead>'
+      +'<tbody>'+rows+'</tbody></table>';
+  }).join('');
+  return '<!doctype html><html><head><meta charset="utf-8"><title>Accounts payable — '+esc(p.addr||'property')+'</title><style>'
+    + 'body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#111;margin:26px;max-width:960px}'
+    + 'h1{font-size:20px;margin:0 0 3px}.sub{font-size:12.5px;color:#566070;margin-bottom:14px}'
+    + '.tiles{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:18px;font-size:12.5px}'
+    + '.tiles b{display:block;font-size:17px}'
+    + 'h2{font-size:13.5px;margin:18px 0 5px;padding-bottom:4px;border-bottom:1.5px solid #111;page-break-after:avoid}'
+    + 'h2 .n{font-weight:400;color:#8A94A6;font-size:11px}'
+    + 'table{width:100%;border-collapse:collapse;font-size:12px}'
+    + 'thead th{text-align:left;font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:#566070;padding:0 7px 4px;border-bottom:0.5px solid #cdd3dd}'
+    + 'td{border-bottom:0.5px solid #eceef3;padding:6px 7px;vertical-align:top}'
+    + 'tr{page-break-inside:avoid}.r{text-align:right;font-variant-numeric:tabular-nums}'
+    + '.s{font-size:10.5px;color:#566070;font-weight:400}.e{color:#b4bac4}.v{opacity:.55}'
+    + '.noprint{margin-bottom:14px}button{padding:8px 16px;background:#111;color:#fff;border:none;border-radius:7px;font-size:13px;cursor:pointer}'
+    + '.foot{font-size:10.5px;color:#566070;margin-top:20px;border-top:1px solid #e6e8ee;padding-top:8px}'
+    + '@media print{.noprint{display:none}body{margin:0}}'
+    + '</style></head><body>'
+    + '<div class="noprint"><button onclick="window.print()">Save as PDF / Print</button></div>'
+    + '<h1>Accounts payable — '+esc(p.addr||'')+'</h1>'
+    + '<div class="sub">Broken up by '+(_apGroupMode()==='trade'?'trade':'contractor')+' · printed '+esc(when)+'</div>'
+    + '<div class="tiles">'
+      +'<div>Agreed<b>'+_apMoney(T.agreed)+'</b></div>'
+      +'<div>Invoiced<b>'+_apMoney(T.invoiced)+'</b></div>'
+      +'<div>Paid<b>'+_apMoney(T.paid)+'</b></div>'
+      +'<div>Outstanding<b>'+_apMoney(T.outstanding)+'</b></div>'
+      +(T.quotes?('<div>Quotes waiting<b>'+_apMoney(T.quoted)+'</b></div>'):'')
+    +'</div>'
+    + (body||'<div style="padding:18px;color:#636b7a">Nothing on accounts payable for this property yet.</div>')
+    + '<div class="foot">A quote is a price we have been given and is not counted as money owed until it is agreed. Figures come from the Legacy Homes project site; the site is the live copy.</div>'
+    + '</body></html>';
+}
+function _apSheetPrint(pid){
+  const w=window.open('','_blank');
+  if(!w){ alert("Your browser blocked the window. Allow pop-ups for this site and try again."); return; }
+  w.document.open(); w.document.write(_apSheetHtml(pid)); w.document.close();
 }
 // ---- Per-person tabs on the property card -------------------------------------
 // Bruce, 26 Sept, and again 30 Sept when he gave me the spec: "per person's tab on each
@@ -35160,4 +35325,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-17q contractor-trades-ranked trade-types dup-stop directory-pdf live-screen-fix -->
+<!-- build: 2026-10-17r accounts-payable-boxes grouped-by-contractor-or-trade ap-pdf -->
