@@ -19054,43 +19054,53 @@ function _rltClosedYear(){
 // That is the same rule as everywhere else on this site - a human decision never lives
 // inside a record a bot rebuilds.
 const PRELIST_GROUPS=[
-  { key:'house', title:'\u{1F3E0} The house itself', hint:'What a buyer’s agent asks first.', fields:[
-      ['beds',    'Bedrooms',             'text', 'e.g. 3'],
-      ['baths',   'Bathrooms',            'text', 'e.g. 2 full, 1 half'],
-      ['sqft',    'Finished square feet', 'auto', 'e.g. 1,420'],
-      ['year',    'Year built',           'text', 'e.g. 1954'],
-      ['lot',     'Lot size',             'text', 'e.g. 0.18 acre'],
-      ['stories', 'Stories',              'text', 'e.g. 2 storey'],
-      ['basement','Basement',             'text', 'Full / partial / crawl / slab — finished?'],
-      ['parking', 'Parking',              'text', 'Garage, carport, off-street, none']
+  { key:'house', title:'\u{1F3E0} The house itself', hint:'What a buyer\u2019s agent asks first.', fields:[
+      ['beds',      'Bedrooms',             'text', 'e.g. 3'],
+      ['baths',     'Bathrooms',            'text', 'e.g. 2 full, 1 half'],
+      ['sqft',      'Finished square feet', 'auto', 'e.g. 1,420'],
+      ['year',      'Year built',           'text', 'e.g. 1954'],
+      ['lot',       'Lot size',             'text', 'e.g. 0.18 acre'],
+      ['stories',   'Stories',              'text', 'e.g. 2 storey'],
+      // Bruce, 17 Oct: "that just needs to be foundation style, foundation type,
+      // parking, house type." Basement on its own was the wrong question - a slab or a
+      // crawl space is an answer too, and the listing form asks for the foundation.
+      ['foundation','Foundation type',      'text', 'Basement, crawl space or slab \u2014 and whether it is finished'],
+      ['parking',   'Parking',              'text', 'Garage, carport, off-street, none'],
+      // The property card already holds this on 44 of 57 houses, so it answers itself.
+      ['housetype', 'House type',           'auto', 'Ranch, colonial, cape cod\u2026']
   ]},
+  // "Systems and their age. I like that." Left exactly as it was.
   { key:'systems', title:'\u{1F527} Systems and their age', hint:'Everything we replaced, and everything we did not. This is what the inspection will ask about.', fields:[
       ['roof',    'Roof',             'text', 'Age, or the year we replaced it'],
-      ['hvac',    'Furnace and AC',   'text', 'Type and age — or new'],
+      ['hvac',    'Furnace and AC',   'text', 'Type and age \u2014 or new'],
       ['water',   'Water heater',     'text', 'Age, gallons, gas or electric'],
       ['electric','Electrical panel', 'text', 'Amps, and whether it is new'],
       ['plumbing','Plumbing',         'text', 'Copper / PEX / galvanised, and what was replaced'],
       ['windows', 'Windows',          'text', 'Age, or new']
   ]},
-  { key:'finish', title:'✨ Finishes and what is new', hint:'The listing copy gets written from this. The finish package is already in the scope of work.', fields:[
-      ['finishes','Finish package', 'auto', 'Standard, upgraded…'],
-      ['kitchen', 'Kitchen',        'text', 'Counters, cabinets, which appliances stay'],
-      ['flooring','Flooring',       'text', 'What is where'],
-      ['newwork', 'What is new',    'area', 'The headline items — roof, HVAC, kitchen, baths, electric…'],
-      ['features','Selling points', 'area', 'What makes this one worth the number']
+  // Bruce read this group back as "kitchen, finish package, flooring, bathrooms,
+  // selling points, what is new" - bathrooms were missing, and that is his order.
+  { key:'finish', title:'\u2728 Finishes and what is new', hint:'The listing copy gets written from this.', fields:[
+      ['kitchen',  'Kitchen',        'text', 'Counters, cabinets, which appliances stay'],
+      ['finishes', 'Finish package', 'auto', 'Standard, upgraded\u2026'],
+      ['flooring', 'Flooring',       'text', 'What is where'],
+      ['bathrooms','Bathrooms',      'text', 'What was done, and what is in them'],
+      ['features', 'Selling points', 'area', 'What makes this one worth the number'],
+      ['newwork',  'What is new',    'area', 'The headline items \u2014 roof, HVAC, kitchen, baths, electric\u2026']
   ]},
+  // Bruce, 17 Oct: "all properties are vacant, so you can just remove that question
+  // completely." Occupied-or-vacant is gone - a question with one possible answer is
+  // not a question.
   { key:'access', title:'\u{1F511} Access and showings', hint:'What a realtor needs to actually get in the door.', fields:[
       ['lockbox',  'Lockbox code',         'auto', 'From the scope of work'],
-      ['showing',  'Showing instructions', 'area', 'Notice needed, where to park, anything that sticks…'],
-      ['occupancy','Occupied or vacant',   'text', 'Vacant / tenant in place / owner'],
-      ['utilities','Utilities on?',        'text', 'Gas, water, electric — on, off, or in whose name']
+      ['showing',  'Showing instructions', 'area', 'Notice needed, where to park, anything that sticks\u2026'],
+      ['utilities','Utilities on?',        'text', 'Gas, water, electric \u2014 on, off, or in whose name']
   ]},
-  { key:'facts', title:'\u{1F4C4} Numbers and legal', hint:'The boxes on the listing form nobody can fill in from memory.', fields:[
-      ['parcel',  'Parcel number',   'text', 'County parcel / APN'],
-      ['taxes',   'Annual taxes',    'text', 'e.g. $2,480'],
-      ['hoa',     'HOA',             'text', 'Dues, or “none”'],
-      ['schools', 'School district', 'text', ''],
-      ['disclose','Known defects to disclose', 'area', 'Anything we did not fix, and anything on the NPI report that stays']
+  // "Parcel number, annual taxes, HOA, school district, known defects ... that whole
+  // section can be removed completely." Gone. Anything that still needs saying has a
+  // box of its own instead.
+  { key:'extra', title:'\u{1F5D2} Anything else', hint:'Whatever else a realtor should know before they write the listing.', fields:[
+      ['extra','Anything else worth knowing','area','Quirks, neighbours, access, what to lead with, what to keep quiet about\u2026']
   ]}
 ];
 const PRELIST_FIELDS=(function(){ const o=[]; PRELIST_GROUPS.forEach(function(g){ g.fields.forEach(function(f){ o.push(f); }); }); return o; })();
@@ -19109,6 +19119,7 @@ function _plAuto(c, key){
   if(key==='sqft')     return String(h.sqft||cl.sqft||'').trim();
   if(key==='finishes') return String(h.finishes||cl.finishes||'').trim();
   if(key==='lockbox')  return String(h.lockbox||cl.lockbox||'').trim();
+  if(key==='housetype')return String(h.house_type||c.type||'').trim();
   return '';
 }
 function _plAutoFrom(c, key){
@@ -19117,6 +19128,7 @@ function _plAutoFrom(c, key){
   if(key==='sqft')     return pick(h.sqft, cl.sqft);
   if(key==='finishes') return pick(h.finishes, cl.finishes);
   if(key==='lockbox')  return pick(h.lockbox, cl.lockbox);
+  if(key==='housetype')return h.house_type?'the scope of work':(c.type?'the property card':'');
   return '';
 }
 function _plData(c){ const d=((c&&c.checklists)||{}).prelist; return (d&&typeof d==='object')?d:{}; }
@@ -19169,47 +19181,15 @@ function _plRerender(pid){
   if(typeof openPropDetail==='function') openPropDetail(pid);
 }
 
-// Where the answers actually live. Bruce, 17 Oct, asked where the pre-listing form
-// should pull from: "pull the scope of work from MULTIPLE Places - whole tail flip
-// drive its what we link each property too, our internal SOW builder and the official
-// SOW builder tommy and andy made that the project team will eventually use."
-//
-// Two of those three this app cannot read, and saying otherwise would be a promise it
-// cannot keep. The Drive folder is Google's and this app holds no Google credentials -
-// it can store a link, it can never go and fetch what is inside one. Renovation Pricing
-// is a separate site on another origin, so the browser will not let this page read it
-// either. The internal scope of work is the one source that IS in this database, and
-// that is the one already answering four of the questions on its own.
-//
-// So all three sit at the top of the form as doors, one click from the box being filled
-// in, with the one that can answer for itself marked as the one that does.
-function _plSources(c){
-  const E=_calEsc;
-  const sc=_plScope(c);
-  const link=function(icon, label, sub, href, onclick, live){
-    const inner='<div style="display:flex;gap:9px;align-items:flex-start">'
-      +'<span style="font-size:16px;line-height:1.2;flex-shrink:0">'+icon+'</span>'
-      +'<div style="min-width:0"><div style="font-size:12.5px;font-weight:700;color:'+(href||onclick?'#185FA5':'#8A94A6')+'">'+label
-        +(live?'<span style="font-size:9.5px;font-weight:700;color:#0F7B54;background:#E6F4ED;padding:1px 6px;border-radius:99px;margin-left:6px;vertical-align:middle">fills the form</span>':'')+'</div>'
-      +'<div style="font-size:11px;color:#566070;line-height:1.45">'+sub+'</div></div></div>';
-    const box='display:block;text-decoration:none;background:#fff;border:0.5px solid '+(href||onclick?'#cdd7e6':'#e8eaf0')+';border-radius:9px;padding:10px 12px;'+(href||onclick?'cursor:pointer':'opacity:.7');
-    if(href)    return '<a href="'+E(href)+'" target="_blank" style="'+box+'">'+inner+'</a>';
-    if(onclick) return '<div onclick="'+onclick+'" style="'+box+'">'+inner+'</div>';
-    return '<div style="'+box+'">'+inner+'</div>';
-  };
-  const a=c.driveUrl
-    ? link('\u{1F4C1}','Wholetail Flip drive folder','Everything filed on this house — opens in a new tab', c.driveUrl, '', false)
-    : link('\u{1F4C1}','Wholetail Flip drive folder','No folder is linked to this house yet — add one on the property card', '', '', false);
-  const b=sc
-    ? link('\u{1F4CB}','Scope of work — ours','Revision '+E(String(sc.revision||'1'))+(sc.phase?(' · '+E(String(sc.phase))):''), '', "_scOpen('"+_argEsc(sc.id)+"')", true)
-    : link('\u{1F4CB}','Scope of work — ours','No scope of work has been written for this house yet', '', '', false);
-  const d=link('\u{1F4B2}','Renovation Pricing','The official SOW builder — opens in a new tab',
-               'https://renovation-pricing.vercel.app/', '', false);
-  return '<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:13px 16px;margin-bottom:11px">'
-    +'<div style="font-size:13px;font-weight:700;color:#111">\u{1F50E} Where the answers live</div>'
-    +'<div style="font-size:11.5px;color:#566070;margin:2px 0 8px">Three places hold the detail for this house. The scope of work is the one this site can read, and it is already answering four of the questions below. The other two open in their own tab.</div>'
-    +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:9px">'+a+b+d+'</div></div>';
-}
+// The "Where the answers live" strip is gone. Bruce, 17 Oct, on seeing it on 3260
+// Avalon: "that's for you to build a function into the website where it automatically
+// goes in and reads and extracts that information from those locations itself ... that
+// information will be for the Grokbot, not for the person filling this out because they
+// already know that. And there's already multiple links to that information in here."
+// He is right on both counts: the person filling the form works here every day, and the
+// property card already carries the Drive and CompanyCam links a few inches away. Three
+// more links were clutter standing in for an automation that has to live outside this
+// app, because this app can read neither Google Drive nor another site's pages.
 function _plBar(c, w){
   const k=_plCounts(c);
   const col=k.done?'#0F7B54':(k.pct>=70?'#185FA5':(k.pct>=30?'#8A5A10':'#B42318'));
@@ -19287,7 +19267,7 @@ function _plBody(c, ro, where){
       : '<button onclick="_plMark(\''+pid+'\',true)" style="padding:8px 15px;background:#122A4A;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">✓ Mark the pre-listing form complete</button>')
     +'<span style="font-size:11.5px;color:#636b7a;align-self:center">Every box saves itself as you leave it.</span></div>';
 
-  return head+_plSources(c)+groups+foot;
+  return head+groups+foot;
 }
 // A save redraws the screen it was made on, but only after the write lands - otherwise
 // a half-typed box can be painted back over the top of itself.
@@ -34441,4 +34421,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-17k va-main-squares checklist-wording -->
+<!-- build: 2026-10-17l prelist-fields-reworked sources-removed -->
