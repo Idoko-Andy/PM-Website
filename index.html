@@ -29165,6 +29165,12 @@ function _confirmDelete(what, consequence){
 // bookings, so a brand new contractor is born at 0 on its own. What was missing was
 // being able to FIND anybody in a directory of 75 - and searching by the business name,
 // which is how half of them are known.
+// Picking a trade shows just that trade, ranked best first. On the By Trade tab it is
+// the same choice, so switching tabs keeps the trade you were looking at.
+function _ctPickTrade(t){
+  window.__ctTrade=String(t||'');
+  renderContractorDirectory(window.__cdView||'directory');
+}
 // Clicking a count at the top is the same as typing it into the search box.
 function _ctSearchFor(q){
   const box=document.getElementById('ct-search');
@@ -29387,18 +29393,26 @@ function _ctTradeStr(list){
   return out.join(', ');
 }
 // ---- the three rankings ------------------------------------------------------
+// Bruce, 17 Oct: "make sure you put do not use as an option as well ... because sometimes
+// they can do landscaping and roofing, but now we don't want to use them as a roofer at
+// all, but they're still good to use as landscaper."
+// That is why this had to be per trade and not a flag on the man. The red flag on the
+// record still means do not hire him for anything; this means do not hire him for THIS.
 const CT_TIERS=[
   { k:'top', label:'Top option',     short:'Top',    bg:'#E7F6EE', bd:'#A9DFC5', fg:'#0F7B54', rank:1 },
   { k:'mid', label:'Mid option',     short:'Mid',    bg:'#FFF6E5', bd:'#EAD9A8', fg:'#8A5A10', rank:2 },
-  { k:'opt', label:'Just an option', short:'Option', bg:'#F1F2F6', bd:'#dfe3ea', fg:'#566070', rank:3 }
+  { k:'opt', label:'Just an option', short:'Option', bg:'#F1F2F6', bd:'#dfe3ea', fg:'#566070', rank:3 },
+  { k:'no',  label:'Do not use',     short:'Do not use', bg:'#FBEAE8', bd:'#F0C7C3', fg:'#B42318', rank:5 }
 ];
+// Not usable for this trade - whatever else he is good at.
+function _ctTierNo(id, trade){ return _ctTier(id, trade)==='no'; }
 function _ctTierDef(k){ return CT_TIERS.find(function(t){ return t.k===String(k||''); })||null; }
 function _ctTierSlug(trade){ return String(trade||'').toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,''); }
 function _ctTier(id, trade){
   const v=(typeof _trkVal==='function') ? _trkVal('ct_tier', id, _ctTierSlug(trade)) : '';
   return _ctTierDef(v) ? String(v) : '';
 }
-function _ctTierRank(id, trade){ const d=_ctTierDef(_ctTier(id,trade)); return d?d.rank:4; }
+function _ctTierRank(id, trade){ const d=_ctTierDef(_ctTier(id,trade)); return d?d.rank:4; }  // unranked sits at 4, "do not use" at 5
 async function _ctTierSet(id, trade, val){
   if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()){ renderContractorDirectory(); return; }
   const c=(_contractorsCache||[]).find(function(x){ return x.id===id; })||{};
@@ -29646,7 +29660,9 @@ function _ctToW9(){
 // share it to somebody so they can use it too." The directory table is for editing. This
 // view is for reading and for handing out: every trade, best first.
 function _ctTradeBoard(ro){
+  const only=String(window.__ctTrade||'').toLowerCase();
   const trades=_ctAllTrades().filter(function(t){ return _ctByTrade(t).length; })
+    .filter(function(t){ return !only || t.toLowerCase()===only; })
     .sort(function(a,b){ return _ctByTrade(b).length-_ctByTrade(a).length || a.localeCompare(b); });
   if(!trades.length){
     return '<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:26px;text-align:center;color:#636b7a;font-size:14px">Nobody has a trade assigned yet. Assign trades on the Directory tab and they will group themselves here.</div>';
@@ -29655,9 +29671,10 @@ function _ctTradeBoard(ro){
     const d=_ctTierDef(_ctTier(c.id,t));
     const nm=c.business_name||c.name||'(unnamed)';
     const sub=[(c.business_name&&c.name&&c.business_name!==c.name)?c.name:'', c.phone||''].filter(Boolean);
-    return '<div data-ct-card="1" style="background:#fff;border:0.5px solid '+(c.red_flag?'#F3C9C4':(d?d.bd:'#e6e9f0'))+';border-left:3px solid '+(c.red_flag?'#B42318':(d?d.fg:'#cdd3dd'))+';border-radius:9px;padding:9px 11px;display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap">'
+    const noUse=(d&&d.k==='no');
+    return '<div data-ct-card="1"'+(noUse?' data-ct-nouse="1"':'')+' style="background:'+(noUse?'#FFF8F7':'#fff')+';border:0.5px solid '+((c.red_flag||noUse)?'#F3C9C4':(d?d.bd:'#e6e9f0'))+';border-left:3px solid '+((c.red_flag||noUse)?'#B42318':(d?d.fg:'#cdd3dd'))+';border-radius:9px;padding:9px 11px;display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap'+(noUse?';opacity:.85':'')+'">'
       +'<div style="min-width:0;flex:1">'
-        +'<div style="font-size:13.5px;font-weight:600;color:'+(c.red_flag?'#B42318':'#111')+'">'+(c.red_flag?'\u{1F6A9} ':'')+_calEsc(nm)+'</div>'
+        +'<div style="font-size:13.5px;font-weight:600;color:'+((c.red_flag||noUse)?'#B42318':'#111')+(noUse?';text-decoration:line-through':'')+'">'+(c.red_flag?'\u{1F6A9} ':'')+_calEsc(nm)+'</div>'
         +(sub.length?'<div style="font-size:11.5px;color:#566070">'+_calEsc(sub.join(' · '))+'</div>':'')
         +'<div style="font-size:11px;color:#8A94A6;margin-top:2px">'+_contractorUses(c.id)+' booking'+(_contractorUses(c.id)===1?'':'s')+(_ctW9On(c.id)?' · W-9 on file':' · no W-9')+'</div>'
       +'</div>'
@@ -29696,8 +29713,8 @@ function _ctSheetHtml(){
       const d=_ctTierDef(_ctTier(c.id,t));
       const nm=c.business_name||c.name||'(unnamed)';
       const who=(c.business_name&&c.name&&c.business_name!==c.name)?c.name:'';
-      return '<tr'+(c.red_flag?' class="fl"':'')+'>'
-        +'<td class="rk"><span class="t'+(d?d.k:'no')+'">'+(d?esc(d.label):'not ranked')+'</span></td>'
+      return '<tr'+(c.red_flag?' class="fl"':((d&&d.k==='no')?' class="nu"':''))+'>'
+        +'<td class="rk"><span class="t'+(d?d.k:'none')+'">'+(d?esc(d.label):'not ranked')+'</span></td>'
         +'<td><b>'+(c.red_flag?'\u{1F6A9} ':'')+esc(nm)+'</b>'+(who?('<div class="s">'+esc(who)+'</div>'):'')+'</td>'
         +'<td>'+(esc(c.phone)||'<span class="e">—</span>')+'</td>'
         +'<td>'+(esc(c.email)||'<span class="e">—</span>')+'</td>'
@@ -29722,7 +29739,9 @@ function _ctSheetHtml(){
     + '.s{font-size:10.5px;color:#566070;font-weight:400}'
     + '.rk{width:104px}.rk span{font-size:10px;font-weight:700;border-radius:99px;padding:2px 7px;white-space:nowrap;display:inline-block}'
     + '.ttop{background:#E7F6EE;color:#0F7B54}.tmid{background:#FFF6E5;color:#8A5A10}'
-    + '.topt{background:#F1F2F6;color:#566070}.tno{background:#fff;color:#b4bac4;border:0.5px solid #e0e4ec}'
+    + '.topt{background:#F1F2F6;color:#566070}.tno{background:#FBEAE8;color:#B42318}'
+    + '.tnone{background:#fff;color:#b4bac4;border:0.5px solid #e0e4ec}'
+    + 'tr.nu b{text-decoration:line-through;color:#B42318}tr.nu{background:#FFF8F7}'
     + '.fl{background:#FDF3F2;color:#B42318}'
     + '.noprint{margin-bottom:14px}'
     + 'button{padding:8px 16px;background:#111;color:#fff;border:none;border-radius:7px;font-size:13px;cursor:pointer}'
@@ -29734,7 +29753,7 @@ function _ctSheetHtml(){
     + '<div class="sub">Legacy Homes · '+total+' contractor'+(total===1?'':'s')+' across '+trades.length+' trade'+(trades.length===1?'':'s')
     +(flagged?(' · '+flagged+' red-flagged'):'')+' · printed '+esc(when)+'</div>'
     + (body||'<div style="padding:20px;color:#636b7a">Nobody has a trade assigned yet.</div>')
-    + '<div class="foot">Ranked per trade — a man can be the top option for one trade and just an option for another. \u{1F6A9} means red-flagged: do not hire. Jobs counts bookings on the construction calendar. Printed from the Legacy Homes project site; the directory there is the live copy.</div>'
+    + '<div class="foot">Ranked per trade — a man can be the top option for one trade and just an option, or <b>do not use</b>, for another. \u{1F6A9} means red-flagged: do not hire him for anything. Jobs counts bookings on the construction calendar. Printed from the Legacy Homes project site; the directory there is the live copy.</div>'
     + '</body></html>';
 }
 function _ctSheetPrint(){
@@ -30507,10 +30526,24 @@ function renderContractorDirectory(view){
   const ro = isReadOnly();
   const inp=(c,field,ph,w)=>ro?`<span style="color:#333">${_calEsc(c[field])||'<span style="color:#636b7a">—</span>'}</span>`
     :`<input value="${_calEsc(c[field]||'')}" placeholder="${ph}" onchange="setContractorField('${c.id}','${field}',this.value)" style="width:${w||'100%'};padding:6px 8px;border:1px solid #e3e6ec;border-radius:6px;font-size:13px"/>`;
+  // Bruce, 17 Oct: "when I'm looking at the contractor directory and I'm selecting a
+  // trade to view ... I would like to just select a trade as an option to sort as well
+  // instead of typing a trade in."
+  const pickedTrade=String(window.__ctTrade||'');
   // Everyone we have flagged sinks to the bottom, so the people you can actually
-  // call are the ones you see first.
-  const list=(_contractorsCache||[]).slice().sort((a,b)=>
-    (!!a.red_flag)-(!!b.red_flag) || String(a.name||'').localeCompare(String(b.name||'')));
+  // call are the ones you see first. With a trade picked, the list is just that trade,
+  // best first - a man you have said do not use for it drops under the unranked.
+  const list=(_contractorsCache||[]).slice()
+    .filter(function(c){
+      if(!pickedTrade) return true;
+      return _ctTrades(c).some(function(t){ return t.toLowerCase()===pickedTrade.toLowerCase(); });
+    })
+    .sort(pickedTrade
+      ? function(a,b){ return (!!a.red_flag)-(!!b.red_flag)
+            || _ctTierRank(a.id,pickedTrade)-_ctTierRank(b.id,pickedTrade)
+            || String(a.business_name||a.name||'').localeCompare(String(b.business_name||b.name||'')); }
+      : function(a,b){ return (!!a.red_flag)-(!!b.red_flag)
+            || String(a.name||'').localeCompare(String(b.name||'')); });
   const rows = list.map(c=>{
     const uses=_contractorUses(c.id);
     const last=_contractorLastUsed(c.id);
@@ -30568,7 +30601,15 @@ function renderContractorDirectory(view){
               return (noW9
                 ? `<span onclick="_ctSearchFor('no w9')" title="Show only these" style="cursor:pointer;font-size:12px;background:#FBF3E2;color:#8A5A10;padding:3px 10px;border-radius:99px">🧾 ${noW9} with no W-9 on file</span>`
                 : `<span style="font-size:12px;background:#E6F4ED;color:#0F7B54;padding:3px 10px;border-radius:99px">🧾 every contractor has a W-9 on file</span>`)
-               + (bad?`<span onclick="_ctSearchFor('flagged')" title="Show only these" style="cursor:pointer;font-size:12px;background:#FBEAE8;color:#B42318;padding:3px 10px;border-radius:99px">🚩 ${bad} W-9 ${bad===1?'entry needs':'entries need'} fixing</span>`:'');
+               + (bad?`<span onclick="_ctSearchFor('flagged')" title="Show only these" style="cursor:pointer;font-size:12px;background:#FBEAE8;color:#B42318;padding:3px 10px;border-radius:99px">🚩 ${bad} W-9 ${bad===1?'entry needs':'entries need'} fixing</span>`:'')
+               + (pickedTrade?(function(){
+                    const men=_ctByTrade(pickedTrade);
+                    const n=function(k){ return men.filter(function(x){ return _ctTier(x.id,pickedTrade)===k; }).length; };
+                    const none=men.filter(function(x){ return !_ctTier(x.id,pickedTrade); }).length;
+                    return CT_TIERS.map(function(x){ const c=n(x.k);
+                        return c?('<span style="font-size:12px;background:'+x.bg+';border:0.5px solid '+x.bd+';color:'+x.fg+';padding:3px 10px;border-radius:99px;font-weight:600">'+c+' '+_calEsc(x.label.toLowerCase())+'</span>'):''; }).join('')
+                      + (none?('<span style="font-size:12px;background:#fff;border:0.5px solid #e0e4ec;color:#8A94A6;padding:3px 10px;border-radius:99px">'+none+' not ranked for '+_calEsc(pickedTrade)+'</span>'):'');
+                  })():'');
             })()}
           <span onclick="_ctToW9()" style="cursor:pointer;font-size:12px;background:#F3E8FB;color:#7A3FA8;padding:3px 10px;border-radius:99px">🧾 Open the W-9 Tracker &rarr;</span>
           <span style="font-size:12px;background:#F1F2F6;color:#566070;padding:3px 10px;border-radius:99px">Need a category that is not here? Add it under Trade → ＋ Other…</span>
@@ -30576,7 +30617,12 @@ function renderContractorDirectory(view){
         ${_ctDupPanel()}
         ${_ctTradeTypesPanel(ro)}
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
-          <input id="ct-search" placeholder="Search a name, a business, a trade, a ranking, a number or an email\u2026" oninput="_ctFilter()" style="flex:1;max-width:420px;padding:8px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:13.5px;outline:none"/>
+          <select onchange="_ctPickTrade(this.value)" title="Show one trade, best first" style="padding:8px 10px;border:0.5px solid ${pickedTrade?'#122A4A':'#d8dce6'};border-radius:8px;font-size:13px;background:${pickedTrade?'#122A4A':'#fff'};color:${pickedTrade?'#fff':'#333'};font-weight:${pickedTrade?'600':'400'};cursor:pointer;max-width:210px">
+            <option value="">All trades</option>
+            ${_ctAllTrades().filter(function(t){ return _ctByTrade(t).length; }).sort().map(function(t){
+                return '<option value="'+_calEsc(t)+'"'+(t.toLowerCase()===pickedTrade.toLowerCase()?' selected':'')+'>'+_calEsc(t)+' ('+_ctByTrade(t).length+')</option>'; }).join('')}
+          </select>
+          <input id="ct-search" placeholder="Search a name, a business, a number or an email\u2026" oninput="_ctFilter()" style="flex:1;min-width:190px;max-width:380px;padding:8px 11px;border:0.5px solid #d8dce6;border-radius:8px;font-size:13.5px;outline:none"/>
           <span id="ct-search-note" style="font-size:12.5px;color:#566070"></span>
           <button onclick="_ctSheetPrint()" style="padding:8px 14px;background:#fff;border:0.5px solid #cdd7e6;border-radius:8px;font-size:12.5px;color:#185FA5;font-weight:600;cursor:pointer;white-space:nowrap">\u2193 Save as PDF</button>
         </div>
@@ -30598,8 +30644,14 @@ function renderContractorDirectory(view){
   // Saving a lineup goes through the trackers record, so the trackers' own save machinery
   // is what reports success or failure - and its redraw has to come back HERE, not to the
   // tracker screen somebody was last on.
-  window._trkRerender=function(){ renderContractorDirectory('lineups'); };
-  window._trkCtx='lineups';
+  // Bruce, 17 Oct: "when I'm in the contractor directory and I'm selecting an option, it
+  // kind of kicks me into another page."
+  // This was hard-wired to the lineups tab, so anything that went through the trackers'
+  // own redraw - a save, a retry, a catch-up sweep - threw you off whatever tab you were
+  // reading and onto Starting Lineups. The rankings and the W-9 tick are tracker writes,
+  // so picking one was the commonest way to trip it. Go back to the tab he is on.
+  window._trkRerender=function(){ renderContractorDirectory(window.__cdView||'directory'); };
+  window._trkCtx='contractors';
   document.getElementById("dash-body").innerHTML =
     `<div style="background:#f4f5f7;min-height:calc(100vh - 160px);padding:24px">
       <div style="max-width:1180px;margin:0 auto">
@@ -30610,6 +30662,15 @@ function renderContractorDirectory(view){
       </div>
     </div>`;
   if(cdView==='lineups' && typeof _trkStatus==='function') _trkStatus((window.__trkState||{}).state||'idle',(window.__trkState||{}).detail);
+  // The rankings, the W-9 tick and the trade types all live in the trackers record. Every
+  // other screen that reads it loads it on first open; this one never did, so on a cold
+  // open the directory showed nobody ranked and nobody holding a W-9, and the first thing
+  // you clicked was writing into a record the page had not read yet.
+  if(!window._trkLoaded){
+    window._trkLoaded='loading';
+    Promise.resolve(_trkLoad()).then(function(){ renderContractorDirectory(window.__cdView||'directory'); })
+      .catch(function(){ window._trkLoaded=false; });
+  }
 }
 async function saveContractor(){
   if(_blockIfReadOnly()) return;
@@ -35573,4 +35634,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-17t baseline-purge-backed-up w9-cross-referenced -->
+<!-- build: 2026-10-17u do-not-use-per-trade trade-dropdown no-more-kickout -->
