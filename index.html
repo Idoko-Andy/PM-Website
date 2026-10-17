@@ -21619,6 +21619,150 @@ function _thisWeekCard(name, mine){
   return _pmaCard('Due this week ('+_calEsc(lab)+')', rows.map(_pmaTaskRow).join(''), rows.length,
                   'Nothing due this week.');
 }
+// ===================== HER DESK — WHAT IS ACTUALLY ON HER PLATE ==================
+// Bruce, 17 Oct: "we need to reorganize and restructure her overdue dashboard for
+// Patience, or due today, and her open tasks to where it's a little more clean. You can
+// mark them complete, you can review, edit, make notes, all that good stuff ... a
+// dashboard to track follow-ups, track stuff worked. So give her the option to make
+// notes and all that good stuff."
+//
+// What was there was three counters over one flat list of everything assigned to her,
+// sorted by date, with no way to do anything to a row except tick it off. A list like
+// that answers "how much" and never "what first".
+//
+// So: five buckets in the order she works them, each row carrying the three things she
+// actually needs - tick it, open it, write down where it got to - and a record at the
+// bottom of what she has cleared this week, because a day's work that leaves no trace
+// is a day nobody can see.
+const VA_DESK_BUCKETS = [
+  ['over',  '\u{1F534} Overdue',               'Oldest first. These are the ones costing us.',            '#B42318'],
+  ['today', '\u{1F7E0} Due today',             'Today’s list.',                                      '#8A5A10'],
+  ['week',  '\u{1F535} The next seven days',   'Coming at her — worth a look before it is overdue.',  '#185FA5'],
+  ['later', '⚪ Later, or no date yet',    'Nothing is chasing these. A job with no date is a job nobody has promised.', '#566070'],
+  ['done',  '✅ Cleared in the last seven days', 'Not a list to work — a record that it happened.', '#0F7B54']
+];
+// A working note against one row of her desk. Deliberately NOT the task's own notes
+// field: that belongs to whoever raised the job and is read on every other screen.
+// This is her margin - where a thing got to, who she rang, what she is waiting on.
+function _vaNote(rowId){ return _trkVal('va_note', String(rowId||''), 'text'); }
+async function _vaNoteSet(rowId, val){
+  await _trkSet('va_note', String(rowId||''), 'text', String(val==null?'':val), false);
+}
+function _vaNoteWhen(rowId){ return _trkVal('va_note', String(rowId||''), 'at'); }
+async function _vaNoteSave(rowId, val){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
+  const v=String(val==null?'':val).trim();
+  await _trkSet('va_note', String(rowId||''), 'text', v, false);
+  await _trkSet('va_note', String(rowId||''), 'at', v?_ymd(new Date()):'', false);
+  const el=document.getElementById('vanote-ok-'+_vaSlug(String(rowId)));
+  if(el){ el.style.display='inline'; setTimeout(function(){ try{ el.style.display='none'; }catch(e){} }, 1600); }
+}
+// Everything with her name on it, sorted into the five buckets.
+function _vaDeskBuckets(name){
+  const today=_ymd(new Date());
+  const weekEnd=_ymd(new Date(Date.now()+7*86400000));
+  const back=_ymd(new Date(Date.now()-7*86400000));
+  const all=(typeof _tasksCache!=='undefined'?_tasksCache:[]);
+  let open=all.filter(function(t){ return _taskOpenFor(t,name) && _taskHasAssignee(t,name); });
+  if(typeof _vaDerivedTasks==='function'){ try{ open=open.concat(_vaDerivedTasks(name)); }catch(e){} }
+  // What she has finished lately. Only real tasks - a checklist step that is done simply
+  // stops being chased, there is no "done on" to read back.
+  const done=all.filter(function(t){
+    return _taskHasAssignee(t,name) && !_taskOpenFor(t,name)
+        && t.due_date && t.due_date>=back && t.due_date<=today;
+  });
+  const b={over:[],today:[],week:[],later:[],done:done};
+  open.forEach(function(t){
+    const d=String(t.due_date||'');
+    if(typeof _hldOn==='function' && _hldOn(t)) { b.later.push(t); return; }   // parked on purpose
+    if(!d) b.later.push(t);
+    else if(d<today)        b.over.push(t);
+    else if(d===today)      b.today.push(t);
+    else if(d<=weekEnd)     b.week.push(t);
+    else                    b.later.push(t);
+  });
+  const byDate=function(x,y){ return String(x.due_date||'9999').localeCompare(String(y.due_date||'9999')); };
+  b.over.sort(byDate); b.today.sort(byDate); b.week.sort(byDate); b.later.sort(byDate);
+  b.done.sort(function(x,y){ return String(y.due_date||'').localeCompare(String(x.due_date||'')); });
+  return b;
+}
+function _vaDeskRow(t, key, ro){
+  const E=_calEsc;
+  const today=_ymd(new Date());
+  const derived=!!t.derived;
+  const isDone=(key==='done');
+  const late=(!isDone && t.due_date && t.due_date<today);
+  const lateBy=late?Math.round((Date.parse(today+'T00:00:00')-Date.parse(t.due_date+'T00:00:00'))/86400000):0;
+  const where=(typeof _locLabel==='function')?_locLabel(t):'';
+  const note=_vaNote(t.id), noteAt=_vaNoteWhen(t.id);
+  const nid=_vaSlug(String(t.id));
+  const chip=derived
+    ? '<span style="font-size:10px;font-weight:700;background:#FFF1E3;color:#8A5A10;padding:1px 7px;border-radius:99px">checklist</span>'
+    : (t.category?('<span style="font-size:10px;font-weight:700;background:#EEEDFE;color:#3C3489;padding:1px 7px;border-radius:99px">'+E(t.category)+'</span>'):'');
+  // Ticking a real task closes it. A checklist step is not a row in the task table, so
+  // its tick opens the house instead - the same rule the old list already followed.
+  const tick=ro?'<span style="font-size:17px;color:'+(isDone?'#0F7B54':'#c4c9d2')+'">'+(isDone?'☑':'☐')+'</span>'
+    : '<span onclick="event.stopPropagation();pmaToggleTask(\''+_argEsc(String(t.id))+'\')" title="'
+      +(derived?'Opens the house — a checklist step is ticked on the property':(isDone?'Put it back on her list':'Mark it complete'))
+      +'" style="cursor:pointer;font-size:17px;color:'+(isDone?'#0F7B54':(late?'#B42318':'#8A94A6'))+'">'+(isDone?'☑':'☐')+'</span>';
+  const openIt=derived
+    ? ('openPropDetail(\''+_argEsc(String(t.property_id||''))+'\')')
+    : ('openTaskDetail(\''+_argEsc(String(t.id))+'\')');
+  return '<div style="display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-top:0.5px solid #f4f5f7;'+(isDone?'opacity:.72':'')+'">'
+    +'<div style="flex-shrink:0;padding-top:1px">'+tick+'</div>'
+    +'<div style="flex:1;min-width:0">'
+      +'<div style="display:flex;gap:7px;align-items:baseline;flex-wrap:wrap">'+chip
+        +'<span onclick="'+openIt+'" style="cursor:pointer;font-size:13.5px;font-weight:600;color:#185FA5;'+(isDone?'text-decoration:line-through':'')+'">'+E(t.title||'')+'</span></div>'
+      +'<div style="font-size:11.5px;color:#566070;margin-top:1px">'
+        +(where?E(where):'no property')+(derived&&t.source?(' · '+E(t.source)):'')+'</div>'
+      // her margin
+      +(ro
+        ? (note?'<div style="margin-top:5px;background:#F7F8FB;border-left:3px solid #cdd7e6;border-radius:0 6px 6px 0;padding:6px 9px;font-size:12.5px;color:#333;white-space:pre-wrap">'+E(note)+(noteAt?('<div style="font-size:10px;color:#8A94A6;margin-top:2px">'+E(noteAt)+'</div>'):'')+'</div>':'')
+        : '<div style="display:flex;gap:7px;align-items:flex-start;margin-top:5px">'
+            +'<textarea id="vanote-'+nid+'" rows="1" placeholder="Where did this get to? Who did you ring? What are you waiting on?" '
+            +'onchange="_vaNoteSave(\''+_argEsc(String(t.id))+'\',this.value)" '
+            +'style="flex:1;min-width:0;padding:5px 8px;border:0.5px solid '+(note?'#cdd7e6':'#e8eaf0')+';border-radius:7px;font-size:12.5px;line-height:1.45;resize:vertical;font-family:inherit;background:'+(note?'#FBFCFE':'#fff')+'">'+E(note)+'</textarea>'
+            +'<span id="vanote-ok-'+nid+'" style="display:none;font-size:11px;color:#0F7B54;white-space:nowrap;padding-top:7px">saved ✓</span>'
+          +'</div>'
+            +(noteAt?'<div style="font-size:10px;color:#8A94A6;margin-top:2px">last written '+E(noteAt)+'</div>':''))
+    +'</div>'
+    +'<div style="flex-shrink:0;text-align:right;white-space:nowrap">'
+      +'<div style="font-size:12px;font-weight:'+(late?'700':'500')+';color:'+(late?'#B42318':(isDone?'#0F7B54':'#566070'))+'">'+E(t.due_date||'no date')+'</div>'
+      +(late?'<div style="font-size:10.5px;color:#B42318">'+lateBy+' day'+(lateBy===1?'':'s')+' late</div>':'')
+      +'<div onclick="'+openIt+'" style="cursor:pointer;font-size:11px;color:#185FA5;margin-top:2px">'+(derived?'open house':'open')+' ›</div>'
+    +'</div></div>';
+}
+function _vaDesk(name){
+  const E=_calEsc;
+  const ro=(typeof isReadOnly==='function')?isReadOnly():false;
+  const b=_vaDeskBuckets(name);
+  const worked=Object.keys((window._trkData||{}).va_note||{}).length;
+  const head=VA_DESK_BUCKETS.map(function(k){
+    const n=(b[k[0]]||[]).length;
+    return '<div onclick="document.getElementById(\'vadesk-'+k[0]+'\').scrollIntoView({behavior:\'smooth\',block:\'start\'})"'
+      +' style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid '+k[3]+';border-radius:10px;padding:10px 13px;cursor:pointer">'
+      +'<div style="font-size:12px;font-weight:600;color:#111">'+k[1]+'</div>'
+      +'<div style="font-size:24px;font-weight:600;color:'+k[3]+';margin-top:2px">'+n+'</div></div>';
+  }).join('');
+  const blocks=VA_DESK_BUCKETS.map(function(k){
+    const rows=b[k[0]]||[];
+    return '<div id="vadesk-'+k[0]+'" style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid '+k[3]+';border-radius:12px;padding:12px 16px;margin-bottom:11px">'
+      +'<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">'
+        +'<div style="font-size:14.5px;font-weight:700;color:#111">'+k[1]
+        +(rows.length?'<span style="font-size:11px;font-weight:700;color:'+k[3]+';background:'+k[3]+'14;padding:2px 9px;border-radius:99px;margin-left:7px">'+rows.length+'</span>':'')+'</div></div>'
+      +'<div style="font-size:11.5px;color:#566070;margin:1px 0 2px">'+k[2]+'</div>'
+      +(rows.length
+        ? rows.slice(0,40).map(function(t){ return _vaDeskRow(t, k[0], ro); }).join('')
+          +(rows.length>40?'<div style="padding:8px 0;font-size:11.5px;color:#566070">+ '+(rows.length-40)+' more</div>':'')
+        : '<div style="font-size:12.5px;color:'+(k[0]==='over'?'#0F7B54':'#b0b6c0')+';padding:7px 0">'
+          +(k[0]==='over'?'✓ Nothing is overdue.':(k[0]==='done'?'Nothing cleared in the last seven days.':'Nothing here.'))+'</div>')
+    +'</div>';
+  }).join('');
+  return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:9px;margin-bottom:14px">'+head+'</div>'
+    +'<div style="font-size:11.5px;color:#566070;margin-bottom:9px">Tick it, open it, or write down where it got to — every note saves itself.'
+      +(worked?(' <b style="color:#111">'+worked+'</b> job'+(worked===1?'':'s')+' she has written a note against so far.'):'')+'</div>'
+    +blocks;
+}
 function _personDashView(name, title){
   const today=new Date(); today.setHours(0,0,0,0); const todayStr=_ymd(today);
   let mine=(typeof _tasksCache!=='undefined'?_tasksCache:[]).filter(t=>_taskOpenFor(t,name) && _taskHasAssignee(t,name));
@@ -21628,7 +21772,8 @@ function _personDashView(name, title){
   const dueToday=mine.filter(t=>t.due_date===todayStr);
   const rows=mine.slice().sort((a,b)=>(a.due_date||'zzz')<(b.due_date||'zzz')?-1:1).map(_pmaTaskRow).join('');
   const initial=(name||'?').trim()[0]||'?';
-  return `<div style="padding:20px;max-width:900px;margin:0 auto">
+  const _isVA=(typeof _vaRoleName==='function' && _canonSame(name, _vaRoleName()));
+  return `<div style="padding:20px;max-width:${_isVA?'1060':'900'}px;margin:0 auto">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
       <div style="width:44px;height:44px;border-radius:50%;background:#1a2744;color:#fff;font-size:19px;font-weight:600;display:flex;align-items:center;justify-content:center">${initial}</div>
       <div><div style="font-size:19px;font-weight:600;color:#111">${_calEsc(name)}</div><div style="font-size:13px;color:#566070">${_calEsc(title)}</div></div>
@@ -21641,7 +21786,9 @@ function _personDashView(name, title){
     ${_ceoBoxes(name)}
     ${(name||'').trim().split(' ')[0]==='Bruce' ? `<div style="margin:4px 0 16px">${threeCalendarWidgets({firstName:'Bruce',lastName:'',role:'Project Director'})}</div>` : ''}
     ${_thisWeekCard(name, mine)}
-    ${_pmaCard('Everything assigned to '+_calEsc(name), rows, mine.length, 'No open tasks assigned right now.')}
+    ${(typeof _vaRoleName==='function' && _canonSame(name, _vaRoleName()))
+      ? _vaDesk(name)
+      : _pmaCard('Everything assigned to '+_calEsc(name), rows, mine.length, 'No open tasks assigned right now.')}
   </div>`;
 }
 function _execShell(fnName, tabs, activeTab, content){
@@ -34421,4 +34568,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-17l prelist-fields-reworked sources-removed -->
+<!-- build: 2026-10-17m her-desk-five-buckets-notes -->
