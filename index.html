@@ -1073,6 +1073,11 @@ async function _initInner() {
     // A design package form the PM has sent over stays on the designer's calendar
     // every day until it is finished, rather than going stale on the day it was raised.
     try{ await _dpSweep(); }catch(e){}
+    // Bruce, 17 Oct: a step the Permit Tracker finished used to leave the person's task
+    // open for ever. The writers close it going forward; this clears what is already
+    // stuck. It only ever closes, and only where the card says the step is done.
+    try{ const st=await _spTaskCatchUp({quiet:true});
+         if(st) _toast(st+" task"+(st===1?"":"s")+" closed to match a finished sub phase"); }catch(e){}
     document.getElementById("dash-body").innerHTML = renderGenericHome(user);
     applyPermissionsUI();
     _applyMobileMode();
@@ -23242,7 +23247,7 @@ function _vaDeskView(vaName){
   return _vaBoard(vaName);
 }
 // ---- Trackers (W-9 / Mowing / Checklists) — persisted in pm_settings key 'trackers'. ----
-async function _trkLoad(){ window._trkLoaded=true; try{ const r=await supabase.from("pm_settings").select("data").eq("key","trackers").maybeSingle(); if(r.error){ window._trkLoadOk=false; window._trkData={}; window._trkBase={}; return; } window._trkLoadOk=true; window._trkData=(r.data&&r.data.data)||{}; window._trkBase=JSON.parse(JSON.stringify(window._trkData)); }catch(e){ window._trkLoadOk=false; window._trkData={}; window._trkBase={}; } }
+async function _trkLoad(){ window._trkLoaded=true; try{ const r=await supabase.from("pm_settings").select("data").eq("key","trackers").maybeSingle(); if(r.error){ window._trkLoadOk=false; window._trkData={}; window._trkBase={}; return; } window._trkLoadOk=true; window._trkData=(r.data&&r.data.data)||{}; window._trkBase=JSON.parse(JSON.stringify(window._trkData)); try{ if(typeof _permitAutoTickOnce==='function') await _permitAutoTickOnce(); }catch(e){} }catch(e){ window._trkLoadOk=false; window._trkData={}; window._trkBase={}; } }
 // ---- Saving a tracker without wiping out what somebody else just did -----------------
 // All six trackers live in ONE row of the database. Every save used to send that entire
 // object as this browser happened to remember it - so if Jen changed a permit at 9am and
@@ -33417,4 +33422,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-17b permitted-autotick subphase-task-cleanup -->
+<!-- build: 2026-10-17c sweeps-actually-wired-up -->
