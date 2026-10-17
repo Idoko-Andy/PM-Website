@@ -6936,6 +6936,11 @@ function _pcTabs(c){
   // other money tab.
   const coN=(typeof _coList==='function')?_coList(c).length:0;
   t.push({key:'co', label:'\u{1F4D1} Change Orders'+(coN?(' \u00b7 '+coN):'')});
+  // Bruce, 17 Oct: the pre-listing form gets "a tab on the property card, from desktop".
+  // The count on the tab is how much of it is answered, so the row says at a glance
+  // whether this house is ready to hand to a realtor.
+  const plk=(typeof _plCounts==='function')?_plCounts(c):null;
+  if(plk) t.push({key:'prelist', label:'\u{1F4DD} Pre-Listing'+(plk.done?' \u00b7 \u2713':(' \u00b7 '+plk.n+'/'+plk.t))});
   // One tab per person with work on this house. The number is what is still on their
   // list HERE, so a glance at the row says who this property is waiting on.
   _ppNames(c).forEach(function(n){
@@ -7688,6 +7693,7 @@ function _pdLinked(c, which){
           </div>
           ${_coBody(c.id)}
         </div>`:''}</div>
+        <div style="display:${_pcTab(c)==='prelist'?'block':'none'};max-width:900px">${_pcTab(c)==='prelist'?_plBody(c, isReadOnly(), 'card'):''}</div>
         <div style="display:${_pcTab(c)==='history'?'block':'none'};max-width:900px">${_pcTab(c)==='history'?_pdHistory(c):''}</div>
         ${_pcTabs(c).filter(function(t){return t.person;}).map(function(t){
           return `<div style="display:${_pcTab(c)===t.key?'block':'none'}">${_pcTab(c)===t.key?_ppBody(c,t.person):''}</div>`;
@@ -19023,6 +19029,299 @@ function _rltClosedYear(){
   return `<div style="font-size:12.5px;color:#566070;margin-bottom:10px">Every house closed in ${yr}, newest first, grouped by who listed it. <b style="color:#111">${all.length} closed so far this year.</b></div>`
     + (all.length?blocks:'<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:16px;font-size:13px;color:#636b7a">Nothing has closed yet this year.</div>');
 }
+// ===================== THE PRE-LISTING INFORMATION FORM =========================
+// Bruce, 17 Oct: the Coming Soon board shows "the pre-listing information form filled
+// out by the PM" - and, asked where it should be filled in: "both a tab on the property
+// card, from desktop, or from a form on the field app to chose property it is for, and
+// should have a dashboard/home base for it and all of them like we do for everything
+// else". On how much of it the site should answer itself: "Automated and manual, but we
+// want to automate as much as possible using the data from the website that we already
+// have in there."
+//
+// So three doors onto ONE record, which lives on the property at checklists.prelist.
+// Nothing here keeps a second copy of anything: the four fields the site already knows
+// are read live from the scope of work and the property card every time the form draws,
+// so they can never go stale behind somebody's back.
+//
+// The one rule that matters: a PM can type over an automatic answer, and when he does,
+// HIS answer wins and the automatic one is shown beside it rather than thrown away.
+// That is the same rule as everywhere else on this site - a human decision never lives
+// inside a record a bot rebuilds.
+const PRELIST_GROUPS=[
+  { key:'house', title:'\u{1F3E0} The house itself', hint:'What a buyer’s agent asks first.', fields:[
+      ['beds',    'Bedrooms',             'text', 'e.g. 3'],
+      ['baths',   'Bathrooms',            'text', 'e.g. 2 full, 1 half'],
+      ['sqft',    'Finished square feet', 'auto', 'e.g. 1,420'],
+      ['year',    'Year built',           'text', 'e.g. 1954'],
+      ['lot',     'Lot size',             'text', 'e.g. 0.18 acre'],
+      ['stories', 'Stories',              'text', 'e.g. 2 storey'],
+      ['basement','Basement',             'text', 'Full / partial / crawl / slab — finished?'],
+      ['parking', 'Parking',              'text', 'Garage, carport, off-street, none']
+  ]},
+  { key:'systems', title:'\u{1F527} Systems and their age', hint:'Everything we replaced, and everything we did not. This is what the inspection will ask about.', fields:[
+      ['roof',    'Roof',             'text', 'Age, or the year we replaced it'],
+      ['hvac',    'Furnace and AC',   'text', 'Type and age — or new'],
+      ['water',   'Water heater',     'text', 'Age, gallons, gas or electric'],
+      ['electric','Electrical panel', 'text', 'Amps, and whether it is new'],
+      ['plumbing','Plumbing',         'text', 'Copper / PEX / galvanised, and what was replaced'],
+      ['windows', 'Windows',          'text', 'Age, or new']
+  ]},
+  { key:'finish', title:'✨ Finishes and what is new', hint:'The listing copy gets written from this. The finish package is already in the scope of work.', fields:[
+      ['finishes','Finish package', 'auto', 'Standard, upgraded…'],
+      ['kitchen', 'Kitchen',        'text', 'Counters, cabinets, which appliances stay'],
+      ['flooring','Flooring',       'text', 'What is where'],
+      ['newwork', 'What is new',    'area', 'The headline items — roof, HVAC, kitchen, baths, electric…'],
+      ['features','Selling points', 'area', 'What makes this one worth the number']
+  ]},
+  { key:'access', title:'\u{1F511} Access and showings', hint:'What a realtor needs to actually get in the door.', fields:[
+      ['lockbox',  'Lockbox code',         'auto', 'From the scope of work'],
+      ['showing',  'Showing instructions', 'area', 'Notice needed, where to park, anything that sticks…'],
+      ['occupancy','Occupied or vacant',   'text', 'Vacant / tenant in place / owner'],
+      ['utilities','Utilities on?',        'text', 'Gas, water, electric — on, off, or in whose name']
+  ]},
+  { key:'facts', title:'\u{1F4C4} Numbers and legal', hint:'The boxes on the listing form nobody can fill in from memory.', fields:[
+      ['parcel',  'Parcel number',   'text', 'County parcel / APN'],
+      ['taxes',   'Annual taxes',    'text', 'e.g. $2,480'],
+      ['hoa',     'HOA',             'text', 'Dues, or “none”'],
+      ['schools', 'School district', 'text', ''],
+      ['disclose','Known defects to disclose', 'area', 'Anything we did not fix, and anything on the NPI report that stays']
+  ]}
+];
+const PRELIST_FIELDS=(function(){ const o=[]; PRELIST_GROUPS.forEach(function(g){ g.fields.forEach(function(f){ o.push(f); }); }); return o; })();
+function _plField(key){ return PRELIST_FIELDS.find(function(f){ return f[0]===key; })||null; }
+
+// The newest scope of work on this house, if there is one.
+function _plScope(c){
+  if(typeof _scAll!=='function' || !c) return null;
+  const mine=_scAll().filter(function(x){ return x && x.sc && x.sc.property_id===c.id; });
+  if(!mine.length) return null;
+  return mine.sort(function(a,b){ return String(b.sc.last_updated_at||'').localeCompare(String(a.sc.last_updated_at||'')); })[0].sc;
+}
+// What the site can answer on its own, and where it got it.
+function _plAuto(c, key){
+  const cl=(c&&c.checklists)||{}, h=_plScope(c)||{};
+  if(key==='sqft')     return String(h.sqft||cl.sqft||'').trim();
+  if(key==='finishes') return String(h.finishes||cl.finishes||'').trim();
+  if(key==='lockbox')  return String(h.lockbox||cl.lockbox||'').trim();
+  return '';
+}
+function _plAutoFrom(c, key){
+  const cl=(c&&c.checklists)||{}, h=_plScope(c)||{};
+  const pick=function(a,b){ return a?'the scope of work':(b?'the property card':''); };
+  if(key==='sqft')     return pick(h.sqft, cl.sqft);
+  if(key==='finishes') return pick(h.finishes, cl.finishes);
+  if(key==='lockbox')  return pick(h.lockbox, cl.lockbox);
+  return '';
+}
+function _plData(c){ const d=((c&&c.checklists)||{}).prelist; return (d&&typeof d==='object')?d:{}; }
+function _plTyped(c, key){ return String((_plData(c).f||{})[key]||''); }
+// What the form shows: what a person typed if they typed anything, otherwise whatever
+// the site knows. Never the other way round.
+function _plVal(c, key){ const t=_plTyped(c,key).trim(); return t || _plAuto(c,key); }
+function _plAnswered(c){ return PRELIST_FIELDS.filter(function(f){ return !!_plVal(c,f[0]); }).length; }
+function _plCounts(c){
+  const n=_plAnswered(c), t=PRELIST_FIELDS.length;
+  const d=_plData(c);
+  return { n:n, t:t, pct:t?Math.round(n*100/t):0, done:String(d.done||''), by:String(d.by||''), at:String(d.at||'') };
+}
+async function _plSet(pid, key, val){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return false;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===pid; });
+  if(!c) return false;
+  if(!_plField(key)) return false;
+  const d=_plData(c);
+  const f=Object.assign({}, d.f||{});
+  const v=String(val==null?'':val);
+  // A blank box clears the override and lets the automatic answer show through again.
+  if(v.trim()) f[key]=v; else delete f[key];
+  const rec=Object.assign({}, d, { f:f, by:(typeof _miWho==='function'?_miWho():''), at:_ymd(new Date()) });
+  if(!(await _wmChecklistPatch(pid, { prelist:rec }))) return false;
+  if(typeof _logAudit==='function'){
+    const lbl=(_plField(key)||[])[1]||key;
+    _logAudit('updated','property',(c&&c.addr)||'', 'Pre-listing form: '+lbl+(v.trim()?' answered':' cleared'));
+  }
+  return true;
+}
+async function _plMark(pid, on){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===pid; });
+  if(!c) return;
+  const d=_plData(c);
+  const rec=Object.assign({}, d);
+  if(on){ rec.done=_ymd(new Date()); rec.doneBy=(typeof _miWho==='function'?_miWho():''); }
+  else { delete rec.done; delete rec.doneBy; }
+  if(!(await _wmChecklistPatch(pid, { prelist:rec }))) return;
+  if(typeof _logAudit==='function') _logAudit('updated','property',(c&&c.addr)||'', 'Pre-listing form '+(on?'marked complete':'reopened'));
+  _plRerender(pid);
+}
+// Whatever screen this form is being filled in on is the screen that redraws. Redrawing
+// a property card from inside the realtor dashboard would throw the person off the board
+// they were working - the same trap the side tasks panel hit in September.
+function _plRerender(pid){
+  if(window._plWhere==='rlt' && typeof openRealtorDashboard==='function'){ openRealtorDashboard(); return; }
+  if(window._plWhere==='hub' && typeof window._trkRerender==='function'){ window._trkRerender(); return; }
+  if(typeof openPropDetail==='function') openPropDetail(pid);
+}
+
+function _plBar(c, w){
+  const k=_plCounts(c);
+  const col=k.done?'#0F7B54':(k.pct>=70?'#185FA5':(k.pct>=30?'#8A5A10':'#B42318'));
+  return '<div style="display:flex;align-items:center;gap:9px;'+(w?('max-width:'+w+'px'):'')+'">'
+    +'<div style="flex:1;height:7px;background:#eef0f6;border-radius:99px;overflow:hidden;min-width:70px">'
+      +'<div style="height:100%;width:'+k.pct+'%;background:'+col+'"></div></div>'
+    +'<span style="font-size:11.5px;font-weight:700;color:'+col+';white-space:nowrap">'+k.n+' / '+k.t+'</span></div>';
+}
+
+function _plBody(c, ro, where){
+  if(!c) return '';
+  window._plWhere=where||'card';
+  const E=_calEsc, k=_plCounts(c), sc=_plScope(c);
+  const pid=c.id;
+  const cell=function(f){
+    const key=f[0], label=f[1], type=f[2], ph=f[3]||'';
+    const typed=_plTyped(c,key).trim();
+    const auto=_plAuto(c,key);
+    const val=typed||auto;
+    const from=(!typed && auto)?_plAutoFrom(c,key):'';
+    const overridden=!!(typed && auto && typed!==auto);
+    const head='<div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap">'
+      +'<span style="font-size:11.5px;font-weight:600;color:#55607A">'+E(label)+'</span>'
+      +(from?'<span style="font-size:10px;color:#0F7B54;background:#E6F4ED;padding:1px 7px;border-radius:99px;white-space:nowrap">filled in from '+E(from)+'</span>':'')
+      +(overridden?'<span title="The scope of work says '+E(auto)+'" style="font-size:10px;color:#8A5A10;background:#FBF3E2;padding:1px 7px;border-radius:99px;white-space:nowrap">typed over '+E(auto)+'</span>':'')
+      +'</div>';
+    if(ro){
+      return '<div style="padding:7px 0;border-bottom:0.5px solid #f4f5f7">'+head
+        +'<div style="font-size:13.5px;color:'+(val?'#111':'#b0b6c0')+';margin-top:2px;white-space:pre-wrap;overflow-wrap:anywhere">'+(val?E(val):'not answered')+'</div></div>';
+    }
+    const esc=(typeof _argEsc==='function')?_argEsc(key):key;
+    const common='onchange="_plSave(\''+pid+'\',\''+esc+'\',this.value)" placeholder="'+E(ph)+'" '
+      +'style="width:100%;box-sizing:border-box;margin-top:3px;padding:7px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13.5px;font-family:inherit"';
+    const box=(type==='area')
+      ? '<textarea rows="3" '+common.replace('style="','style="line-height:1.5;resize:vertical;min-height:62px;')+'>'+E(typed||auto)+'</textarea>'
+      : '<input value="'+E(typed||auto)+'" '+common+'/>';
+    return '<div style="padding:7px 0;border-bottom:0.5px solid #f4f5f7">'+head+box+'</div>';
+  };
+  const groups=PRELIST_GROUPS.map(function(g){
+    const done=g.fields.filter(function(f){ return !!_plVal(c,f[0]); }).length;
+    const all=g.fields.length;
+    return '<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:13px 16px;margin-bottom:11px">'
+      +'<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">'
+        +'<div style="font-size:14px;font-weight:700;color:#111">'+E(g.title)+'</div>'
+        +'<span style="font-size:11px;font-weight:700;color:'+(done===all?'#0F7B54':'#8A5A10')+';background:'+(done===all?'#E6F4ED':'#FBF3E2')+';padding:1px 9px;border-radius:99px">'+done+' / '+all+'</span></div>'
+      +'<div style="font-size:11.5px;color:#566070;margin:2px 0 4px">'+E(g.hint)+'</div>'
+      +g.fields.map(cell).join('')
+    +'</div>';
+  }).join('');
+
+  // Context the form never asks for, because the site already knows it.
+  const ctx=[['Property type', c.type||''], ['Goal ARV', c.goalArv||''],
+             ['Target list date', c.targetListDate||''], ['PM', c.pm||''],
+             ['Listing agent', c.listingAgent||'']]
+    .filter(function(x){ return x[1]; })
+    .map(function(x){ return '<div><div style="font-size:10px;color:#566070;text-transform:uppercase;letter-spacing:.05em">'+E(x[0])+'</div>'
+      +'<div style="font-size:13px;font-weight:600;color:#111">'+E(x[1])+'</div></div>'; }).join('');
+
+  const head='<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:13px 16px;margin-bottom:11px">'
+    +'<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">'
+      +'<div style="font-size:15px;font-weight:700;color:#111">\u{1F4DD} Pre-listing information</div>'
+      +(k.done?'<span style="font-size:11px;font-weight:700;color:#0F7B54;background:#E6F4ED;padding:2px 10px;border-radius:99px">✓ marked complete '+E(k.done)+(_plData(c).doneBy?(' by '+E(_plData(c).doneBy)):'')+'</span>':'')
+    +'</div>'
+    +'<div style="font-size:11.5px;color:#566070;margin:2px 0 8px">The PM fills this in before the house is listed. '
+      +(sc?'The four the site already knows are read live from the scope of work and the property card — type over any of them and yours wins.'
+          :'There is no scope of work on this house yet, so everything here is typed in by hand.')+'</div>'
+    +_plBar(c, 320)
+    +(k.at?'<div style="font-size:11px;color:#636b7a;margin-top:5px">Last touched '+E(k.at)+(k.by?(' by '+E(k.by)):'')+'</div>':'')
+    +(ctx?'<div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:10px;padding-top:9px;border-top:0.5px solid #eef0f6">'+ctx+'</div>':'')
+  +'</div>';
+
+  const foot=ro?'' : '<div style="display:flex;gap:9px;flex-wrap:wrap;margin-top:2px">'
+    +(k.done
+      ? '<button onclick="_plMark(\''+pid+'\',false)" style="padding:8px 15px;background:#fff;border:0.5px solid #cdd7e6;border-radius:8px;font-size:13px;color:#566070;cursor:pointer;font-weight:600">Reopen the form</button>'
+      : '<button onclick="_plMark(\''+pid+'\',true)" style="padding:8px 15px;background:#122A4A;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">✓ Mark the pre-listing form complete</button>')
+    +'<span style="font-size:11.5px;color:#636b7a;align-self:center">Every box saves itself as you leave it.</span></div>';
+
+  return head+groups+foot;
+}
+// A save redraws the screen it was made on, but only after the write lands - otherwise
+// a half-typed box can be painted back over the top of itself.
+async function _plSave(pid, key, val){
+  const ok=await _plSet(pid, key, val);
+  if(ok) _plRerender(pid);
+}
+
+// One write for a whole formful - what the field app needs on a bad signal.
+async function _plSetMany(pid, obj, markDone){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return false;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===pid; });
+  if(!c) return false;
+  const d=_plData(c);
+  const f=Object.assign({}, d.f||{});
+  let n=0;
+  Object.keys(obj||{}).forEach(function(key){
+    if(!_plField(key)) return;
+    const v=String(obj[key]==null?'':obj[key]);
+    if(v.trim()){ if(f[key]!==v){ f[key]=v; n++; } }
+    else if(f[key]!==undefined){ delete f[key]; n++; }
+  });
+  const rec=Object.assign({}, d, { f:f, by:(typeof _miWho==='function'?_miWho():''), at:_ymd(new Date()) });
+  if(markDone===true){ rec.done=_ymd(new Date()); rec.doneBy=(typeof _miWho==='function'?_miWho():''); }
+  if(!(await _wmChecklistPatch(pid, { prelist:rec }))) return false;
+  if(typeof _logAudit==='function') _logAudit('updated','property',(c&&c.addr)||'',
+    'Pre-listing form saved from the field app — '+n+' field'+(n===1?'':'s')+' changed'+(markDone===true?', marked complete':''));
+  return true;
+}
+// ---- the home base: every house's pre-listing form in one place ----
+// Bruce: "should have a dashboard/home base for it and all of them like we do for
+// everything else." Everything else means Trackers, so it is a tile there.
+function _plHubCards(){
+  const soon=(typeof MKT_PHASES!=='undefined')?(MKT_PHASES.soon||[]):[];
+  const later=(typeof MKT_PHASES!=='undefined')
+    ? [].concat(MKT_PHASES.active||[], MKT_PHASES.contract||[], MKT_PHASES.rtr||[], MKT_PHASES.ctc||[]) : [];
+  const all=(typeof propCards!=='undefined'?propCards:[]).filter(function(c){ return !c.archived; });
+  return { soon: all.filter(function(c){ return soon.indexOf(c.phase)>=0; }),
+           later: all.filter(function(c){ return later.indexOf(c.phase)>=0; }),
+           started: all.filter(function(c){ return soon.indexOf(c.phase)<0 && later.indexOf(c.phase)<0 && _plAnswered(c)>0; }) };
+}
+function _plHubOutstanding(){
+  const g=_plHubCards();
+  return g.soon.filter(function(c){ return !_plCounts(c).done; }).length;
+}
+function _plHubOpen(pid){ window._plHubSel=pid; if(typeof window._trkRerender==='function') window._trkRerender(); }
+function _plHub(){
+  const E=_calEsc, g=_plHubCards(), ro=(typeof isReadOnly==='function')?isReadOnly():false;
+  const sel=(typeof propCards!=='undefined'?propCards:[]).find(function(c){ return c.id===window._plHubSel; });
+  const row=function(c){
+    const k=_plCounts(c);
+    const on=(sel && sel.id===c.id);
+    return '<div onclick="_plHubOpen(\''+c.id+'\')" style="display:flex;justify-content:space-between;gap:12px;align-items:center;padding:9px 13px;border-bottom:0.5px solid #f1f3f7;cursor:pointer;background:'+(on?'#F2F5FA':'#fff')+'">'
+      +'<div style="min-width:0;flex:1">'
+        +'<div style="font-size:13.5px;font-weight:600;color:'+(on?'#111':'#185FA5')+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+E(c.addr||'')+'</div>'
+        +'<div style="font-size:11px;color:#566070">'+E(_phLabel(c.phase))+(c.pm?(' · PM '+E(c.pm)):'')+(c.listingAgent?(' · '+E(c.listingAgent)):'')+'</div>'
+      +'</div>'
+      +'<div style="width:150px;flex-shrink:0">'+_plBar(c)+'</div>'
+      +'<div style="width:112px;flex-shrink:0;text-align:right;font-size:11px;font-weight:700;color:'+(k.done?'#0F7B54':'#8A5A10')+'">'
+        +(k.done?('✓ complete'):(k.n?'in progress':'not started'))+'</div></div>';
+  };
+  const block=function(title, hint, cards){
+    return '<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;overflow:hidden;margin-bottom:12px">'
+      +'<div style="padding:9px 13px;background:#F7F8FB;border-bottom:0.5px solid #e0e4ec">'
+        +'<div style="font-size:12.5px;font-weight:700;color:#111">'+title+' <span style="color:#566070;font-weight:400">· '+cards.length+'</span></div>'
+        +'<div style="font-size:11px;color:#566070">'+hint+'</div></div>'
+      +(cards.length?cards.sort(function(a,b){ return String(a.addr||'').localeCompare(String(b.addr||'')); }).map(row).join('')
+        :'<div style="padding:13px;font-size:12.5px;color:#b0b6c0">Nothing here.</div>')+'</div>';
+  };
+  const left=block('⏳ Coming soon','The houses this form is for — fill it in before they are listed.', g.soon)
+    + block('\u{1F3E1} Already listed or further on','Still readable, and still correctable.', g.later)
+    + (g.started.length?block('\u{1F4DD} Started early','Somebody began the form before the house reached pre-list.', g.started):'');
+  const right=sel
+    ? _plBody(sel, ro, 'hub')
+    : '<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:26px;text-align:center;color:#636b7a;font-size:13.5px">Pick a house on the left to open its pre-listing form.</div>';
+  const out=g.soon.filter(function(c){ return !_plCounts(c).done; }).length;
+  return '<div style="font-size:12.5px;color:#566070;margin-bottom:11px">The information a realtor needs to write the listing, answered once by the PM and read everywhere — the Coming Soon board, the property card and the field app all show this same form. <b style="color:#111">'
+    +out+' coming-soon house'+(out===1?'':'s')+' still to finish.</b></div>'
+    +'<div style="display:grid;grid-template-columns:minmax(300px,1.05fr) minmax(0,1fr);gap:14px;align-items:start">'
+    +'<div data-pl-left="1">'+left+'</div>'+right+'</div>';
+}
 // ===================== THE FIVE STAGE BOARDS (realtor dashboard) =================
 // Bruce, 17 Oct: "on the realtor dashboard go ahead and continue building that out ...
 // a Coming Soon tab ... on the left side it lists only the properties that belong in
@@ -19263,32 +19562,10 @@ function _rltStagePane(which, cards){
 // is the hand-off point it plugs into, and it already shows what the site can answer
 // on its own so nobody types those four again.
 function _rltPreListSection(c){
-  const sc=(typeof _scAll==='function')
-    ? _scAll().filter(function(x){ return x.sc && x.sc.property_id===c.id; })
-        .sort(function(a,b){ return String(b.sc.last_updated_at||'').localeCompare(String(a.sc.last_updated_at||'')); })[0]
-    : null;
-  const h=sc?sc.sc:null;
-  const row=function(label, val, from){
-    return '<div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline;padding:6px 0;border-bottom:0.5px solid #f4f5f7">'
-      +'<div style="font-size:12.5px;color:#566070">'+label+'</div>'
-      +'<div style="font-size:13px;font-weight:600;color:'+(val?'#111':'#b0b6c0')+';text-align:right">'+(val?_calEsc(val):'not set')
-      +(from?'<div style="font-size:10px;font-weight:400;color:#636b7a">from '+from+'</div>':'')+'</div></div>';
-  };
-  const cl=(c&&c.checklists)||{};
-  const body=row('House type', (h&&h.house_type)||c.type||'', (h&&h.house_type)?'the scope of work':'the property card')
-    + row('Square feet', (h&&h.sqft)||cl.sqft||'', (h&&h.sqft)?'the scope of work':'the property card')
-    + row('Finishes', (h&&h.finishes)||cl.finishes||'', (h&&h.finishes)?'the scope of work':'the property card')
-    + row('Lockbox', (h&&h.lockbox)||cl.lockbox||'', (h&&h.lockbox)?'the scope of work':'the property card')
-    + row('Goal ARV', c.goalArv||'', 'the property card')
-    + row('Target list date', c.targetListDate||'', 'the property card')
-    + '<div style="margin-top:9px;background:#F7F9FD;border:0.5px solid #e0e4ec;border-radius:9px;padding:9px 11px;font-size:12px;color:#566070">'
-    + 'The rest of the pre-listing form — the questions the PM answers by hand — is the next build. It will fill itself in from these before anybody types anything.</div>';
-  return _rltPreSec('&#128221; Pre-listing information', (h?'Pulled from the scope of work and the property card.':'No scope of work on this house yet, so this is the property card only.'), body);
-}
-function _rltPreSec(title, hint, body){
-  return '<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:13px 16px;margin-bottom:11px">'
-    +'<div style="font-size:14px;font-weight:700;color:#111">'+title+'</div>'
-    +'<div style="font-size:11.5px;color:#566070;margin:2px 0 6px">'+hint+'</div>'+body+'</div>';
+  // The real form, drawn straight into the Coming Soon pane. Same record as the
+  // property card tab and the field app - there is only ever one of these per house.
+  const ro=(typeof isReadOnly==='function')?isReadOnly():false;
+  return _plBody(c, ro, 'rlt');
 }
 // The row of five. It sits under the tab bar on the main dashboard and on every
 // realtor's own tab, so "Coming Soon" means Katie's coming soon when you are on
@@ -26635,7 +26912,7 @@ function _vaTrackers(){
   // tracker tile already forwards into that same dashboard, so the two were one door
   // wearing two signs. The dashboard is still on every role's menu and still has the
   // card at the foot of this page - only the duplicate tile is gone.
-  const tiles=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:16px">${tile('w9','🧾','W-9 Tracker',w9out,'#7A3FA8')}${tile('window','🪟','Window Tracker',winout,'#185FA5')}${tile('mow','🌱','Mowing Tracker',mowout,'#3B6D11')}${tile('checklist','✅','Checklist Tracker',clout,'#0B7285')}${tile('util','⚡','Utility Tracker',utilout,'#8A5A10')}${tile('permit','📄','Permit Tracker',permitout,'#B03A8B')}${tile('co','📑','Change Order Tracker',coOut,'#4A1D6E')}${drawTile}</div>`;
+  const tiles=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:16px">${tile('w9','🧾','W-9 Tracker',w9out,'#7A3FA8')}${tile('window','🪟','Window Tracker',winout,'#185FA5')}${tile('mow','🌱','Mowing Tracker',mowout,'#3B6D11')}${tile('checklist','✅','Checklist Tracker',clout,'#0B7285')}${tile('util','⚡','Utility Tracker',utilout,'#8A5A10')}${tile('permit','📄','Permit Tracker',permitout,'#B03A8B')}${tile('co','📑','Change Order Tracker',coOut,'#4A1D6E')}${tile('prelist','📝','Pre-Listing Forms',(typeof _plHubOutstanding==='function'?_plHubOutstanding():0),'#0E7460')}${drawTile}</div>`;
   const back=`<div onclick="window._trkView='summary';(window._trkRerender||function(){openVAAdminDashboard('trackers');})()" style="display:inline-flex;align-items:center;gap:5px;font-size:13px;color:#185FA5;cursor:pointer;margin-bottom:10px">‹ Back to Trackers</div>`;
   const shell=(inner)=>`<div style="padding:20px;max-width:1120px;margin:0 auto">
       <div style="position:sticky;top:0;z-index:20;background:#f4f5f7;padding:2px 0 8px;margin:-2px 0 2px;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
@@ -26647,6 +26924,7 @@ function _vaTrackers(){
     +(w9flagged?`<div style="background:#FBE9E7;border:0.5px solid #F0C7C3;border-radius:9px;padding:10px 13px;margin-bottom:11px;font-size:12.5px;color:#72241F"><b>${w9flagged} ${w9flagged===1?'entry needs':'entries need'} fixing.</b> They are at the top of the list with the reason beside them. Nothing has been renamed or merged \u2014 fix them in the Contractor Directory, or type the right name into <i>Name on W-9</i>. Search <b>flagged</b> to see only these.</div>`:'')
     +_trkTable('🧾 W-9 Tracker','#7A3FA8','<th style="padding:9px 10px;text-align:left">Who the W-9 is under</th><th style="padding:9px;text-align:left">First name</th><th style="padding:9px;text-align:left">Last name</th><th style="padding:9px;text-align:left">Name on W-9</th><th style="padding:9px">On file</th><th style="padding:9px;text-align:left">Needs fixing</th><th style="padding:9px;text-align:left">Notes</th><th style="padding:9px;text-align:left">Email</th><th style="padding:9px;text-align:left">Phone</th>'+(ro?'':'<th></th>'),w9rows)+`<div style="font-size:12px;color:#566070">A contractor fills a W-9 in as <b>either himself or his company</b> — whichever it was, that is the name shown first, with the other underneath so you can still find him. Type it in "Name on W-9" if it differs from both. Ticking "On file" here also marks them in the Contractor Directory.${ro?'':' <b>Remove</b> deletes the whole contractor record — use it on duplicates.'}</div>`);
   if(view==='co') return shell(back+_trkSearchBox('Search a property, what changed, who caused it or who approved it…')+_coTrackerBody());
+  if(view==='prelist') return shell(back+_plHub());
   if(view==='mow') return shell(back+_trkSearchBox('Search a property…')+_trkTable('🌱 Mowing Tracker','#3B6D11','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px;text-align:left">Who is mowing</th><th style="padding:9px;text-align:left">How often</th><th style="padding:9px;text-align:left">Cost/mow</th><th style="padding:9px;text-align:left">Contact #</th><th style="padding:9px;text-align:left">PM</th><th style="padding:9px;text-align:left">Payment</th><th style="padding:9px">On route</th><th style="padding:9px">Removed after</th>',mowrows)+_trkClosedSimple(closed,'mowing history'));
   if(view==='window') return shell(back+winStageBar+winAdd+_trkSearchBox('Search a property…')+_trkTable('🪟 Window Tracker'+(_wf?' — '+_winStageMeta(_wf).label:''),'#185FA5','<th style="padding:9px 10px;text-align:left">Property / what’s being replaced</th><th style="padding:9px">Needed</th><th style="padding:9px">Measure</th><th style="padding:9px">Ordered</th><th style="padding:9px">Arrival</th><th style="padding:9px">Install &amp; confirm</th><th style="padding:9px;text-align:left">Notes &amp; comments</th>',winrows)+`<div style="font-size:12px;color:#566070;margin-top:-8px">This list is the window <b>queue</b> &mdash; only houses somebody has actually asked for windows or glass on. Use <b>Add to the window list</b> above for a one-off job. Each square is one stage: the number is how many houses are waiting on <i>that</i> step, and clicking a square filters the list to it. A house moves on when you tick the box, not when you set the date &mdash; a booked install is still an install to chase. Dates you set here land on that property’s construction calendar automatically, and Slack posts 48 hours before the measure and install dates — in <b>#Window-Tracker</b>, the same channel the scheduled alerts go to. Post there when you have asked for a measure and the request shows up on this list.${winFin.length?` <b>${winFin.length}</b> finished propert${winFin.length===1?'y is':'ies are'} in the completed folder below.`:''}</div>`+winFinished+winClosed);
   // ---------- Utility tracker, one rectangle per property ----------
@@ -31894,7 +32172,10 @@ function _mAddTab(){
     // payable. When I click on that, I can click add, I can select a contractor, and then
     // I can put amount quoted and description of work. I can either type something in or
     // give the option to attach a PDF."
-    +item("\u{1F4B0}","Add a quote or price","What a contractor wants for a job — goes straight to the property card","ap");
+    +item("\u{1F4B0}","Add a quote or price","What a contractor wants for a job — goes straight to the property card","ap")
+    // Bruce, 17 Oct: the pre-listing form should be fillable "from a form on the field
+    // app to chose property it is for".
+    +item("\u{1F4DD}","Pre-listing information","What a realtor needs to write the listing","pl");
 }
 function _mOpenAdd(kind){
   const body=document.getElementById("m-body"); if(!body) return;
@@ -31903,6 +32184,7 @@ function _mOpenAdd(kind){
                  : kind==="co"   ? _mAddFormCO()
                  : kind==="sq"   ? _mAddFormSQ()
                  : kind==="ap"   ? _mAddFormAP()
+                 : kind==="pl"   ? _mAddFormPL()
                  : _mAddFormEvent(kind==="material");
   if(kind==="task") _mNewStepsRender();
   body.scrollTop=0;
@@ -31933,6 +32215,74 @@ function _mAddFormCO(){
     <button class="m-btn" onclick="_submit('m-co',this,'Saving…',_mSubmitCO)">Save change order</button>
     <div style="font-size:12px;color:#566070;margin-top:9px"><b>Total actual cost</b> gets filled in later on the property card &mdash; usually at the end of the project. Until then the estimate stands in.</div>
   `);
+}
+// ---- the pre-listing form on the field app ----
+// Bruce, 17 Oct: "a form on the field app to chose property it is for". Same record as
+// the property card tab and the Coming Soon board. On a phone the boxes do NOT each save
+// themselves - a PM standing in a basement gets one Save, one write, one answer, instead
+// of thirty round trips over a bad signal.
+function _mAddFormPL(){
+  const g=(typeof _plHubCards==='function')?_plHubCards():{soon:[],later:[]};
+  const opt=function(c){
+    const k=_plCounts(c);
+    return '<option value="'+_calEsc(c.id)+'">'+_calEsc(c.addr||'')+' — '+(k.done?'complete':(k.n+'/'+k.t))+'</option>';
+  };
+  const soon=g.soon.slice().sort(function(a,b){ return String(a.addr||'').localeCompare(String(b.addr||'')); }).map(opt).join('');
+  const rest=g.later.slice().sort(function(a,b){ return String(a.addr||'').localeCompare(String(b.addr||'')); }).map(opt).join('');
+  return _mFormWrap("Pre-listing information",
+    '<div style="font-size:13px;color:#566070;margin-bottom:10px;line-height:1.5">What a realtor needs to write the listing. Pick the house and the boxes fill in with whatever is already answered — including the four the site knows from the scope of work.</div>'
+    +'<div class="m-label">Property</div>'
+    +'<select id="mpl-prop" class="m-select" onchange="_mPLPropPick()"><option value="">— Pick the property —</option>'
+      +(soon?'<optgroup label="Coming soon">'+soon+'</optgroup>':'')
+      +(rest?'<optgroup label="Listed or further on">'+rest+'</optgroup>':'')
+    +'</select>'
+    +'<div id="mpl-fields"></div>');
+}
+function _mPLPropPick(){
+  const sel=document.getElementById('mpl-prop');
+  const box=document.getElementById('mpl-fields');
+  if(!sel||!box) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===sel.value; });
+  if(!c){ box.innerHTML=''; return; }
+  const E=_calEsc, k=_plCounts(c);
+  const html=PRELIST_GROUPS.map(function(gr){
+    return '<div style="margin-top:16px"><div style="font-size:15px;font-weight:700;color:#111">'+E(gr.title)+'</div>'
+      +'<div style="font-size:12.5px;color:#566070;margin-bottom:2px">'+E(gr.hint)+'</div>'
+      +gr.fields.map(function(f){
+        const key=f[0], typed=_plTyped(c,key).trim(), auto=_plAuto(c,key), from=(!typed&&auto)?_plAutoFrom(c,key):'';
+        const v=typed||auto;
+        const lab='<div class="m-label" style="margin-top:10px">'+E(f[1])
+          +(from?'<span style="font-weight:400;color:#0F7B54"> · from '+E(from)+'</span>':'')+'</div>';
+        return lab+(f[2]==='area'
+          ? '<textarea id="mpl-f-'+E(key)+'" class="m-input" rows="3" style="min-height:70px;resize:vertical;font-family:inherit" placeholder="'+E(f[3]||'')+'">'+E(v)+'</textarea>'
+          : '<input id="mpl-f-'+E(key)+'" class="m-input" value="'+E(v)+'" placeholder="'+E(f[3]||'')+'"/>');
+      }).join('')+'</div>';
+  }).join('');
+  box.innerHTML=html
+    +'<div style="margin-top:16px;font-size:13px;color:#566070">'+k.n+' of '+k.t+' answered'+(k.done?(' · marked complete '+E(k.done)):'')+'</div>'
+    +'<button class="m-btn" onclick="_submit(\'m-pl\',this,\'Saving…\',_mSubmitPL)">Save the pre-listing form</button>'
+    +(k.done?'':'<button class="m-btn m-btn-lite" style="margin-top:8px" onclick="_mSubmitPL(true)">Save and mark it complete</button>');
+}
+async function _mSubmitPL(markDone){
+  const sel=document.getElementById('mpl-prop');
+  const pid=sel?sel.value:'';
+  if(!pid){ alert('Pick the property first.'); return; }
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===pid; });
+  if(!c){ alert('That property is not loaded — pull down to refresh and try again.'); return; }
+  const patch={};
+  PRELIST_FIELDS.forEach(function(f){
+    const el=document.getElementById('mpl-f-'+f[0]);
+    if(!el) return;
+    const v=String(el.value==null?'':el.value).trim();
+    // A box left showing the automatic answer is NOT an override - writing it back would
+    // freeze today's scope-of-work value into the record and it would never update again.
+    if(v && v===_plAuto(c,f[0]) && !_plTyped(c,f[0])) return;
+    patch[f[0]]=v;
+  });
+  const ok=await _plSetMany(pid, patch, markDone===true);
+  if(!ok) return;
+  _toast('Pre-listing form saved'+(markDone===true?' and marked complete':''));
+  _mGo('add');
 }
 // Picking the property fills the PM in, because the card already knows who it is.
 function _mCOPropPick(){
@@ -33929,4 +34279,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-17h timeline-wording-from-live-data -->
+<!-- build: 2026-10-17i prelisting-form-four-doors -->
