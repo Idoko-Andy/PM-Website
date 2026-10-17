@@ -12588,7 +12588,14 @@ const MKT_PDF_FIELDS = {
           ['insp_date','Inspection date'],['appr_date','Appraisal date'],['close_date','Close date'],
           ['rem_due','Remedies need done by'],['rem_started','Remedies started'],
           ['rem_done','Remedies completed'],['rem_status','Remedy status'],
-          ['lag','Lag times and why'],['closing','Closing notes']]
+          ['lag','Lag times and why'],['closing','Closing notes'],
+          // Found 17 Oct while checking the site against Katie's doc line by line.
+          // In Contract has always ASKED for check-in dates and always SAVED them, but
+          // the field was never in this list - so every open house and walk somebody
+          // typed was dropped from the PDF and the email the room actually reads. The
+          // computed ones (the finished on-market checklists) are drawn on screen from
+          // the checklist data; this is the half a person adds by hand.
+          ['checkins','Check-in dates added by hand']]
 };
 function _mktPdfKind(c){
   if(MKT_PHASES.soon.indexOf(c.phase)>=0)   return 'soon';
@@ -13569,6 +13576,7 @@ const MKT_CARRY = [
   'pm',
   'contract_price',
   'close_date',
+  'checkins',         // visits accumulate over the whole listing, so they carry forward
   'sugg_price',
   'doc_comps','doc_range','doc_reco','doc_why'   // the Suggested Listing Doc
 ];
@@ -34588,4 +34596,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-17n in-contract-checkin-dates -->
+<!-- build: 2026-10-17o checkins-reach-the-pdf -->
