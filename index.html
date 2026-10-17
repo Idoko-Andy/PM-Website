@@ -24482,6 +24482,11 @@ async function _permitInspSubphase(permit, ins, passed){
   const {data,error}=await supabase.from("pm_properties").update({sub_phases:subs}).eq("id",c.id).select("id");
   if(error||!data||!data.length) return false;
   c.subPhases=subs;
+  // Passing an inspection here ticks the subphase on the card, so the PM's own task has
+  // to go with it - that is the half that was missing. This one mirrors `passed` both
+  // ways, because unlike the permit steps an inspection CAN come back un-ticked (a fail
+  // re-opens it), and leaving the task closed would hide work that is live again.
+  await _spCloseTasksForSteps(c, [label], !!passed);
   return true;
 }
 // Every inspection on the tracker that never made it onto its property card. They
@@ -24599,15 +24604,36 @@ async function _permitWriteSubs(permit, steps){
 // Same writer, addressed to a card rather than to one permit. The house-level steps
 // ("Permits Submitted" and friends) are about every permit on the house at once, so
 // there is no single permit to hang them off.
+// Bruce, 17 Oct: "when it's marked completed on the subphase it needs to clean up the
+// personal scheduled tasks and mark them completed too."
+// _spTasksDone already did exactly that - but it was only ever called from the two
+// places a PERSON ticks a step: toggleSubPhaseComplete and approveSubPhase. Everything
+// the PERMIT TRACKER ticked went round the back of it, so the card showed the step
+// finished while the task sat open on somebody's list for ever. On 17 Oct that was four
+// inspections on 5120 Bigelow - framing, insulation, footing and rough plumbing, all
+// passed on the tracker, all still open and overdue on Andrew Scrape's list since
+// mid-September. This is the shared closer the tracker writers call.
+async function _spCloseTasksForSteps(card, labels, done){
+  if(!card || !labels || !labels.length) return 0;
+  if(typeof _spTasksDone!=='function') return 0;
+  let n=0;
+  for(const label of labels){
+    try{ n += (await _spTasksDone(card.id, label, !!done)) || 0; }catch(e){}
+  }
+  return n;
+}
 async function _permitWriteSubsOn(c, steps){
   if(!c) return false;
   const subs=Array.isArray(c.subPhases)?c.subPhases.map(s=>Object.assign({},s)):[];
   let changed=false;
+  // the steps this write is ticking for the first time - their tasks need closing too
+  const newlyDone=[];
   const set=(o,k,v)=>{ if(String(o[k]||"")!==String(v||"")){ o[k]=v||""; changed=true; } };
   steps.forEach((st)=>{
     const i=subs.findIndex(s=>String(s.name||"")===st.label);
     if(i<0){
       subs.push({ name:st.label, start:st.start||"", due:st.due||"", completed:!!st.done });
+      if(st.done) newlyDone.push(st.label);
       changed=true;
       return;
     }
@@ -24617,12 +24643,14 @@ async function _permitWriteSubsOn(c, steps){
     if(st.due)   set(subs[i],'due',st.due);
     // Never un-tick something already finished. Somebody ticked it for a reason, and
     // pulling ticks back out from under the room mid-week is how trust goes.
-    if(st.done && !subs[i].completed){ subs[i].completed=true; changed=true; }
+    if(st.done && !subs[i].completed){ subs[i].completed=true; newlyDone.push(st.label); changed=true; }
   });
   if(!changed) return true;
   const {data,error}=await supabase.from("pm_properties").update({sub_phases:subs}).eq("id",c.id).select("id");
   if(error||!data||!data.length) return false;
   c.subPhases=subs;
+  // Only ever CLOSE from here. These steps never un-tick, so there is nothing to reopen.
+  await _spCloseTasksForSteps(c, newlyDone, true);
   return true;
 }
 // ---- the house-level permit steps -------------------------------------------------
@@ -24716,6 +24744,106 @@ async function _permitCatchUpCards(opts){
 }
 // Once per session, quietly, when the trackers are loaded. A card nobody has opened is
 // just as wrong as one somebody is looking at.
+// ---- catching the TASKS up ---------------------------------------------------------
+// The fix above only closes a task at the moment the tracker ticks its step. Everything
+// the tracker ticked BEFORE that fix existed is still sitting open on somebody's list -
+// on 17 Oct, four inspections on 5120 Bigelow, passed in September, still overdue on
+// Andrew Scrape's tab. This walks every card once a session and closes any task whose
+// subphase is already finished.
+// It only ever CLOSES, and only where the card says the step is done, so it cannot
+// reopen anything or invent work. A step that needs approval is not "done" until it is
+// approved - the same test the rest of the app uses.
+async function _spTaskCatchUp(opts){
+  const quiet=!!(opts&&opts.quiet);
+  if(typeof propCards==='undefined' || !propCards || !propCards.length) return 0;
+  if(typeof _tasksCache==='undefined' || !_tasksCache) return 0;
+  if(typeof isReadOnly==='function' && isReadOnly()) return 0;
+  let closed=0; const touched=[];
+  for(const c of propCards){
+    if(!c || c.archived) continue;
+    const subs=Array.isArray(c.subPhases)?c.subPhases:[];
+    for(const sp of subs){
+      if(!sp || !sp.name) continue;
+      const needsAppr=(typeof subphaseNeedsApproval==='function') ? subphaseNeedsApproval(sp.name) : false;
+      const done=!!(sp.completed && (!needsAppr || sp.approved));
+      if(!done) continue;
+      const ids=(typeof _spTaskIds==='function')?_spTaskIds(c.id, sp.name):[];
+      const stillOpen=ids.filter(function(id){
+        const t=_tasksCache.find(function(x){ return x.id===id; });
+        return t && t.status!=='done';
+      });
+      if(!stillOpen.length) continue;
+      try{
+        const n=await _spTasksDone(c.id, sp.name, true);
+        if(n){ closed+=n; touched.push((c.addr||'a property')+' \u2014 '+sp.name); }
+      }catch(e){}
+    }
+  }
+  if(closed && typeof _logAudit==='function'){
+    _logAudit("completed","task","", closed+" task"+(closed===1?"":"s")+
+      " closed to match a finished sub phase: "+touched.slice(0,6).join('; ')+
+      (touched.length>6?(' and '+(touched.length-6)+' more'):''));
+  }
+  if(!quiet && typeof _toast==='function' && closed){
+    _toast(closed+" task"+(closed===1?"":"s")+" closed to match a finished sub phase");
+  }
+  return closed;
+}
+async function _spTaskCatchUpOnce(){
+  if(window.__spTaskCaught) return;
+  if(typeof propCards==='undefined' || !propCards || !propCards.length) return;
+  if(typeof _tasksCache==='undefined' || !_tasksCache || !_tasksCache.length) return;
+  if(typeof isReadOnly==='function' && isReadOnly()) return;
+  window.__spTaskCaught=true;
+  try{ await _spTaskCatchUp({quiet:true}); }catch(e){}
+}
+// ---- the permitted tick, read off the Permit Tracker --------------------------------
+// Bruce, 17 Oct: "when a property has permits in the permit tracker, it auto checks in
+// the property info that the job is permitted."
+// The tracker is the record of whether permits exist; the tick was somebody's memory of
+// setting it, and the two drifted. 427-439 Hanford carried permits on the tracker while
+// its own card read "Full Rehab No Permit" and the permitted box was never ticked.
+// This only ever ticks ON. An empty tracker does NOT mean a house is unpermitted - it
+// usually means Jen has not entered the permit yet - so nothing here ever unticks, and
+// a house somebody has deliberately marked "no" is left alone rather than argued with.
+async function _permitAutoTickPermitted(opts){
+  const quiet=!!(opts&&opts.quiet);
+  if(typeof propCards==='undefined' || !propCards || !propCards.length) return 0;
+  if(typeof _permitList!=='function' || typeof _permitProp!=='function') return 0;
+  if(typeof isReadOnly==='function' && isReadOnly()) return 0;
+  const rows=_permitList();
+  if(!rows.length) return 0;
+  const withPermits={};
+  rows.forEach(function(r){ try{ const c=_permitProp(r); if(c) withPermits[c.id]=c; }catch(e){} });
+  let n=0; const names=[];
+  for(const id of Object.keys(withPermits)){
+    const c=withPermits[id];
+    if(!c || c.archived) continue;
+    const cur=String(((c.checklists||{}).permitted)||'').trim().toLowerCase();
+    if(cur==='yes') continue;            // already ticked
+    if(cur==='no') continue;             // a person said no - leave it to them
+    const ok=await _wmChecklistPatch(c.id, {permitted:'yes'});
+    if(!ok) continue;
+    n++; names.push(c.addr||'a property');
+    if(typeof _logAudit==='function'){
+      _logAudit("updated","property", c.addr||"",
+        "Marked permitted automatically \u2014 the Permit Tracker carries a permit for this house");
+    }
+  }
+  if(!quiet && typeof _toast==='function' && n){
+    _toast(n+" propert"+(n===1?"y":"ies")+" marked permitted from the Permit Tracker");
+  }
+  return n;
+}
+async function _permitAutoTickOnce(){
+  if(window.__permTicked) return;
+  if(window._trkLoadOk===false) return;
+  if(typeof propCards==="undefined" || !propCards || !propCards.length) return;
+  if(typeof _permitList!=='function' || !_permitList().length) return;
+  if(typeof isReadOnly==="function" && isReadOnly()) return;
+  window.__permTicked=true;
+  try{ await _permitAutoTickPermitted({quiet:true}); }catch(e){}
+}
 async function _permitCatchUpOnce(){
   if(window.__permCaught) return;
   // Do not spend the one shot before the pieces are here. With no property cards
@@ -24726,6 +24854,10 @@ async function _permitCatchUpOnce(){
   if(typeof isReadOnly==="function" && isReadOnly()) return;
   window.__permCaught=true;
   try{ await _permitCatchUpCards({quiet:true}); }catch(e){}
+  // the tick first, so a house the tracker knows about is permitted before anything
+  // reads that flag; then the tasks that the tracker finished but never closed
+  try{ await _permitAutoTickOnce(); }catch(e){}
+  try{ await _spTaskCatchUpOnce(); }catch(e){}
 }
 // Revisions means Jen has drawings to redo. That is real work with a date on it,
 // so it becomes a scheduled task rather than a colour on a dropdown.
@@ -24760,8 +24892,27 @@ async function _permitRevisionTask(id){
 async function _permitAfterChange(id, field){
   // Bruce, 27 Sept: the dates on the card come off the tracker now, so a change to any
   // of the dates has to reach the card too - not just the status.
-  if(["status","submitted","number","received","issued","drawings"].indexOf(field)<0) return;
+  // The address is what ties a permit to a house, so a change to it can bring a card
+  // into scope that was not in scope a moment ago - that is why "addr" is on this list
+  // even though it writes no dates.
+  if(["status","submitted","number","received","issued","drawings","addr"].indexOf(field)<0) return;
   try{ await _permitSyncCard(id); }catch(e){}
+  // Jen entering a permit IS the statement that this house is permitted. Tick it now
+  // rather than waiting for the next session's sweep.
+  try{
+    const _r=((window._trkData||{}).permits||{})[id];
+    const _c=_r?_permitProp(_r):null;
+    if(_c && !_c.archived){
+      const _cur=String(((_c.checklists||{}).permitted)||'').trim().toLowerCase();
+      if(_cur!=='yes' && _cur!=='no'){
+        const _ok=await _wmChecklistPatch(_c.id, {permitted:'yes'});
+        if(_ok && typeof _logAudit==='function'){
+          _logAudit("updated","property", _c.addr||"",
+            "Marked permitted automatically \u2014 a permit was entered on the Permit Tracker");
+        }
+      }
+    }
+  }catch(e){}
   if(field==="status"){
     const st=String((((window._trkData||{}).permits||{})[id]||{}).status||"");
     if(st==="Revisions" || st==="Corrections Required"){ try{ await _permitRevisionTask(id); }catch(e){} }
@@ -33266,4 +33417,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-17a goal-bl-value-shared-across-meetings -->
+<!-- build: 2026-10-17b permitted-autotick subphase-task-cleanup -->
