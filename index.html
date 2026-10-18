@@ -25957,7 +25957,11 @@ function _inspStampedDates(){
       if(!s || s.completed) return;
       const a=String(s.start||'').trim(), b=String(s.due||'').trim();
       if(!a || !b) return;
-      const gap=(Date.parse(b+'T00:00:00')-Date.parse(a+'T00:00:00'))/86400000;
+      // Math.round, not a bare division. The clocks go back on 1 November, so a pair
+      // either side of it is 7.0417 days apart and an exact ===7 quietly skipped every
+      // stamp written in the last week of October - the ones most likely to still be on
+      // a card. _daysBetween has always rounded for the same reason.
+      const gap=Math.round((Date.parse(b+'T00:00:00')-Date.parse(a+'T00:00:00'))/86400000);
       if(gap!==7) return;
       out.push({card:c, label:label, start:a, due:b});
     });
@@ -29382,6 +29386,14 @@ function _ctDupAsk(name, business, phone){
 function _ctTrades(c){
   return String((c&&c.trade)||'').split(',').map(function(s){ return s.trim(); }).filter(Boolean);
 }
+// The trade list is stored comma separated, so a comma inside one trade name would
+// split it into two the next time anybody read it - "Gutters, Soffit & Fascia" became
+// two trades, on the contractor and in the list of types. Rather than refuse the name,
+// fold it into the slash the house style already uses: "Framing / Carpentry",
+// "Concrete / Masonry". The caller says so out loud when it changes what was typed.
+function _ctTradeClean(t){
+  return String(t||'').replace(/\s*,\s*/g,' / ').replace(/\s+/g,' ').trim();
+}
 function _ctTradeStr(list){
   const seen=[], out=[];
   (list||[]).forEach(function(t){
@@ -29428,8 +29440,14 @@ async function _ctTradeAdd(id, trade){
   if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
   let t=String(trade||'').trim();
   if(t==='__other__'){
-    t=String(prompt('What trade?')||'').trim();
-    if(!t){ renderContractorDirectory(); return; }
+    const typed=String(prompt('What trade?')||'').trim();
+    if(!typed){ renderContractorDirectory(); return; }
+    t=_ctTradeClean(typed);
+    if(t!==typed) alert('Saved as "'+t+'".\n\nA trade name cannot hold a comma \u2014 the trades on a contractor are kept as a comma-separated list, so one would split in two.');
+    // If it is the same trade as one we already have, written differently, use the
+    // spelling that is already in the directory rather than starting a second one.
+    const match=_ctAllTrades().find(function(x){ return _ctTierSlug(x)===_ctTierSlug(t); });
+    if(match) t=match;
   }
   if(!t){ renderContractorDirectory(); return; }
   const c=(_contractorsCache||[]).find(function(x){ return x.id===id; }); if(!c) return;
@@ -29459,10 +29477,17 @@ function _ctCustomTrades(){
 async function _ctTradeTypeAdd(){
   if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
   const el=document.getElementById('ct-newtrade');
-  const t=String((el&&el.value)||'').trim();
-  if(!t){ if(el) el.focus(); return; }
-  if(_ctAllTrades().some(function(x){ return x.toLowerCase()===t.toLowerCase(); })){
-    alert('"'+t+'" is already one of the trade types.');
+  const typed=String((el&&el.value)||'').trim();
+  if(!typed){ if(el) el.focus(); return; }
+  const t=_ctTradeClean(typed);
+  if(t!==typed) alert('Saved as "'+t+'".\n\nA trade name cannot hold a comma \u2014 the trades on a contractor are kept as a comma-separated list, so one would split in two.');
+  // Matched on the ranking key, not just the text. "Framing / Carpentry" and "Framing
+  // Carpentry" are the same trade as far as the per-trade rankings are concerned, so
+  // letting both exist would have two trade types quietly sharing one set of rankings.
+  const clash=_ctAllTrades().find(function(x){ return _ctTierSlug(x)===_ctTierSlug(t); });
+  if(clash){
+    alert(clash===t ? ('"'+t+'" is already one of the trade types.')
+                    : ('"'+t+'" is the same trade as "'+clash+'", which is already on the list.\n\nUse that one \u2014 two spellings of one trade would share a single set of rankings and disagree with each other.'));
     if(el) el.value=''; return;
   }
   const next=_ctCustomTrades(); next.push(t);
@@ -35640,4 +35665,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-17v field-app-skips-baseline -->
+<!-- build: 2026-10-18a trade-comma-safe no-slug-collision dst-safe-stamp-sweep -->
