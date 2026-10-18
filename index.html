@@ -11576,7 +11576,16 @@ const WM_TOPICS = [
 // and becomes Vacancy (tenants and utilities are what a vacancy actually turns on), and
 // 'lag' keeps its key and becomes the recap at the end.
 const WM_TD_TOPICS = [
-  {key:'close',  icon:'\u{1F4C6}', title:'Closing',                     sub:'the date we buy it, the money, and whether it is on plan'},
+  // Bruce, 18 Oct: "1325 Westwood, how it has confirmed closed - that section for
+  // closing doesn't even need to appear. We can still discuss the vacancy section, the
+  // last week section, the scheduled this and next week section, and the recap."
+  // Once the purchase is confirmed there is nothing left to say about a closing that
+  // has happened, and an open heading on it only makes the room tick an empty box.
+  // Plain City has not closed, so Plain City keeps its closing section.
+  // Note what this does NOT do: the notes already typed under 'close' are untouched and
+  // still read on the property's history. The heading is hidden, not the record.
+  {key:'close',  icon:'\u{1F4C6}', title:'Closing',                     sub:'the date we buy it, the money, and whether it is on plan',
+   when:function(c){ return !(c && c.purchaseConfirmed); }},
   {key:'access', icon:'\u{1F511}', title:'Vacancy',                     sub:'when it empties, and the access, tenants and utilities behind that'},
   {key:'last',   icon:'\u{1F4C5}', title:'Last week',                   sub:'what was scheduled, and what went right'},
   {key:'next',   icon:'\u{1F5D3}', title:'This week & next week',       sub:'what is booked'},
@@ -15472,6 +15481,103 @@ function _kickCardRow(c){
 // vacant, who is on it, and anything anybody wants to flag. The pricing, the
 // comps and the line-by-line scope stay in the Kickoff meeting - repeating them
 // here would only give the room two places to disagree with itself.
+// ===================== A HOUSE THAT HAS CLOSED AND GONE VACANT ==================
+// Bruce, 18 Oct: "6610 Geyer Street closed and is confirmed vacant, so it got moved into
+// vacant on standby ... figure out why it didn't automatically move into the vacant on
+// standby channel as well. Figure out what that bug was ... I really want the coding in
+// the website to do as much automation as possible."
+//
+// THE BUG, plainly: there was no code. Nothing anywhere watched purchase_confirmed or
+// the vacancy date. A takedown sat in Upcoming Takedowns until a person dragged it, and
+// when nobody did - because Gabe had no reason to know those two jobs were waiting - it
+// stayed on the Monday takedown list long after we owned it and it was empty. Same for
+// 4521 St. Margaret Lane. It was never a broken rule; it was a missing one.
+//
+// The rule now: a house we HAVE BOUGHT and that HAS GONE VACANT is not a takedown any
+// more, it is a construction job. So it moves itself to Vacant / On Standby, which puts
+// it straight onto the Monday construction walk (WM_TEAM_PHASES already starts there)
+// and takes it off the takedown tab.
+//
+// Four guards, because this writes to a property card on its own:
+//   1. ONE DIRECTION ONLY. It fires from Upcoming Takedowns and Occupied / Closed, and
+//      only into Vacant / On Standby. It can never pull a house backwards.
+//   2. BOTH FACTS, NOT ONE. The purchase has to be confirmed AND the vacancy date has to
+//      have arrived. A date on its own is a plan; confirmation on its own is a house with
+//      tenants still in it.
+//   3. ONCE PER HOUSE, EVER. The move is recorded in the trackers record. If somebody
+//      puts the house back on the takedown list on purpose, this does not argue with
+//      them - a human overruling an automation is the end of the conversation.
+//   4. IT SAYS WHAT IT DID. Every move is written to the audit log and shown on screen.
+//      An automation nobody can see is just a thing that happens to your data.
+const AUTO_VACANT_FROM = ["Upcoming Takedowns","Occupied / Closed"];
+const AUTO_VACANT_TO   = "Vacant / On Standby";
+function _avDone(){ const d=(window._trkData||{}).auto_phase; return (d&&typeof d==='object')?d:{}; }
+function _avAlready(pid){ return !!_avDone()[pid]; }
+// Which houses qualify right now. Pure - it reads and decides, it never writes.
+function _avDue(){
+  const today=_ymd(new Date());
+  return (typeof propCards!=='undefined'?propCards:[]).filter(function(c){
+    if(!c || c.archived) return false;
+    if(AUTO_VACANT_FROM.indexOf(c.phase)<0) return false;
+    if(!c.purchaseConfirmed) return false;
+    const v=String(c.vacancyDate||'').trim();
+    if(!v || v>today) return false;
+    return !_avAlready(c.id);
+  });
+}
+// Runs itself once a session, after the properties and the trackers are both in.
+// It deliberately does NOT run for a read-only viewer: somebody looking at the board
+// should not be writing to it.
+async function _avSweep(){
+  try{
+    if(typeof isReadOnly==='function' && isReadOnly()) return;
+    if(window.__avRunning) return;
+    if(!window._trkLoaded) return;          // without the record we cannot tell what already moved
+    const due=_avDue();
+    if(!due.length) return;
+    window.__avRunning=true;
+    const moved=[];
+    for(const c of due){
+      const r=await supabase.from("pm_properties").update({ phase:AUTO_VACANT_TO }).eq("id",c.id).select("id");
+      // A refused update comes back error:null with no rows. Recording a move the
+      // database never took would stop it being retried, so only a real row counts.
+      if(r.error || !r.data || !r.data.length) continue;
+      moved.push(c);
+      try{
+        const d=window._trkData||{};
+        d.auto_phase=d.auto_phase||{};
+        d.auto_phase[c.id]={ at:new Date().toISOString(), to:AUTO_VACANT_TO, from:c.phase };
+        window._trkData=d;
+      }catch(e){}
+      if(typeof _logAudit==='function') _logAudit('updated','property', c.addr||'',
+        'Moved itself from '+c.phase+' to '+AUTO_VACANT_TO+' \u2014 the purchase is confirmed and the vacancy date ('+(c.vacancyDate||'')+') has passed');
+    }
+    window.__avRunning=false;
+    if(!moved.length) return;
+    try{ await _trkSave(); }catch(e){}
+    window.__avMoved=(window.__avMoved||[]).concat(moved.map(function(c){ return { addr:c.addr||'', from:c.phase, v:c.vacancyDate||'' }; }));
+    if(typeof loadPropertiesFromSupabase==='function') await loadPropertiesFromSupabase();
+    if(typeof _wmRerenderIfOpen==='function') _wmRerenderIfOpen();
+  }catch(e){ window.__avRunning=false; }
+}
+// The notice. It sits at the top of the Monday meeting until somebody reads it.
+function _avNotice(){
+  const m=window.__avMoved||[];
+  if(!m.length) return '';
+  return '<div style="background:#EAF3FC;border:1px solid #B8D4F0;border-radius:11px;padding:12px 15px;margin-bottom:14px">'
+    +'<div style="font-size:13.5px;font-weight:700;color:#174a7c;margin-bottom:3px">'
+      +m.length+' house'+(m.length===1?'':'s')+' moved '+(m.length===1?'itself':'themselves')+' to Vacant / On Standby</div>'
+    +'<div style="font-size:12px;color:#174a7c;margin-bottom:6px">We own '+(m.length===1?'it':'them')+' and '+(m.length===1?'it has':'they have')+' gone vacant, so '+(m.length===1?'it is':'they are')+' construction work now, not a takedown. '+(m.length===1?'It':'They')+' moved off the takedown tab and onto the construction walk.</div>'
+    + m.map(function(x){ return '<div style="font-size:12.5px;color:#111;padding:2px 0"><b>'+_calEsc(x.addr)+'</b><span style="color:#566070"> \u2014 was '+_calEsc(x.from)+', vacant since '+_calEsc(x.v||'(no date)')+'</span></div>'; }).join('')
+    +'<div style="margin-top:8px"><span onclick="window.__avMoved=[];openWeeklyMeeting(\'team\',window.__wmLastWeek||undefined)" style="cursor:pointer;font-size:12px;color:#185FA5;font-weight:600">Got it &rsaquo;</span></div>'
+  +'</div>';
+}
+function _wmRerenderIfOpen(){
+  try{
+    const doc=document.querySelector('[data-wm-doc]');
+    if(doc && doc.getAttribute('data-wm-doc')==='team') openWeeklyMeeting('team', doc.getAttribute('data-wm-week')||undefined);
+  }catch(e){}
+}
 const WM_TAKEDOWN_PHASES=["Upcoming Takedowns","Occupied / Closed"];
 function _wmTakedownCards(){
   const _n=(a)=>{ const m=String(a||'').match(/\d+/); return m?parseInt(m[0],10):999999; };
@@ -15534,6 +15640,23 @@ function _wmTakedownBody(wk, notes, prevNotes, roNow, ta2){
         ${(kn&&kn.done)?`<div style="margin-top:9px"><button onclick="_kickOpenPDF('${c.id}')" style="padding:6px 13px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">&#128196; Kickoff notes PDF</button></div>`:''}
         ${_wmTdTopics(wk, c, roNow, ta2, kn)}
         ${_sqBody(c, true)}
+        ${roNow?'':(function(){
+          // Bruce, 18 Oct: "when I'm clicking on a property, it doesn't have the option
+          // to click like ready for meeting, separately, in case all the categories
+          // aren't filled out but it is partially ready for what it can be. I just left
+          // the other areas blank because they're blank."
+          // The construction cards had these two buttons from the start; the takedown
+          // cards never got them, so the only way a takedown could go blue was to tick
+          // every topic on it - which is the opposite of what Ready is for. Ready is the
+          // person saying THEIR half is done, whatever is still empty.
+          const _tst=_wmStateOf(wk, c.id);
+          const _tcov=(_tst==='done');
+          return '<div style="margin-top:12px;padding-top:11px;border-top:0.5px solid #eef0f6;display:flex;gap:8px;flex-wrap:wrap;align-items:center">'
+            +'<span style="font-size:11.5px;color:#566070;flex:1;min-width:180px">You do not have to fill in every section \u2014 mark it ready with whatever is filled in, and leave the blanks blank.</span>'
+            +'<button onclick="_wmReady(\''+wk+'\',\''+c.id+'\')" style="padding:7px 14px;background:'+(_tst==='ready'?'#fff':'#185FA5')+';border:'+(_tst==='ready'?'0.5px solid #B8D4F0':'none')+';border-radius:8px;font-size:12.5px;font-weight:600;color:'+(_tst==='ready'?'#185FA5':'#fff')+';cursor:pointer;white-space:nowrap">'+(_tst==='ready'?'Not ready after all':'\u270E Ready for the meeting')+'</button>'
+            +'<button onclick="_wmCovered(\''+wk+'\',\''+c.id+'\')" style="padding:7px 14px;background:'+(_tcov?'#fff':'#0F7B54')+';border:'+(_tcov?'0.5px solid #cdd7e6':'none')+';border-radius:8px;font-size:12.5px;font-weight:600;color:'+(_tcov?'#566070':'#fff')+';cursor:pointer;white-space:nowrap">'+(_tcov?'Reopen this one':'\u2713 Done with this one')+'</button>'
+          +'</div>';
+        })()}
       </div>
     </details>`;
   }).join('');
@@ -16942,6 +17065,10 @@ function openWeeklyMeeting(kind, week){
           </div>
         </summary>
         <div style="padding:0 16px 14px">
+        ${roNow?'':`<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:2px 0 10px;padding:8px 11px;background:#F7F8FB;border:0.5px solid #e6e9f0;border-radius:9px">
+          <span style="font-size:11.5px;color:#566070">Your half done? You do not have to fill in every section &mdash; mark it ready with whatever is filled in.</span>
+          <button onclick="_wmReady('${wk}','${c.id}')" style="margin-left:auto;padding:6px 13px;background:${_st==='ready'?'#fff':'#185FA5'};border:${_st==='ready'?'0.5px solid #B8D4F0':'none'};border-radius:7px;font-size:12.5px;font-weight:600;color:${_st==='ready'?'#185FA5':'#fff'};cursor:pointer;white-space:nowrap">${_st==='ready'?'Not ready after all':'&#9998; Ready for the meeting'}</button>
+        </div>`}
         <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:8px">
           <span onclick="openPropDetail('${c.id}')" style="cursor:pointer;font-size:13px;color:#185FA5">Open the property card &rsaquo;</span>
           <span style="font-size:12px;color:#666">${_calEsc(_phLabel(c.phase))} &middot; PM: ${_calEsc(c.pm)||'&mdash;'}${perm?' &middot; &#127963; Permitted':''}</span>
@@ -17141,10 +17268,14 @@ function openWeeklyMeeting(kind, week){
   // the property cards keep a readable column inside it, because that half IS the
   // document. The other meetings are still single-column write-ups, so they keep the
   // narrow measure - long lines of prose are genuinely harder to read.
+  // A takedown we have bought and that has gone vacant moves itself onto the
+  // construction walk. Fired here because this is the screen the mistake showed up on.
+  if(kind==='team'){ try{ window.__wmLastWeek=wk; Promise.resolve(_avSweep()); }catch(e){} }
   const _wmWide = (kind==='team');
   document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div data-wm-doc="${kind}" data-wm-week="${wk}" style="padding:20px ${_wmWide?'26px':'20px'};max-width:${_wmWide?'none':'1000px'};margin:0 auto">
     <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:4px"><div style="font-size:18px;font-weight:700;color:#111">${titles[kind]||'Weekly Meeting'}</div><div style="font-size:13px;color:#566070">${kind==='va'?_calEsc(_vaMeetMonthLabel(wk)):'Week of '+_calEsc(_wmLabel(wk))} &middot; ${_wmWhenLabel(kind)}${isPast?' &middot; archived':''}</div></div>
     <div style="font-size:12.5px;color:#566070;margin-bottom:14px">Auto-prefilled from live data. <b style="color:#0F7B54">Everything saves itself as you type</b> — the Save buttons still work, you just don't need them. Notes are shared with everyone for this week's meeting.${isPast?' <b style="color:#8a6d1a">You are looking back at a past week.</b>':''}</div>
+    ${kind==='team'?_avNotice():''}
     ${_wmArchive(kind, wk)}
     ${(kind==='team'||kind==='market') && typeof _ctlPanel==='function' ? _ctlPanel(isReadOnly()||isPast) : ''}
     ${body}
@@ -17825,6 +17956,159 @@ function openPMDashboard() { _propFromSet('openPMDashboard',[]);
 }
 
 // ===================== SOP DATA =====================
+// ===================== THE VA's WEEK, ONCE =====================================
+// Bruce, 18 Oct, sent the finished schedule as a PDF: "here's that PDF I'd like to link
+// to that job role for Patience on our website for now too."
+//
+// It is kept HERE, as data, rather than as a file sitting in the repo. A file would be a
+// photograph of the week as it was the day it was made; the moment he changes a block it
+// is wrong and nobody can tell by looking. From this one list the site writes both the
+// job role SOP text AND the printable sheet, so the page and the PDF cannot disagree -
+// which is his own rule: put it in once, it shows up everywhere.
+//
+// His uploaded version settled three things the dictated one had left open: every day
+// starts at 8:30, Wednesday's last block is post-construction, and Tuesday's third block
+// is the active construction checklists in CompanyCam.
+const VA_BLOCK_KIND = {
+  plan: { label:'Planning & follow-up',     col:'#122A4A' },
+  util: { label:'Utilities',                col:'#B9821A' },
+  pre:  { label:'Pre-Construction',         col:'#AF2C2B' },
+  act:  { label:'Active Construction',      col:'#639922' },
+  post: { label:'Post-Construction',        col:'#7A3FA8' },
+  book: { label:'Bookkeeping & paperwork',  col:'#11657A' },
+  web:  { label:'Website & automations',    col:'#566070' },
+  zoom: { label:'Zoom / meeting',           col:'#15181D' }
+};
+const VA_WEEK = [
+  { day:'Monday', hours:'8:30 AM – 4:30 PM', blocks:[
+    { t:'8:30 – 10:30 AM', k:'plan', n:'Planning & scheduling',
+      d:"Organise your week and team members' to-do lists. Review what was left from last week and set the priorities." },
+    { t:'10:30 AM – 12:30 PM', k:'util', n:'Utilities',
+      d:'Follow up on every open utility request. Coordinate with Jeriel. Schedule the interns for on-site utility appointments.' },
+    { t:'12:30 – 2:30 PM', k:'plan', n:'Tasks & unfinished work',
+      d:'Your own outstanding tasks, and anything that did not get finished the week before.' },
+    { t:'2:30 – 4:30 PM', k:'post', n:'Post-Construction',
+      d:'Work the Post-Construction section of the project dashboard. Follow up with the PMs, Marlo and VA Andy on closed properties.' }
+  ]},
+  { day:'Tuesday', hours:'8:30 AM – 4:30 PM', blocks:[
+    { t:'8:30 – 9:00 AM', k:'zoom', n:'Monthly Zoom meeting',
+      d:'A rotating half hour with one part of the project team. The rota is below.' },
+    { t:'9:00 – 10:30 AM', k:'post', n:'Post-Construction',
+      d:'Post-construction checklist work and follow-ups. An hour and a half today.' },
+    { t:'10:30 AM – 12:00 PM', k:'util', n:'Utilities',
+      d:'Utility follow-ups and intern scheduling. An hour and a half today — the meeting takes the other half hour.' },
+    { t:'12:00 – 2:00 PM', k:'act', n:'Active construction checklists',
+      d:'Review the active project checklists in CompanyCam. Follow up with the interns on anything not finished.' },
+    { t:'2:00 – 4:30 PM', k:'web', n:'Website, follow-ups & Bruce to-dos',
+      d:'Clean up the project management website. Log bugs and ideas in the edit doc. Follow up with the PMs. Work through the tasks Bruce has handed over.' }
+  ]},
+  { day:'Wednesday', hours:'8:30 AM – 4:30 PM', blocks:[
+    { t:'8:30 – 10:30 AM', k:'act', n:'Active construction checklists',
+      d:'CompanyCam active project checklists. Flag anything that needs a PM.' },
+    { t:'10:30 AM – 12:30 PM', k:'util', n:'Utilities',
+      d:'Utility follow-ups, scheduling and tracking.' },
+    { t:'12:30 – 2:30 PM', k:'book', n:'Bookkeeping, W-9s & admin',
+      d:'Charge finding and tracking. Retrieve and organise W-9s. Ask Marlo and the PMs what they need.' },
+    { t:'2:30 – 4:30 PM', k:'post', n:'Post-Construction',
+      d:'Post-construction dashboard work and follow-ups.' }
+  ]},
+  { day:'Thursday', hours:'8:30 AM – 4:30 PM', blocks:[
+    { t:'8:30 – 10:30 AM', k:'post', n:'Post-Construction',
+      d:'Checklist work, follow-ups and documentation.' },
+    { t:'10:30 AM – 12:30 PM', k:'util', n:'Utilities',
+      d:'Utility requests, follow-ups and intern coordination.' },
+    { t:'12:30 – 2:30 PM', k:'plan', n:'PM follow-ups & next-week prep',
+      d:'Follow up with every project manager and team member, then organise and schedule the week ahead.' },
+    { t:'2:30 – 4:30 PM', k:'pre', n:'Pre-Construction',
+      d:'The Pre-Construction section of the project dashboard — Upcoming Takedowns and the pre-construction checklists.' }
+  ]},
+  { day:'Friday', hours:'8:30 AM – 4:30 PM', blocks:[
+    { t:'8:30 – 10:30 AM', k:'web', n:'Website cleanup & automations',
+      d:'Leave the website clean and organised going into the weekend. Check the automations ran. Update the edits-and-ideas doc.' },
+    { t:'10:30 AM – 12:30 PM', k:'util', n:'Utilities',
+      d:'Final utility follow-ups and confirmations for the week.' },
+    { t:'12:30 – 4:30 PM', k:'pre', n:'Pre-Construction — four hours',
+      d:'The deep dive: Upcoming Takedowns, property cards and the pre-construction checklists. The heaviest pre-construction push of the week, and what makes Monday possible.' }
+  ]}
+];
+const VA_ROTA_ROWS = [
+  ['First Tuesday',  'Project managers + VA Andy', 'Active projects, upcoming takedowns and open PM items.'],
+  ['Second Tuesday', 'PM assistants + VA Andy',    'Start of Project and End of Project assistants. Handoffs and open items.'],
+  ['Third Tuesday',  'Project Director (Bruce)',   'One to one. Priorities, escalations, website updates and administrative direction.'],
+  ['Last Tuesday',   'Marlo + VA Andy',            'Administrative sync. Invoices, W-9s, receipts and accounts payable.']
+];
+// The SOP's day sections, written off the list above so they can never drift from it.
+function _vaDaySections(){
+  return VA_WEEK.map(function(d){
+    return { title:d.day+' — '+d.hours,
+             items:d.blocks.map(function(b){ return b.t+' — '+b.n+'. '+b.d; }) };
+  });
+}
+// The printable sheet. Same week, laid out as a wall chart rather than a list, because
+// that is the form somebody actually pins up. Opened from the job role SOP.
+function _vaSchedulePdfHtml(){
+  const esc=_calEsc;
+  const legend=Object.keys(VA_BLOCK_KIND).filter(function(k){ return k!=='zoom'; }).map(function(k){
+    const x=VA_BLOCK_KIND[k];
+    return '<span class="lg"><i style="background:'+x.col+'"></i>'+esc(x.label)+'</span>';
+  }).join('');
+  const cols=VA_WEEK.map(function(d){
+    const blocks=d.blocks.map(function(b){
+      const x=VA_BLOCK_KIND[b.k]||VA_BLOCK_KIND.plan;
+      const grow=/4:30 PM/.test(b.t)&&/12:30/.test(b.t) ? 4 : (/9:00 AM/.test(b.t)&&/8:30/.test(b.t) ? 0.8 : (/10:30 AM – 12:00|9:00 – 10:30/.test(b.t)?1.5:2));
+      return '<div class="bl" style="border-left-color:'+x.col+';flex:'+grow+'">'
+        +'<div class="t">'+esc(b.t)+'</div><div class="n">'+esc(b.n)+'</div><div class="d">'+esc(b.d)+'</div></div>';
+    }).join('');
+    return '<div class="day"><div class="hd"><div class="nm">'+esc(d.day.toUpperCase())+'</div><div class="hr">'+esc(d.hours)+'</div></div><div class="bls">'+blocks+'</div></div>';
+  }).join('');
+  const rota=VA_ROTA_ROWS.map(function(r){
+    return '<tr><td class="w">'+esc(r[0])+'</td><td class="t2">8:30 – 9:00 AM</td><td><b>'+esc(r[1])+'</b><div class="nt">'+esc(r[2])+'</div></td></tr>';
+  }).join('');
+  return '<!doctype html><html><head><meta charset="utf-8"><title>Virtual Administrative Assistant — Daily Schedule</title><style>'
+    +'@page{size:Letter landscape;margin:11mm}'
+    +'*{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#15181D;margin:0;font-size:11px;line-height:1.45}'
+    +'.mast{display:flex;align-items:flex-end;gap:14px;border-bottom:2px solid #15181D;padding-bottom:8px;margin-bottom:12px}'
+    +'.eyebrow{font-size:9px;font-weight:800;letter-spacing:.14em;text-transform:uppercase;color:#8A94A6}'
+    +'h1{font-size:21px;margin:2px 0 2px;letter-spacing:-.4px}.lede{font-size:11px;color:#4A5260}'
+    +'.r{margin-left:auto;text-align:right;font-size:9.5px;color:#8A94A6;line-height:1.6;white-space:nowrap}.r b{display:block;color:#15181D;font-size:10.5px}'
+    +'.legend{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px}'
+    +'.lg{display:flex;align-items:center;gap:5px;font-size:8.5px;font-weight:700;padding:3px 9px;border-radius:99px;background:#F4F5F7;color:#39414E}'
+    +'.lg i{width:9px;height:9px;border-radius:3px;display:inline-block}'
+    +'.week{display:flex;gap:6px;align-items:stretch;min-height:400px}'
+    +'.day{flex:1;min-width:0;display:flex;flex-direction:column;border:1px solid #E0E4EC;border-radius:9px;overflow:hidden;background:#fff}'
+    +'.hd{background:#15181D;color:#fff;padding:6px 9px}.hd .nm{font-size:11.5px;font-weight:800}.hd .hr{font-size:8.5px;color:#B6BFCC}'
+    +'.bls{display:flex;flex-direction:column;flex:1;padding:5px;gap:4px}'
+    +'.bl{border-left:4px solid #999;border-radius:5px;background:#FAFBFC;padding:6px 8px;display:flex;flex-direction:column;justify-content:center}'
+    +'.bl .t{font-size:7.5px;color:#8A94A6;font-weight:700}.bl .n{font-size:9.5px;font-weight:800;margin-top:1px;line-height:1.25}'
+    +'.bl .d{font-size:8px;color:#566070;margin-top:3px;line-height:1.35}'
+    +'h2{font-size:14px;margin:16px 0 4px}'
+    +'table{width:100%;border-collapse:collapse;font-size:10px}'
+    +'th{text-align:left;font-size:8px;text-transform:uppercase;letter-spacing:.07em;color:#8A94A6;padding:0 8px 5px;border-bottom:1.5px solid #15181D}'
+    +'td{padding:6px 8px;border-bottom:1px solid #EDEFF3;vertical-align:top}'
+    +'td.w{font-weight:800;white-space:nowrap;width:110px}td.t2{color:#566070;white-space:nowrap;width:100px}'
+    +'.nt{font-size:8.5px;color:#8A94A6;margin-top:1px}'
+    +'.noprint button{padding:9px 18px;background:#122A4A;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer}'
+    +'@media print{.noprint{display:none}}'
+    +'</style></head><body>'
+    +'<div class="mast"><div><div class="eyebrow">Legacy Ohio Homes · Job Role SOP</div>'
+      +'<h1>Virtual Administrative Assistant</h1>'
+      +'<div class="lede">Daily schedule and order of operations — eight hours, four blocks, utilities every day.</div></div>'
+      +'<div class="r"><b>Patience Ochefije</b>Reports to the Project Director<br>Monday–Friday · no weekends</div></div>'
+    +'<div class="legend">'+legend+'</div>'
+    +'<div class="week">'+cols+'</div>'
+    +'<h2>Monthly Tuesday Zoom meetings — 8:30 to 9:00 AM</h2>'
+    +'<table><tr><th>Tuesday</th><th>Time</th><th>Who, and what it is for</th></tr>'+rota+'</table>'
+    +'<div style="font-size:9px;color:#8A94A6;margin-top:10px">Legacy Ohio Homes · Virtual Administrative Assistant SOP · built from the live job role record on '
+      + esc(new Date().toLocaleDateString(undefined,{month:'long',day:'numeric',year:'numeric'})) + '</div>'
+    +'<div class="noprint" style="text-align:center;margin-top:16px"><button onclick="window.print()">↓ Save as PDF / Print</button>'
+      +'<div style="font-size:11px;color:#8A94A6;margin-top:6px">Your browser’s print dialog has a <b>Save as PDF</b> destination — that is the file you attach.</div></div>'
+    +'</body></html>';
+}
+function _vaOpenSchedulePDF(){
+  const w=window.open('','_blank');
+  if(!w){ alert('Your browser blocked the window. Allow pop-ups for this site and try again.'); return; }
+  w.document.open(); w.document.write(_vaSchedulePdfHtml()); w.document.close();
+}
 const ROLE_SOPS = {
   "Project Director": {
     icon: "⬡",
@@ -17950,46 +18234,19 @@ const ROLE_SOPS = {
     icon: "\u{1F4BB}",
     sections: [
       { title: "Role Overview", items: [
-        "An eight-hour day, Monday to Friday, in four two-hour blocks. No weekends.",
-        "Utilities is a standing block every single day \u2014 two hours, and an hour and a half on Tuesday \u2014 so it never piles up.",
-        "One block each day belongs to a construction wave. The waves move backwards through the week: post-construction early, active construction on Wednesday, pre-construction at the end. Friday is what makes Monday possible.",
+        "8:30 AM to 4:30 PM, Monday to Friday. Eight hours in four two-hour blocks. No weekends.",
+        "Utilities is a standing block every single day \u2014 two hours, and an hour and a half on Tuesday \u2014 so it never piles up. Jeriel and the interns are part of that block.",
+        "One block each day belongs to a construction wave. Post-construction runs Monday, Tuesday, Wednesday and Thursday; active construction Tuesday and Wednesday; pre-construction Thursday and Friday. Friday is what makes Monday possible.",
         "Sign-offs are not hers. She gets a step ready and puts it in front of Bruce, Marlo or Tommy."
       ]},
-      { title: "Monday \u2014 10:00 AM to 6:00 PM", items: [
-        "10:00\u201312:00 \u2014 Shape the week. Plan, schedule and organise the week: her own, and team members\u2019 where they need it. Read the notifications first \u2014 they only show what is past due and what is due today.",
-        "12:00\u20132:00 \u2014 Utilities.",
-        "2:00\u20134:00 \u2014 Her own list: what she has to finish this week, and anything left open from last week.",
-        "4:00\u20136:00 \u2014 Post-Construction: Listed on the Market, In Contract, Rental Handoff / RTR, Closed."
-      ]},
-      { title: "Tuesday \u2014 8:30 AM to 4:30 PM", items: [
-        "8:30\u20139:00 \u2014 The standing Zoom. One person from the project team; the rota runs monthly (see below). This meeting is why Tuesday starts at 8:30.",
-        "9:00\u201311:00 \u2014 Post-Construction, second pass on the same four lists.",
-        "11:00\u201312:30 \u2014 Utilities. An hour and a half today; the half hour went to the meeting.",
-        "12:30\u20132:30 \u2014 Follow up with the project managers, work her own to-do list, and the small projects handed over by the Project Director.",
-        "2:30\u20134:30 \u2014 The website: tidy and organise, go looking for bugs, and keep the Google Doc of edits and ideas up to date."
-      ]},
-      { title: "Wednesday \u2014 eight hours", items: [
-        "Hours 1\u20132 \u2014 Active Construction: Framing, MEPs & Exterior; Insulation & Drywall; Finish MEPs; Punch Out & Pre-List Inspections.",
-        "Hours 3\u20134 \u2014 Utilities.",
-        "Hours 5\u20136 \u2014 Books and paperwork: bookkeeping, finding a charge where one needs chasing, W-9s retrieved and filed, and whatever Marlo and the project managers need.",
-        "Hours 7\u20138 \u2014 NOT ASSIGNED YET. The natural fill is a second Active Construction block, since Wednesday is already the active-construction day and that wave otherwise gets only two hours in the week. Waiting on Bruce."
-      ]},
-      { title: "Thursday \u2014 eight hours", items: [
-        "Hours 1\u20132 \u2014 Post-Construction, the last look at the back end before the week turns.",
-        "Hours 3\u20134 \u2014 Utilities.",
-        "Hours 5\u20136 \u2014 Follow-ups with the project managers and team members, then scheduling and organising the week ahead.",
-        "Hours 7\u20138 \u2014 Pre-Construction: Upcoming Takedowns, Occupied / Closed, Vacant on Standby, Pre-Construction."
-      ]},
-      { title: "Friday \u2014 eight hours", items: [
-        "Hours 1\u20132 \u2014 Whatever the admin side needs: tidy the website, and confirm the automations are running before the weekend, when nobody is watching them.",
-        "Hours 3\u20134 \u2014 Utilities.",
-        "Hours 5\u20138 \u2014 Pre-Construction, four hours, worked off the project dashboard. The long block of the week: every house the team starts next week is set up here."
-      ]},
+      // Monday to Friday, written straight off VA_WEEK so the page, the printable sheet
+      // and this list are one thing rather than three that have to be kept in step.
+      ..._vaDaySections(),
       { title: "The standing Tuesday meeting \u2014 8:30 to 9:00 AM", items: [
-        "First Tuesday \u2014 the project managers: the houses in flight, and what she can take off them.",
-        "Second Tuesday \u2014 the PM assistants: Start of Project and End of Project, either one or both together in the one Zoom.",
-        "Third Tuesday \u2014 the Project Director: direction, priorities, and the month\u2019s small projects.",
-        "Last Tuesday \u2014 Marlo, with VA Andy sitting in. Runs off the template from the old fortnightly meeting.",
+        "First Tuesday \u2014 the project managers, with VA Andy: active projects, upcoming takedowns and open PM items.",
+        "Second Tuesday \u2014 the PM assistants, with VA Andy: Start of Project and End of Project, either one or both in the one Zoom. Handoffs and open items.",
+        "Third Tuesday \u2014 the Project Director, one to one: priorities, escalations, website updates and administrative direction.",
+        "Last Tuesday \u2014 Marlo, with VA Andy: the administrative sync. Invoices, W-9s, receipts and accounts payable.",
         "There is no meeting with Jen.",
         "The rota and the notes live under Meetings \u2192 Monthly VA Assistant."
       ]},
@@ -18001,10 +18258,8 @@ const ROLE_SOPS = {
         "Some steps tick themselves from CompanyCam. Do not tick those by hand.",
         "Anything left open on a wave follows the house to the next one as a carried item. It does not disappear."
       ]},
-      { title: "Still to settle", items: [
-        "Wednesday hours 7\u20138 are unassigned.",
-        "Start times for Wednesday, Thursday and Friday are not fixed. Only Monday (10:00) and Tuesday (8:30) are.",
-        "In a month with five Tuesdays the fourth has nothing on it \u2014 first, second and third are spoken for and the last is Marlo."
+      { title: "One thing still open", items: [
+        "In a month with five Tuesdays the fourth has nothing on it \u2014 first, second and third are spoken for and the last is Marlo. Leave it clear, or put a second PM slot in it?"
       ]}
     ]
   },
@@ -18429,10 +18684,23 @@ function _renderSopView(){
   const content = _sopCache[_currentSop.key] || "";
   const cur=(ROLE_SOP_TABS.find(t=>t[0]===(_currentSop.tab||'breakdown'))||[])[2]||'';
   const editBtn = isReadOnly() ? "" : `<button onclick="editSop()" style="padding:6px 14px;font-size:13px;background:#fff;color:#111;border:none;border-radius:6px;cursor:pointer">✎ Edit</button>`;
+  // Bruce, 18 Oct, with the schedule he had made: "here's that PDF I'd like to link to
+  // that job role for Patience on our website for now too."
+  // It hangs HERE rather than inside the document, because the document is editable and
+  // anything put inside it is one accidental select-all away from being gone. The sheet
+  // is built from VA_WEEK on the spot, so it is never an out-of-date file.
+  const attach = (_currentSop.role==='Virtual Administrative Assistant' && (_currentSop.tab||'breakdown')==='breakdown')
+    ? `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:#122A4A;border-radius:9px;padding:10px 14px;margin-bottom:10px">
+         <span style="font-size:13px;font-weight:700;color:#fff">&#128197; Daily Schedule &amp; Order of Operations</span>
+         <span style="font-size:11.5px;color:#B6BFCC">The whole week on one sheet &mdash; built from this SOP, so it cannot go out of date.</span>
+         <button onclick="_vaOpenSchedulePDF()" style="margin-left:auto;padding:7px 14px;background:#fff;color:#122A4A;border:none;border-radius:7px;font-size:12.5px;font-weight:700;cursor:pointer;white-space:nowrap">&#8595; Open the PDF</button>
+       </div>`
+    : '';
   document.getElementById("sop-modal-body").innerHTML =
     `${_sopTabBar()}
      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:8px 0 12px">
        <div style="font-size:12px;color:#566070;max-width:70%">${_calEsc(cur)}</div>${editBtn}</div>
+     ${attach}
      <div class="sop-doc">${content}</div>`;
 }
 function _sopInsertBox(){ document.execCommand('insertHTML', false, '<div class="sop-box">Note…</div>'); }
@@ -20098,7 +20366,21 @@ function _rltPreListSection(c){
   // The real form, drawn straight into the Coming Soon pane. Same record as the
   // property card tab and the field app - there is only ever one of these per house.
   const ro=(typeof isReadOnly==='function')?isReadOnly():false;
-  return _plBody(c, ro, 'rlt');
+  // Bruce, 17 Oct: "on the realtor dashboard, that PDF can also populate on the coming
+  // soon." The form was here; the PDF of it was only ever on the property card, so a
+  // realtor standing on this page had the answers but no one-page sheet to send on.
+  // Same builder the property card uses - built from the live form, never a saved file,
+  // so a correction made this morning is in the sheet this afternoon.
+  const ready=(typeof _plPdfReady==='function') && _plPdfReady(c);
+  const k=(typeof _plCounts==='function')?_plCounts(c):{n:0,t:0};
+  const bar='<div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap;background:'+(ready?'#F2FBF6':'#F7F8FB')+';border:0.5px solid '+(ready?'#BFE5D4':'#e6e9f0')+';border-radius:9px;padding:8px 12px;margin-bottom:10px">'
+    +'<span style="font-size:12.5px;color:'+(ready?'#0F7B54':'#566070')+';font-weight:600">\u{1F4DD} Pre-listing sheet</span>'
+    +'<span style="font-size:11.5px;color:#566070">'+(ready?'complete \u2014 ready to send to the realtor':(k.n?(k.n+' of '+k.t+' answered'):'nobody has started it'))+'</span>'
+    + (ready
+        ? '<button onclick="_plOpenPDF(\''+c.id+'\')" style="margin-left:auto;padding:6px 13px;background:#122A4A;color:#fff;border:none;border-radius:7px;font-size:12.5px;font-weight:600;cursor:pointer;white-space:nowrap">\u2193 Open the PDF</button>'
+        : '<span style="margin-left:auto;font-size:11.5px;color:#8A5A10;white-space:nowrap">The PDF appears once the PM marks the form complete</span>')
+    +'</div>';
+  return bar + _plBody(c, ro, 'rlt');
 }
 // The row of five. It sits under the tab bar on the main dashboard and on every
 // realtor's own tab, so "Coming Soon" means Katie's coming soon when you are on
@@ -36612,4 +36894,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-18j va-job-role-sop -->
+<!-- build: 2026-10-18k meeting-tab-and-auto-vacant -->
