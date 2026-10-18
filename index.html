@@ -20660,7 +20660,9 @@ function _rltStageRow(pools){
       +(on?'background:#185FA5;color:#fff':'background:#fff;color:#444;border:0.5px solid #dde2ea')+'">'+_calEsc(t[1])
       +'<span style="font-weight:700;margin-left:6px;opacity:'+(on?'.85':'.6')+'">'+n+'</span></div>';
   }).join('');
-  return '<div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-bottom:12px">'
+  // Tagged so the row itself is findable - the overview tiles now open these same
+  // boards, so "anything that calls _rltStageGo" is no longer the same as "the pills".
+  return '<div data-rlt-stages="1" style="display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-bottom:12px">'
     +(cur?'<div onclick="_rltStageGo(\''+cur+'\')" style="padding:7px 12px;border-radius:9px;font-size:12.5px;font-weight:600;cursor:pointer;background:#fff;color:#185FA5;border:0.5px solid #cdd7e6">&lsaquo; Overview</div>':'')
     +btns+'</div>';
 }
@@ -20963,7 +20965,17 @@ function _icBody(){
 }
 const RLT_STAGES=["Pre List / Punchout Process","Listed on the Market","In Contract","RTR In Process","RTR Completed (Pending Closing)"];
 function _rltTab(){ const t=window._rltTabSel||'main'; return (t==='contract'||RLT_TABS.some(x=>x[0]===t))?t:'main'; }
-function _rltGo(t){ window._rltTabSel=t; openRealtorDashboard(); }
+function _rltGo(t){
+  const k=String(t||'');
+  // 'stages' was never a tab. Treat it, and any stage name, as "open that board".
+  if(k==='stages'){ _rltStageGo(_rltStage()||'soon'); return; }
+  if(RLT_STAGE_TABS.some(function(x){ return x[0]===k; })){ _rltStageGo(k); return; }
+  window._rltTabSel=k;
+  // Leaving a tab leaves its stage board behind too, otherwise Katie's tab opens on
+  // whatever board the main dashboard was last looking at.
+  window._rltStageSel=''; window._rltStagePid=null;
+  openRealtorDashboard();
+}
 function openRealtorDashboard(tab){
   window.__rltOpen=true;
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
@@ -21107,19 +21119,19 @@ function openRealtorDashboard(tab){
 
   const overviewBody=`
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:10px;margin-bottom:16px">
-      ${tile('⏳','Coming soon',soon.length,poOpen.length?(poOpen.length+' punch-out'+(poOpen.length===1?'':'s')+' open'):'about to be listed','#8A5A10',"_rltGo('stages')")}
-      ${tile('🏡','On the market',act.length,mktLate.length?(mktLate.length+' checklist'+(mktLate.length===1?'':'s')+' overdue'):'checklists current','#185FA5',"_rltGo('stages')")}
-      ${tile('🤝','In contract',ctr.length,icNo.length?(icNo.length+' without an inspection'):'all inspected','#0E7460',"_rltGo('contract')")}
-      ${tile('🛠','Request a remedy',rtr.length,'remedies being worked','#BA7517',"_rltGo('stages')")}
-      ${tile('✅','Cleared to close',ctc.length,'remedies completed','#534AB7',"_rltGo('stages')")}
+      ${tile('⏳','Coming soon',soon.length,poOpen.length?(poOpen.length+' punch-out'+(poOpen.length===1?'':'s')+' open'):'about to be listed','#8A5A10',"_rltStageGo('soon')")}
+      ${tile('🏡','On the market',act.length,mktLate.length?(mktLate.length+' checklist'+(mktLate.length===1?'':'s')+' overdue'):'checklists current','#185FA5',"_rltStageGo('active')")}
+      ${tile('🤝','In contract',ctr.length,icNo.length?(icNo.length+' without an inspection'):'all inspected','#0E7460',"_rltStageGo('contract')")}
+      ${tile('🛠','Request a remedy',rtr.length,'remedies being worked','#BA7517',"_rltStageGo('rtr')")}
+      ${tile('✅','Cleared to close',ctc.length,'remedies completed','#534AB7',"_rltStageGo('ctc')")}
     </div>
     <div style="font-size:13px;font-weight:700;color:#111;margin-bottom:8px">What needs chasing</div>
-    ${need('⏳ Pre-list / punch out', poOpen.length, '#8A5A10', 'Houses whose punch-out checklist is not finished. <b>The eight are:</b> '+PUNCH_ITEMS.map(x=>_calEsc(x[1])).join(' &middot; ')+'. So "0 of 8, not started" means nobody has opened a punch-out walk-through on that house at all. Patience fills it in from the NPI inspection report — click one to open it.', poBody, 'See every stage', "_rltGo('stages')")}
+    ${need('⏳ Pre-list / punch out', poOpen.length, '#8A5A10', 'Houses whose punch-out checklist is not finished. <b>The eight are:</b> '+PUNCH_ITEMS.map(x=>_calEsc(x[1])).join(' &middot; ')+'. So "0 of 8, not started" means nobody has opened a punch-out walk-through on that house at all. Patience fills it in from the NPI inspection report — click one to open it.', poBody, 'Open the Coming Soon board', "_rltStageGo('soon')")}
     ${need('🏡 Listed on the market', mktLate.length, '#185FA5', 'The on-the-market checklist is due every two weeks. These have run out.', mktBody, 'On the market meeting', "openWeeklyMeeting('market')")}
     ${need('👣 Showings and feedback', _shwTotalFor(act), '#7A3FA8', _shwHeadline(act), _shwMini(act), 'Open showings and feedback', "_rltGo('showings')")}
     ${need('🤝 In contract', icNo.length, '#0E7460', 'No home inspection recorded yet. Open the in-contract board to answer inspection, remedy and notes on each one.', icBody, 'Open the in-contract board', "_rltGo('contract')")}
     ${need('🛠 Request a remedy', rtr.length, '#BA7517', 'Remedy lists being worked, and the next thing booked on each house.', rtrBody, 'Construction calendar', "openProjectDashboard('construction')")}
-    ${need('✅ Cleared to close', ctc.length, '#534AB7', 'Remedies finished — these are waiting on a closing date.', ctcBody, 'See every stage', "_rltGo('stages')")}`;
+    ${need('✅ Cleared to close', ctc.length, '#534AB7', 'Remedies finished — these are waiting on a closing date.', ctcBody, 'Open the Cleared to Close board', "_rltStageGo('ctc')")}`;
 
   // Bruce, 17 Oct: the five stage boards sit on the main dashboard AND on every
   // realtor's own tab. The pools below were already run through _rOnly(), so a realtor's
@@ -21128,8 +21140,9 @@ function openRealtorDashboard(tab){
   const _stageNow=_rltStage();
   const mainBody=_rltStageRow(_stagePools)
     + (_stageNow ? _rltStagePane(_stageNow, _stagePools[_stageNow]||[]) : overviewBody);
+  const _mainWide=!!_stageNow;
 
-  document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div style="padding:20px;max-width:1000px;margin:0 auto">
+  document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div style="padding:20px;max-width:${_mainWide?1320:1000}px;margin:0 auto">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
       <div style="font-size:18px;font-weight:700;color:#111">🔑 Realtor Dashboard</div>
       ${isReadOnly()?'':`<button onclick="_rltAddTask()" style="padding:8px 15px;background:#122A4A;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">＋ Schedule a task</button>`}
@@ -37465,4 +37478,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-18q realtor-rollups -->
+<!-- build: 2026-10-18r realtor-dead-tabs-fixed -->
