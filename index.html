@@ -6342,7 +6342,8 @@ function _apTradeOpts(){
     (_apCache||[]).forEach(function(r){ const t=String(r.category||'').trim(); if(t) seen[t]=1; });
     list=Object.keys(seen);
   }
-  return list.slice().sort().map(function(t){ return '<option value="'+_calEsc(t)+'"></option>'; }).join('');
+  return list.slice().sort(function(a,b){ return String(a).toLowerCase().localeCompare(String(b).toLowerCase()); })
+             .map(function(t){ return '<option value="'+_calEsc(t)+'"></option>'; }).join('');
 }
 function _apQuoteNewCon(){
   const sel=document.getElementById('apq-who');
@@ -7827,6 +7828,7 @@ function _pdLinked(c, which){
                 ${_ro_sp ? `<span style="color:#111;font-weight:500">${c.closingDateSell||'—'}</span>` : `<span style="display:flex;gap:6px;align-items:center"><input type="date" id="pd-closing-sell" value="${c.closingDateSell||''}" style="font-size:13px;padding:3px 6px;border:0.5px solid #ddd;border-radius:5px;color:#111;background:#fff;outline:none"/><button onclick="saveClosingSellDate('${c.id}')" style="font-size:12px;padding:3px 9px;border-radius:5px;background:#111;color:#fff;border:none;cursor:pointer">Save date</button></span>`}
               </div>
               ${_kickCardRow(c)}
+              ${_plCardRow(c)}
               ${(()=>{ const n=_poCount(c), tot=PUNCH_ITEMS.length, done=_poComplete(c);
                 // Only worth showing once the house is near the end - before that there is
                 // nothing to punch out.
@@ -19350,6 +19352,94 @@ function _plTyped(c, key){ return String((_plData(c).f||{})[key]||''); }
 // the site knows. Never the other way round.
 function _plVal(c, key){ const t=_plTyped(c,key).trim(); return t || _plAuto(c,key); }
 function _plAnswered(c){ return PRELIST_FIELDS.filter(function(f){ return !!_plVal(c,f[0]); }).length; }
+// ---- The pre-listing form as a page you can hand a realtor --------------------
+// Bruce, 18 Oct: "for the field app build, the PDF just saves to the property card,
+// kind of like the kickoff notes does when you click on the properties."
+//
+// So it works exactly like the kickoff notes and for the same reason: the PDF is BUILT
+// from the live record every time it is opened, not saved as a file somewhere. A saved
+// file is a copy that goes stale the moment somebody corrects an answer - and this form
+// gets corrected. One record, one page, always current.
+//
+// It appears once the form is marked complete, the same gate the kickoff PDF uses:
+// a half-answered form is not something to hand a realtor.
+function _plPdfReady(c){ return String((_plData(c)||{}).done||'')==='yes'; }
+function _plPdfHtml(pid){
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===pid; });
+  if(!c){ alert('That property could not be found.'); return ''; }
+  const k=_plCounts(c);
+  if(!_plPdfReady(c)){
+    alert('The pre-listing form for '+(c.addr||'this property')+' is not finished yet.\n\n'
+      +k.n+' of '+k.t+' answered. Open it, fill it in and mark it complete — the PDF appears on the property card the moment you do.');
+    return '';
+  }
+  const esc=_calEsc;
+  const when=new Date().toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  const row=function(f){
+    const v=_plVal(c, f[0]);
+    if(!v) return '';
+    const auto=!_plTyped(c,f[0]).trim();
+    return '<div class="r"><div class="k">'+esc(f[1])+'</div>'
+      +'<div class="v">'+esc(v).replace(/\n/g,'<br>')+(auto?'<span class="a">from the site</span>':'')+'</div></div>';
+  };
+  const blocks=PRELIST_GROUPS.map(function(g){
+    const rows=g.fields.map(row).filter(Boolean).join('');
+    if(!rows) return '';
+    // the emoji in the group title is for the screen, not for a printed page
+    const title=String(g.title||'').replace(/^[^A-Za-z]+/,'').trim();
+    return '<section><h2>'+esc(title)+'</h2>'+rows+'</section>';
+  }).filter(Boolean).join('');
+  const agent=String(c.listingAgent||'').trim();
+  return '<!doctype html><html><head><meta charset="utf-8"><title>Pre-listing — '+esc(c.addr||'property')+'</title><style>'
+    + 'body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:#111;margin:30px;max-width:860px;line-height:1.5}'
+    + 'h1{font-size:23px;margin:0 0 2px}'
+    + '.sub{font-size:13px;color:#566070;margin-bottom:6px}'
+    + '.who{font-size:12.5px;color:#566070;border-top:1px solid #e6e8ee;border-bottom:1px solid #e6e8ee;padding:8px 0;margin:14px 0 20px}'
+    + 'section{margin-bottom:22px;page-break-inside:avoid}'
+    + 'h2{font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:#185FA5;margin:0 0 8px;padding-bottom:5px;border-bottom:1.5px solid #185FA5}'
+    + '.r{display:flex;gap:16px;padding:7px 0;border-bottom:0.5px solid #eceef3;page-break-inside:avoid}'
+    + '.k{width:190px;flex-shrink:0;font-size:12.5px;color:#566070}'
+    + '.v{flex:1;font-size:13.5px;color:#111}'
+    + '.a{font-size:10px;color:#8A94A6;margin-left:7px;white-space:nowrap}'
+    + '.noprint{margin-bottom:16px}'
+    + 'button{padding:9px 17px;background:#111;color:#fff;border:none;border-radius:8px;font-size:13px;cursor:pointer}'
+    + '.foot{font-size:11px;color:#566070;margin-top:26px;border-top:1px solid #e6e8ee;padding-top:9px}'
+    + '@media print{.noprint{display:none}body{margin:0}}'
+    + '</style></head><body>'
+    + '<div class="noprint"><button onclick="window.print()">Save as PDF / Print</button></div>'
+    + '<h1>'+esc(c.addr||'')+'</h1>'
+    + '<div class="sub">Pre-listing information · everything a realtor needs to write the listing</div>'
+    + '<div class="who">'
+      + (agent?('Listing agent: <b>'+esc(agent)+'</b> · '):'')
+      + (c.pm?('Project manager: <b>'+esc(c.pm)+'</b> · '):'')
+      + 'Completed by <b>'+(esc(k.by)||'the project team')+'</b>'+(k.at?(' on '+esc(k.at)):'')
+      + ' · printed '+esc(when)
+    + '</div>'
+    + (blocks||'<div style="padding:20px;color:#636b7a">Nothing has been answered on this form yet.</div>')
+    + '<div class="foot">Legacy Homes — '+esc(c.addr||'')+'. Answers marked <i>from the site</i> were filled in automatically from the scope of work or the property record; everything else was answered by the project manager. If anything here is wrong, tell the project manager rather than correcting it on the page — this sheet is printed fresh from the record each time, so a fix there fixes every copy.</div>'
+    + '</body></html>';
+}
+function _plOpenPDF(pid){
+  const html=_plPdfHtml(pid);
+  if(!html) return;
+  const w=window.open('','_blank');
+  if(!w){ alert('Your browser blocked the window. Allow pop-ups for this site and try again.'); return; }
+  w.document.open(); w.document.write(html); w.document.close();
+}
+// The row on the property card, written to read like the kickoff notes row beside it.
+function _plCardRow(c){
+  const k=_plCounts(c);
+  const ready=_plPdfReady(c);
+  const started=k.n>0;
+  return '<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-top:0.5px solid #f4f5f7;font-size:14px">'
+    + '<span style="color:#566070;display:flex;align-items:center;gap:5px">\u{1F4DD} Pre-listing info'
+      + '<span style="font-size:10px;background:'+(ready?'#EAF3DE':(started?'#FBF3E2':'#F1F2F6'))+';color:'+(ready?'#173404':(started?'#8a6d1a':'#636b7a'))+';padding:1px 5px;border-radius:4px">'
+      + (ready?'completed':(started?(k.n+' of '+k.t):'not started'))+'</span></span>'
+    + (ready
+        ? '<span onclick="_plOpenPDF(\''+c.id+'\')" style="cursor:pointer;color:#185FA5;font-size:13px;font-weight:600">Open PDF &#8599;</span>'
+        : '<span style="color:#636b7a;font-size:12.5px">'+(started?'not marked complete yet':'nobody has started it')+'</span>')
+    + '</div>';
+}
 function _plCounts(c){
   const n=_plAnswered(c), t=PRELIST_FIELDS.length;
   const d=_plData(c);
@@ -29249,8 +29339,36 @@ function _ctFilter(){
     note.style.color = (!t || shown) ? '#566070' : '#8A5A10';
   }
 }
-function _contractorUses(id){
+// Bruce, 18 Oct: "we've already used some of these contractors multiple times ... A Plus
+// Carpet Cleaning, it says zero, never booked, but we've used him before, prior to making
+// this website. So I want to change his number to 10. And then from there, his count will
+// start from how many times he's scheduled on the calendar."
+//
+// So the number is two things added together, and they stay separate on purpose: a
+// STARTING COUNT somebody typed in for the work that happened before this site existed,
+// and the bookings on the construction calendar, which go on counting themselves. The
+// typed number is never recalculated and the counted one is never overwritten, so neither
+// can quietly eat the other.
+function _ctPrior(id){
+  const v=(typeof _trkVal==='function') ? _trkVal('ct_prior', id, 'n') : '';
+  const n=parseInt(String(v||'').replace(/[^0-9]/g,''),10);
+  return isNaN(n)?0:n;
+}
+function _contractorBooked(id){
   return (typeof _calEventsCache!=='undefined'?_calEventsCache:[]).filter(e=>e.contractor_id===id).length;
+}
+function _contractorUses(id){ return _ctPrior(id)+_contractorBooked(id); }
+async function _ctPriorSet(id, val){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()){ renderContractorDirectory(); return; }
+  const raw=String(val==null?'':val).replace(/[^0-9]/g,'');
+  const n=parseInt(raw,10);
+  const c=(_contractorsCache||[]).find(function(x){ return x.id===id; })||{};
+  await _trkSet('ct_prior', id, 'n', (isNaN(n)||n<=0)?'':String(n), false);
+  if(typeof _logAudit==='function'){
+    _logAudit('updated','contractor',(c.name||c.business_name||'contractor'),
+      (isNaN(n)||n<=0) ? 'Starting count cleared' : ('Starting count set to '+n+' \u2014 jobs before this site existed'));
+  }
+  renderContractorDirectory();
 }
 function _contractorLastUsed(id){
   const ds=(typeof _calEventsCache!=='undefined'?_calEventsCache:[]).filter(e=>e.contractor_id===id).map(e=>e.event_date).filter(Boolean).sort();
@@ -29556,7 +29674,7 @@ async function _ctTradeTypeRemove(t){
   renderContractorDirectory();
 }
 function _ctTradeTypesPanel(ro){
-  const all=_ctAllTrades();
+  const all=_ctAllTrades().slice().sort(function(a,b){ return a.toLowerCase().localeCompare(b.toLowerCase()); });
   const custom=_ctCustomTrades().map(function(x){ return x.toLowerCase(); });
   const open=!!window.__ctTypesOpen;
   const head='<div onclick="window.__ctTypesOpen=!window.__ctTypesOpen;renderContractorDirectory()" style="display:flex;align-items:center;gap:7px;cursor:pointer">'
@@ -29625,9 +29743,12 @@ function _tradeCell(c, ro){
   const mine=_ctTrades(c);
   const chips=mine.map(function(t){ return _ctTradeChip(c,t,ro); }).join('');
   if(ro) return '<div style="min-width:150px">'+(chips||'<span style="color:#636b7a">&mdash;</span>')+'</div>';
+  // Bruce, 18 Oct: "when I'm selecting a trade, make sure that the trades auto-populate
+  // in alphabetical order, that way it's easy to navigate if there is a trade or not, or
+  // if we need to create one for it."
   const left=_ctAllTrades().filter(function(t){
     return mine.every(function(m){ return m.toLowerCase()!==t.toLowerCase(); });
-  });
+  }).sort(function(a,b){ return a.toLowerCase().localeCompare(b.toLowerCase()); });
   const opts='<option value="">'+(mine.length?'+ another trade':'&mdash; Assign trade &mdash;')+'</option>'
     + left.map(function(t){ return '<option value="'+_calEsc(t)+'">'+_calEsc(t)+'</option>'; }).join('')
     + '<option value="__other__">＋ Other…</option>';
@@ -29724,6 +29845,93 @@ function _ctW9Cell(c, ro){
     + (nm?'<div style="font-size:10px;color:#636b7a;max-width:124px;margin:1px auto 0;line-height:1.2">'+_calEsc(nm)+'</div>':'')
     + (on?'':'<div style="font-size:9.5px;color:#8A5A10;margin-top:1px">still needed</div>')
     + (issues.length?('<div onclick="_ctToW9()" title="'+_calEsc(issues.join(' \u00b7 '))+'" style="font-size:9.5px;color:#B42318;font-weight:700;margin-top:1px;cursor:pointer">\u{1F6A9} '+issues.length+' to fix</div>'):'');
+}
+// ---- the starting counts Bruce read out, ready to apply in one press ----------
+// Bruce, 18 Oct, going down the directory: "A Plus Carpet Cleaning, it says zero, never
+// booked, but we've used him before ... change his number to 10 ... Aaron Hayes, SNL
+// Lumber Store, change him to 100 ... Abe or Abel the landscaper, used him three times
+// ... Adolfo Bagre, one time ... Aiden, Happy Box, 10 ... Alexis Asphalt, five ... Amanda
+// Williams, 100 ... Antonio, 10 plus the 4 that's already there, so 14 ... Bethany,
+// architect, five."
+//
+// Typed out rather than written straight into the database, because matching a name he
+// said out loud to a row is a guess and a guess belongs in front of him, not behind him.
+// Each line shows which record it matched; anything ambiguous says so and is skipped.
+// Antonio is 10 here on purpose - his 4 calendar bookings are counted separately and add
+// up to the 14 he asked for.
+const CT_PRIOR_SEED=[
+  { want:'A Plus Carpet Cleaning', n:10,  keys:['a plus carpet','aplus carpet','a+ carpet'] },
+  { want:'Aaron Hayes / SNL Lumber', n:100, keys:['aaron hayes','snl lumber'] },
+  { want:'Abe / Abel (landscaper)', n:3,   keys:['abel','abe '] },
+  { want:'Adolfo Bagre',           n:1,   keys:['adolfo','bagre'] },
+  { want:'Aiden / Happy Box',      n:10,  keys:['happy box','aiden'] },
+  { want:'Alexis Asphalt',         n:5,   keys:['alexis'] },
+  { want:'Amanda Williams',        n:100, keys:['amanda williams'] },
+  { want:'Antonio',                n:10,  keys:['antonio'] },
+  { want:'Bethany (architect)',    n:5,   keys:['bethany'] }
+];
+function _ctPriorSeedMatch(){
+  const L=(typeof _contractorsCache!=='undefined'?_contractorsCache:[])||[];
+  return CT_PRIOR_SEED.map(function(s){
+    const hits=L.filter(function(c){
+      const hay=((c.name||'')+' '+(c.business_name||'')).toLowerCase();
+      return s.keys.some(function(k){ return hay.indexOf(k)>=0; });
+    });
+    return { seed:s, hits:hits, done:(hits.length===1 && _ctPrior(hits[0].id)===s.n) };
+  });
+}
+function _ctPriorSeedPanel(ro){
+  if(ro) return '';
+  const rows=_ctPriorSeedMatch();
+  const todo=rows.filter(function(r){ return r.hits.length===1 && !r.done; });
+  if(!todo.length) return '';
+  const line=function(r){
+    const one=r.hits.length===1, none=r.hits.length===0;
+    const who=one?(r.hits[0].business_name||r.hits[0].name||'(unnamed)'):'';
+    const col=one?(r.done?'#0F7B54':'#111'):'#B42318';
+    return '<div style="display:flex;gap:10px;align-items:baseline;padding:4px 0;font-size:12.5px;color:'+col+'">'
+      +'<span style="width:170px;flex-shrink:0">'+_calEsc(r.seed.want)+'</span>'
+      +'<b style="width:42px;flex-shrink:0;text-align:right">'+r.seed.n+'</b>'
+      +'<span style="flex:1;min-width:0;color:#566070">'
+        +(none?'no contractor matches that name \u2014 skipped'
+          :(one?('\u2192 '+_calEsc(who)+(r.done?' \u00b7 already set':'')) 
+              :('matches '+r.hits.length+' records \u2014 skipped, set it by hand')))
+      +'</span></div>';
+  };
+  return '<div data-ct-seed="1" style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid #185FA5;border-radius:10px;padding:12px 15px;margin-bottom:12px">'
+    +'<div style="font-size:14px;font-weight:700;color:#111">\u{1F522} Starting counts you read out</div>'
+    +'<div style="font-size:11.5px;color:#566070;margin:2px 0 8px">Work these men did before the site existed. It is added to what the construction calendar counts, so the calendar keeps counting from here. Nothing is written until you press the button, and anything that matched more than one record is skipped rather than guessed.</div>'
+    +rows.map(line).join('')
+    +'<button onclick="_ctPriorSeedApply()" style="margin-top:9px;padding:8px 15px;background:#122A4A;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Set '+todo.length+' starting count'+(todo.length===1?'':'s')+'</button>'
+  +'</div>';
+}
+async function _ctPriorSeedApply(){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
+  const todo=_ctPriorSeedMatch().filter(function(r){ return r.hits.length===1 && !r.done; });
+  if(!todo.length){ alert('Nothing left to set.'); return; }
+  const lines=todo.map(function(r){ return '\u2022 '+(r.hits[0].business_name||r.hits[0].name)+' \u2014 '+r.seed.n; });
+  if(!confirm('Set these starting counts?\n\n'+lines.join('\n')
+    +'\n\nEach is added to the bookings the construction calendar already counts, and the calendar goes on counting from here.')) return;
+  for(const r of todo){
+    try{ await _trkSet('ct_prior', r.hits[0].id, 'n', String(r.seed.n), false); }catch(e){}
+  }
+  if(typeof _logAudit==='function') _logAudit('updated','contractor','',
+    'Set '+todo.length+' starting job count'+(todo.length===1?'':'s')+' for work done before the site existed');
+  renderContractorDirectory();
+}
+// Bruce, 18 Oct: "we need to be able to add a little square section of notes beside each
+// contractor, like a little comment section, about them or whatever."
+// It writes to the contractor's own notes column - the same one a merge folds the other
+// record's details into - so a note survives being combined with a duplicate.
+function _ctNotesCell(c, ro){
+  const v=String((c&&c.notes)||'');
+  if(ro) return v
+    ? '<div style="font-size:11.5px;color:#444;max-width:190px;white-space:pre-wrap">'+_calEsc(v)+'</div>'
+    : '<span style="color:#c4c9d2">&mdash;</span>';
+  return '<textarea data-ct-notes="1" placeholder="Anything worth remembering about him\u2026" '
+    + 'onchange="setContractorField(\''+c.id+'\',\'notes\',this.value)" '
+    + 'style="width:100%;min-width:150px;max-width:210px;padding:5px 7px;border:0.5px solid #e3e6ec;border-radius:6px;'
+    + 'font-size:11.5px;font-family:inherit;resize:vertical;line-height:1.4" rows="'+(v?2:1)+'">'+_calEsc(v)+'</textarea>';
 }
 // Straight through to this same contractor on the W-9 Tracker - same record, more fields.
 function _ctToW9(){
@@ -30621,7 +30829,9 @@ function renderContractorDirectory(view){
       : function(a,b){ return (!!a.red_flag)-(!!b.red_flag)
             || String(a.name||'').localeCompare(String(b.name||'')); });
   const rows = list.map(c=>{
-    const uses=_contractorUses(c.id);
+    const booked=_contractorBooked(c.id);
+    const prior=_ctPrior(c.id);
+    const uses=prior+booked;
     const last=_contractorLastUsed(c.id);
     // Bruce, 25 Sept: he goes looking for "A Solis framing" as often as "Antonio".
     // Searching only the person's name meant half the directory was unfindable.
@@ -30636,9 +30846,16 @@ function renderContractorDirectory(view){
       <td style="padding:9px 12px;border-bottom:0.5px solid #eee">${inp(c,'email','Email')}${c.email?`<div style="margin-top:2px"><a href="mailto:${_calEsc(c.email)}" style="font-size:11px;color:#185FA5;text-decoration:none">✉️ email</a></div>`:''}</td>
       <td style="padding:9px 12px;border-bottom:0.5px solid #eee;color:#566070">${_tradeCell(c,ro)}</td>
       <td style="padding:9px 12px;border-bottom:0.5px solid #eee;text-align:center">${_ctW9Cell(c,ro)}</td>
+      <td style="padding:9px 12px;border-bottom:0.5px solid #eee">${_ctNotesCell(c,ro)}</td>
       <td style="padding:9px 12px;border-bottom:0.5px solid #eee;text-align:center">
-        <div onclick="${uses?`_contractorJobs('${c.id}')`:''}" style="font-size:16px;font-weight:600;${uses?'color:#185FA5;cursor:pointer;text-decoration:underline':'color:#636b7a'}">${uses}</div>
-        <div style="font-size:10.5px;color:#636b7a">${last?('last '+_calEsc(last)):'never booked'}</div></td>
+        <div onclick="${booked?`_contractorJobs('${c.id}')`:''}" style="font-size:16px;font-weight:600;${booked?'color:#185FA5;cursor:pointer;text-decoration:underline':'color:#636b7a'}">${uses}</div>
+        <div style="font-size:10.5px;color:#636b7a">${booked?(_calEsc(last)?('last '+_calEsc(last)):(booked+' booked')):'none booked here'}</div>
+        ${ro
+          ? (prior?`<div style="font-size:10px;color:#8A94A6">${prior} before the site</div>`:'')
+          : `<div style="margin-top:3px;display:flex;align-items:center;gap:3px;justify-content:center">
+               <input value="${prior||''}" placeholder="0" title="Jobs before this site existed. The calendar counts the rest." onchange="_ctPriorSet('${c.id}',this.value)" style="width:38px;padding:2px 3px;border:0.5px solid #e3e6ec;border-radius:5px;font-size:11px;text-align:center"/>
+               <span style="font-size:9.5px;color:#a3aab6">+${booked} booked</span>
+             </div>`}</td>
       <td style="padding:9px 12px;border-bottom:0.5px solid #eee;text-align:center">
         ${ro?(c.red_flag?'🚩':'—')
            :`<span onclick="toggleContractorFlag('${c.id}')" title="${c.red_flag?'Remove the red flag':'Red-flag — do not hire'}" style="cursor:pointer;font-size:17px">${c.red_flag?'🚩':'⚐'}</span>`}</td>
@@ -30652,7 +30869,7 @@ function renderContractorDirectory(view){
       <div style="flex:1.4;min-width:130px"><label style="font-size:12px;color:#566070;display:block;margin-bottom:4px">Business name</label><input id="ct-biz" placeholder="Company" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px"/></div>
       <div style="flex:1;min-width:120px"><label style="font-size:12px;color:#566070;display:block;margin-bottom:4px">Phone</label><input id="ct-phone" placeholder="(614) 555-0100" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px"/></div>
       <div style="flex:1.2;min-width:140px"><label style="font-size:12px;color:#566070;display:block;margin-bottom:4px">Email</label><input id="ct-email" placeholder="name@company.com" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px"/></div>
-      <div style="flex:1;min-width:120px"><label style="font-size:12px;color:#566070;display:block;margin-bottom:4px">Trade</label><input id="ct-trade" list="ct-trade-list" placeholder="Plumbing, HVAC…" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px"/><datalist id="ct-trade-list">${_ctAllTrades().map(t=>`<option value="${_calEsc(t)}"></option>`).join('')}</datalist></div>
+      <div style="flex:1;min-width:120px"><label style="font-size:12px;color:#566070;display:block;margin-bottom:4px">Trade</label><input id="ct-trade" list="ct-trade-list" placeholder="Plumbing, HVAC…" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px"/><datalist id="ct-trade-list">${_ctAllTrades().slice().sort(function(a,b){return a.toLowerCase().localeCompare(b.toLowerCase());}).map(t=>`<option value="${_calEsc(t)}"></option>`).join('')}</datalist></div>
       <button onclick="_submit('ct-add',this,'Adding…',saveContractor)" style="padding:9px 16px;background:#111;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer">+ Add</button>
     </div>`;
   const th=(t,align)=>`<th style="text-align:${align||'left'};padding:9px 12px;font-size:12px;color:#566070;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap">${t}</th>`;
@@ -30691,6 +30908,7 @@ function renderContractorDirectory(view){
           <span style="font-size:12px;background:#F1F2F6;color:#566070;padding:3px 10px;border-radius:99px">Need a category that is not here? Add it under Trade → ＋ Other…</span>
         </div>
         ${_ctDupPanel()}
+        ${_ctPriorSeedPanel(ro)}
         ${_ctTradeTypesPanel(ro)}
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
           <select onchange="_ctPickTrade(this.value)" title="Show one trade, best first" style="padding:8px 10px;border:0.5px solid ${pickedTrade?'#122A4A':'#d8dce6'};border-radius:8px;font-size:13px;background:${pickedTrade?'#122A4A':'#fff'};color:${pickedTrade?'#fff':'#333'};font-weight:${pickedTrade?'600':'400'};cursor:pointer;max-width:210px">
@@ -30706,9 +30924,9 @@ function renderContractorDirectory(view){
         <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:auto">
           <table style="width:100%;border-collapse:collapse;font-size:14px;color:#111">
             <thead><tr style="background:#fafbfc">
-              ${th('Name')}${th('Business name')}${th('Phone')}${th('Email')}${th('Trade &amp; ranking')}${th('W-9','center')}${th('Times used','center')}${th('Red flag','center')}${ro?"":"<th></th>"}
+              ${th('Name')}${th('Business name')}${th('Phone')}${th('Email')}${th('Trade &amp; ranking')}${th('W-9','center')}${th('Notes')}${th('Times used','center')}${th('Red flag','center')}${ro?"":"<th></th>"}
             </tr></thead>
-            <tbody>${rows || `<tr><td colspan="9" style="padding:24px;text-align:center;color:#636b7a;font-size:14px">No contractors yet.${ro?"":" Add your first one above."}</td></tr>`}</tbody>
+            <tbody>${rows || `<tr><td colspan="10" style="padding:24px;text-align:center;color:#636b7a;font-size:14px">No contractors yet.${ro?"":" Add your first one above."}</td></tr>`}</tbody>
           </table>
         </div>`;
   const _cdTradeBody = `
@@ -35716,4 +35934,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-18c window-notifs-marlo-and-pm us-spelling -->
+<!-- build: 2026-10-18d prelist-pdf-on-card prior-counts contractor-notes alpha-trades -->
