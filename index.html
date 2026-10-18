@@ -28598,6 +28598,31 @@ function _vaTrackers(){
   // the sheet - see _w9InTracker. Still-needed first, then the answered ones.
   const w9cons=_w9List();
   const w9hidden=_w9Hidden();
+  // Marking somebody "never used them" takes the row off this screen, which is the
+  // point - but it would also mean the only way to undo it was to walk over to the
+  // Contractor Directory. He asked for either screen to work, so they come back here.
+  const w9never=_w9NeverList();
+  const w9showNever=!!window.__w9ShowNever;
+  const w9neverPanel=w9never.length
+    ? '<div style="background:#F7F8FB;border:0.5px solid #e4e8ef;border-radius:9px;padding:9px 13px;margin-bottom:10px;font-size:12.5px;color:#566070">'
+      +'<span onclick="_w9ToggleNever()" style="cursor:pointer;color:#185FA5;font-weight:700">'
+        +(w9showNever?'\u25be':'\u25b8')+' '+w9never.length+' marked \u201cnever used them\u201d</span>'
+      +' \u2014 off this sheet until somebody books them on the construction calendar.'
+      +(w9showNever
+        ? ('<div style="margin-top:8px;display:flex;flex-direction:column;gap:5px">'
+           + w9never.slice().sort(function(a,b){ return String(a.name||a.business_name||'').localeCompare(String(b.name||b.business_name||'')); })
+              .map(function(c){
+                return '<div style="display:flex;gap:9px;align-items:baseline;flex-wrap:wrap;padding:4px 0;border-bottom:0.5px solid #eef0f4">'
+                  +'<span style="font-size:13px;font-weight:600;color:#111">'+_calEsc(c.business_name||c.name||'')+'</span>'
+                  +(c.name&&c.business_name?'<span style="font-size:11.5px;color:#566070">'+_calEsc(c.name)+'</span>':'')
+                  +(c.trade?'<span style="font-size:11px;color:#8A94A6">'+_calEsc(c.trade)+'</span>':'')
+                  +(ro?'':'<span onclick="_w9SetState(\''+c.id+'\',\'\')" style="margin-left:auto;cursor:pointer;font-size:11.5px;font-weight:600;color:#185FA5;white-space:nowrap">Put back on the sheet \u203a</span>')
+                +'</div>';
+              }).join('')
+           +'</div>')
+        : '')
+      +'</div>'
+    : '';
   const w9sorted=w9cons.slice().sort((a,b)=> (_w9Flags(b).length?1:0)-(_w9Flags(a).length?1:0) || (_w9Settled(a)-_w9Settled(b)) || ((!!a.red_flag)-(!!b.red_flag)) || String(a.name||'').localeCompare(String(b.name||'')));
   const w9flagged=w9cons.filter(c=>_w9Flags(c).length).length;
   // The four-way answer. One control, because the four answers are mutually exclusive.
@@ -28616,7 +28641,7 @@ function _vaTrackers(){
     <td style="padding:7px">${_w9NameCell(c,'first')}</td>
     <td style="padding:7px">${_w9NameCell(c,'last')}</td>
     <td style="padding:7px">${txt('w9info',c.id,'w9name','Name on W-9',150)}</td>
-    <td style="text-align:center;padding:7px">${_w9StateCell(c)}</td>
+    <td style="text-align:center;padding:7px">${_w9StateCell(c)}${_w9NeverButUsed(c)?'<div style="font-size:10px;color:#8A5A10;margin-top:3px;line-height:1.3">You marked this one <b>never used</b> \u2014 they are on the calendar now</div>':''}</td>
     <td style="padding:7px;min-width:150px">${fl.length?fl.map(x=>`<div style="font-size:11px;color:#B42318;line-height:1.35">\uD83D\uDEA9 ${_calEsc(x)}</div>`).join(''):'<span style="color:#8A94A6;font-size:11.5px">&mdash;</span>'}</td>
     <td style="padding:7px">${txt('w9info',c.id,'note','Why, or anything to remember',170)}</td>
     <td style="padding:7px">${ro?(_calEsc(c.email)||'\u2014'):`<input value="${_calEsc(c.email||'')}" placeholder="Email" onchange="setContractorField('${c.id}','email',this.value)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:150px"/>`}
@@ -28835,7 +28860,7 @@ function _vaTrackers(){
 
   if(view==='w9') return shell(back+_trkSearchBox('Search a person, a business name or a trade…')
     +(w9flagged?`<div style="background:#FBE9E7;border:0.5px solid #F0C7C3;border-radius:9px;padding:10px 13px;margin-bottom:11px;font-size:12.5px;color:#72241F"><b>${w9flagged} ${w9flagged===1?'entry needs':'entries need'} fixing.</b> They are at the top of the list with the reason beside them. Nothing has been renamed or merged \u2014 fix them in the Contractor Directory, or type the right name into <i>Name on W-9</i>. Search <b>flagged</b> to see only these.</div>`:'')
-    +_trkTable('🧾 W-9 Tracker','#7A3FA8','<th style="padding:9px 10px;text-align:left">Who the W-9 is under</th><th style="padding:9px;text-align:left">First name</th><th style="padding:9px;text-align:left">Last name</th><th style="padding:9px;text-align:left">Name on W-9</th><th style="padding:9px">W-9</th><th style="padding:9px;text-align:left">Needs fixing</th><th style="padding:9px;text-align:left">Notes</th><th style="padding:9px;text-align:left">Email</th><th style="padding:9px;text-align:left">Phone</th>'+(ro?'':'<th></th>'),w9rows)+`<div style="font-size:12.5px;color:#2A4365;background:#F4F7FC;border:0.5px solid #D6E0EF;border-radius:9px;padding:9px 13px;margin-bottom:9px"><b>Who is on this list:</b> everybody we have actually used &mdash; booked on the construction calendar, carrying a starting job count, or with money against him in accounts payable &mdash; plus everybody already on this sheet. ${w9hidden?('<b>'+w9hidden+'</b> more sit in the Contractor Directory that we have never used or scheduled; they stay off until we do.'):'Everybody in the directory has been used at least once.'} <b>Nobody already here is ever removed by that rule.</b><div style="margin-top:5px">The answer column has four settings: <b>Still needed</b> is the only one that counts as outstanding. <b>On file</b> also ticks him in the Contractor Directory. <b>No W-9 required</b> is for a supplier or a shop we buy from over the counter. <b>Refusing to give one</b> records a decision rather than leaving him looking like a chase &mdash; put why in the Notes.</div></div>`+`<div style="font-size:12px;color:#566070">A contractor fills a W-9 in as <b>either himself or his company</b> — whichever it was, that is the name shown first, with the other underneath so you can still find him. Type it in "Name on W-9" if it differs from both. Ticking "On file" here also marks them in the Contractor Directory.${ro?'':' <b>Remove</b> deletes the whole contractor record — use it on duplicates.'}</div>`);
+    +w9neverPanel+_trkTable('🧾 W-9 Tracker','#7A3FA8','<th style="padding:9px 10px;text-align:left">Who the W-9 is under</th><th style="padding:9px;text-align:left">First name</th><th style="padding:9px;text-align:left">Last name</th><th style="padding:9px;text-align:left">Name on W-9</th><th style="padding:9px">W-9</th><th style="padding:9px;text-align:left">Needs fixing</th><th style="padding:9px;text-align:left">Notes</th><th style="padding:9px;text-align:left">Email</th><th style="padding:9px;text-align:left">Phone</th>'+(ro?'':'<th></th>'),w9rows)+`<div style="font-size:12.5px;color:#2A4365;background:#F4F7FC;border:0.5px solid #D6E0EF;border-radius:9px;padding:9px 13px;margin-bottom:9px"><b>Who is on this list:</b> everybody we have actually used &mdash; booked on the construction calendar, carrying a starting job count, or with money against him in accounts payable &mdash; plus everybody already on this sheet. ${w9hidden?('<b>'+w9hidden+'</b> more sit in the Contractor Directory that we have never used or scheduled'+(w9never.length?(', <b>'+w9never.length+'</b> of them marked so by hand'):'')+'; they stay off until we do.'):'Everybody in the directory has been used at least once.'} <b>Nobody already here is ever removed by that rule.</b><div style="margin-top:5px">The answer column has five settings: <b>Still needed</b> is the only one that counts as outstanding. <b>On file</b> also ticks him in the Contractor Directory. <b>No W-9 required</b> is for a supplier or a shop we buy from over the counter. <b>Refusing to give one</b> records a decision rather than leaving him looking like a chase &mdash; put why in the Notes. <b>Never used them</b> takes him off this sheet altogether, from here or from the Contractor Directory &mdash; until somebody books him on the construction calendar, at which point he comes back on his own.</div></div>`+`<div style="font-size:12px;color:#566070">A contractor fills a W-9 in as <b>either himself or his company</b> — whichever it was, that is the name shown first, with the other underneath so you can still find him. Type it in "Name on W-9" if it differs from both. Ticking "On file" here also marks them in the Contractor Directory.${ro?'':' <b>Remove</b> deletes the whole contractor record — use it on duplicates.'}</div>`);
   if(view==='co') return shell(back+_trkSearchBox('Search a property, what changed, who caused it or who approved it…')+_coTrackerBody());
   if(view==='prelist') return shell(back+_plHub());
   if(view==='mow') return shell(back+_trkSearchBox('Search a property…')+_trkTable('🌱 Mowing Tracker','#3B6D11','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px;text-align:left">Who is mowing</th><th style="padding:9px;text-align:left">How often</th><th style="padding:9px;text-align:left">Cost/mow</th><th style="padding:9px;text-align:left">Contact #</th><th style="padding:9px;text-align:left">PM</th><th style="padding:9px;text-align:left">Payment</th><th style="padding:9px">On route</th><th style="padding:9px">Removed after</th>',mowrows)+_trkClosedSimple(closed,'mowing history'));
@@ -30858,6 +30883,11 @@ const _W9_TASKWORDS=/\b(rip\s*off|ripoff|tear\s*out|build|install|installation|r
 function _w9Digits(v){ return String(v||'').replace(/\D+/g,'').slice(-10); }
 function _w9Flags(c){
     const out=[];
+    // Bruce: "if I mark it in the contractor directory that I've never used them, then
+    // it needs to just stop flagging that it needs a W-9." Name-quality problems still
+    // show - he is cleaning the directory and those are exactly what he is looking for -
+    // but nothing here nags about paperwork we have no reason to ask for yet.
+    const _quiet=(_w9StatRaw(c)==='never' && !_w9Worked(c));
     const nm=String(c.name||'').trim();
     const biz=String(c.business_name||'').trim();
     const w9n=String(_trkVal('w9info',c.id,'w9name')||'').trim();
@@ -30874,9 +30904,9 @@ function _w9Flags(c){
     else if(nm && _W9_TASKWORDS.test(nm) && words.length===2 && !biz)
       out.push('Looks like a nickname - needs the real name');
     // 4. The W-9 is ticked but we never captured whose legal name is on it.
-    if(_w9on(c) && !first && !last && !w9n)
+    if(!_quiet && _w9on(c) && !first && !last && !w9n)
       out.push('W-9 ticked but no name recorded for it');
-    if(_w9StatRaw(c)==='refused' && !String(_trkVal('w9info',c.id,'note')||'').trim())
+    if(!_quiet && _w9StatRaw(c)==='refused' && !String(_trkVal('w9info',c.id,'note')||'').trim())
       out.push('Marked as refusing \u2014 write down why in the notes');
     // 5. The typed W-9 name matches neither the person nor the company.
     if(w9n && nm && biz){
@@ -30920,21 +30950,45 @@ function _w9Flags(c){
 // it. If he is ticked, if anybody has typed a single character against him, or if an
 // answer has been recorded, he stays - whatever the business test says. This filter can
 // only ever ADD somebody to the tracker, never take one away.
+// Bruce, 19 Oct, cleaning the directory out: "I'm finding a lot of numbers in here of
+// people that we've never used before ... I need an option that I can mark in either
+// tracker ... it doesn't matter which one I mark it in ... if I mark it that I've never
+// used them before, it removes them from the W9 tracker UNTIL THEY ARE USED ... we don't
+// need a W-9 from somebody until we've paid them. Which you're not going to know if we've
+// paid them or not, but you'll know if we've put them on our construction calendar."
+//
+// That last sentence is the whole design. The mark is not permanent and it is not a
+// delete - it says "not yet", and the construction calendar is what overrules it. The
+// day somebody books that contractor on a job, the mark is out of date, he comes back on
+// the W-9 sheet on his own, and the screen says why so nobody wonders where he came from.
+// His mark is never erased by that - an automation may stop obeying a human decision, it
+// may not quietly rewrite one.
 const W9_STATES = [
   ['',        'Still needed',           '#B42318', '#FBEAE8'],
   ['onfile',  'On file',                '#0F7B54', '#E6F4ED'],
   ['none',    'No W-9 required',        '#185FA5', '#E8F1FB'],
-  ['refused', 'Refusing to give one',   '#8A5A10', '#FBF3E2']
+  ['refused', 'Refusing to give one',   '#8A5A10', '#FBF3E2'],
+  ['never',   'Never used them',        '#566070', '#F1F3F7']
 ];
 function _w9Meta(k){ return W9_STATES.find(function(x){ return x[0]===String(k||''); })||W9_STATES[0]; }
 // The stored answer, which is NOT the tick. The tick stays exactly what it always was so
 // every other screen reading it keeps working; this sits beside it.
 function _w9StatRaw(c){
   const v=String(((((window._trkData||{}).w9info)||{})[(c&&c.id)]||{}).status||'');
-  return (v==='none'||v==='refused')?v:'';
+  return (v==='none'||v==='refused'||v==='never')?v:'';
 }
 // The tick wins. A W-9 we actually hold beats any note about not needing one.
-function _w9State(c){ return _w9on(c) ? 'onfile' : _w9StatRaw(c); }
+// And "never used them" only holds UNTIL we use them - the moment he is on a job the
+// mark is stale, so it stops counting as an answer and the W-9 question is live again.
+// The stored mark is left alone; it is read through _w9StatRaw where that still matters.
+function _w9State(c){
+  if(_w9on(c)) return 'onfile';
+  const s=_w9StatRaw(c);
+  if(s==='never' && _w9Worked(c)) return '';
+  return s;
+}
+// He said he never used them, and then somebody booked them. Worth saying out loud.
+function _w9NeverButUsed(c){ return _w9StatRaw(c)==='never' && _w9Worked(c); }
 // Answered - any of the three. This is what "outstanding" is counted against now, so a
 // supplier we never ask and a man who said no both stop showing up as work to do.
 function _w9Settled(c){ return _w9State(c)!==''; }
@@ -30953,7 +31007,22 @@ function _w9Typed(c){
   const i=((((window._trkData||{}).w9info)||{})[(c&&c.id)])||{};
   return ['first','last','w9name','note','status'].some(function(k){ return String(i[k]||'').trim(); });
 }
-function _w9InTracker(c){ return !!c && (_w9on(c) || _w9Typed(c) || _w9Worked(c)); }
+// Order matters here, and it is the whole rule in four lines.
+//   1. Used on a job - always on the sheet, whatever anybody has marked.
+//   2. Marked "never used them" - off the sheet until (1) becomes true.
+//   3. Otherwise the old safety rule: ticked, or anybody has typed anything.
+function _w9InTracker(c){
+  if(!c) return false;
+  if(_w9Worked(c)) return true;
+  if(_w9StatRaw(c)==='never') return false;
+  return _w9on(c) || _w9Typed(c);
+}
+// The ones he has explicitly put aside, so the tracker can offer them back rather than
+// making him go to the directory to undo a mark he made on the tracker.
+function _w9NeverList(){
+  return (typeof _contractorsCache!=='undefined'?_contractorsCache:[])
+    .filter(function(c){ return _w9StatRaw(c)==='never' && !_w9Worked(c); });
+}
 function _w9List(){
   return (typeof _contractorsCache!=='undefined'?_contractorsCache:[]).filter(_w9InTracker);
 }
@@ -30962,6 +31031,10 @@ function _w9List(){
 function _w9Hidden(){
   const all=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]);
   return all.length - all.filter(_w9InTracker).length;
+}
+function _w9ToggleNever(){
+  window.__w9ShowNever=!window.__w9ShowNever;
+  if(typeof _trkRerender==='function') _trkRerender(); else openVAAdminDashboard('trackers');
 }
 async function _w9SetState(id, val){
   if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
@@ -30973,7 +31046,7 @@ async function _w9SetState(id, val){
   if(v==='onfile') d.w9[id]=true; else delete d.w9[id];
   window._trkData=d;
   // _trkSet writes the whole trkData blob and redraws, so the tick above goes with it.
-  await _trkSet('w9info', id, 'status', (v==='none'||v==='refused')?v:'', true);
+  await _trkSet('w9info', id, 'status', (v==='none'||v==='refused'||v==='never')?v:'', true);
   if(typeof _logAudit==='function'){
     _logAudit('updated','contractor', (c.name||c.business_name||''), 'W-9: '+_w9Meta(v)[1]);
   }
@@ -31011,12 +31084,14 @@ function _ctW9Cell(c, ro){
       ? '<span onclick="_ctW9Toggle(\''+c.id+'\')" title="'+(st==='onfile'?'W-9 is on file \u2014 click to un-tick':'No W-9 on file \u2014 click once it is collected')+'" style="cursor:pointer;font-size:16px;color:'+face+'">'+(st==='onfile'?'\u2611':'\u2610')+'</span>'
       : '<span style="font-size:10.5px;font-weight:700;color:'+face+'">'+_calEsc(m[1])+'</span>');
   const pick=ro ? '' :
-    '<select onchange="_w9SetState(\''+c.id+'\',this.value)" title="What the W-9 answer is for this contractor" style="margin-top:2px;padding:1px 3px;border:0.5px solid #e3e6ec;border-radius:5px;font-size:9.5px;max-width:118px;color:'+face+';background:'+m[3]+'">'
+    '<select onchange="_w9SetState(\''+c.id+'\',this.value)" title="What the W-9 answer is for this contractor. Never used them takes him off the W-9 tracker until somebody books him on the construction calendar." style="margin-top:2px;padding:1px 3px;border:0.5px solid #e3e6ec;border-radius:5px;font-size:9.5px;max-width:118px;color:'+face+';background:'+m[3]+'">'
     + W9_STATES.map(function(x){ return '<option value="'+x[0]+'"'+(x[0]===st?' selected':'')+'>'+_calEsc(x[1])+'</option>'; }).join('')
     + '</select>';
   return '<div style="font-size:15px;color:'+face+'">'+mark+'</div>'
     + (nm?'<div style="font-size:10px;color:#636b7a;max-width:124px;margin:1px auto 0;line-height:1.2">'+_calEsc(nm)+'</div>':'')
     + (st?'':'<div style="font-size:9.5px;color:#8A5A10;margin-top:1px">still needed</div>')
+    + (_w9NeverButUsed(c)?'<div style="font-size:9px;color:#8A5A10;margin-top:1px;line-height:1.25">marked never used \u2014 now booked</div>':'')
+    + (_w9State(c)==='never'?'<div style="font-size:9px;color:#8A94A6;margin-top:1px;line-height:1.25">off the W-9 sheet</div>':'')
     + pick
     + (issues.length?('<div onclick="_ctToW9()" title="'+_calEsc(issues.join(' \u00b7 '))+'" style="font-size:9.5px;color:#B42318;font-weight:700;margin-top:1px;cursor:pointer">\u{1F6A9} '+issues.length+' to fix</div>'):'');
 }
@@ -37478,4 +37553,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-18r realtor-dead-tabs-fixed -->
+<!-- build: 2026-10-18s w9-never-used -->
