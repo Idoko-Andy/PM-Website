@@ -2875,6 +2875,38 @@ function _canonUnique(list){
   });
   return out;
 }
+// Bruce, 18 Oct: "Isaiah versus Isaiah Stinson - that is the same person. They both
+// need to act as the same, whether I click one or the other."
+// _canonName already knew they were one man and _sameAssignee already matched them, so
+// nothing was ever assigned to the wrong person. What was wrong is that several screens
+// built their list of managers straight from the raw pm column - [...new Set(cards.map(
+// c=>c.pm))] - so the same man appeared twice in the strip and twice in the counts, and
+// you had two places to click for one person.
+//
+// These two put that right without touching the stored data. The first gives the one
+// canonical name for a list of cards; the second reads a per-manager record under EVERY
+// spelling of that man, so folding the names together cannot hide notes filed under the
+// other one.
+function _pmNamesFrom(cards){
+  return _canonUnique(((cards||[]).map(function(c){ return c&&c.pm; })).filter(Boolean));
+}
+function _pmSpellings(cards, name){
+  const out=[]; 
+  ((cards||[]).map(function(c){ return c&&c.pm; })).filter(Boolean).forEach(function(n){
+    if(_canonSame(n,name) && out.indexOf(n)<0) out.push(n);
+  });
+  if(!out.length) out.push(name);
+  return out;
+}
+// Every entry filed under any spelling of this person, newest spelling first.
+function _pdnAll(data, cards, name, key){
+  const out=[];
+  _pmSpellings(cards, name).concat([name]).forEach(function(sp){
+    const list=(((data||{})[sp]||{})[key])||[];
+    list.forEach(function(x){ if(out.indexOf(x)<0) out.push(x); });
+  });
+  return out;
+}
 let PM_MANAGERS = ["Andrew","Isaiah"];
 async function loadPMManagers(){
   // The Project Manager tabs are driven primarily by JOB ROLE: anyone whose role
@@ -8667,11 +8699,12 @@ function _pdnAllPMs(key, title){
   const u=(typeof _effectiveUser==='function')?_effectiveUser():currentUser();
   const isDir = !!(u && (isBruce(u) || u.role==='CEO' || u.role==='Project Director' || u.isSuperAdmin));
   if(!isDir) return '';
-  const pms=[...new Set((typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived).map(c=>c.pm).filter(Boolean))].sort();
+  const _src=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived);
+  const pms=_pmNamesFrom(_src).sort();
   if(!pms.length) return '';
   const d=window._pdnData||{};
   const cards=pms.map(pm=>{
-    const list=((d[pm]||{})[key])||[];
+    const list=_pdnAll(d, _src, pm, key);
     const pmQ=_argEsc(pm);
     const elId='pdnall-'+key.replace(/[^a-z0-9]/gi,'')+'-'+pm.replace(/[^a-z0-9]/gi,'');
     const rows=list.map((n,i)=>`<div style="display:flex;gap:7px;align-items:flex-start;padding:5px 0;border-bottom:0.5px solid #f1f3f7"><span onclick="_pdnToggleAll('${pmQ}','${key}',${i})" style="font-size:14px;cursor:pointer">${n.done?'✅':'⬜'}</span><div style="flex:1;font-size:12.5px;color:${n.done?'#566070':'#333'};${n.done?'text-decoration:line-through;':''}">${_calEsc(n.t)} <span style="color:#636b7a;font-size:10.5px">${_calEsc(n.at||'')}</span></div></div>`).join('')||'<div style="font-size:12px;color:#636b7a;padding:4px 0">No comments yet.</div>';
@@ -9944,7 +9977,7 @@ function openDollarsDayHousing(){
     return `<div style="margin-bottom:8px"><div style="font-size:13px;font-weight:700;color:#111;margin-bottom:7px">${heading} <span style="font-weight:400;color:#566070">— overall ${wavg(list)}/day across ${list.length}</span></div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:9px;margin-bottom:16px">${cells||'<div style="font-size:12.5px;color:#636b7a">No data.</div>'}</div></div>`;
   };
 
-  const pms=[...new Set(cards.map(c=>c.pm).filter(Boolean))].sort();
+  const pms=_pmNamesFrom(cards).sort();
   const types=[...new Set(cards.map(c=>c.type).filter(Boolean))].sort();
   const btn=(v,l)=>`<span onclick="_ddSet('range','${v}')" style="display:inline-block;padding:6px 12px;margin:0 6px 6px 0;border-radius:99px;font-size:12.5px;cursor:pointer;border:0.5px solid ${st.range===v?'#185FA5':'#dde2ec'};background:${st.range===v?'#E6F1FB':'#fff'};color:${st.range===v?'#185FA5':'#555'};font-weight:${st.range===v?600:400}">${l}</span>`;
   const perm=rows.filter(r=>r.permitted), non=rows.filter(r=>!r.permitted);
@@ -16956,10 +16989,10 @@ function openWeeklyMeeting(kind, week){
     }).join('');
 
     // Pre Construction comments across ALL PMs - directors see + add on one page.
-    const pms=[...new Set(cards.map(c=>c.pm).filter(Boolean))];
+    const pms=_pmNamesFrom(cards);
     const pdn=window._pdnData||{};
     const pmNotes=pms.map(pm=>{
-      const list=(((pdn[pm]||{}).precon)||[]);
+      const list=_pdnAll(pdn, cards, pm, 'precon');
       const items=list.map((n,i)=>`<div style="display:flex;gap:7px;align-items:flex-start;padding:5px 0;border-bottom:0.5px solid #f1f3f7"><span onclick="_pdnToggle2('${_argEsc(pm)}',${i})" style="font-size:14px;cursor:pointer">${n.done?'&#9989;':'&#11036;'}</span><div style="flex:1;font-size:12.5px;color:${n.done?'#566070':'#333'};${n.done?'text-decoration:line-through;':''}">${_calEsc(n.t)} <span style="color:#636b7a;font-size:10.5px">${_calEsc(n.at||'')}</span></div></div>`).join('')||'<div style="font-size:12px;color:#636b7a;padding:4px 0">No comments yet.</div>';
       const elId='pdn-mtg-'+pm.replace(/[^a-z0-9]/gi,'');
       return `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 14px"><div style="font-size:13.5px;font-weight:700;color:#111;margin-bottom:4px">${_calEsc(pm)} &mdash; Pre Construction comments</div>${items}
@@ -19531,9 +19564,21 @@ function _plBody(c, ro, where){
       : '<input value="'+E(typed||auto)+'" '+common+'/>';
     return '<div style="padding:7px 0;border-bottom:0.5px solid #f4f5f7">'+head+box+'</div>';
   };
-  const groups=PRELIST_GROUPS.map(function(g){
+  // Bruce, 18 Oct: "forms in labelled sections with progress ... this is exactly what
+  // you are describing with Amazon and Target. They never show you everything at once."
+  //
+  // Same twenty-five questions, same record, same save path - one section on screen at a
+  // time with a strip across the top showing where you are. A PM can do the structure
+  // section standing in the kitchen and the finishes section later, and the form tells
+  // them what is left rather than making them count.
+  //
+  // Read-only is deliberately NOT stepped: somebody reviewing the form wants the whole
+  // thing on one page, and there is nothing to fill in.
+  const gstat=PRELIST_GROUPS.map(function(g){
     const done=g.fields.filter(function(f){ return !!_plVal(c,f[0]); }).length;
-    const all=g.fields.length;
+    return { g:g, done:done, all:g.fields.length, full:(done===g.fields.length) };
+  });
+  const card=function(g, done, all){
     return '<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:13px 16px;margin-bottom:11px">'
       +'<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap">'
         +'<div style="font-size:14px;font-weight:700;color:#111">'+E(g.title)+'</div>'
@@ -19541,7 +19586,42 @@ function _plBody(c, ro, where){
       +'<div style="font-size:11.5px;color:#566070;margin:2px 0 4px">'+E(g.hint)+'</div>'
       +g.fields.map(cell).join('')
     +'</div>';
-  }).join('');
+  };
+  // Stepped where somebody is FILLING IT IN - the property card, the hub, the field app.
+  // Whole where somebody is READING it: a realtor opening Coming Soon wants the lockbox
+  // and the showing instructions in front of them, not three clicks away. Same record,
+  // same boxes, same saves either way - only the number on screen at once differs.
+  const stepped = !ro && (window._plWhere!=='rlt');
+  let groups;
+  if(!stepped){
+    groups=gstat.map(function(s){ return card(s.g, s.done, s.all); }).join('');
+  } else {
+    const i=_plStepIdx(pid, gstat);
+    const s=gstat[i];
+    const strip='<div style="display:flex;gap:4px;margin-bottom:10px;flex-wrap:wrap">'
+      + gstat.map(function(x,n){
+          const on=(n===i);
+          const bg=on?'#122A4A':(x.full?'#E6F4ED':'#EDEFF3');
+          const fg=on?'#fff':(x.full?'#0F7B54':'#8A94A6');
+          const name=String(x.g.title||'').replace(/^[^A-Za-z]+/,'').trim();
+          return '<span data-pl-step="'+n+'" onclick="_plGo(\''+pid+'\','+n+')" title="'+E(name)+' \u2014 '+x.done+' of '+x.all+' answered" '
+            +'style="flex:1;min-width:74px;text-align:center;cursor:pointer;font-size:10.5px;font-weight:'+(on?'700':'400')+';padding:5px 4px;border-radius:6px;background:'+bg+';color:'+fg+';white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
+            +(x.full&&!on?'\u2713 ':'')+E(name)+'</span>';
+        }).join('')
+      +'</div>';
+    const left=k.t-k.n;
+    const head2='<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:4px">'
+      +'<div style="font-size:12.5px;font-weight:700;color:#111">Step '+(i+1)+' of '+gstat.length+'</div>'
+      +'<div style="font-size:11.5px;color:'+(left?'#8A5A10':'#0F7B54')+'">'+(left? (left+' question'+(left===1?'':'s')+' left on the whole form') : 'every question answered')+'</div></div>';
+    const bar='<div style="height:5px;background:#EDEFF3;border-radius:99px;overflow:hidden;margin-bottom:11px">'
+      +'<div style="height:100%;width:'+Math.max(2,k.pct)+'%;background:#122A4A"></div></div>';
+    const prev=(i>0)?'<button onclick="_plGo(\''+pid+'\','+(i-1)+')" style="padding:8px 15px;background:#fff;border:0.5px solid #cdd7e6;border-radius:8px;font-size:13px;color:#566070;cursor:pointer">\u2039 Back</button>':'';
+    const next=(i<gstat.length-1)
+      ? '<button onclick="_plGo(\''+pid+'\','+(i+1)+')" style="padding:8px 16px;background:#122A4A;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Next \u2014 '+E(String(gstat[i+1].g.title||'').replace(/^[^A-Za-z]+/,'').trim())+' \u203a</button>'
+      : '';
+    groups=strip+head2+bar+card(s.g, s.done, s.all)
+      +'<div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:11px">'+prev+next+'</div>';
+  }
 
   // Context the form never asks for, because the site already knows it.
   const ctx=[['Property type', c.type||''], ['Goal ARV', c.goalArv||''],
@@ -19571,6 +19651,18 @@ function _plBody(c, ro, where){
     +'<span style="font-size:11.5px;color:#636b7a;align-self:center">Every box saves itself as you leave it.</span></div>';
 
   return head+groups+foot;
+}
+// Which step this house is on. It opens on the first section with anything missing,
+// so coming back to a half-done form puts you where the work is rather than at the top.
+function _plStepIdx(pid, gstat){
+  const st=window._plStep||{};
+  if(st[pid]!=null && st[pid]>=0 && st[pid]<gstat.length) return st[pid];
+  for(let n=0;n<gstat.length;n++){ if(!gstat[n].full) return n; }
+  return 0;
+}
+function _plGo(pid, i){
+  const st=window._plStep||{}; st[pid]=i; window._plStep=st;
+  _plRerender(pid);
 }
 // A save redraws the screen it was made on, but only after the write lands - otherwise
 // a half-typed box can be painted back over the top of itself.
@@ -22131,7 +22223,7 @@ function _amCards(key){
 }
 function _amTile(key,title,icon,color,sub){
   const cards=_amCards(key);
-  const pms=new Set(cards.map(c=>c.pm).filter(Boolean));
+  const pms=new Set(_pmNamesFrom(cards));
   return `<div onclick="_amDrill('${_argEsc(key)}')" style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${color};border-radius:10px;padding:14px 16px;cursor:pointer" onmouseover="this.style.boxShadow='0 4px 14px rgba(0,0,0,0.08)'" onmouseout="this.style.boxShadow='none'">
     <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px"><div style="font-size:13.5px;font-weight:600;color:#111;min-width:0;line-height:1.3">${icon} ${title}</div><span style="color:#636b7a;flex-shrink:0">›</span></div>
     <div style="font-size:27px;font-weight:600;color:${color};margin-top:6px">${cards.length}</div>
@@ -22176,7 +22268,7 @@ function _adminMainDashboard(){
   const all=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived);
   const done=["Closed","Completed"];
   const activeAll=all.filter(c=>done.indexOf(c.phase)<0);
-  const pms=new Set(activeAll.map(c=>c.pm).filter(Boolean));
+  const pms=new Set(_pmNamesFrom(activeAll));
   const noPM=activeAll.filter(c=>!c.pm).length;
   const tiles=_AM_TILES.map(t=>_amTile(t[0],t[1],t[2],t[3],t[4]));
   const band=(label,rows)=>`<div style="font-size:12px;font-weight:600;color:#566070;text-transform:uppercase;letter-spacing:0.5px;margin:0 0 8px">${label}</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-bottom:20px">${rows}</div>`;
@@ -22205,7 +22297,7 @@ function _marloTab(){
   // 1. Active projects across every project manager.
   const _amAll=(typeof propCards!=='undefined'?propCards:[]).filter(c=>!c.archived);
   const _amActive=_amAll.filter(c=>["Closed","Completed"].indexOf(c.phase)<0);
-  const _amPMs=new Set(_amActive.map(c=>c.pm).filter(Boolean));
+  const _amPMs=new Set(_pmNamesFrom(_amActive));
   // 2. Her completion rate over the last seven days. pm_tasks records no completion
   // timestamp, only status - so this is "of her tasks that came due in the last 7
   // days, how many are marked done", which is the honest reading of the number.
@@ -35934,4 +36026,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-18d prelist-pdf-on-card prior-counts contractor-notes alpha-trades -->
+<!-- build: 2026-10-18e stepped-prelist-form one-person-one-entry -->
