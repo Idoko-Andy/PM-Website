@@ -5037,6 +5037,17 @@ let _propBack = 'trello';
 // they are simply no longer the only thing that can be remembered.
 function _propFromSet(fn, args){
   try{ _propBack={ fn:String(fn), args:Array.prototype.slice.call(args||[]) }; }catch(e){}
+  // ---- the "it took me out of her tab" bug, properly this time ------------------
+  // Bruce, 4 Oct: "I was just on her tab and it took me out of her tab." That was fixed
+  // by having each tracker screen say how to redraw ITSELF, in window._trkRerender.
+  // What nobody cleared was the other half: _trkRerender was never UNSET when you left.
+  // So after one visit to Trackers, the instruction "redraw the trackers screen" stayed
+  // loaded for the rest of the session - and ticking anything tracker-backed from the
+  // realtor dashboard, the property board or anywhere else threw you onto Trackers.
+  //
+  // Every screen change runs through here, so here is where it gets cleared. A screen
+  // that hosts a tracker sets it again straight after, further down its own opener.
+  try{ window._trkRerender=null; window._trkCtx=null; }catch(e){}
 }
 function _goPropBack(){
   const k = _propBack || 'trello';
@@ -15894,13 +15905,13 @@ async function _tdHold(key){
   if(!ok) return;
   if(typeof _logAudit==='function') _logAudit('updated','property',(row&&row.addr)||key,
     'Put on hold on the Upcoming Takedowns queue until '+until+'. It comes back by itself.');
-  (window._trkRerender||function(){ openVAAdminDashboard('va'); })();
+  _trkRedraw();
 }
 async function _tdUnhold(key){
   if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
   const ok=await _tdSet(key, { hold:'' });
   if(!ok) return;
-  (window._trkRerender||function(){ openVAAdminDashboard('va'); })();
+  _trkRedraw();
 }
 // Everything this screen writes goes into trackers.tdq, which ordinary staff may write.
 async function _tdSet(key, patch){
@@ -15925,7 +15936,7 @@ async function _tdAdd(){
   if(!ok) return;
   if(typeof _logAudit==='function') _logAudit('created','property', addr, 'Added to the Upcoming Takedowns list - needs a property card');
   ['td-addr','td-close','td-vac','td-note'].forEach(function(id){ const e=document.getElementById(id); if(e) e.value=''; });
-  (window._trkRerender||function(){ openVAAdminDashboard('va'); })();
+  _trkRedraw();
 }
 async function _tdDismiss(key){
   const x=_tdAll().find(function(y){ return y.key===key; }) || {};
@@ -15933,7 +15944,7 @@ async function _tdDismiss(key){
   const ok=await _tdSet(key, { done:true, doneBy:(typeof _miWho==='function')?_miWho():'', doneAt:new Date().toISOString(), doneWhy:'not ours' });
   if(!ok) return;
   if(typeof _logAudit==='function') _logAudit('updated','property', x.addr||key, 'Taken off the Upcoming Takedowns list');
-  (window._trkRerender||function(){ openVAAdminDashboard('va'); })();
+  _trkRedraw();
 }
 // Open the normal Add Property form with what we know already filled in. The person
 // still presses Save, so nothing reaches the board without somebody looking at it.
@@ -19054,12 +19065,24 @@ function roleWidget(role) {
 }
 
 // Welcome header used by all
+// It used to interpolate user.firstName and user.lastName straight into the page, so
+// anybody whose profile had not loaded yet - or who simply has no last name on their
+// record - was greeted with "Welcome back, undefined undefined". It is the first line on
+// every role dashboard, so it is the first thing that looks broken. Everything here now
+// falls back: both names, one name, the email, and finally no name at all.
 function welcomeHeader(user) {
+  const u=user||{};
+  const nm=[u.firstName,u.lastName].map(function(x){ return String(x==null?'':x).trim(); })
+            .filter(Boolean).join(' ')
+         || String(u.name||'').trim()
+         || String(u.email||'').split('@')[0]
+         || '';
+  const role=String(u.role||'').trim();
   return `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
       <div>
-        <div style="font-size:17px;font-weight:500;color:#fff">Welcome back, ${user.firstName} ${user.lastName} 👋</div>
-        <div style="font-size:12px;color:#555;margin-top:3px">${user.role} &nbsp;·&nbsp; ${new Date().toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"})}</div>
+        <div style="font-size:17px;font-weight:500;color:#fff">Welcome back${nm?(', '+_calEsc(nm)):''} 👋</div>
+        <div style="font-size:12px;color:#555;margin-top:3px">${role?(_calEsc(role)+' &nbsp;·&nbsp; '):''}${new Date().toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"})}</div>
       </div>
       <div style="font-size:11px;color:#444;background:#111;border:1px solid #2a2a2a;border-radius:6px;padding:5px 10px">🔴 Live data connects as you build</div>
     </div>`;
@@ -23969,7 +23992,19 @@ function _dirCollect(){
   return {cards,tasks,today,buyDue,sellDue,upPurch,upSale,overdue,approvals};
 }
 function renderDirectorHome(){
-  if(typeof _tasksCache==='undefined'||!_tasksCache.length){ Promise.all([(typeof loadTasks==='function')?loadTasks():Promise.resolve(),(typeof loadPropertiesFromSupabase==='function')?loadPropertiesFromSupabase():Promise.resolve()]).then(()=>{const el=document.getElementById('pd-content'); if(el) el.innerHTML=renderDirectorHome();}); }
+  // This screen used to load the tasks it needed and then redraw ITSELF - and the redraw
+  // ran the same check again. When the task list came back empty it loaded, redrew,
+  // checked, loaded, redrew... forever, with no error and no end: the Director/CEO tab
+  // simply locked the browser up. An empty task list is not a rare state either - a
+  // permissions hiccup, a dropped request, or genuinely having no open tasks all produce
+  // one. It now tries exactly ONCE per session and then draws whatever it has.
+  if((typeof _tasksCache==='undefined'||!_tasksCache.length) && !window.__dirHomeTried){
+    window.__dirHomeTried=true;
+    Promise.all([(typeof loadTasks==='function')?loadTasks():Promise.resolve(),
+                 (typeof loadPropertiesFromSupabase==='function')?loadPropertiesFromSupabase():Promise.resolve()])
+      .then(()=>{ const el=document.getElementById('pd-content'); if(el) el.innerHTML=renderDirectorHome(); })
+      .catch(()=>{});
+  }
   const d=_dirCollect();
   const phases=["Upcoming Takedowns","Occupied / Closed","Vacant / On Standby","Pre Construction","Waiting Permits","Framing, MEPS, Insulation","Drywall / Exterior Work","Finishes","Listed on the Market","In Contract","Closed"];
   const money=[
@@ -25803,6 +25838,34 @@ function _trkApplyPatch(target, ops){
 //
 // Saves now run one at a time, in the order they were asked for, each one working out its
 // change against what the save before it actually wrote.
+// ---- one place that decides where a redraw lands ------------------------------
+// Bruce, 19 Oct: "make sure all confirmation buttons when you submit something or click
+// something done, it doesn't kick you out of the page or take you, it just needs to mark
+// complete and leave you where you are."
+//
+// Twenty-one different save handlers each carried their own copy of "...or else go to
+// the Trackers screen". That fallback is what moved people. It fires whenever the screen
+// you are standing on did not happen to register a redraw - which is most screens, since
+// tracker-backed data is read on the property board, the realtor boards, the meeting
+// screens and the field app, not just on Trackers.
+//
+// The rule is now one function and it has no destination of its own:
+//   1. The screen said how to redraw itself  -> do that.
+//   2. It did not                            -> redraw whatever screen is open, which
+//                                               _propFromSet recorded on the way in.
+//   3. Nothing recorded                      -> do nothing. The save already happened;
+//                                               a stale cell beats being teleported.
+// Nowhere in those three branches is there a screen name. That is the point.
+function _trkRedraw(){
+  if(typeof window._trkRerender==='function'){ try{ window._trkRerender(); }catch(e){} return; }
+  try{
+    const k=_propBack;
+    if(k && typeof k==='object' && k.fn && typeof window[k.fn]==='function'){
+      const go=function(){ window[k.fn].apply(null, k.args||[]); };
+      if(typeof _trkKeepScroll==='function') _trkKeepScroll(go); else go();
+    }
+  }catch(e){}
+}
 async function _trkSave(){
   const prev = window._trkQueue || Promise.resolve();
   const run = prev.then(_trkSaveNow, _trkSaveNow);
@@ -25839,7 +25902,7 @@ async function _trkSaveNow(){
   _trkStatus('saved');
   return true;
 }
-async function _trkToggle(kind,id){ if(_blockIfReadOnly()) return; const d=window._trkData||{}; d[kind]=d[kind]||{}; d[kind][id]=!d[kind][id]; window._trkData=d; await _trkSave(); (window._trkRerender||function(){openVAAdminDashboard('trackers');})(); }
+async function _trkToggle(kind,id){ if(_blockIfReadOnly()) return; const d=window._trkData||{}; d[kind]=d[kind]||{}; d[kind][id]=!d[kind][id]; window._trkData=d; await _trkSave(); _trkRedraw(); }
 // Generic field setter for the richer trackers (window / mowing / W-9 detail rows).
 async function _trkSet(kind,id,field,val,rerender){
   if(_blockIfReadOnly()) return;
@@ -25850,7 +25913,7 @@ async function _trkSet(kind,id,field,val,rerender){
 
   // A permit moving is not just a cell edit - it drives the property card.
   if(kind==='permits' && typeof _permitAfterChange==='function'){ try{ await _permitAfterChange(id,field); }catch(e){} }
-  if(rerender) (window._trkRerender||function(){openVAAdminDashboard('trackers');})();
+  if(rerender) _trkRedraw();
 }
 function _trkVal(kind,id,field){ const e=((window._trkData||{})[kind]||{})[id]; return (e&&e[field])||''; }
 function _trkOn(kind,id,field){ const e=((window._trkData||{})[kind]||{})[id]; return !!(e&&e[field]); }
@@ -26135,7 +26198,7 @@ async function _utilPayApply(pid, sub, d, amt, conf, note){
     const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===_utilBaseId(pid));
     _logAudit(at>=0?'updated':'created','property',(c&&c.addr)||'',
       (UTILS.find(u=>u.key===sub)||{}).label+' payment logged: '+d+(amt?(' \u2014 '+amt):' \u2014 amount still to add'));
-    (window._trkRerender||function(){openVAAdminDashboard('trackers');})();
+    _trkRedraw();
     return true;
   }
 }
@@ -26180,7 +26243,7 @@ async function _utilPayHistApply(pid, sub, d, amt, chg, method, conf, note){
     const c=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===_utilBaseId(pid));
     _logAudit(at>=0?'updated':'created','property',(c&&c.addr)||'',
       (UTILS.find(u=>u.key===sub)||{}).label+' payment logged: '+d+(amt?(' \u2014 '+amt):' \u2014 amount still to add'));
-    (window._trkRerender||function(){openVAAdminDashboard('trackers');})();
+    _trkRedraw();
     return true;
   }
 }
@@ -26238,8 +26301,8 @@ async function _utilLogDel(pid,i){
   if(!(await _utilArrWrite('ulog',pid,null,arr))) return;
   _utilOpenHistory(pid);
 }
-function _utilOpenHistory(pid){ window._trkView='util'; window._utilTab='h'; window._utilProp=pid; (window._trkRerender||function(){openVAAdminDashboard('trackers');})(); }
-function _utilTabTo(t){ window._trkView='util'; window._utilTab=t; if(t!=='h') window._utilProp=null; (window._trkRerender||function(){openVAAdminDashboard('trackers');})(); }
+function _utilOpenHistory(pid){ window._trkView='util'; window._utilTab='h'; window._utilProp=pid; _trkRedraw(); }
+function _utilTabTo(t){ window._trkView='util'; window._utilTab=t; if(t!=='h') window._utilProp=null; _trkRedraw(); }
 
 // A property is "outstanding" when any utility has no provider recorded, or is
 // recorded as off. That is what the VA chases every week.
@@ -26685,7 +26748,7 @@ async function _winConfirmInstall(pid, yes){
     return;
   }
   _winBell();
-  (window._trkRerender||function(){ openVAAdminDashboard('trackers'); })();
+  _trkRedraw();
 }
 // The red flag in the bell has to clear the moment it is answered, from either side.
 function _winBell(){
@@ -26705,7 +26768,7 @@ function _winStageNote(c){
   if(st==='install')  return dt('install_date') ? ('install booked '+dt('install_date')+' \u2014 confirm it happened') : 'needs an install date booked';
   return '';
 }
-function _winGo(k){ window._winStageFilter=(window._winStageFilter===k?null:k); (window._trkRerender||function(){openVAAdminDashboard('trackers');})(); }
+function _winGo(k){ window._winStageFilter=(window._winStageFilter===k?null:k); _trkRedraw(); }
 async function _winAdd(){
   if(_blockIfReadOnly()) return;
   const sel=document.getElementById('win-add');
@@ -26715,7 +26778,7 @@ async function _winAdd(){
   await _trkSet('win',pid,'needed',true,true);
   if(typeof _logAudit==='function') _logAudit('created','property',(c&&c.addr)||'','Added to the window list');
   window._winStageFilter=null;
-  (window._trkRerender||function(){openVAAdminDashboard('trackers');})();
+  _trkRedraw();
 }
 // Taking a house back off the list only makes sense while nothing has happened on
 // it - once it is measured or ordered the record is history, not clutter.
@@ -26725,7 +26788,7 @@ async function _winRemove(pid){
   if(!confirm('Take '+((c&&c.addr)||'this property')+' off the window list?\n\nNothing has been measured or ordered on it, so nothing is lost. You can add it back any time.')) return;
   await _trkSet('win',pid,'needed',false,true);
   if(typeof _logAudit==='function') _logAudit('updated','property',(c&&c.addr)||'','Taken off the window list');
-  (window._trkRerender||function(){openVAAdminDashboard('trackers');})();
+  _trkRedraw();
 }
 function _winComplete(c){
   if(!c) return false;
@@ -26974,7 +27037,7 @@ function _permitRerender(){
     openPermitDashboard(window._permTabSel==='insp'?'insp':'tracker'); return;
   }
   if(window._permitCtx==="architect" && typeof openArchitectDashboard==="function"){ openArchitectDashboard("permits"); return; }
-  (window._trkRerender||function(){ openVAAdminDashboard("trackers"); })();
+  _trkRedraw();
 }
 // Permit work only ever lands on Jen or Marlo, so the assignee is pre-ticked
 // rather than left for someone to guess at.
@@ -28454,7 +28517,7 @@ async function _mowSetWho(pid, val){
 async function _mowAdd(pid){
   if(_blockIfReadOnly()) return;
   const name=(prompt("Who is mowing this one? Enter their name or company.\n\nThey get added to the Contractor Directory under Landscaping so you only type this once.")||'').trim();
-  if(!name){ (window._trkRerender||function(){ openVAAdminDashboard('trackers'); })(); return; }
+  if(!name){ _trkRedraw(); return; }
   const existing=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).find(c=>String(c.name||'').trim().toLowerCase()===name.toLowerCase());
   if(existing){
     // Already in the directory under some other trade - reuse them and make them
@@ -28482,7 +28545,7 @@ async function _mowPhoneSet(pid, val){
   if(error){ alert("Couldn't save that number: "+(error.message||"")); return; }
   _logAudit("updated","contractor",m.name||"","Phone set from the Mowing Tracker");
   await loadContractorsFromSupabase();
-  (window._trkRerender||function(){ openVAAdminDashboard('trackers'); })();
+  _trkRedraw();
 }
 
 function _vaTrackers(){
@@ -28829,7 +28892,7 @@ function _vaTrackers(){
   // waiting to go to the warehouse — Jen's chases live on her own dashboard.
   const permitout=_permitWarehouseDue().length;
   const view=window._trkView||'summary';
-  const tile=(key,icon,title,n,color)=>`<div onclick="window._trkView='${key}';(window._trkRerender||function(){openVAAdminDashboard('trackers');})()" style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${color};border-radius:10px;padding:13px 15px;cursor:pointer"><div style="display:flex;justify-content:space-between"><div style="font-size:13.5px;font-weight:600;color:#111">${icon} ${title}</div><span style="color:#636b7a">›</span></div><div style="font-size:25px;font-weight:600;color:${color};margin-top:5px">${n}</div><div style="font-size:11px;color:#566070">outstanding</div></div>`;
+  const tile=(key,icon,title,n,color)=>`<div onclick="window._trkView='${key}';_trkRedraw()" style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid ${color};border-radius:10px;padding:13px 15px;cursor:pointer"><div style="display:flex;justify-content:space-between"><div style="font-size:13.5px;font-weight:600;color:#111">${icon} ${title}</div><span style="color:#636b7a">›</span></div><div style="font-size:25px;font-weight:600;color:${color};margin-top:5px">${n}</div><div style="font-size:11px;color:#566070">outstanding</div></div>`;
   // Bruce, 25 Sept: Tommy's draw schedule site belongs with the trackers. It is a
   // separate site, so this tile opens it in a new tab instead of switching the view -
   // hence the arrow, so nobody expects it to load in place.
@@ -28850,8 +28913,16 @@ function _vaTrackers(){
   // tracker tile already forwards into that same dashboard, so the two were one door
   // wearing two signs. The dashboard is still on every role's menu and still has the
   // card at the foot of this page - only the duplicate tile is gone.
-  const tiles=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:16px">${tile('w9','🧾','W-9 Tracker',w9out,'#7A3FA8')}${tile('window','🪟','Window Tracker',winout,'#185FA5')}${tile('mow','🌱','Mowing Tracker',mowout,'#3B6D11')}${tile('checklist','✅','Checklist Tracker',clout,'#0B7285')}${tile('util','⚡','Utility Tracker',utilout,'#8A5A10')}${tile('permit','📄','Permit Tracker',permitout,'#B03A8B')}${tile('co','📑','Change Order Tracker',coOut,'#4A1D6E')}${tile('prelist','📝','Pre-Listing Forms',(typeof _plHubOutstanding==='function'?_plHubOutstanding():0),'#0E7460')}${drawTile}</div>`;
-  const back=`<div onclick="window._trkView='summary';(window._trkRerender||function(){openVAAdminDashboard('trackers');})()" style="display:inline-flex;align-items:center;gap:5px;font-size:13px;color:#185FA5;cursor:pointer;margin-bottom:10px">‹ Back to Trackers</div>`;
+  // Seven of the eight tracker tiles open inside this dashboard and leave you a "Back
+  // to Trackers" link. The eighth - Permits - forwards to a dashboard of its own, by
+  // design (Bruce moved permits out on 5 Sept), but it looked identical to its seven
+  // siblings, so pressing it dropped you somewhere else with no warning and no way
+  // back. The Draw Desk tile beside it already has a convention for "this one leaves":
+  // the arrow, and a line saying where it goes. Permits uses the same one now, so the
+  // only tile that behaves differently is the only tile that looks different.
+  const permitTile=`<div onclick="openPermitDashboard('tracker')" title="Permits have their own dashboard \u2014 this opens it" style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid #B03A8B;border-radius:10px;padding:13px 15px;cursor:pointer"><div style="display:flex;justify-content:space-between"><div style="font-size:13.5px;font-weight:600;color:#111">\u{1F4C4} Permit Tracker</div><span style="color:#636b7a">\u2197</span></div><div style="font-size:25px;font-weight:600;color:#B03A8B;margin-top:5px">${permitout}</div><div style="font-size:11px;color:#566070">outstanding \u00b7 its own dashboard</div></div>`;
+  const tiles=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:16px">${tile('w9','🧾','W-9 Tracker',w9out,'#7A3FA8')}${tile('window','🪟','Window Tracker',winout,'#185FA5')}${tile('mow','🌱','Mowing Tracker',mowout,'#3B6D11')}${tile('checklist','✅','Checklist Tracker',clout,'#0B7285')}${tile('util','⚡','Utility Tracker',utilout,'#8A5A10')}${permitTile}${tile('co','📑','Change Order Tracker',coOut,'#4A1D6E')}${tile('prelist','📝','Pre-Listing Forms',(typeof _plHubOutstanding==='function'?_plHubOutstanding():0),'#0E7460')}${drawTile}</div>`;
+  const back=`<div onclick="window._trkView='summary';_trkRedraw()" style="display:inline-flex;align-items:center;gap:5px;font-size:13px;color:#185FA5;cursor:pointer;margin-bottom:10px">‹ Back to Trackers</div>`;
   const shell=(inner)=>`<div style="padding:20px;max-width:1120px;margin:0 auto">
       <div style="position:sticky;top:0;z-index:20;background:#f4f5f7;padding:2px 0 8px;margin:-2px 0 2px;display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
         <div style="font-size:16px;font-weight:600;color:#111">📋 Trackers</div>
@@ -29367,7 +29438,7 @@ async function _zonRowName(id, val){ await _zonWrite(z=>{ const r=z.rows.find(x=
 async function _zonColName(id, val){ await _zonWrite(z=>{ const c=z.cols.find(x=>x.id===id); if(c) c.name=val; }); }
 async function _zonColLink(id, field, val){ await _zonWrite(z=>{ const c=z.cols.find(x=>x.id===id); if(c) c[field]=val; }); }
 async function _zonNote(val){ await _zonWrite(z=>{ z.note=val; }); }
-function _zonRerender(){ (window._trkRerender||function(){ openPermitDashboard('zoning'); })(); }
+function _zonRerender(){ _trkRedraw(); }
 
 function _zonBody(){
   const ro=isReadOnly();
@@ -31034,7 +31105,10 @@ function _w9Hidden(){
 }
 function _w9ToggleNever(){
   window.__w9ShowNever=!window.__w9ShowNever;
-  if(typeof _trkRerender==='function') _trkRerender(); else openVAAdminDashboard('trackers');
+  // No fallback navigation. If this screen did not say how to redraw itself, the save
+  // still happened and the person stays where they are - better a stale cell than being
+  // thrown onto a screen they did not ask for.
+  if(typeof window._trkRerender==='function') window._trkRerender();
 }
 async function _w9SetState(id, val){
   if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
@@ -37553,4 +37627,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-18s w9-never-used -->
+<!-- build: 2026-10-18t audit-stay-put -->
