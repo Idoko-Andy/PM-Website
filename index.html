@@ -50,8 +50,8 @@ body{background:#1a1a1a;color:#fff;min-height:100vh}
 .brand-main{font-size:18px;font-weight:500;color:#fff}
 .brand-sub{font-size:13px;color:#b4bcc8;margin-top:2px}
 
-.nav{background:#1a1a1a;display:flex;width:100%;border-bottom:1px solid #2a2a2a;overflow:visible}
-.ni{flex:1;min-width:0;padding:0 6px;font-size:11.5px;color:#b4bcc8;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:3px;height:42px;white-space:nowrap;border-right:1px solid #2a2a2a;transition:background 0.12s;position:relative;overflow:visible}
+.nav{background:#1a1a1a;display:flex;flex-wrap:wrap;width:100%;border-bottom:1px solid #2a2a2a;overflow:visible}
+.ni{flex:1 1 auto;min-width:max-content;padding:0 8px;font-size:11.5px;color:#b4bcc8;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:3px;height:42px;white-space:nowrap;border-right:1px solid #2a2a2a;transition:background 0.12s;position:relative;overflow:visible}
 .ni:last-child{border-right:none}
 .ni:hover,.ni.on{background:#2a2a2a;color:#fff}
 .ni svg{width:13px;height:13px;flex-shrink:0}
@@ -2420,9 +2420,46 @@ NAV_DROPDOWNS.forEach(([tid,did]) => {
     if (!was) {
       d.classList.add("open");
       t.classList.add("on");
+      _ddFit(d);
       if (tid === "data-t") applyDataAccessUI();
     }
   });
+});
+// Keep an open menu on the screen. A menu hangs from the left edge of its own tab, so
+// the tabs at the right-hand end of the bar open off the side of the window and their
+// items are cut off - which is what "the words are cut off on the edges" was. Measure
+// once on open and hang it from the right instead when it would not fit; the ones that
+// already fit are not touched, so nothing moves that did not have to.
+function _ddFit(d){
+  if(!d) return;
+  try{
+    d.style.left=''; d.style.right=''; d.style.maxWidth='';
+    const pad=10;
+    const w=window.innerWidth || document.documentElement.clientWidth;
+    let r=d.getBoundingClientRect();
+    if(r.right <= w-pad) return;          // it already fits where it is - leave it alone
+    d.style.left='auto'; d.style.right='0';
+    r=d.getBoundingClientRect();
+    // Hard against the right and STILL too wide for the window: cap it, rather than let
+    // it run off the left instead.
+    if(r.left < pad) d.style.maxWidth=(w-(2*pad))+'px';
+  }catch(e){}
+}
+// A sub-menu flies out to the LEFT of its parent, which falls off the window when the
+// parent menu is itself hard against the left edge. Same measure, other direction.
+document.addEventListener('mouseover', function(e){
+  const f=e.target && e.target.closest ? e.target.closest('.sop-flyout') : null;
+  if(!f) return;
+  const sub=f.querySelector('.sop-sub'); if(!sub) return;
+  try{
+    sub.style.right=''; sub.style.left='';
+    const r=sub.getBoundingClientRect();
+    if(r.left < 6){ sub.style.right='auto'; sub.style.left='100%'; }
+  }catch(e2){}
+}, true);
+// A menu left open while the window is resized has to be measured again.
+window.addEventListener('resize', function(){
+  document.querySelectorAll('.dd.open').forEach(_ddFit);
 });
 // A menu with no opener looks like a broken feature, not a missing line of code.
 // Say so in the console the moment the page loads rather than waiting for somebody
@@ -30222,7 +30259,7 @@ function _ctCard(c, ro){
     + '<div style="flex:0 0 auto;min-width:92px">'+lab('W-9')+_ctW9Cell(c,ro)+'</div>'
     + box('220px', lab('Notes')+_ctNotesCell(c,ro,true))
     + '</div>';
-  return '<div data-ct="'+_calEsc(hay)+'" style="padding:14px 16px;border-bottom:0.5px solid #edeff3;'+(c.red_flag?'background:#FDF3F2;':'')+'">'
+  return '<div data-ct="'+_calEsc(hay)+'" style="padding:16px;border-bottom:2px solid #dde2ea;'+(c.red_flag?'background:#FDF3F2;':'')+'">'
     + head + contact + work + '</div>';
 }
 // Straight through to this same contractor on the W-9 Tracker - same record, more fields.
@@ -30531,6 +30568,276 @@ function _ctImportPanel(){
       </div>
     </div>`:''}
   </div>`;
+}
+// ===================== THE KING LIST AND TOMMY'S LIST ==========================
+// Bruce, 18 Oct: "The real list is the very first one we created, which is on the project
+// team website ... the contractor directory on the project team website under tools tab
+// that we've been building since day one. The request to remedy one Tommy did, Tommy did
+// it out of order, and that's his mistake. The king list is the one that wins."
+//
+// They are two different TABLES, not two spellings of one list. This directory is
+// pm_contractors. Request to Remedy reads contractor_directory, which is one row per
+// contractor PER TRADE - a man in three trades is three rows over there, one row here.
+//
+// So the order of work is: get everybody into the king list first, THEN point Request to
+// Remedy at it. Pointing it here while two hundred names are still only in Tommy's table
+// would empty the list people ring contractors off, which is worse than two lists.
+//
+// This panel is the first half. It reads Tommy's table, says who is already here and who
+// is not, and will bring the missing ones across on a button - backed up first, nothing
+// deleted from his table, nothing guessed.
+function _ctRtrState(){ return window._ctRtr || { state:'idle', rows:[], err:'' }; }
+async function _ctRtrLoad(){
+  const st=_ctRtrState();
+  if(st.state==='loading') return;
+  window._ctRtr={ state:'loading', rows:[], err:'' };
+  renderContractorDirectory();
+  try{
+    const r=await supabase.from('contractor_directory')
+      .select('id,name,trade,phone,email,contact_name,vetting_tier,is_internal,jobs_done_n,tracker_props_n,tracker_last_date,contact_pref')
+      .eq('is_archived',false).eq('active',true);
+    if(r.error){ window._ctRtr={ state:'error', rows:[], err:r.error.message||'unknown error' }; }
+    else { window._ctRtr={ state:'ok', rows:(r.data||[]), err:'' }; }
+  }catch(e){ window._ctRtr={ state:'error', rows:[], err:String((e&&e.message)||e) }; }
+  renderContractorDirectory();
+}
+// Tommy's table is one row per trade. Fold it back into people first, or a man in four
+// trades reads as four missing contractors.
+function _ctRtrPeople(){
+  const out=[], by={};
+  _ctRtrState().rows.forEach(function(r){
+    const ph=_ctDigits(r.phone);
+    const key=(ph.length>=10) ? ('p:'+ph) : ('n:'+_ctNormName(r.name));
+    if(!key || key==='n:') return;
+    if(!by[key]){ by[key]={ key:key, name:String(r.name||'').trim(), contact:String(r.contact_name||'').trim(),
+                            phone:String(r.phone||'').trim(), email:String(r.email||'').trim(),
+                            trades:[], rows:[] }; out.push(by[key]); }
+    const g=by[key];
+    if(!g.contact && r.contact_name) g.contact=String(r.contact_name).trim();
+    if(!g.phone && r.phone) g.phone=String(r.phone).trim();
+    if(!g.email && r.email) g.email=String(r.email).trim();
+    const t=_ctTradeClean(r.trade);
+    if(t && !g.trades.some(function(x){ return _ctTierSlug(x)===_ctTierSlug(t); })) g.trades.push(t);
+    g.rows.push(r);
+  });
+  return out;
+}
+// Is this person already in the king list? Phone first - it is the field least likely to
+// have been typed two different ways - then the name against BOTH of ours, because Tommy's
+// single name field holds companies and people alike.
+function _ctRtrFind(g){
+  const list=(typeof _contractorsCache!=='undefined'?_contractorsCache:[])||[];
+  const ph=_ctDigits(g.phone);
+  if(ph.length>=10){
+    const byPhone=list.find(function(c){ return _ctDigits(c.phone)===ph; });
+    if(byPhone) return { c:byPhone, how:'the same phone number' };
+  }
+  const keys=[_ctNormName(g.name), _ctNormName(g.contact)].filter(function(k){ return k && k.length>=4; });
+  for(const k of keys){
+    const hit=list.find(function(c){ return _ctNormName(c.name)===k || _ctNormName(c.business_name)===k; });
+    if(hit) return { c:hit, how:'the same name' };
+  }
+  return null;
+}
+function _ctRtrWords(t){
+  return String(t||'').toLowerCase().split(/[^a-z0-9]+/).filter(function(w){
+    return w && w!=='and' && w!=='the' && w!=='of';
+  });
+}
+// Suggests in ONE direction only: when his whole name sits inside one of ours, so his is
+// the shorter way of saying the same thing - "Framing" inside "Framing / Carpentry".
+//
+// It deliberately does NOT go the other way. Our "Cleaning" sits inside his "Duct
+// Cleaning", but duct cleaning is not cleaning, and filing a duct man under Cleaning puts
+// him on the list somebody rings to get a house swept. A name of his that is MORE
+// specific than ours earns a trade type of its own and waits for a human to say otherwise.
+// Two of ours that could both fit suggests neither, so "HVAC" never picks between a rough
+// and a finish trade on a coin toss.
+function _ctRtrSuggest(t){
+  const mine=_ctAllTrades();
+  const exact=mine.find(function(x){ return _ctTierSlug(x)===_ctTierSlug(t); });
+  if(exact) return { trade:exact, exact:true };
+  const w=_ctRtrWords(t);
+  if(!w.length) return null;
+  const hits=mine.filter(function(x){
+    const v=_ctRtrWords(x);
+    return w.length < v.length && w.every(function(k){ return v.indexOf(k)>=0; });
+  });
+  return hits.length===1 ? { trade:hits[0], exact:false } : null;
+}
+function _ctRtrMapAll(){ return window.__ctRtrMap || (window.__ctRtrMap={}); }
+function _ctRtrMapGet(t){
+  const m=_ctRtrMapAll();
+  if(Object.prototype.hasOwnProperty.call(m,t)) return m[t];   // he has decided
+  const g=_ctRtrSuggest(t);
+  return g ? g.trade : '';                                      // '' = add it as its own trade type
+}
+function _ctRtrMapSet(t, v){ _ctRtrMapAll()[t]=v; renderContractorDirectory(); }
+// What a trade on his list is called here once the mapping is applied.
+function _ctRtrTrade(t){ return _ctRtrMapGet(t) || _ctTradeClean(t); }
+function _ctRtrReport(){
+  const people=_ctRtrPeople();
+  const here=[], missing=[];
+  people.forEach(function(g){ const m=_ctRtrFind(g); if(m){ g.match=m; here.push(g); } else missing.push(g); });
+  // Every trade name Tommy's table uses, and what it is called on the king list.
+  const mine=_ctAllTrades();
+  const tmap={};
+  people.forEach(function(g){ g.trades.forEach(function(t){
+    if(!tmap[t]) tmap[t]={ trade:t, n:0, same:mine.find(function(x){ return _ctTierSlug(x)===_ctTierSlug(t); })||null };
+    tmap[t].n++;
+  }); });
+  Object.keys(tmap).forEach(function(k){
+    const t=tmap[k];
+    t.suggest=_ctRtrSuggest(t.trade);
+    t.mapped=_ctRtrMapGet(t.trade);     // '' means it comes in as a trade type of its own
+  });
+  const trades=Object.keys(tmap).map(function(k){ return tmap[k]; })
+    .sort(function(a,b){ return (a.same?1:0)-(b.same?1:0) || b.n-a.n || a.trade.localeCompare(b.trade); });
+  return { people:people, here:here, missing:missing, trades:trades,
+           // Only the ones that will land as a NEW trade type here - a name he has
+           // pointed at an existing trade is not a new trade type.
+           newTrades:trades.filter(function(t){ return !t.same && !t.mapped; }),
+           decide:trades.filter(function(t){ return !t.same; }) };
+}
+// What a missing person becomes on the king list. No guessing which of Tommy's names is a
+// man and which is a company: if he recorded a contact person, that is the person and the
+// other is the company. If he did not, it goes in as a company with the name field left
+// empty, which since 18g is an honest state rather than a company pretending to be a man.
+function _ctRtrAsRow(g){
+  const nm=g.contact ? g.contact : '';
+  const bz=g.contact ? g.name : g.name;
+  // His trade names go through the mapping he has confirmed, and two of his names that
+  // both point at one of ours collapse to one rather than appearing twice.
+  const trades=[];
+  g.trades.forEach(function(t){
+    const v=_ctRtrTrade(t);
+    if(v && !trades.some(function(x){ return _ctTierSlug(x)===_ctTierSlug(v); })) trades.push(v);
+  });
+  return { name:nm, business_name:bz, phone:g.phone||'', email:g.email||'',
+           trade:_ctTradeStr(trades) };
+}
+function _ctRtrPanel(ro){
+  const u=(typeof currentUser==='function')?currentUser():null;
+  const boss=!!(u && (u.isSuperAdmin || u.role==='Project Director' || u.role==='CEO'));
+  if(ro || !boss) return '';
+  const open=!!window.__ctRtrOpen;
+  const st=_ctRtrState();
+  const head='<div onclick="window.__ctRtrOpen=!window.__ctRtrOpen;renderContractorDirectory()" style="display:flex;align-items:center;gap:8px;cursor:pointer;flex-wrap:wrap">'
+    +'<span style="font-size:13.5px;font-weight:600;color:#111">\u{1F6E0}\uFE0F The Request to Remedy list</span>'
+    +'<span style="font-size:11.5px;color:#8A94A6">'+(open?'hide':'compare it with this one')+'</span></div>';
+  if(!open) return '<div data-ct-rtr="1" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:11px 14px;margin-bottom:12px">'+head+'</div>';
+  let body='';
+  if(st.state==='idle'){
+    body='<div style="font-size:12.5px;color:#566070;margin:7px 0 9px">Request to Remedy keeps its own contractor table \u2014 one row per man per trade. This reads it and says who is already here and who is not. It writes nothing.</div>'
+      +'<button onclick="_ctRtrLoad()" style="padding:8px 15px;background:#122A4A;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Read that list</button>';
+  } else if(st.state==='loading'){
+    body='<div style="font-size:12.5px;color:#566070;margin-top:8px">Reading it\u2026</div>';
+  } else if(st.state==='error'){
+    body='<div style="font-size:12.5px;color:#B42318;margin:8px 0">It would not open \u2014 '+_calEsc(st.err)+'.</div>'
+      +'<button onclick="_ctRtrLoad()" style="padding:7px 14px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer">Try again</button>';
+  } else {
+    const rep=_ctRtrReport();
+    const chip=function(txt,bg,bd,fg){ return '<span style="font-size:12px;background:'+bg+';border:0.5px solid '+bd+';color:'+fg+';padding:3px 10px;border-radius:99px;font-weight:600">'+txt+'</span>'; };
+    const line=function(g){
+      return '<div style="display:flex;gap:10px;align-items:baseline;padding:4px 0;font-size:12.5px;flex-wrap:wrap">'
+        +'<span style="flex:1;min-width:150px;color:#111;font-weight:600">'+_calEsc(g.name||'(no name)')+(g.contact?('<span style="font-weight:400;color:#566070"> \u00b7 '+_calEsc(g.contact)+'</span>'):'')+'</span>'
+        +'<span style="flex:1;min-width:140px;color:#566070">'+_calEsc(g.trades.join(' / ')||'no trade')+'</span>'
+        +'<span style="width:118px;color:#8A94A6">'+_calEsc(g.phone||'no number')+'</span></div>';
+    };
+    const missing=rep.missing;
+    body='<div style="display:flex;gap:8px;flex-wrap:wrap;margin:9px 0 10px">'
+      + chip(st.rows.length+' rows \u00b7 '+rep.people.length+' people on that list','#F1F2F6','#dfe3ea','#566070')
+      + chip(rep.here.length+' already here','#E7F6EE','#A9DFC5','#0F7B54')
+      + (missing.length?chip(missing.length+' not here yet','#FFF6E5','#EAD9A8','#8A5A10'):chip('nobody is missing','#E7F6EE','#A9DFC5','#0F7B54'))
+      + (rep.newTrades.length?chip(rep.newTrades.length+' trade name'+(rep.newTrades.length===1?'':'s')+' we do not have','#FFF6E5','#EAD9A8','#8A5A10'):'')
+      +'</div>';
+    if(rep.decide.length){
+      const opts=_ctAllTrades().slice().sort(function(a,b){ return a.toLowerCase().localeCompare(b.toLowerCase()); });
+      body+='<div style="font-size:11.5px;color:#566070;margin:2px 0 5px"><b>Trade names his list uses that this one does not.</b> Say which of ours each one is, or leave it to come across as a trade type of its own. A suggestion is only made where one name sits wholly inside the other \u2014 nothing is guessed between two that could both fit.</div>'
+        + rep.decide.map(function(t){
+            const sug=t.suggest && !t.suggest.exact ? t.suggest.trade : '';
+            return '<div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap;padding:3px 0">'
+              +'<span style="min-width:150px;font-size:12.5px;color:#111;font-weight:600">'+_calEsc(t.trade)+'<span style="font-weight:400;color:#a3aab6"> \u00b7 '+t.n+'</span></span>'
+              +'<span style="font-size:11.5px;color:#8A94A6">is our</span>'
+              +'<select onchange="_ctRtrMapSet(\''+_calEsc(t.trade).replace(/'/g,"&#39;")+'\',this.value)" style="padding:4px 7px;border:0.5px solid '+(t.mapped?'#A9DFC5':'#d8dce6')+';border-radius:7px;font-size:12px;background:'+(t.mapped?'#F2FBF6':'#fff')+';max-width:230px">'
+                +'<option value=""'+(t.mapped?'':' selected')+'>\u2014 a new trade type, "'+_calEsc(t.trade)+'" \u2014</option>'
+                + opts.map(function(x){ return '<option value="'+_calEsc(x)+'"'+(t.mapped===x?' selected':'')+'>'+_calEsc(x)+'</option>'; }).join('')
+              +'</select>'
+              + (sug && t.mapped===sug ? '<span style="font-size:11px;color:#0F7B54">suggested</span>' : '')
+              +'</div>';
+          }).join('')
+        +'<div style="height:9px"></div>';
+    }
+    if(missing.length){
+      body+='<div style="font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#8A5A10;margin:2px 0 2px">Not in this directory yet ('+missing.length+')</div>'
+        +'<div style="font-size:11.5px;color:#566070;margin-bottom:4px">Point Request to Remedy at this list while these are missing and they fall off the page people ring contractors from. Bring them over first.</div>'
+        +'<div style="max-height:330px;overflow-y:auto;border-top:0.5px solid #f1f3f7">'+missing.map(line).join('')+'</div>'
+        +'<div style="font-size:11px;color:#566070;margin:8px 0 7px;border-top:0.5px solid #f1f3f7;padding-top:7px">A backup file downloads before anything is written. Where Tommy recorded a contact person, that person goes in the name field and his list\u2019s name goes in the business field; where he did not, it goes in as a business with the name left blank rather than a company pretending to be a man. <b>Nothing is removed from his table.</b></div>'
+        +'<button onclick="_ctRtrImport()" style="padding:9px 16px;background:#122A4A;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Bring '+missing.length+' contractor'+(missing.length===1?'':'s')+' into this directory</button>'
+        +' <button onclick="_ctRtrLoad()" style="padding:9px 14px;background:#fff;border:0.5px solid #cdd7e6;border-radius:8px;font-size:12.5px;color:#185FA5;cursor:pointer">Read it again</button>';
+    } else {
+      body+='<div style="font-size:12.5px;color:#0F7B54;font-weight:600;margin-bottom:3px">\u2713 Every contractor on the Request to Remedy list is in this directory.</div>'
+        +'<div style="font-size:11.5px;color:#566070">That is the condition for pointing Request to Remedy at this list instead of its own table \u2014 nobody falls off the page when it switches.</div>'
+        +'<button onclick="_ctRtrLoad()" style="margin-top:9px;padding:7px 14px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer">Read it again</button>';
+    }
+  }
+  return '<div data-ct-rtr="1" style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid #7A3FA8;border-radius:10px;padding:12px 15px;margin-bottom:12px">'+head+body+'</div>';
+}
+async function _ctRtrImport(){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
+  if(_ctRtrState().state!=='ok') return;
+  const rep=_ctRtrReport();
+  const missing=rep.missing;
+  if(!missing.length){ alert('Nobody is missing \u2014 they are all already in this directory.'); return; }
+  const rows=missing.map(_ctRtrAsRow);
+  // The backup goes out BEFORE the first write, and it holds Tommy's rows as they stand
+  // as well as what we are about to insert, so this is undoable from a file either way.
+  try{
+    const dump={ at:new Date().toISOString(), by:((typeof _miWho==='function'?_miWho():'')||''),
+                 note:'Contractors read from the Request to Remedy table (contractor_directory) and about to be inserted into pm_contractors. Nothing was deleted from contractor_directory.',
+                 rtr_rows:_ctRtrState().rows, inserting:rows };
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob([JSON.stringify(dump,null,2)],{type:'application/json'}));
+    a.download='contractors-from-request-to-remedy-'+_ymd(new Date())+'.json';
+    document.body.appendChild(a); a.click(); a.remove();
+  }catch(e){
+    if(!confirm('The backup file would not download ('+String((e&&e.message)||e)+').\n\nGo ahead without it?')) return;
+  }
+  const sample=rows.slice(0,6).map(function(r){ return '\u2022 '+(r.name?(r.name+' \u2014 '+r.business_name):r.business_name)+(r.trade?(' \u2014 '+r.trade):''); });
+  if(!confirm('Add '+rows.length+' contractor'+(rows.length===1?'':'s')+' to this directory?\n\n'
+    + sample.join('\n') + (rows.length>6?('\n\u2026and '+(rows.length-6)+' more'):'')
+    + '\n\nNothing is removed from the Request to Remedy list \u2014 this only copies them here.\n'
+    + 'A backup file has just downloaded.')) return;
+  // Any trade name only his list uses becomes a trade type here first, so nobody lands
+  // with a trade the dropdowns do not know about.
+  if(rep.newTrades.length){
+    try{
+      const next=_ctCustomTrades();
+      rep.newTrades.forEach(function(t){
+        if(!next.some(function(x){ return _ctTierSlug(x)===_ctTierSlug(t.trade); })) next.push(t.trade);
+      });
+      await _trkSet('ct_meta','trades','custom', _ctTradeStr(next), false);
+    }catch(e){}
+  }
+  let added=0; const failed=[];
+  for(let i=0;i<rows.length;i+=25){
+    const batch=rows.slice(i,i+25);
+    const r=await supabase.from('pm_contractors').insert(batch).select('id');
+    // An insert the database refuses comes back with error:null and no rows. Counting the
+    // rows it actually returned is the only honest way to know what landed.
+    const n=(r.data||[]).length;
+    added+=n;
+    if(r.error || n!==batch.length){
+      failed.push('rows '+(i+1)+'\u2013'+(i+batch.length)+(r.error?(': '+(r.error.message||'')):' \u2014 the database accepted '+n+' of '+batch.length));
+    }
+  }
+  if(typeof loadContractorsFromSupabase==='function') await loadContractorsFromSupabase();
+  if(typeof _logAudit==='function') _logAudit('created','contractor','',
+    'Brought '+added+' contractor'+(added===1?'':'s')+' across from the Request to Remedy list');
+  await _ctRtrLoad();
+  if(failed.length) alert('Added '+added+' of '+rows.length+'.\n\nThese did not go in:\n'+failed.join('\n')
+    +'\n\nThe backup file has everything that was meant to be added.');
+  else alert('Added all '+added+'.\n\nRead the list again any time \u2014 once nobody is missing, Request to Remedy can be pointed at this directory.');
 }
 // ---- Possible duplicates ----------------------------------------------------
 // Bruce, 9 Sept: "delete Brady Packs, Brandon Miller, Jacob Barnes, Joe Garcia /
@@ -31206,6 +31513,7 @@ function renderContractorDirectory(view){
           <span style="font-size:12px;background:#F1F2F6;color:#566070;padding:3px 10px;border-radius:99px">Need a category that is not here? Add it under Trade → ＋ Other…</span>
         </div>
         ${_ctDupPanel()}
+        ${_ctRtrPanel(ro)}
         ${_ctPriorSeedPanel(ro)}
         ${_ctTradeTypesPanel(ro)}
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
@@ -36232,4 +36540,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-18g contractor-directory-reads-down -->
+<!-- build: 2026-10-18i rtr-list-bows-to-the-king-list -->
