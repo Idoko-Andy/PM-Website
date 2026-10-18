@@ -20350,12 +20350,90 @@ function _rltMonthGrid(sel){
     +'</div>';
   return nav+'<div style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px">'+head+cells+'</div>';
 }
+// ===================== THE SAME TREATMENT, ON EVERY REALTOR STAGE ================
+// Bruce, 19 Oct, after seeing the Pre List / Punch Out board on the assistant dashboard:
+// "yeah, that looks good, but we need to get it built out for the realtor dashboard too."
+//
+// Two things made that board work, and neither was the data - the data was already
+// there. It was (1) one line at the top that answers "how far off is this stage" before
+// anybody clicks anything, and (2) the list ordered by what still needs chasing instead
+// of by address, so the house nobody has touched is not buried under three nearly done.
+//
+// Every stage gets both. The numbers differ because what blocks a house differs by
+// stage, so each one says its own two things rather than a generic count of houses.
+
+// How far along one house is AT THIS STAGE. Low is worse. Used only for ordering.
+function _rltScore(which, c){
+  const today=_ymd(new Date());
+  if(which==='soon')     return _poCount(c) + (_plPdfReady(c)?PUNCH_ITEMS.length:0);
+  if(which==='active'){
+    const d=_rltDaysSince(c.checklistMarketLast);
+    // Never done is the worst; after that, the longer ago the worse.
+    return (d===null) ? -99999 : -d;
+  }
+  if(which==='contract'){
+    const insp=(typeof _icNoInspection==='function') ? (_icNoInspection(c)?0:1) : 1;
+    return insp + (c.closingDateSell?1:0);
+  }
+  if(which==='rtr'){
+    const nx=_ppEventsOn(c.id).filter(function(e){ return !e.completed && e.event_date>=today; });
+    return nx.length?1:0;
+  }
+  return c.closingDateSell ? 1 : 0;   // ctc
+}
+// The line above the two columns. Two numbers per stage, in the words of that stage.
+function _rltRollup(which, cards){
+  const n=(cards||[]).length;
+  if(!n) return '';
+  const today=_ymd(new Date());
+  const B=function(x){ return '<b>'+x+' of '+n+'</b>'; };
+  let body='';
+  if(which==='soon'){
+    const walks=cards.filter(function(c){ return _poCount(c)===PUNCH_ITEMS.length; }).length;
+    const sheets=cards.filter(_plPdfReady).length;
+    body='<b>Two things stand between these houses and a listing:</b> the punch-out walk, and the pre-listing form the listing is written from. '
+      +B(walks)+' have finished punch out; '+B(sheets)+' have a sheet ready to send.';
+  } else if(which==='active'){
+    const late=cards.filter(_rltChkLate).length;
+    const noAgent=cards.filter(function(c){ return !String(c.listingAgent||'').trim(); }).length;
+    body='<b>On the market.</b> The checklist is due every two weeks: '+B(n-late)+' are inside it, '
+      +'<b>'+late+'</b> '+(late===1?'has':'have')+' run out. '
+      +(noAgent?('<b>'+noAgent+'</b> '+(noAgent===1?'has':'have')+' no listing agent on the card.'):'Every one has a listing agent.');
+  } else if(which==='contract'){
+    const insp=cards.filter(function(c){ return !((typeof _icNoInspection==='function')&&_icNoInspection(c)); }).length;
+    const dated=cards.filter(function(c){ return !!c.closingDateSell; }).length;
+    const rem=cards.filter(function(c){ return (typeof _icRem==='function') && _icRem(c)==='yes'; }).length;
+    body='<b>Under contract.</b> '+B(insp)+' have an inspection recorded; '+B(dated)+' have a closing date. '
+      +(rem?('<b>'+rem+'</b> '+(rem===1?'has':'have')+' asked for a remedy.'):'Nobody has asked for a remedy.');
+  } else if(which==='rtr'){
+    const booked=cards.filter(function(c){
+      return _ppEventsOn(c.id).some(function(e){ return !e.completed && e.event_date>=today; });
+    }).length;
+    const openT=cards.reduce(function(a,c){ return a+_ppTasksOn(c.id).filter(function(t){ return t.status!=='done'; }).length; },0);
+    body='<b>Remedy work.</b> '+B(booked)+' have something booked on site; <b>'+(n-booked)+'</b> '
+      +((n-booked)===1?'has':'have')+' nothing on the calendar at all. '
+      +(openT?('<b>'+openT+'</b> task'+(openT===1?'':'s')+' open across them.'):'No tasks open across them.');
+  } else {
+    const dated=cards.filter(function(c){ return !!c.closingDateSell; }).length;
+    const next=cards.filter(function(c){ return c.closingDateSell && c.closingDateSell>=today; })
+                    .sort(function(a,b){ return a.closingDateSell<b.closingDateSell?-1:1; })[0];
+    body='<b>Waiting on the table.</b> '+B(dated)+' have a closing date. '
+      +(next?('The next one is <b>'+_calEsc(next.addr||'')+'</b> on <b>'+_calEsc(next.closingDateSell)+'</b>.')
+            :'Nothing is dated yet.');
+  }
+  return '<div style="background:#F4F7FC;border:0.5px solid #D6E0EF;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:12.5px;color:#2A4365;line-height:1.5">'+body+'</div>';
+}
 function _rltStagePane(which, cards){
   const meta=RLT_STAGE_TABS.find(function(x){ return x[0]===which; })||RLT_STAGE_TABS[0];
   const blank=function(msg){
     return '<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:26px;text-align:center;color:#636b7a;font-size:13.5px">'+msg+'</div>';
   };
   if(!cards.length) return blank('Nothing is at <b>'+_calEsc(meta[1].replace(/^\S+\s/,''))+'</b> right now.');
+  // Worst first, address only to break a tie - the same rule the assistant board uses.
+  cards=cards.slice().sort(function(a,b){
+    const d=_rltScore(which,a)-_rltScore(which,b);
+    return d!==0 ? d : String(a.addr||'').localeCompare(String(b.addr||''));
+  });
   let sel=cards.find(function(c){ return c.id===window._rltStagePid; });
   if(!sel) sel=cards[0];
   const today=_ymd(new Date());
@@ -20391,6 +20469,15 @@ function _rltStagePane(which, cards){
       +'<div style="font-size:13.5px;font-weight:600;color:'+(on?'#111':'#185FA5')+';overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+_calEsc(c.addr||'')+'</div>'
       +'<div style="margin-top:3px">'+badge(c)+'</div>'
       +'<div style="font-size:10.5px;color:#566070;margin-top:2px">'+(c.pm?('PM '+_calEsc(c.pm)):'no PM')+(c.listingAgent?(' · '+_calEsc(c.listingAgent)):'')+'</div>'
+      // On Coming Soon, punch out is the thing holding the listing up, so the two items
+      // still open are named on the row rather than hidden behind a count.
+      + (which==='soon' ? (function(){
+          const open=_poOpenItems(c);
+          if(!open.length) return '<div style="font-size:10.5px;color:#0F7B54;margin-top:2px">&#10003; punch out finished</div>';
+          return '<div style="font-size:10.5px;color:#566070;margin-top:2px;line-height:1.4">still open: '
+            + open.slice(0,2).map(function(it){ return _calEsc(it[1]); }).join(', ')
+            + (open.length>2?(' +'+(open.length-2)):'') + '</div>';
+        })() : '')
     +'</div>';
   }).join('');
 
@@ -20529,7 +20616,8 @@ function _rltStagePane(which, cards){
     +'</div></div>';
 
   const right='<div>'+head+chkSec+poSec+preSec+stageSec+evSec+'</div>';
-  return '<div style="display:grid;grid-template-columns:minmax(200px,260px) 1fr;gap:14px;align-items:start">'
+  return _rltRollup(which, cards)
+    +'<div style="display:grid;grid-template-columns:minmax(200px,260px) 1fr;gap:14px;align-items:start">'
     +'<div data-rlt-left="1" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;overflow:hidden">'
     +'<div style="padding:9px 13px;border-bottom:0.5px solid #e0e4ec;font-size:12px;font-weight:700;color:#566070;text-transform:uppercase;letter-spacing:.05em">'+_calEsc(meta[1])+' &middot; '+cards.length+'</div>'
     +left+'</div>'+right+'</div>';
@@ -37377,4 +37465,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-18p w9-four-answers -->
+<!-- build: 2026-10-18q realtor-rollups -->
