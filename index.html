@@ -17982,61 +17982,98 @@ const VA_BLOCK_KIND = {
 };
 const VA_WEEK = [
   { day:'Monday', hours:'8:30 AM – 4:30 PM', blocks:[
-    { t:'8:30 – 10:30 AM', k:'plan', n:'Planning & scheduling',
-      d:"Organise your week and team members' to-do lists. Review what was left from last week and set the priorities." },
-    { t:'10:30 AM – 12:30 PM', k:'util', n:'Utilities',
-      d:'Follow up on every open utility request. Coordinate with Jeriel. Schedule the interns for on-site utility appointments.' },
-    { t:'12:30 – 2:30 PM', k:'plan', n:'Tasks & unfinished work',
-      d:'Your own outstanding tasks, and anything that did not get finished the week before.' },
-    { t:'2:30 – 4:30 PM', k:'post', n:'Post-Construction',
-      d:'Work the Post-Construction section of the project dashboard. Follow up with the PMs, Marlo and VA Andy on closed properties.' }
+    { t:'8:30 – 10:30 AM', k:'plan', n:'Planning & scheduling', short:'Set the week up',
+      d:"Review and organise your own week, your task list and the team's to-do lists. Set the priorities and pick up everything unresolved from last week." },
+    { t:'10:30 AM – 12:30 PM', k:'util', n:'Utilities', short:'Requests, interns, bills',
+      d:'Follow up on every open utility request. Coordinate with Jeriel. Assign the interns to on-site appointments. Pay outstanding bills, complete bookkeeping, and check nothing slipped over the weekend.' },
+    { t:'12:30 – 2:30 PM', k:'plan', n:'Tasks & unfinished work', short:'Clear your own list',
+      d:'Finish your own outstanding tasks and anything left over from the week before. End by setting your task agenda for the week ahead.' },
+    { t:'2:30 – 4:30 PM', k:'post', n:'Post-Construction', short:'The closed-out houses',
+      d:'Work the Post-Construction dashboard on the project website. Follow up with the project team and complete every action item.' }
   ]},
   { day:'Tuesday', hours:'8:30 AM – 4:30 PM', blocks:[
-    { t:'8:30 – 9:00 AM', k:'zoom', n:'Monthly Zoom meeting',
-      d:'A rotating half hour with one part of the project team. The rota is below.' },
-    { t:'9:00 – 10:30 AM', k:'post', n:'Post-Construction',
-      d:'Post-construction checklist work and follow-ups. An hour and a half today.' },
-    { t:'10:30 AM – 12:00 PM', k:'util', n:'Utilities',
-      d:'Utility follow-ups and intern scheduling. An hour and a half today — the meeting takes the other half hour.' },
-    { t:'12:00 – 2:00 PM', k:'act', n:'Active construction checklists',
-      d:'Review the active project checklists in CompanyCam. Follow up with the interns on anything not finished.' },
-    { t:'2:00 – 4:30 PM', k:'web', n:'Website, follow-ups & Bruce to-dos',
+    { t:'8:30 – 9:00 AM', k:'zoom', n:'Monthly Zoom', short:'Rotates — see the rota',
+      d:'A rotating half hour with one part of the project team. Complete that job role’s monthly meeting form.' },
+    { t:'9:00 – 10:30 AM', k:'post', n:'Post-Construction', short:'1½ hrs today',
+      d:'Work the Post-Construction dashboard. Follow up with the project team and complete every action item.' },
+    { t:'10:30 AM – 12:00 PM', k:'util', n:'Utilities', short:'1½ hrs — bills too',
+      d:'Follow up on open utility requests. Pay outstanding bills and complete bookkeeping. Schedule the interns for on-site appointments.' },
+    { t:'12:00 – 2:00 PM', k:'act', n:'Active construction', short:'CompanyCam checklists',
+      d:'Review every active project checklist in CompanyCam. Help organise the team to-do lists. Flag anything that needs a PM now.' },
+    { t:'2:00 – 4:30 PM', k:'web', n:'Website & follow-ups', short:'Bugs, ideas, Bruce’s list',
       d:'Clean up the project management website. Log bugs and ideas in the edit doc. Follow up with the PMs. Work through the tasks Bruce has handed over.' }
   ]},
   { day:'Wednesday', hours:'8:30 AM – 4:30 PM', blocks:[
-    { t:'8:30 – 10:30 AM', k:'act', n:'Active construction checklists',
-      d:'CompanyCam active project checklists. Flag anything that needs a PM.' },
-    { t:'10:30 AM – 12:30 PM', k:'util', n:'Utilities',
-      d:'Utility follow-ups, scheduling and tracking.' },
-    { t:'12:30 – 2:30 PM', k:'book', n:'Bookkeeping, W-9s & admin',
-      d:'Charge finding and tracking. Retrieve and organise W-9s. Ask Marlo and the PMs what they need.' },
-    { t:'2:30 – 4:30 PM', k:'post', n:'Post-Construction',
+    { t:'8:30 – 10:30 AM', k:'act', n:'Active construction', short:'CompanyCam checklists',
+      d:'Review every active project checklist in CompanyCam. Help organise the team to-do lists. Flag anything needing immediate PM attention.' },
+    { t:'10:30 AM – 12:30 PM', k:'util', n:'Utilities', short:'Requests, bills, tracking',
+      d:'Follow up on open utility requests. Pay outstanding bills and complete bookkeeping. Make sure every item is tracked and moving forward.' },
+    { t:'12:30 – 2:30 PM', k:'book', n:'Bookkeeping, W-9s & admin', short:'Charges and paperwork',
+      d:'Locate and track charges. Retrieve and organise outstanding W-9s. Ask Marlo and the PMs what they need.' },
+    { t:'2:30 – 4:30 PM', k:'post', n:'Post-Construction', short:'The closed-out houses',
       d:'Post-construction dashboard work and follow-ups.' }
   ]},
   { day:'Thursday', hours:'8:30 AM – 4:30 PM', blocks:[
-    { t:'8:30 – 10:30 AM', k:'post', n:'Post-Construction',
-      d:'Checklist work, follow-ups and documentation.' },
-    { t:'10:30 AM – 12:30 PM', k:'util', n:'Utilities',
-      d:'Utility requests, follow-ups and intern coordination.' },
-    { t:'12:30 – 2:30 PM', k:'plan', n:'PM follow-ups & next-week prep',
-      d:'Follow up with every project manager and team member, then organise and schedule the week ahead.' },
-    { t:'2:30 – 4:30 PM', k:'pre', n:'Pre-Construction',
-      d:'The Pre-Construction section of the project dashboard — Upcoming Takedowns and the pre-construction checklists.' }
+    { t:'8:30 – 10:30 AM', k:'post', n:'Post-Construction', short:'Last look before the turn',
+      d:'Work the Post-Construction dashboard. Follow up with the project team and complete every action item.' },
+    { t:'10:30 AM – 12:30 PM', k:'util', n:'Utilities', short:'Cover every visit',
+      d:'Utility requests and follow-ups. Coordinate the interns for on-site appointments and confirm every scheduled utility visit is covered.' },
+    { t:'12:30 – 2:30 PM', k:'plan', n:'PM follow-ups & next week', short:'Chase, then plan',
+      d:'Follow up with every project manager and team member on open items. Begin organising and scheduling the week ahead.' },
+    { t:'2:30 – 4:30 PM', k:'pre', n:'Pre-Construction', short:'Takedowns and checklists',
+      d:'The Pre-Construction dashboard — Upcoming Takedowns and the pre-construction checklists.' }
   ]},
   { day:'Friday', hours:'8:30 AM – 4:30 PM', blocks:[
-    { t:'8:30 – 10:30 AM', k:'web', n:'Website cleanup & automations',
-      d:'Leave the website clean and organised going into the weekend. Check the automations ran. Update the edits-and-ideas doc.' },
-    { t:'10:30 AM – 12:30 PM', k:'util', n:'Utilities',
-      d:'Final utility follow-ups and confirmations for the week.' },
-    { t:'12:30 – 4:30 PM', k:'pre', n:'Pre-Construction — four hours',
-      d:'The deep dive: Upcoming Takedowns, property cards and the pre-construction checklists. The heaviest pre-construction push of the week, and what makes Monday possible.' }
+    { t:'8:30 – 10:30 AM', k:'web', n:'Website & automations', short:'Clean before the weekend',
+      d:'Leave the project website clean and up to date going into the weekend. Check every automation ran correctly. Log any bugs or ideas.' },
+    { t:'10:30 AM – 12:30 PM', k:'util', n:'Utilities', short:'Close the week out',
+      d:'Final utility follow-ups and confirmations. Leave no open item unaddressed going into the weekend.' },
+    { t:'12:30 – 4:30 PM', k:'pre', n:'Pre-Construction — 4 hrs', short:'The big block of the week',
+      d:'A deep dive on the Pre-Construction dashboard. Build scopes of work and material lists. Work through every Upcoming Takedown and the pre-construction checklists.' }
   ]}
 ];
 const VA_ROTA_ROWS = [
-  ['First Tuesday',  'Project managers + VA Andy', 'Active projects, upcoming takedowns and open PM items.'],
-  ['Second Tuesday', 'PM assistants + VA Andy',    'Start of Project and End of Project assistants. Handoffs and open items.'],
-  ['Third Tuesday',  'Project Director (Bruce)',   'One to one. Priorities, escalations, website updates and administrative direction.'],
-  ['Last Tuesday',   'Marlo + VA Andy',            'Administrative sync. Invoices, W-9s, receipts and accounts payable.']
+  ['First Tuesday',  'Project managers + VA Andy', 'Active projects, upcoming takedowns and open PM items. Complete the monthly Project Manager form.'],
+  ['Second Tuesday', 'PM assistants + VA Andy',    'Start of Project and End of Project — handoffs and open items. Complete the monthly PM Assistant form.'],
+  ['Third Tuesday',  'Project Director (Bruce)',   'Priorities, escalations, website updates and administrative direction. Complete the monthly Project Director form.'],
+  ['Last Tuesday',   'Senior Admin (Marlo) + VA Andy', 'Invoices, W-9s, receipts and accounts payable. Complete the monthly Administrative form.']
+];
+// Bruce, 19 Oct, on the long version: "the average human ... isn't going to be able to
+// stay attended to that while reading it. Dumb it down a little. Give them a good
+// general understanding looking at it quickly through an overview."
+//
+// So there are two densities off one set of facts. The SHORT strings are what the
+// printable sheet shows - a few words a person takes in at a glance, pinned to a wall.
+// The long ones are on the job role page on the website, where somebody reading properly
+// has the room for them. Change a fact once and both change.
+const VA_PURPOSE_SHORT = 'Keep the project team organised, on schedule and moving — and keep the website true. Proactive, never reactive.';
+const VA_PURPOSE = 'Support construction-specific operations, run the project team website, and keep the whole team organised, on schedule and operating efficiently — every communication and every piece of information moving cleanly through the pipeline with no gaps and no missed steps. Proactive rather than reactive at all times. The week covers utilities, pre-construction, active construction and post-construction; building scopes of work and material lists; scheduling contractors; following up on checklists and construction milestones; keeping properties on pace to close cleanly; and keeping the project management website fully up to date.';
+const VA_CHAIN = [
+  ['1','Project Director / CEO / Owner','Bruce Bartlett · Tommy Harr · Andy Karabinos','Final authority on every project team decision and direction. All three sit in Seat 1.'],
+  ['2','Senior Virtual Admin Assistant','Idoko Andrew','Oversees all VA work and quality. Reports directly to Seat 1.'],
+  ['2','Senior Administrative Assistant','Marlo Berry-Kinison','Materials, accounts payable and on-site administration. Reports directly to Seat 1.'],
+  ['3','Project Managers','Alex Bacallao · Andrew Scrape · Isaiah Stinson','Run the active construction properties. Escalate to Seat 1 as needed.'],
+  ['4','Virtual Administrative Assistant','This role','Supports every operation remotely. Reports to Seats 1 and 2.'],
+  ['5','PM Assistants','Start of Project · End of Project','Field support. Coordinate directly with the PMs and the VA.']
+];
+const VA_SYSTEMS = [
+  ['Project Management Website','home base','The VA Admin Dashboard, property cards, checklists, tasks and Upcoming Takedowns — your primary home base.'],
+  ['CompanyCam','photos & checklists','Every property photo and checklist — Start, Active, On Market, End of Project, RTR. Create the project folder from the standard template the moment we first get access.'],
+  ['Slack','team comms','Watch #vacancy-updates, #company-closings, #utility-requests, #project-tasks, #request-to-remedy, #rental-handoffs, #new-contractor-connections and #project-tracking.'],
+  ['Google Drive','the documents','SOPs, trackers, meeting templates, scopes of work, permits and every shared company document.'],
+  ['Utility portals','Columbia Gas, AEP, water','Submit requests, book appointments and track every open item.'],
+  ['Zoom','meetings','Every team meeting, including the Tuesday 8:30–9:00 rotating monthly call.'],
+  ['WhatsApp','the field, fast','Direct line to the PMs and the field team for time-sensitive follow-ups.'],
+  ['Gmail / Calendar','outside the company','External email and scheduling — Zoom calls, utility appointments, contractor correspondence.'],
+  ['Suppliers','Lowe’s, Amazon','Track orders, find receipts and help with material returns.'],
+  ['Legacy Homes & TV sites','reference','The public company site, and the A&E Zombie House Flipping show site for show properties.']
+];
+const VA_CONTACTS = [
+  ['The project team','Alex, Andrew and Isaiah, Marlo, the interns and the field assistants — day-to-day coordination, scheduling, follow-ups and tasks.'],
+  ['B&M Management','Eddy and Michaela at B&M Management Ohio — rental handoffs, ownership transfer forms and property transitions.'],
+  ['The other VAs','VA Andy (Idoko Andrew) and every VA across the company — W-9 tracking, data entry and administrative support.'],
+  ['Utility companies','Columbia Gas, AEP and the city water departments — by phone, portal or email.'],
+  ['Contractors & suppliers','Anybody outside the company attached to an active property.']
 ];
 // The SOP's day sections, written off the list above so they can never drift from it.
 function _vaDaySections(){
@@ -18057,8 +18094,12 @@ function _vaSchedulePdfHtml(){
     const blocks=d.blocks.map(function(b){
       const x=VA_BLOCK_KIND[b.k]||VA_BLOCK_KIND.plan;
       const grow=/4:30 PM/.test(b.t)&&/12:30/.test(b.t) ? 4 : (/9:00 AM/.test(b.t)&&/8:30/.test(b.t) ? 0.8 : (/10:30 AM – 12:00|9:00 – 10:30/.test(b.t)?1.5:2));
+      // The SHORT line, not the long one. Somebody checking what they are meant to be
+      // doing at two o'clock reads four words, not four sentences. The full wording is
+      // on the job role page on the website for anybody reading it properly.
       return '<div class="bl" style="border-left-color:'+x.col+';flex:'+grow+'">'
-        +'<div class="t">'+esc(b.t)+'</div><div class="n">'+esc(b.n)+'</div><div class="d">'+esc(b.d)+'</div></div>';
+        +'<div class="t">'+esc(b.t)+'</div><div class="n">'+esc(b.n)+'</div>'
+        +(b.short?('<div class="d">'+esc(b.short)+'</div>'):'')+'</div>';
     }).join('');
     return '<div class="day"><div class="hd"><div class="nm">'+esc(d.day.toUpperCase())+'</div><div class="hr">'+esc(d.hours)+'</div></div><div class="bls">'+blocks+'</div></div>';
   }).join('');
@@ -18075,19 +18116,24 @@ function _vaSchedulePdfHtml(){
     +'.legend{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px}'
     +'.lg{display:flex;align-items:center;gap:5px;font-size:8.5px;font-weight:700;padding:3px 9px;border-radius:99px;background:#F4F5F7;color:#39414E}'
     +'.lg i{width:9px;height:9px;border-radius:3px;display:inline-block}'
-    +'.week{display:flex;gap:6px;align-items:stretch;min-height:400px}'
+    +'.week{display:flex;gap:5px;align-items:stretch;min-height:292px}'
     +'.day{flex:1;min-width:0;display:flex;flex-direction:column;border:1px solid #E0E4EC;border-radius:9px;overflow:hidden;background:#fff}'
     +'.hd{background:#15181D;color:#fff;padding:6px 9px}.hd .nm{font-size:11.5px;font-weight:800}.hd .hr{font-size:8.5px;color:#B6BFCC}'
     +'.bls{display:flex;flex-direction:column;flex:1;padding:5px;gap:4px}'
-    +'.bl{border-left:4px solid #999;border-radius:5px;background:#FAFBFC;padding:6px 8px;display:flex;flex-direction:column;justify-content:center}'
+    +'.bl{border-left:4px solid #999;border-radius:5px;background:#FAFBFC;padding:5px 7px;display:flex;flex-direction:column;justify-content:center}'
     +'.bl .t{font-size:7.5px;color:#8A94A6;font-weight:700}.bl .n{font-size:9.5px;font-weight:800;margin-top:1px;line-height:1.25}'
     +'.bl .d{font-size:8px;color:#566070;margin-top:3px;line-height:1.35}'
-    +'h2{font-size:14px;margin:16px 0 4px}'
+    +'h2{font-size:12px;margin:11px 0 3px;page-break-after:avoid}'
     +'table{width:100%;border-collapse:collapse;font-size:10px}'
     +'th{text-align:left;font-size:8px;text-transform:uppercase;letter-spacing:.07em;color:#8A94A6;padding:0 8px 5px;border-bottom:1.5px solid #15181D}'
-    +'td{padding:6px 8px;border-bottom:1px solid #EDEFF3;vertical-align:top}'
+    +'td{padding:4px 7px;border-bottom:1px solid #EDEFF3;vertical-align:top;font-size:9.5px}table{page-break-inside:avoid}'
     +'td.w{font-weight:800;white-space:nowrap;width:110px}td.t2{color:#566070;white-space:nowrap;width:100px}'
     +'.nt{font-size:8.5px;color:#8A94A6;margin-top:1px}'
+    +'.purp{font-size:11px;color:#39414E;background:#F4F5F7;border-left:3px solid #122A4A;border-radius:0 7px 7px 0;padding:8px 12px;margin-bottom:10px}'
+    +'.two{display:flex;gap:16px;align-items:flex-start;page-break-inside:avoid}.two>div{flex:1;min-width:0}'
+    +'.chips{display:flex;gap:5px;flex-wrap:wrap;margin-top:4px}'
+    +'.chip{font-size:9px;color:#39414E;background:#F4F5F7;border:0.5px solid #E0E4EC;border-radius:99px;padding:3px 10px}'
+    +'.chip b{color:#15181D}'
     +'.noprint button{padding:9px 18px;background:#122A4A;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer}'
     +'@media print{.noprint{display:none}}'
     +'</style></head><body>'
@@ -18095,10 +18141,19 @@ function _vaSchedulePdfHtml(){
       +'<h1>Virtual Administrative Assistant</h1>'
       +'<div class="lede">Daily schedule and order of operations — eight hours, four blocks, utilities every day.</div></div>'
       +'<div class="r"><b>Patience Ochefije</b>Reports to the Project Director<br>Monday–Friday · no weekends</div></div>'
+    +'<div class="purp"><b>The job.</b> '+esc(VA_PURPOSE_SHORT)+'</div>'
     +'<div class="legend">'+legend+'</div>'
     +'<div class="week">'+cols+'</div>'
-    +'<h2>Monthly Tuesday Zoom meetings — 8:30 to 9:00 AM</h2>'
-    +'<table><tr><th>Tuesday</th><th>Time</th><th>Who, and what it is for</th></tr>'+rota+'</table>'
+    +'<div class="two">'
+      +'<div style="flex:1.05"><h2>Monthly Tuesday Zoom \u2014 8:30 to 9:00</h2>'
+        +'<table>'+VA_ROTA_ROWS.map(function(r){ return '<tr><td class="w" style="width:86px">'+esc(r[0])+'</td><td><b>'+esc(r[1])+'</b></td></tr>'; }).join('')+'</table></div>'
+      +'<div style="flex:1.3"><h2>Who you report to</h2>'
+        +'<table>'+VA_CHAIN.map(function(r){ return '<tr><td class="w" style="width:24px">'+esc(r[0])+'</td><td><b>'+esc(r[1])+'</b> <span class="nt" style="display:inline">'+esc(r[2])+'</span></td></tr>'; }).join('')+'</table></div>'
+      +'<div style="flex:1.05"><h2>Where the work lives</h2>'
+        +'<div class="chips">'+VA_SYSTEMS.map(function(r){ return '<span class="chip"><b>'+esc(r[0])+'</b></span>'; }).join('')+'</div>'
+        +'<h2>Who you talk to</h2>'
+        +'<div class="chips">'+VA_CONTACTS.map(function(r){ return '<span class="chip">'+esc(r[0])+'</span>'; }).join('')+'</div></div>'
+    +'</div>'
     +'<div style="font-size:9px;color:#8A94A6;margin-top:10px">Legacy Ohio Homes · Virtual Administrative Assistant SOP · built from the live job role record on '
       + esc(new Date().toLocaleDateString(undefined,{month:'long',day:'numeric',year:'numeric'})) + '</div>'
     +'<div class="noprint" style="text-align:center;margin-top:16px"><button onclick="window.print()">↓ Save as PDF / Print</button>'
@@ -18235,6 +18290,7 @@ const ROLE_SOPS = {
     icon: "\u{1F4BB}",
     sections: [
       { title: "Role Overview", items: [
+        VA_PURPOSE,
         "8:30 AM to 4:30 PM, Monday to Friday. Eight hours in four two-hour blocks. No weekends.",
         "Utilities is a standing block every single day \u2014 two hours, and an hour and a half on Tuesday \u2014 so it never piles up. Jeriel and the interns are part of that block.",
         "One block each day belongs to a construction wave. Post-construction runs Monday, Tuesday, Wednesday and Thursday; active construction Tuesday and Wednesday; pre-construction Thursday and Friday. Friday is what makes Monday possible.",
@@ -18251,6 +18307,10 @@ const ROLE_SOPS = {
         "There is no meeting with Jen.",
         "The rota and the notes live under Meetings \u2192 Monthly VA Assistant."
       ]},
+      { title: "Chain of command", items: VA_CHAIN.map(function(r){
+        return 'Seat '+r[0]+' \u2014 '+r[1]+': '+r[2]+'. '+r[3]; }) },
+      { title: "Where the work lives", items: VA_SYSTEMS.map(function(r){ return r[0]+' \u2014 '+r[2]; }) },
+      { title: "Who you talk to", items: VA_CONTACTS.map(function(r){ return r[0]+' \u2014 '+r[1]; }) },
       { title: "Rules that do not change", items: [
         "Utilities gets its block every day. It is never traded away for something louder \u2014 a missed turn-on stops a crew, and a missed removal keeps paying a bill on a house we no longer own.",
         "Enter it once. A phone number, a W-9 tick or a trade typed in one place shows up everywhere else on the site. Never keep a second copy in a side sheet.",
@@ -20160,7 +20220,7 @@ function _rltStageGo(s){
   window._rltStagePid=null;
   openRealtorDashboard();
 }
-function _rltPickProp(pid){ window._rltStagePid=pid; openRealtorDashboard(); }
+function _rltPickProp(pid){ window._rltStagePid=pid; window.__rltCalYM=null; openRealtorDashboard(); }
 
 // ---- the missing primitive: WHICH punch-out items are still open ----
 // _poCount and _poComplete have always answered "how many" and "is it finished". Nothing
@@ -20192,6 +20252,104 @@ function _rltChkLate(c){
   return (ds===null || ds>=14);
 }
 
+// ---- the calendar view the stage boards were missing -------------------------
+// Bruce, 17 Oct, twice in the same sentence: "Also a construction calendar view ...
+// Pre-List / Punch Out also gets the construction calendar and task calendar views."
+//
+// What was built off that was two LISTS - what is booked, and what is scheduled - sorted
+// by date. A list is not a calendar. Standing in a house on the 14th, a realtor wants to
+// see the shape of the month: what is on today, what lands before the weekend, where the
+// empty week is. A list of ten rows cannot show you an empty week.
+//
+// So the two lists become one section with two views, and the CALENDAR is the one it
+// opens on, because that is the one he asked for and the one that was missing. The list
+// is still there behind a toggle - it is better for "what is late" - and both read the
+// same two caches as before. Nothing new is stored.
+function _rltCalYM(sel){
+  const st=window.__rltCalYM;
+  if(st && st.pid===sel.id && st.y!=null) return st;
+  // Open on the month where the work is: the earliest thing still outstanding on this
+  // house, or today if there is nothing left.
+  const dates=[].concat(
+    _ppEventsOn(sel.id).filter(function(e){ return !e.completed; }).map(function(e){ return e.event_date; }),
+    _ppTasksOn(sel.id).filter(function(t){ return t.status!=='done'; }).map(function(t){ return t.due_date; })
+  ).filter(function(d){ return /^\d{4}-\d{2}-\d{2}$/.test(String(d||'')); }).sort();
+  const d = dates.length ? new Date(dates[0]+'T00:00:00') : new Date();
+  const out={ pid:sel.id, y:d.getFullYear(), m:d.getMonth() };
+  window.__rltCalYM=out;
+  return out;
+}
+function _rltCalMove(n){
+  const st=window.__rltCalYM; if(!st) return;
+  const d=new Date(st.y, st.m+n, 1);
+  window.__rltCalYM={ pid:st.pid, y:d.getFullYear(), m:d.getMonth() };
+  openRealtorDashboard();
+}
+function _rltCalToday(){
+  const st=window.__rltCalYM; if(!st) return;
+  const d=new Date();
+  window.__rltCalYM={ pid:st.pid, y:d.getFullYear(), m:d.getMonth() };
+  openRealtorDashboard();
+}
+function _rltCalView(v){ window.__rltCalView=(v==='list')?'list':'cal'; openRealtorDashboard(); }
+// One month of this house, bookings and tasks together on the days they fall.
+function _rltMonthGrid(sel){
+  const E=_calEsc, today=_ymd(new Date());
+  const st=_rltCalYM(sel);
+  const first=new Date(st.y, st.m, 1);
+  const days=new Date(st.y, st.m+1, 0).getDate();
+  const lead=first.getDay();
+  const ds=function(d){ return st.y+'-'+String(st.m+1).padStart(2,'0')+'-'+String(d).padStart(2,'0'); };
+  // A booking with an end date sits on every day it runs, which is the whole reason to
+  // draw a calendar rather than list a start date.
+  const evs=_ppEventsOn(sel.id), tks=_ppTasksOn(sel.id);
+  const onDay=function(day){
+    const k=ds(day), out=[];
+    evs.forEach(function(e){
+      const a=String(e.event_date||''), b=String(e.end_date||a);
+      if(!a) return;
+      if(k<a || k>(b||a)) return;
+      const con=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).find(function(x){ return x.id===e.contractor_id; });
+      const label=con?(con.business_name||con.name||''):(e.title||'');
+      out.push({ t:'e', done:!!e.completed, icon:(e.kind==='material')?'\u{1F4E6}':((e.kind==='contractor')?'★':'•'),
+                 label:label||'booking', col:(e.kind==='material')?'#8A5A10':'#4A7318' });
+    });
+    tks.forEach(function(t){
+      if(String(t.due_date||'')!==k) return;
+      const late=(t.status!=='done') && k<today;
+      out.push({ t:'t', done:t.status==='done', icon:'✓', label:t.title||'task', col:late?'#B42318':'#185FA5', id:t.id });
+    });
+    return out;
+  };
+  const head=['S','M','T','W','T','F','S'].map(function(x){
+    return '<div style="font-size:9.5px;font-weight:700;color:#8A94A6;text-align:center;padding:3px 0;letter-spacing:.04em">'+x+'</div>'; }).join('');
+  let cells='';
+  for(let i=0;i<lead;i++) cells+='<div style="min-height:58px;border-radius:7px;background:#FAFBFC"></div>';
+  for(let d=1; d<=days; d++){
+    const k=ds(d), items=onDay(d), isToday=(k===today);
+    const chips=items.slice(0,3).map(function(x){
+      return '<div '+(x.id?('onclick="openTaskDetail(\''+x.id+'\')" style="cursor:pointer;'):'style="')
+        +'font-size:9px;line-height:1.3;color:'+(x.done?'#8A94A6':x.col)+';'+(x.done?'text-decoration:line-through;':'')
+        +'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px" title="'+E(x.label)+'">'
+        +x.icon+' '+E(x.label)+'</div>';
+    }).join('');
+    const more=items.length>3?('<div style="font-size:8.5px;color:#8A94A6;margin-top:1px">+'+(items.length-3)+' more</div>'):'';
+    cells+='<div style="min-width:0;min-height:58px;padding:4px 5px;border-radius:7px;background:'+(isToday?'#EAF3FC':'#fff')
+      +';border:0.5px solid '+(isToday?'#B8D4F0':'#eef0f6')+';overflow:hidden">'
+      +'<div style="font-size:10px;font-weight:'+(isToday?'800':'600')+';color:'+(isToday?'#185FA5':'#8A94A6')+'">'+d+'</div>'
+      +chips+more+'</div>';
+  }
+  let label=st.y+'-'+String(st.m+1).padStart(2,'0');
+  try{ label=first.toLocaleDateString(undefined,{month:'long',year:'numeric'}); }catch(e){}
+  const nav='<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:8px">'
+    +'<button onclick="_rltCalMove(-1)" style="padding:4px 10px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer">‹</button>'
+    +'<div style="font-size:13px;font-weight:700;color:#111;min-width:132px;text-align:center">'+E(label)+'</div>'
+    +'<button onclick="_rltCalMove(1)" style="padding:4px 10px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer">›</button>'
+    +'<button onclick="_rltCalToday()" style="padding:4px 11px;background:#fff;border:0.5px solid #e6e8ee;border-radius:7px;font-size:12px;color:#566070;cursor:pointer">Today</button>'
+    +'<span style="margin-left:auto;font-size:10.5px;color:#8A94A6;white-space:nowrap">★ contractor &middot; \u{1F4E6} material &middot; ✓ task</span>'
+    +'</div>';
+  return nav+'<div style="display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:3px">'+head+cells+'</div>';
+}
 function _rltStagePane(which, cards){
   const meta=RLT_STAGE_TABS.find(function(x){ return x[0]===which; })||RLT_STAGE_TABS[0];
   const blank=function(msg){
@@ -20318,9 +20476,7 @@ function _rltStagePane(which, cards){
           +'<div style="font-size:11.5px;flex-shrink:0;color:'+(late?'#B42318':'#566070')+';font-weight:'+(late?'600':'400')+'">'+_calEsc(t.due_date||'')+(late?' late':'')+'</div></div>';
       }).join('') + (tOpen.length>12?'<div style="padding:7px 0;font-size:11.5px;color:#566070">+ '+(tOpen.length-12)+' more</div>':'')
     : ok(tAll.length?'Nothing open on this house — everything on it is finished.':'Nothing on the task calendar for this house.');
-  const taskSec=sec('&#9989; Scheduled tasks on this house',
-    'Anything anybody scheduled against this address — punch-out jobs, remedy work, follow-ups.'+(tOpen.length?(' <b>'+tOpen.length+' open.</b>'):''),
-    taskRows, link('Task calendar', "openProjectDashboard('taskcal')"));
+  // held for the List view below
 
   // --- construction calendar ---
   const evAll=_ppEventsOn(sel.id);
@@ -20336,9 +20492,30 @@ function _rltStagePane(which, cards){
           +'<div style="font-size:11.5px;color:#566070;flex-shrink:0">'+_calEsc(e.event_date||'')+(e.end_date&&e.end_date!==e.event_date?(' → '+_calEsc(e.end_date)):'')+'</div></div>';
       }).join('') + (evOpen.length>10?'<div style="padding:7px 0;font-size:11.5px;color:#566070">+ '+(evOpen.length-10)+' more</div>':'')
     : ok(evAll.length?'Nothing still booked — every booking on this house is done.':'Nothing booked on the construction calendar for this house.');
-  const evSec=sec('&#128197; Construction calendar',
-    'What is booked on site'+(evOpen.length?(' — <b>'+evOpen.length+' still to happen</b>'):'')+'.',
-    evRows, link('Construction calendar', "openProjectDashboard('construction')"));
+  // Bruce, 17 Oct: "also a construction calendar view ... the construction calendar and
+  // task calendar views." One section, two views, opening on the calendar.
+  const _cv=(window.__rltCalView==='list')?'list':'cal';
+  const _seg=function(v,label){
+    const on=(_cv===v);
+    return '<span onclick="_rltCalView(\''+v+'\')" style="cursor:pointer;padding:4px 12px;border-radius:7px;font-size:12px;font-weight:'+(on?'700':'500')+';'
+      +(on?'background:#122A4A;color:#fff':'background:#fff;color:#566070;border:0.5px solid #dde2ea')+'">'+label+'</span>';
+  };
+  const _toggle='<div style="display:flex;gap:6px;flex-wrap:wrap">'+_seg('cal','\u{1F4C5} Calendar')+_seg('list','\u2630 List')+'</div>';
+  const _body=(_cv==='cal')
+    ? _rltMonthGrid(sel)
+    : ('<div style="font-size:12px;font-weight:700;color:#566070;text-transform:uppercase;letter-spacing:.05em;margin:2px 0 4px">Booked on site</div>'+evRows
+       +'<div style="font-size:12px;font-weight:700;color:#566070;text-transform:uppercase;letter-spacing:.05em;margin:13px 0 4px">Scheduled tasks</div>'+taskRows);
+  const evSec='<div data-rlt-when="1" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:13px 16px;margin-bottom:11px">'
+    +'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:3px">'
+      +'<div style="font-size:14px;font-weight:700;color:#111">\u{1F4C5} This house\u2019s calendar</div>'+_toggle+'</div>'
+    +'<div style="font-size:11.5px;color:#566070;margin:2px 0 9px">Everything booked on site and every task anybody scheduled against this address, on the days they fall.'
+      +(evOpen.length?(' <b>'+evOpen.length+' booking'+(evOpen.length===1?'':'s')+' still to happen.</b>'):'')
+      +(tOpen.length?(' <b>'+tOpen.length+' task'+(tOpen.length===1?'':'s')+' open.</b>'):'')+'</div>'
+    +_body
+    +'<div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;padding-top:9px;border-top:0.5px solid #eef0f6">'
+      +link('Construction calendar', "openProjectDashboard('construction')")
+      +link('Task calendar', "openProjectDashboard('taskcal')")
+    +'</div></div>';
 
   // --- pre-listing information form (Coming Soon) ---
   const preSec=(which==='soon')?_rltPreListSection(sel):'';
@@ -20351,7 +20528,7 @@ function _rltStagePane(which, cards){
     +'<button onclick="openPropDetail(\''+sel.id+'\')" style="padding:7px 14px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">Open the property card</button>'
     +'</div></div>';
 
-  const right='<div>'+head+chkSec+poSec+preSec+stageSec+taskSec+evSec+'</div>';
+  const right='<div>'+head+chkSec+poSec+preSec+stageSec+evSec+'</div>';
   return '<div style="display:grid;grid-template-columns:minmax(200px,260px) 1fr;gap:14px;align-items:start">'
     +'<div data-rlt-left="1" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;overflow:hidden">'
     +'<div style="padding:9px 13px;border-bottom:0.5px solid #e0e4ec;font-size:12px;font-weight:700;color:#566070;text-transform:uppercase;letter-spacing:.05em">'+_calEsc(meta[1])+' &middot; '+cards.length+'</div>'
@@ -36905,4 +37082,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-18l baseline-off-everywhere -->
+<!-- build: 2026-10-18m realtor-calendar-views -->
