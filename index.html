@@ -6316,13 +6316,33 @@ async function _apDel(id, pid){
 // else. Pass a property or a contractor to have it filled in already.
 // The trades we already use, so a type of work is picked from the same list everywhere
 // instead of being spelled three ways.
+// Bruce, 18 Oct: "whatever trades we have that you can select on the construction
+// calendar need to be the same on the contractor directory as well. And anytime one's
+// added to one or the other, it auto-populates on both of them."
+//
+// There were two lists. The directory had the seventeen standing trades plus any you
+// added yourself; this one was built from whatever strings happened to be sitting on a
+// contractor row or an old quote - so a trade you added in the directory never reached
+// the calendar, and one typed on a quote never reached the directory.
+//
+// It is one list now, read from both ends: _ctAllTrades() is the standing trades, the
+// ones added in the directory, and every trade actually assigned to somebody - and it
+// now takes in the categories typed on quotes too, so a trade invented at a job site
+// turns up in the directory next time somebody opens it.
+//
+// It also fixes a bug the multi-trade change introduced: this read the raw `trade`
+// column, which is a comma-separated list now, so a man who does roofing and plumbing
+// offered the single nonsense option "Roofing, Plumbing" instead of the two trades.
 function _apTradeOpts(){
-  const seen={};
-  (typeof _contractorsCache!=='undefined'?_contractorsCache:[]).forEach(function(x){
-    const t=String(x.trade||'').trim(); if(t) seen[t]=1;
-  });
-  (_apCache||[]).forEach(function(r){ const t=String(r.category||'').trim(); if(t) seen[t]=1; });
-  return Object.keys(seen).sort().map(function(t){ return '<option value="'+_calEsc(t)+'"></option>'; }).join('');
+  let list=[];
+  try{ list=(typeof _ctAllTrades==='function') ? _ctAllTrades() : []; }catch(e){ list=[]; }
+  if(!list.length){
+    // the directory has not loaded yet - fall back to whatever the money already names
+    const seen={};
+    (_apCache||[]).forEach(function(r){ const t=String(r.category||'').trim(); if(t) seen[t]=1; });
+    list=Object.keys(seen);
+  }
+  return list.slice().sort().map(function(t){ return '<option value="'+_calEsc(t)+'"></option>'; }).join('');
 }
 function _apQuoteNewCon(){
   const sel=document.getElementById('apq-who');
@@ -22668,8 +22688,15 @@ async function _nfSetRead(ids){
   _nfBadge(); _nfRender();
 }
 // The furthest-ahead due date the bell will mention: today plus two days.
+// Bruce, 18 Oct: "we need to show what's past due and what's due that day. That's it,
+// because right now I have 20 notifications, and realistically I should only see what's
+// due that day and what's due past due."
+// This replaces his 4 Oct rule - "the only time a notification should pop up is when
+// it's within 48 hours of being due" - which is what put work two days out in the bell
+// and is why there were twenty of them. A thing you cannot act on today is not a
+// notification; it is on your task list, where it belongs.
 function _nfHorizon(){
-  const d=new Date(); d.setHours(0,0,0,0); d.setDate(d.getDate()+2);
+  const d=new Date(); d.setHours(0,0,0,0);
   return (typeof _ymd==='function') ? _ymd(d) : d.toISOString().slice(0,10);
 }
 function _nfItems(){
@@ -22694,8 +22721,15 @@ function _nfItems(){
       // This was the one assignee test in the app still done by exact string, so a
       // task on "Andrew" never reached Andrew Scrape's bell and one on "Tom" never
       // reached Tommy's. Everything else goes through _sameAssignee; now so does this.
-      if(me && who.length && !who.some(function(n){ return _sameAssignee(n,me); })) return;
-      if(me && !who.length) return;
+      //
+      // And it fails CLOSED. Both tests used to be written "if(me && ...)", so when we
+      // did not yet know who was looking - the profile had not come back, or it carries
+      // no name - every guard was skipped and the bell filled with the whole company's
+      // work. Not knowing whose it is is a reason to show nothing, never a reason to
+      // show everything.
+      if(!me) return;
+      if(who.length && !who.some(function(n){ return _sameAssignee(n,me); })) return;
+      if(!who.length) return;
       const late=t.due_date<today;
       push({ id:'task:'+t.id+':'+t.due_date, icon: late?'⏰':'📋',
         tone: late?'red':'blue',
@@ -22717,7 +22751,9 @@ function _nfItems(){
       const seesAll=(typeof _seesEveryone==='function') ? _seesEveryone() : false;
       _winAwaitingConfirm().forEach(function(x){
         const c=x.c, d=x.due;
-        const mine = !me || seesAll || forWindows(me) || _sameAssignee(c.pm, me);
+        // Same fail-closed rule as the tasks above: "!me" used to mean everybody saw it.
+        if(!me) return;
+        const mine = seesAll || forWindows(me) || _sameAssignee(c.pm, me);
         if(!mine) return;
         push({ id:'wininstall:'+c.id+':'+d.date, icon:'\u{1F6A9}', tone:'red',
           text:'Windows — did they go in at '+(c.addr||'this house')+'?',
@@ -22775,8 +22811,12 @@ function _nfItems(){
   // now at the top of their notification screen, in order from oldest to newest due."
   // It used to read newest first, which buried the thing that had been waiting longest
   // at the bottom of the list - the exact opposite of what you want to see first.
-  out.sort(function(a,b){ return String(a.when||'').localeCompare(String(b.when||'')); });
-  return out;
+  // One rule over every source, not just the tasks. Each of the five builders above
+  // decides its own dates, so a single late-or-today test here is what actually
+  // guarantees what he asked for - and it keeps holding if another source is added.
+  const dated=out.filter(function(x){ return !x.when || x.when<=today; });
+  dated.sort(function(a,b){ return String(a.when||'').localeCompare(String(b.when||'')); });
+  return dated;
 }
 function _nfUnread(){ const rd=_nfReadMap(); return _nfItems().filter(function(x){ return !rd[x.id]; }); }
 function _nfBadge(){
@@ -22801,7 +22841,7 @@ function _nfRender(){
     + '</div>';
   if(!items.length){
     p.innerHTML=head+'<div style="padding:26px 16px;text-align:center;color:#636b7a;font-size:13px">Nothing is waiting on you.</div>'
-      +'<div style="padding:9px 14px;border-top:0.5px solid #eef0f6;font-size:11px;color:#c4c9d2">Your own work only. A task appears here once it is within 48 hours of its due date.</div>';
+      +'<div style="padding:9px 14px;border-top:0.5px solid #eef0f6;font-size:11px;color:#c4c9d2">Your own work only \u2014 what is past due and what is due today. Anything further out is on your task list, not here.</div>';
     return;
   }
   const rows=items.map(function(x){
@@ -22816,7 +22856,7 @@ function _nfRender(){
       + (isNew?'<div style="width:7px;height:7px;border-radius:99px;background:'+t.fg+';flex-shrink:0;margin-top:6px"></div>':'')
       + '</div>';
   }).join('');
-  p.innerHTML=head+rows+'<div style="padding:9px 14px;font-size:11px;color:#c4c9d2">Your own work only, oldest due first. A task appears here once it is within 48 hours of its due date, and stays until it is ticked.</div>';
+  p.innerHTML=head+rows+'<div style="padding:9px 14px;font-size:11px;color:#c4c9d2">Your own work only \u2014 what is past due and what is due today, oldest first. It stays until it is ticked. Anything further out is on your task list, not here.</div>';
 }
 function _nfOpen(id){
   let items=[]; try{ items=_nfItems(); }catch(e){}
@@ -29533,13 +29573,16 @@ function _ctTradeTypesPanel(ro){
 }
 function _ctAllTrades(){
   const out=CONTRACTOR_TRADES.slice();
-  _ctCustomTrades().forEach(function(t){
-    if(!out.some(function(x){ return x.toLowerCase()===t.toLowerCase(); })) out.push(t);
-  });
+  const add=function(t){
+    const v=_ctTradeClean(t);
+    if(v && !out.some(function(x){ return _ctTierSlug(x)===_ctTierSlug(v); })) out.push(v);
+  };
+  _ctCustomTrades().forEach(add);
+  // A trade typed on a quote or a calendar booking is a trade we do. It belongs on the
+  // same list, so the directory offers it the next time somebody assigns one.
+  try{ (typeof _apCache!=='undefined'?_apCache:[]).forEach(function(r){ add(r&&r.category); }); }catch(e){}
   (typeof _contractorsCache!=='undefined'?_contractorsCache:[]).forEach(function(c){
-    _ctTrades(c).forEach(function(t){
-      if(!out.some(function(x){ return x.toLowerCase()===t.toLowerCase(); })) out.push(t);
-    });
+    _ctTrades(c).forEach(add);
   });
   return out;
 }
@@ -30601,7 +30644,7 @@ function renderContractorDirectory(view){
       <div style="flex:1.4;min-width:130px"><label style="font-size:12px;color:#566070;display:block;margin-bottom:4px">Business name</label><input id="ct-biz" placeholder="Company" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px"/></div>
       <div style="flex:1;min-width:120px"><label style="font-size:12px;color:#566070;display:block;margin-bottom:4px">Phone</label><input id="ct-phone" placeholder="(614) 555-0100" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px"/></div>
       <div style="flex:1.2;min-width:140px"><label style="font-size:12px;color:#566070;display:block;margin-bottom:4px">Email</label><input id="ct-email" placeholder="name@company.com" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px"/></div>
-      <div style="flex:1;min-width:120px"><label style="font-size:12px;color:#566070;display:block;margin-bottom:4px">Trade</label><input id="ct-trade" list="ct-trade-list" placeholder="Plumbing, HVAC…" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px"/><datalist id="ct-trade-list">${CONTRACTOR_TRADES.map(t=>`<option value="${_calEsc(t)}"></option>`).join('')}</datalist></div>
+      <div style="flex:1;min-width:120px"><label style="font-size:12px;color:#566070;display:block;margin-bottom:4px">Trade</label><input id="ct-trade" list="ct-trade-list" placeholder="Plumbing, HVAC…" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px"/><datalist id="ct-trade-list">${_ctAllTrades().map(t=>`<option value="${_calEsc(t)}"></option>`).join('')}</datalist></div>
       <button onclick="_submit('ct-add',this,'Adding…',saveContractor)" style="padding:9px 16px;background:#111;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer">+ Add</button>
     </div>`;
   const th=(t,align)=>`<th style="text-align:${align||'left'};padding:9px 12px;font-size:12px;color:#566070;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap">${t}</th>`;
@@ -35665,4 +35708,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-18a trade-comma-safe no-slug-collision dst-safe-stamp-sweep -->
+<!-- build: 2026-10-18b notifications-late-or-today role-scoping-fails-closed one-trade-list -->
