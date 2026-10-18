@@ -5039,7 +5039,7 @@ async function _sqWrite(pid, mut){
 async function _sqAdd(pid){
   const tEl=document.getElementById('sq-t-'+pid), pEl=document.getElementById('sq-p-'+pid), dEl=document.getElementById('sq-d-'+pid);
   const text=((tEl&&tEl.value)||'').trim();
-  if(!text){ alert("Write the reminder first — “ask the neighbour about the fence line”, “check the basement after heavy rain”…"); return; }
+  if(!text){ alert("Write the reminder first — “ask the neighbor about the fence line”, “check the basement after heavy rain”…"); return; }
   const ph=(pEl&&pEl.value)||'pre';
   const at=(dEl&&dEl.value)||'';
   const cEl=document.getElementById('sq-c-'+pid);
@@ -5240,7 +5240,7 @@ function _sqBody(c, compact){
 
   const adder=ro?'':`<div style="border-top:0.5px solid #eef0f6;padding:10px 14px;background:#FAFBFD">
       <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
-        <input id="sq-t-${c.id}" placeholder="Ask the neighbour about the fence line…" style="flex:1;min-width:210px;padding:6px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px"/>
+        <input id="sq-t-${c.id}" placeholder="Ask the neighbor about the fence line…" style="flex:1;min-width:210px;padding:6px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px"/>
         <select id="sq-p-${c.id}" style="padding:6px 7px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12.5px">${SQ_PHASES.map(p=>`<option value="${p.id}">${p.label}</option>`).join('')}</select>
         <select id="sq-w-${c.id}" title="Who is this for?" style="padding:6px 7px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12.5px;max-width:180px">${_sqWhoOpts(_sqMe())}</select>
         <input type="date" id="sq-d-${c.id}" title="Optional — when should this come back up?" style="padding:5px 7px;border:0.5px solid #d8dce6;border-radius:7px;font-size:12.5px;color:#666"/>
@@ -5613,7 +5613,7 @@ function _scBody(id){
         ${ro?`<div style="font-size:13px;font-weight:700;color:${l.stop?'#A82B1E':'#111'}">${esc(l.title||'')}</div>`
             :`<input value="${esc(l.title||'')}" placeholder="What the work is…" onchange="_scSet('${l.id}',{title:this.value})" style="width:100%;font-size:13px;font-weight:700;color:${l.stop?'#A82B1E':'#111'};border:none;border-bottom:1px dashed #e4e8ef;background:none;outline:none;padding:2px 0"/>`}
         ${ro?(l.detail?`<div style="font-size:12px;color:#33383F;margin-top:3px">${esc(l.detail)}</div>`:'')
-            :`<textarea placeholder="Detail, colours, instructions…" onchange="_scSet('${l.id}',{detail:this.value})" style="width:100%;font-size:12px;color:#33383F;border:none;background:none;outline:none;resize:vertical;min-height:20px;margin-top:2px;line-height:1.5">${esc(l.detail||'')}</textarea>`}
+            :`<textarea placeholder="Detail, colors, instructions…" onchange="_scSet('${l.id}',{detail:this.value})" style="width:100%;font-size:12px;color:#33383F;border:none;background:none;outline:none;resize:vertical;min-height:20px;margin-top:2px;line-height:1.5">${esc(l.detail||'')}</textarea>`}
         ${tags?`<div style="margin-top:4px">${tags}</div>`:''}
         ${l.link_url?`<div style="font-size:11.5px;margin-top:3px">\u{1F517} <a href="${esc(l.link_url)}" target="_blank" style="color:#185FA5">${esc(l.link_label||l.link_url)}</a></div>`:''}
         ${l.photo_url?`<div style="margin-top:5px"><img src="${esc(l.photo_url)}" style="max-width:190px;border-radius:5px;border:1px solid #e0e4ec;display:block"/>${l.photo_caption?`<div style="font-size:10.5px;color:#636b7a;margin-top:2px">${esc(l.photo_caption)}</div>`:''}</div>`:''}
@@ -6210,7 +6210,7 @@ function _apDocChips(r, ro){
 async function _apWrite(fields){
   if(_blockIfReadOnly()) return null;
   const label=String((fields&&fields.label)||'').trim();
-  if(!label){ alert("Say what the money is for — “framing labour”, “roof, materials and labour”…"); return null; }
+  if(!label){ alert("Say what the money is for — “framing labor”, “roof, materials and labor”…"); return null; }
   const pid=(fields&&fields.property_id)||null;
   let con=null;
   if(fields && fields.contractor_id){
@@ -6408,7 +6408,7 @@ function _apQuoteOpen(pid, cid){
       +'<input id="apq-nc-trade" placeholder="Trade \u2014 framing, roofing, plumbing…" style="'+inp+';margin-top:6px"/>'
     +'</div>'
     +lbl('Amount quoted')+'<input id="apq-amt" inputmode="decimal" placeholder="$0.00" style="'+inp+'"/>'
-    +lbl('Description of work')+'<input id="apq-label" placeholder="Framing labour, roof tear-off and replace…" style="'+inp+'"/>'
+    +lbl('Description of work')+'<input id="apq-label" placeholder="Framing labor, roof tear-off and replace…" style="'+inp+'"/>'
     +lbl('Type of work','trade or category')+'<input id="apq-cat" list="apq-trades" placeholder="Framing, Roofing, Plumbing…" style="'+inp+'"/>'
     +'<datalist id="apq-trades">'+_apTradeOpts()+'</datalist>'
     +lbl('Anything worth adding','optional')+'<textarea id="apq-notes" rows="3" placeholder="What is included, what is not…" style="'+inp+';resize:vertical"></textarea>'
@@ -9035,10 +9035,10 @@ const DP_EXT = [
     ["siding","Keeping the existing siding?","If yes — what type?",null],
     ["siding_paint","Painting the siding?",null,"siding"]]],
   ["Soffit & fascia", [
-    ["soffit","Keeping the existing soffit & fascia?","If yes — material / colour",null],
+    ["soffit","Keeping the existing soffit & fascia?","If yes — material / color",null],
     ["soffit_paint","Painting the soffit & fascia?",null,"soffit"]]],
   ["Gutters", [
-    ["gutters","Keeping the existing gutters?","If yes — colour / material",null],
+    ["gutters","Keeping the existing gutters?","If yes — color / material",null],
     ["gutters_paint","Painting the existing gutters?",null,"gutters"]]],
   ["Roof", [
     ["roof","Keeping the existing roof?","If yes — type (shingle, flat, metal…)",null]]],
@@ -9054,7 +9054,7 @@ const DP_EXT = [
     ["mailbox","Keeping the existing mailbox?","If yes — wall mount or post mount?",null],
     ["numbers","Keeping the existing house numbers?",null,null]]],
   ["Garage door", [
-    ["garage","Keeping the existing garage door?","If yes — style / colour",null],
+    ["garage","Keeping the existing garage door?","If yes — style / color",null],
     ["garage_opener","Keeping the existing garage door opener?",null,"garage"],
     ["garage_paint","Painting the existing garage door?",null,"garage"]]]
 ];
@@ -14160,7 +14160,7 @@ function _mktMeetingBody(wk, kind, notes, prevNotes, roNow){
                     : tab==='ctc' ? 'Nothing is cleared to close right now.'
                     : 'Nothing is in contract right now.';
     const _intro = tab==='rtr'
-      ? _rtrPanel()+`<div style="background:#FFF9EE;border:0.5px solid #EAD9A8;border-radius:10px;padding:11px 14px;margin:12px 0;font-size:13px;color:#633806">This is the same card as In Contract with the remedy list front and centre. Contractors, dates and photos live on the Remedies page.</div>`
+      ? _rtrPanel()+`<div style="background:#FFF9EE;border:0.5px solid #EAD9A8;border-radius:10px;padding:11px 14px;margin:12px 0;font-size:13px;color:#633806">This is the same card as In Contract with the remedy list front and center. Contractors, dates and photos live on the Remedies page.</div>`
       : tab==='ctc'
       ? `<div style="background:#F4F3FE;border:0.5px solid #CECBF6;border-radius:10px;padding:11px 14px;margin-bottom:12px;font-size:13px;color:#26215C">Remedies are done on these. What is left is the closing table &mdash; keep the close date and the closing notes current.</div>`
       : '';
@@ -18206,7 +18206,7 @@ function _sopSeedAd(role){
     +'<h3>Who you would work with</h3><p>You would report to '+_calEsc(f.reports)+'.'+(f.manages && f.manages!=='nobody' ? (' You would be responsible for '+_calEsc(f.manages)+'.') : '')+'</p>'
     +'<h3>What we are looking for</h3><ul>'
       +'<li>[Years of experience, and in what]</li>'
-      +'<li>[Any licence, certification or ticket that is genuinely required]</li>'
+      +'<li>[Any license, certification or ticket that is genuinely required]</li>'
       +'<li>Comfortable working in a system rather than out of your head — we run on '+_calEsc((f.systems||[]).slice(0,2).join(' and '))+'.</li>'
       +'<li>Says it plainly when something has slipped, early rather than late.</li></ul>'
     +'<h3>What we offer</h3><ul><li>[Pay range]</li><li>[Hours, and whether any of it is remote]</li><li>[Benefits, vehicle, phone, tools]</li></ul>'
@@ -19313,7 +19313,7 @@ const PRELIST_GROUPS=[
   // section can be removed completely." Gone. Anything that still needs saying has a
   // box of its own instead.
   { key:'extra', title:'\u{1F5D2} Anything else', hint:'Whatever else a realtor should know before they write the listing.', fields:[
-      ['extra','Anything else worth knowing','area','Quirks, neighbours, access, what to lead with, what to keep quiet about\u2026']
+      ['extra','Anything else worth knowing','area','Quirks, neighbors, access, what to lead with, what to keep quiet about\u2026']
   ]}
 ];
 const PRELIST_FIELDS=(function(){ const o=[]; PRELIST_GROUPS.forEach(function(g){ g.fields.forEach(function(f){ o.push(f); }); }); return o; })();
@@ -22741,19 +22741,27 @@ function _nfItems(){
   // 1b - windows booked in, nobody has said whether they actually went in
   //
   // Bruce, 26 Sept: "once the install date happens, 48 hours after that it should pop up
-  // in Marlo's red flag on her screen and Patience's, to follow up with the project
-  // manager and confirm that the windows did get installed."
-  // It goes to whoever runs the window list - Marlo and Patience - and to the property's
-  // own project manager, because they are the one who can actually answer it.
+  // in Marlo's red flag on her screen ... to follow up with the project manager and
+  // confirm that the windows did get installed."
+  // And 18 Oct, narrowing it: "it's Marlo's job to keep up on the window tracker, so all
+  // those notifications will show up for Marlo no matter what. And then the other person
+  // ... whoever is assigned the project manager for that property is who else will get
+  // the notification for that."
+  //
+  // So it is exactly two people per house, and it now asks the SAME function the 48-hour
+  // chase task already used - _winChaseWho - which reads Marlo by the seat she holds
+  // rather than by name, so it keeps working when somebody else takes that chair. Two
+  // lists of who-gets-told for one thing is how they drift apart.
+  // Patience and "anyone who can see everything" are both off it: she is not the one who
+  // can answer whether the windows went in, and a director does not need the red flag.
   try{
     if(typeof _winAwaitingConfirm==='function'){
-      const forWindows=(nm)=>['Marlo Berry-Kinison','patience ochefije'].some(function(x){ return _sameAssignee(x,nm); });
-      const seesAll=(typeof _seesEveryone==='function') ? _seesEveryone() : false;
       _winAwaitingConfirm().forEach(function(x){
         const c=x.c, d=x.due;
         // Same fail-closed rule as the tasks above: "!me" used to mean everybody saw it.
         if(!me) return;
-        const mine = seesAll || forWindows(me) || _sameAssignee(c.pm, me);
+        const who=(typeof _winChaseWho==='function')?_winChaseWho(c):[];
+        const mine=who.some(function(n){ return _sameAssignee(n,me); });
         if(!mine) return;
         push({ id:'wininstall:'+c.id+':'+d.date, icon:'\u{1F6A9}', tone:'red',
           text:'Windows — did they go in at '+(c.addr||'this house')+'?',
@@ -32983,7 +32991,7 @@ function _mSqBlock(c){
       </div></div>`;
   };
   const adder=ro?'':`<div style="border-top:0.5px solid #f2f4f7;padding-top:11px;margin-top:4px">
-      <input class="m-input" id="msq-t-${c.id}" placeholder="Ask the neighbour about the fence line&hellip;" style="margin-top:0"/>
+      <input class="m-input" id="msq-t-${c.id}" placeholder="Ask the neighbor about the fence line&hellip;" style="margin-top:0"/>
       <select class="m-select" id="msq-w-${c.id}">${(typeof _sqWhoOpts==='function')?_sqWhoOpts((typeof _sqMe==='function')?_sqMe():''):''}</select>
       <input class="m-input" type="date" id="msq-d-${c.id}"/>
       <label style="display:flex;align-items:center;gap:8px;font-size:14px;color:#666;margin-top:10px"><input type="checkbox" id="msq-c-${c.id}" style="width:19px;height:19px"/> put it on the task calendar too</label>
@@ -33618,7 +33626,7 @@ function _mAddFormSQ(){
   return _mFormWrap("Add a side task",`
     <div style="font-size:13px;color:#566070;margin-bottom:10px;line-height:1.5">A reminder that lives on the property card. It stays off everybody's task calendar unless you tick the box.</div>
     <div class="m-label">Property</div>${_mPropOnlyPicker("ms")}
-    <div class="m-label" style="margin-top:12px">The reminder</div><textarea id="ms-t" class="m-input" rows="2" placeholder="Ask the neighbour about the fence line…"></textarea>
+    <div class="m-label" style="margin-top:12px">The reminder</div><textarea id="ms-t" class="m-input" rows="2" placeholder="Ask the neighbor about the fence line…"></textarea>
     <div class="m-label" style="margin-top:12px">When in the job?</div><select id="ms-ph" class="m-select">${phases.map(x=>`<option value="${_calEsc(x.id)}">${_calEsc(x.label)}</option>`).join('')}</select>
     <div class="m-label" style="margin-top:12px">Who is it for? <span style="color:#566070;font-weight:400">&mdash; tap one</span></div>${_mWhoChips("ms",[me])}
     <div class="m-label" style="margin-top:12px">Bring it back up on <span style="color:#566070;font-weight:400">&mdash; optional</span></div><input id="ms-d" type="date" class="m-input"/>
@@ -33649,7 +33657,7 @@ function _mAddFormAP(){
       <input id="map-nc-trade" class="m-input" style="margin-top:6px" placeholder="Trade — framing, roofing, plumbing…"/>
     </div>
     <div class="m-label" style="margin-top:12px">Amount quoted</div><input id="map-amt" class="m-input" inputmode="decimal" placeholder="$0.00"/>
-    <div class="m-label" style="margin-top:12px">Description of work</div><input id="map-label" class="m-input" placeholder="Framing labour, roof tear-off and replace…"/>
+    <div class="m-label" style="margin-top:12px">Description of work</div><input id="map-label" class="m-input" placeholder="Framing labor, roof tear-off and replace…"/>
     <div class="m-label" style="margin-top:12px">Type of work <span style="color:#566070;font-weight:400">&mdash; trade or category</span></div>
     <input id="map-cat" class="m-input" list="map-trades" placeholder="Framing, Roofing, Plumbing…"/><datalist id="map-trades">${_apTradeOpts()}</datalist>
     <div class="m-label" style="margin-top:12px">Anything worth adding <span style="color:#566070;font-weight:400">&mdash; optional</span></div>
@@ -35708,4 +35716,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-18b notifications-late-or-today role-scoping-fails-closed one-trade-list -->
+<!-- build: 2026-10-18c window-notifs-marlo-and-pm us-spelling -->
