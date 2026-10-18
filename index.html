@@ -8537,7 +8537,9 @@ function _pmBoardDrill(pmName,key){
   const el=document.getElementById('pd-content'); if(!el) return;
   const g=_PM_BOARD_GROUPS[key]; if(!g) return;
   const cards=_pmGroupCards(pmName,key);
-  const rows=cards.length?cards.map(_dirPropRow).join(""):'<div style="color:#636b7a;font-size:14px;padding:20px 0">No properties in this group right now.</div>';
+  // His own wave, with what is left on each house - the same renderer Marlo's combined
+  // board uses, scoped to him, so the two can never say different things.
+  const rows=_wsBoard({cards:cards, key:key, me:pmName, title:g.title});
   // Middle column: what still needs completed on each property (open subphases).
   const needs=cards.length?cards.map(c=>{
     const subs=(c.subPhases||[]).filter(sp=>!sp.completed && (sp.start||sp.due));
@@ -22221,6 +22223,119 @@ function _amCards(key){
     .filter(c=>!c.archived && g.phases.indexOf(c.phase)>=0 && (!g.permittedOnly || (c.checklists&&c.checklists.permitted)==='yes'))
     .sort((a,b)=>String(a.addr||'').localeCompare(String(b.addr||'')));
 }
+// ---- Phase workspaces --------------------------------------------------------
+// Bruce, 18 Oct: "the reason I have it the way it is now is because when they look on
+// their main dashboard, I want them to see the total number of properties in each phase,
+// and then when you click on that, that opens up another portal ... organized by type,
+// for each job role ... that way they can kind of start to schedule their weeks. On
+// Mondays Patience will work through her pre-construction tab and any property that is
+// in upcoming takedowns all the way till permits are approved. She can work through her
+// checklists ... same for the project manager, anything in that wave assigned to them."
+//
+// So the squares stay exactly where they are. What changes is what opens when you press
+// one: not a list of addresses, but every house in that wave with WHAT IS LEFT ON IT
+// underneath, so somebody can sit down on a Monday and work the wave end to end without
+// opening each card to find out whether it needs them.
+//
+// The items are read from the records that already decide them - the steps on the card,
+// the task list, the pre-listing form - so a workspace cannot disagree with the card it
+// points at. Nothing here is a second copy of anything.
+function _wsItems(c, key, me){
+  const out=[];
+  // 1. Steps on the card that are not finished. These ARE the phase's checklist.
+  (Array.isArray(c.subPhases)?c.subPhases:[]).forEach(function(sp){
+    const nm=String(sp.name||'');
+    if(typeof _subDone==='function' ? _subDone(sp,nm) : sp.completed) return;
+    const needsOk=(typeof subphaseNeedsApproval==='function') && subphaseNeedsApproval(nm);
+    out.push({ kind:'step', text:nm,
+      note:(sp.completed&&needsOk)?'done — waiting on sign-off':(sp.due?('due '+sp.due):''),
+      late:!!(sp.due && !sp.completed && sp.due<_ymd(new Date())),
+      click:"openPropDetail('"+c.id+"')" });
+  });
+  // 2. Open work on this house that is THIS person's. A board somebody else's name is
+  //    all over is not a to-do list, it is a status report.
+  (typeof _tasksCache!=='undefined'?_tasksCache:[]).forEach(function(t){
+    if(!t || t.property_id!==c.id || t.status==='done') return;
+    if(typeof _hldOn==='function' && _hldOn(t)) return;      // parked on purpose
+    const who=(typeof taskAssignees==='function')?taskAssignees(t):[];
+    if(me && who.length && !who.some(function(n){ return _sameAssignee(n,me); })) return;
+    out.push({ kind:'task', text:(t.category?t.category+' — ':'')+(t.title||'a task'),
+      note:t.due_date?((t.due_date<_ymd(new Date())?'was due ':'due ')+t.due_date):'',
+      late:!!(t.due_date && t.due_date<_ymd(new Date())),
+      click:"openTaskDetail('"+t.id+"')" });
+  });
+  // 3. The pre-listing form, but only on the waves where it is actually due.
+  if(['finishes','eop','eopa'].indexOf(key)>=0 && typeof _plCounts==='function'){
+    const k=_plCounts(c);
+    if(!k.done) out.push({ kind:'form',
+      text:'Pre-listing form — '+(k.t-k.n)+' question'+((k.t-k.n)===1?'':'s')+' left',
+      note:k.n?('started · '+k.n+' of '+k.t):'nobody has started it', late:false,
+      click:"openPropDetail('"+c.id+"')" });
+  }
+  return out;
+}
+// One house on a workspace: the address, how much is left, and the list.
+function _wsCard(c, key, me){
+  const items=_wsItems(c, key, me);
+  const late=items.filter(function(x){ return x.late; }).length;
+  const ph=(typeof phInfo==='function')?phInfo(c.phase):{dot:'#566070'};
+  const edge=late?'#B42318':(items.length?'#B9821A':'#0F7B54');
+  const head='<div onclick="openPropDetail(\''+c.id+'\')" style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;cursor:pointer">'
+    +'<div style="min-width:0"><div style="font-size:14px;font-weight:700;color:#111">'+_calEsc(c.addr||'')+'</div>'
+      +'<div style="font-size:11.5px;color:#566070">'+_calEsc((typeof _phLabel==='function'?_phLabel(c.phase):c.phase)||'')
+      +(c.pm?(' · '+_calEsc(c.pm)):'')+'</div></div>'
+    +'<span style="font-size:11px;font-weight:700;white-space:nowrap;padding:2px 10px;border-radius:99px;background:'
+      +(late?'#FBEAE8':(items.length?'#FBF3E2':'#E6F4ED'))+';color:'+edge+'">'
+      +(items.length?(items.length+' left'+(late?(' · '+late+' late'):'')):'✓ nothing left')+'</span>'
+    +'</div>';
+  const rows=items.length
+    ? items.map(function(x){
+        const icon=x.kind==='task'?'●':(x.kind==='form'?'✎':'□');
+        return '<div data-ws-item="'+x.kind+'" onclick="'+x.click+'" style="display:flex;gap:8px;align-items:baseline;padding:4px 0;border-top:0.5px solid #f4f5f7;cursor:pointer">'
+          +'<span style="color:'+(x.late?'#B42318':'#8A94A6')+';font-size:10px;flex-shrink:0">'+icon+'</span>'
+          +'<span style="flex:1;min-width:0;font-size:12.5px;color:#333">'+_calEsc(x.text)+'</span>'
+          +(x.note?'<span style="font-size:11px;color:'+(x.late?'#B42318':'#8A94A6')+';white-space:nowrap">'+_calEsc(x.note)+'</span>':'')
+        +'</div>';
+      }).join('')
+    : '<div style="font-size:12px;color:#0F7B54;padding:5px 0;border-top:0.5px solid #f4f5f7">Nothing outstanding on this house in this phase.</div>';
+  return '<div data-ws-card="'+_calEsc(c.id)+'" style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid '+edge+';border-radius:10px;padding:11px 14px;margin-bottom:9px">'
+    +head+'<div style="margin-top:6px">'+rows+'</div></div>';
+}
+// The workspace itself. Used by every square that opens a phase, so a PM's board and
+// Marlo's combined board cannot drift apart.
+function _wsBoard(opts){
+  const cards=opts.cards||[], key=opts.key, me=opts.me||'';
+  const withWork=cards.filter(function(c){ return _wsItems(c,key,me).length; });
+  const clear=cards.length-withWork.length;
+  const totalLeft=withWork.reduce(function(n,c){ return n+_wsItems(c,key,me).length; },0);
+  const lateN=withWork.reduce(function(n,c){ return n+_wsItems(c,key,me).filter(function(x){ return x.late; }).length; },0);
+  // Most to do first - that is the order somebody actually works a wave in.
+  const sorted=withWork.slice().sort(function(a,b){
+    const A=_wsItems(a,key,me), B=_wsItems(b,key,me);
+    return B.filter(function(x){return x.late;}).length-A.filter(function(x){return x.late;}).length
+        || B.length-A.length
+        || String(a.addr||'').localeCompare(String(b.addr||''));
+  });
+  const band=cards.length
+    ? '<div style="background:#fff;border:1px solid #122A4A;border-radius:10px;padding:11px 14px;margin-bottom:12px">'
+      +'<div style="font-size:14px;font-weight:700;color:#111">'
+        +(totalLeft? (totalLeft+' thing'+(totalLeft===1?'':'s')+' to work through on '+withWork.length+' house'+(withWork.length===1?'':'s'))
+                   : 'Nothing outstanding in this phase')+'</div>'
+      +'<div style="font-size:11.5px;color:#566070;margin-top:2px">'
+        +(lateN?('<b style="color:#B42318">'+lateN+' already late.</b> '):'')
+        +(clear?(clear+' house'+(clear===1?' is':'s are')+' clear. '):'')
+        +'Worked top to bottom, most behind first. Click any line to open it, or the address for the whole card.</div></div>'
+    : '';
+  const body=sorted.length ? sorted.map(function(c){ return _wsCard(c,key,me); }).join('')
+    : (cards.length
+        ? '<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:22px;text-align:center;color:#0F7B54;font-size:13.5px">✓ Every house in this phase is clear.<div style="font-size:12px;color:#8A94A6;margin-top:3px">'+cards.length+' propert'+(cards.length===1?'y':'ies')+' here, nothing outstanding on any of them.</div></div>'
+        : '<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:22px;text-align:center;color:#636b7a;font-size:13.5px">No properties in this phase right now.<div style="font-size:12px;color:#8A94A6;margin-top:3px">A house appears here the moment it moves into '+_calEsc(opts.title||'this phase')+'.</div></div>');
+  const clearCards=clear? '<div style="font-size:11.5px;color:#8A94A6;margin:14px 0 7px;text-transform:uppercase;letter-spacing:.05em">Clear · '+clear+'</div>'
+      + cards.filter(function(c){ return !_wsItems(c,key,me).length; })
+             .sort(function(a,b){ return String(a.addr||'').localeCompare(String(b.addr||'')); })
+             .map(function(c){ return _wsCard(c,key,me); }).join('') : '';
+  return band+body+clearCards;
+}
 function _amTile(key,title,icon,color,sub){
   const cards=_amCards(key);
   const pms=new Set(_pmNamesFrom(cards));
@@ -22240,6 +22355,8 @@ function _amDrill(key){
   cards.forEach(c=>{ const k=c.pm||'__none__'; (byPM[k]=byPM[k]||[]).push(c); });
   const names=Object.keys(byPM).filter(k=>k!=='__none__').sort();
   if(byPM['__none__']) names.push('__none__');
+  // Grouped by manager still, but each house now carries what is left on it rather
+  // than just its address - this is the screen somebody works a wave from.
   const sections=names.length?names.map(pm=>{
     const list=byPM[pm];
     const label = pm==='__none__' ? 'No project manager assigned' : (resolvePMName(pm)||pm);
@@ -22248,7 +22365,7 @@ function _amDrill(key){
         <div style="font-size:14px;font-weight:700;color:${pm==='__none__'?'#B42318':'#111'}">${_calEsc(label)}</div>
         <div style="font-size:12px;color:#566070">${list.length} propert${list.length===1?'y':'ies'}</div>
       </div>
-      <div style="display:flex;flex-direction:column;gap:8px">${list.map(_dirPropRow).join('')}</div>
+      <div>${_wsBoard({cards:list, key:key, me:'', title:g.title})}</div>
     </div>`;
   }).join(''):'<div style="color:#636b7a;font-size:14px;padding:20px 0">No properties on this board right now.</div>';
   const pmCount=names.filter(n=>n!=='__none__').length;
@@ -22257,8 +22374,8 @@ function _amDrill(key){
       <button onclick="openAdminDashboard('main')" style="font-size:13px;padding:6px 12px;border:0.5px solid #cdd7e6;border-radius:6px;background:#fff;color:#185FA5;cursor:pointer">‹ Back</button>
       <div style="font-size:17px;font-weight:600;color:#111">${_calEsc(g.title)}</div>
     </div>
-    <div style="font-size:13px;color:#566070;margin-bottom:16px">Every property on this board, across all project managers — ${cards.length} propert${cards.length===1?'y':'ies'}${pmCount?` under ${pmCount} PM${pmCount===1?'':'s'}`:''}.</div>
-    <div style="max-width:820px">${sections}</div>
+    <div style="font-size:13px;color:#566070;margin-bottom:16px">Every property on this board, across all project managers — ${cards.length} propert${cards.length===1?'y':'ies'}${pmCount?` under ${pmCount} PM${pmCount===1?'':'s'}`:''}. Each house shows what is still outstanding on it in this phase.</div>
+    <div style="max-width:880px">${sections}</div>
   </div>`;
 }
 // Marlo's admin MAIN dashboard: every PM board and both assistant boards, across ALL
@@ -36026,4 +36143,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-18e stepped-prelist-form one-person-one-entry -->
+<!-- build: 2026-10-18f phase-workspaces -->
