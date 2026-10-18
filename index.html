@@ -24893,8 +24893,11 @@ const VA_AUTO = {
                 if(e && e.property_id===c.id) add(e.contractor_id);
               });
               if(!ids.length) return '';
-              const w9=((window._trkData||{}).w9)||{};
-              return ids.every(function(id){ return w9[id]===true; }) ? 'yes' : '';
+              const by=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]);
+              return ids.every(function(id){
+                const c2=by.find(function(x){ return x.id===id; });
+                return c2 ? _w9Settled(c2) : false;
+              }) ? 'yes' : '';
             }catch(e){ return ''; } }}
 };
 function _vaItemDays(item){ const m=String(item||'').match(/@(\d+)d\b/); return m?parseInt(m[1],10):0; }
@@ -28490,9 +28493,21 @@ function _vaTrackers(){
     if(per && per.toLowerCase()!==t) return per;
     return '';
   };
-  const w9sorted=cons.slice().sort((a,b)=> (_w9Flags(b).length?1:0)-(_w9Flags(a).length?1:0) || (_w9on(a)-_w9on(b)) || ((!!a.red_flag)-(!!b.red_flag)) || String(a.name||'').localeCompare(String(b.name||'')));
-  const w9flagged=cons.filter(c=>_w9Flags(c).length).length;
-  const w9rows=cons.length?w9sorted.map(c=>{ const T=_w9Title(c); const fl=_w9Flags(c); return `<tr data-trk="${_calEsc((c.name||'')+' '+(c.business_name||'')+' '+T.main+' '+(c.trade||'')+' '+(c.phone||'')+' '+(c.email||'')+(fl.length?' flagged needs fixing':''))}" style="border-top:0.5px solid #eef0f6;${fl.length?'background:#FFF6F5':(_w9on(c)?'':'background:#FFFBF7')}">
+  // Not the directory. Everybody we have done business with, plus everybody already on
+  // the sheet - see _w9InTracker. Still-needed first, then the answered ones.
+  const w9cons=_w9List();
+  const w9hidden=_w9Hidden();
+  const w9sorted=w9cons.slice().sort((a,b)=> (_w9Flags(b).length?1:0)-(_w9Flags(a).length?1:0) || (_w9Settled(a)-_w9Settled(b)) || ((!!a.red_flag)-(!!b.red_flag)) || String(a.name||'').localeCompare(String(b.name||'')));
+  const w9flagged=w9cons.filter(c=>_w9Flags(c).length).length;
+  // The four-way answer. One control, because the four answers are mutually exclusive.
+  const _w9StateCell=(c)=>{
+    const st=_w9State(c), m=_w9Meta(st);
+    if(ro) return '<span style="font-size:11.5px;font-weight:700;color:'+m[2]+'">'+_calEsc(m[1])+'</span>';
+    return '<select onchange="_w9SetState(\''+c.id+'\',this.value)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12px;width:142px;font-weight:600;color:'+m[2]+';background:'+m[3]+'">'
+      + W9_STATES.map(function(x){ return '<option value="'+x[0]+'"'+(x[0]===st?' selected':'')+'>'+_calEsc(x[1])+'</option>'; }).join('')
+      + '</select>';
+  };
+  const w9rows=w9cons.length?w9sorted.map(c=>{ const T=_w9Title(c); const fl=_w9Flags(c); return `<tr data-trk="${_calEsc((c.name||'')+' '+(c.business_name||'')+' '+T.main+' '+(c.trade||'')+' '+(c.phone||'')+' '+(c.email||'')+(fl.length?' flagged needs fixing':''))}" style="border-top:0.5px solid #eef0f6;${fl.length?'background:#FFF6F5':(_w9Settled(c)?'':'background:#FFFBF7')}">
     <td style="padding:7px 10px;font-weight:600;color:${c.red_flag?'#B42318':'#111'};min-width:170px">${c.red_flag?'\uD83D\uDEA9 ':''}${_calEsc(T.main)}
       <div style="font-size:10px;color:#8A5A10;font-weight:400">${_calEsc(T.how)}</div>
       ${T.sub?`<div style="font-size:11px;color:#566070;font-weight:400">${_calEsc(T.sub)}</div>`:''}
@@ -28500,13 +28515,13 @@ function _vaTrackers(){
     <td style="padding:7px">${_w9NameCell(c,'first')}</td>
     <td style="padding:7px">${_w9NameCell(c,'last')}</td>
     <td style="padding:7px">${txt('w9info',c.id,'w9name','Name on W-9',150)}</td>
-    <td style="text-align:center;padding:7px">${chk('w9',c.id,(d.w9||{})[c.id])}${_w9on(c)?'':'<div style="font-size:10.5px;color:#8A5A10;margin-top:2px">still needed</div>'}</td>
+    <td style="text-align:center;padding:7px">${_w9StateCell(c)}</td>
     <td style="padding:7px;min-width:150px">${fl.length?fl.map(x=>`<div style="font-size:11px;color:#B42318;line-height:1.35">\uD83D\uDEA9 ${_calEsc(x)}</div>`).join(''):'<span style="color:#8A94A6;font-size:11.5px">&mdash;</span>'}</td>
-    <td style="padding:7px">${txt('w9info',c.id,'note','Notes / no W-9 needed',170)}</td>
+    <td style="padding:7px">${txt('w9info',c.id,'note','Why, or anything to remember',170)}</td>
     <td style="padding:7px">${ro?(_calEsc(c.email)||'\u2014'):`<input value="${_calEsc(c.email||'')}" placeholder="Email" onchange="setContractorField('${c.id}','email',this.value)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:150px"/>`}
       <div style="font-size:10px;color:#636b7a;margin-top:2px">from the directory</div></td>
     <td style="padding:7px">${ro?(_calEsc(c.phone)||'\u2014'):`<input value="${_calEsc(c.phone||'')}" placeholder="Phone" onchange="setContractorField('${c.id}','phone',this.value)" style="padding:4px 6px;border:0.5px solid #d8dce6;border-radius:6px;font-size:12.5px;width:120px"/>`}</td>
-    ${ro?'':`<td style="padding:7px;text-align:right;white-space:nowrap"><span onclick="deleteContractor('${c.id}','trackers')" title="Delete this contractor everywhere" style="cursor:pointer;color:#c0392b;font-size:12.5px">Remove</span></td>`}</tr>`; }).join(""):'<tr><td colspan="10" style="padding:16px;color:#636b7a;text-align:center">No contractors in the directory yet. Add them under Tools \u2192 Contractor Directory.</td></tr>';
+    ${ro?'':`<td style="padding:7px;text-align:right;white-space:nowrap"><span onclick="deleteContractor('${c.id}','trackers')" title="Delete this contractor everywhere" style="cursor:pointer;color:#c0392b;font-size:12.5px">Remove</span></td>`}</tr>`; }).join(""):'<tr><td colspan="10" style="padding:16px;color:#636b7a;text-align:center">Nobody has been booked or paid yet, so there is no W-9 to chase. A contractor appears here the first time he is put on the construction calendar or has money recorded against him.</td></tr>';
 
   // ---------- Mowing tracker (mirrors the Active Mowing Tracker sheet) ----------
   const mowWhoSel=(c)=>{
@@ -28677,7 +28692,7 @@ function _vaTrackers(){
 
   // ---------- Outstanding counts ----------
   const winDone=(c)=>_trkOn('win',c.id,'measured')&&_trkOn('win',c.id,'ordered')&&_trkOn('win',c.id,'arrived')&&_trkOn('win',c.id,'installed');
-  const w9out=cons.filter(c=>!(d.w9||{})[c.id]).length;
+  const w9out=_w9List().filter(function(c){ return !_w9Settled(c); }).length;
   const mowout=active.filter(c=>_mowNeedsRoute(c) && !(d.mow||{})[c.id]).length + closed.filter(c=>!_trkOn('mowinfo',c.id,'removed')).length;
   const winout=_winAwaitingConfirm().length + active.filter(c=>_winInQueue(c) && _winActionable(c)).length;
   // Only a vacant, ready house can have first-time access done. Counting every
@@ -28719,7 +28734,7 @@ function _vaTrackers(){
 
   if(view==='w9') return shell(back+_trkSearchBox('Search a person, a business name or a trade…')
     +(w9flagged?`<div style="background:#FBE9E7;border:0.5px solid #F0C7C3;border-radius:9px;padding:10px 13px;margin-bottom:11px;font-size:12.5px;color:#72241F"><b>${w9flagged} ${w9flagged===1?'entry needs':'entries need'} fixing.</b> They are at the top of the list with the reason beside them. Nothing has been renamed or merged \u2014 fix them in the Contractor Directory, or type the right name into <i>Name on W-9</i>. Search <b>flagged</b> to see only these.</div>`:'')
-    +_trkTable('🧾 W-9 Tracker','#7A3FA8','<th style="padding:9px 10px;text-align:left">Who the W-9 is under</th><th style="padding:9px;text-align:left">First name</th><th style="padding:9px;text-align:left">Last name</th><th style="padding:9px;text-align:left">Name on W-9</th><th style="padding:9px">On file</th><th style="padding:9px;text-align:left">Needs fixing</th><th style="padding:9px;text-align:left">Notes</th><th style="padding:9px;text-align:left">Email</th><th style="padding:9px;text-align:left">Phone</th>'+(ro?'':'<th></th>'),w9rows)+`<div style="font-size:12px;color:#566070">A contractor fills a W-9 in as <b>either himself or his company</b> — whichever it was, that is the name shown first, with the other underneath so you can still find him. Type it in "Name on W-9" if it differs from both. Ticking "On file" here also marks them in the Contractor Directory.${ro?'':' <b>Remove</b> deletes the whole contractor record — use it on duplicates.'}</div>`);
+    +_trkTable('🧾 W-9 Tracker','#7A3FA8','<th style="padding:9px 10px;text-align:left">Who the W-9 is under</th><th style="padding:9px;text-align:left">First name</th><th style="padding:9px;text-align:left">Last name</th><th style="padding:9px;text-align:left">Name on W-9</th><th style="padding:9px">W-9</th><th style="padding:9px;text-align:left">Needs fixing</th><th style="padding:9px;text-align:left">Notes</th><th style="padding:9px;text-align:left">Email</th><th style="padding:9px;text-align:left">Phone</th>'+(ro?'':'<th></th>'),w9rows)+`<div style="font-size:12.5px;color:#2A4365;background:#F4F7FC;border:0.5px solid #D6E0EF;border-radius:9px;padding:9px 13px;margin-bottom:9px"><b>Who is on this list:</b> everybody we have actually used &mdash; booked on the construction calendar, carrying a starting job count, or with money against him in accounts payable &mdash; plus everybody already on this sheet. ${w9hidden?('<b>'+w9hidden+'</b> more sit in the Contractor Directory that we have never used or scheduled; they stay off until we do.'):'Everybody in the directory has been used at least once.'} <b>Nobody already here is ever removed by that rule.</b><div style="margin-top:5px">The answer column has four settings: <b>Still needed</b> is the only one that counts as outstanding. <b>On file</b> also ticks him in the Contractor Directory. <b>No W-9 required</b> is for a supplier or a shop we buy from over the counter. <b>Refusing to give one</b> records a decision rather than leaving him looking like a chase &mdash; put why in the Notes.</div></div>`+`<div style="font-size:12px;color:#566070">A contractor fills a W-9 in as <b>either himself or his company</b> — whichever it was, that is the name shown first, with the other underneath so you can still find him. Type it in "Name on W-9" if it differs from both. Ticking "On file" here also marks them in the Contractor Directory.${ro?'':' <b>Remove</b> deletes the whole contractor record — use it on duplicates.'}</div>`);
   if(view==='co') return shell(back+_trkSearchBox('Search a property, what changed, who caused it or who approved it…')+_coTrackerBody());
   if(view==='prelist') return shell(back+_plHub());
   if(view==='mow') return shell(back+_trkSearchBox('Search a property…')+_trkTable('🌱 Mowing Tracker','#3B6D11','<th style="padding:9px 10px;text-align:left">Property</th><th style="padding:9px;text-align:left">Who is mowing</th><th style="padding:9px;text-align:left">How often</th><th style="padding:9px;text-align:left">Cost/mow</th><th style="padding:9px;text-align:left">Contact #</th><th style="padding:9px;text-align:left">PM</th><th style="padding:9px;text-align:left">Payment</th><th style="padding:9px">On route</th><th style="padding:9px">Removed after</th>',mowrows)+_trkClosedSimple(closed,'mowing history'));
@@ -28884,7 +28899,7 @@ function _vaTrackers(){
 
   const li=(txt)=>`<div style="font-size:12.5px;color:#333;padding:4px 0;border-bottom:0.5px solid #f1f3f7">• ${txt}</div>`;
   const sum=(title,color,items)=>`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 14px"><div style="font-size:13.5px;font-weight:700;color:${color};margin-bottom:4px">${title}</div>${items.length?items.slice(0,6).map(li).join('')+(items.length>6?`<div style="font-size:11.5px;color:#566070;padding-top:4px">+ ${items.length-6} more — click the tile</div>`:''):'<div style="font-size:12px;color:#16794C;padding:4px 0">All caught up ✅</div>'}</div>`;
-  const w9i=cons.filter(c=>!(d.w9||{})[c.id]).map(c=>_calEsc(c.name||''));
+  const w9i=_w9List().filter(function(c){ return !_w9Settled(c); }).map(c=>_calEsc(c.name||''));
   const mi=closed.filter(c=>!_trkOn('mowinfo',c.id,'removed')).map(c=>'<b style="color:#8a6d1a">REMOVE from the route:</b> '+nm(c))
     .concat(active.filter(c=>_mowNeedsRoute(c) && !(d.mow||{})[c.id]).map(c=>'<b style="color:#3B6D11">ADD to the route:</b> '+nm(c)));
   // Unconfirmed installs come FIRST and in red - 48 hours past the date with nobody
@@ -30760,6 +30775,8 @@ function _w9Flags(c){
     // 4. The W-9 is ticked but we never captured whose legal name is on it.
     if(_w9on(c) && !first && !last && !w9n)
       out.push('W-9 ticked but no name recorded for it');
+    if(_w9StatRaw(c)==='refused' && !String(_trkVal('w9info',c.id,'note')||'').trim())
+      out.push('Marked as refusing \u2014 write down why in the notes');
     // 5. The typed W-9 name matches neither the person nor the company.
     if(w9n && nm && biz){
       const t=w9n.toLowerCase();
@@ -30777,6 +30794,88 @@ function _w9Flags(c){
     });
     if(dup) out.push('Looks like a duplicate of "'+String(dup.name||dup.business_name||'')+'"');
     return out;
+}
+// ---- what a W-9 can actually BE, and who belongs on the tracker ----------------
+// Bruce, 19 Oct: "need a option to mark no W9 required - or refusing to give W9 - but
+// contractors that are in the contractor directory should no auto populate on the W9
+// tracker if they have not been used before or scheduled before ... but do not remove
+// contractors from the W9 Tracker that we already have."
+//
+// Two separate problems, and they pull in opposite directions, so both rules are written
+// down here rather than left to whoever edits a renderer next.
+//
+// ONE. A missing W-9 was the only answer the sheet could hold. Everybody we would never
+// ask (a supplier, a company we buy from over the counter) and everybody who has flatly
+// said no sat in the red column for ever, which is why the red column stopped meaning
+// anything. There are four answers now, and three of them are answers.
+//
+// TWO. The tracker was the whole directory - every name anybody has ever typed in,
+// whether we have used him or not. That is ~250 rows of people we may never hire,
+// burying the dozen that actually matter. The tracker is now everybody we have DONE
+// BUSINESS WITH: booked on the construction calendar, carrying a starting job count, or
+// with money against him in accounts payable.
+//
+// The safety rule on top of that, in his words: nobody already on the sheet comes off
+// it. If he is ticked, if anybody has typed a single character against him, or if an
+// answer has been recorded, he stays - whatever the business test says. This filter can
+// only ever ADD somebody to the tracker, never take one away.
+const W9_STATES = [
+  ['',        'Still needed',           '#B42318', '#FBEAE8'],
+  ['onfile',  'On file',                '#0F7B54', '#E6F4ED'],
+  ['none',    'No W-9 required',        '#185FA5', '#E8F1FB'],
+  ['refused', 'Refusing to give one',   '#8A5A10', '#FBF3E2']
+];
+function _w9Meta(k){ return W9_STATES.find(function(x){ return x[0]===String(k||''); })||W9_STATES[0]; }
+// The stored answer, which is NOT the tick. The tick stays exactly what it always was so
+// every other screen reading it keeps working; this sits beside it.
+function _w9StatRaw(c){
+  const v=String(((((window._trkData||{}).w9info)||{})[(c&&c.id)]||{}).status||'');
+  return (v==='none'||v==='refused')?v:'';
+}
+// The tick wins. A W-9 we actually hold beats any note about not needing one.
+function _w9State(c){ return _w9on(c) ? 'onfile' : _w9StatRaw(c); }
+// Answered - any of the three. This is what "outstanding" is counted against now, so a
+// supplier we never ask and a man who said no both stop showing up as work to do.
+function _w9Settled(c){ return _w9State(c)!==''; }
+// Have we ever actually done business with him?
+function _w9Worked(c){
+  if(!c) return false;
+  try{ if((typeof _contractorUses==='function') && _contractorUses(c.id)>0) return true; }catch(e){}
+  try{
+    const ap=(typeof _apCache!=='undefined'?_apCache:[]);
+    if(ap.some(function(r){ return r && r.contractor_id===c.id && r.status!=='void'; })) return true;
+  }catch(e){}
+  return false;
+}
+// Has anybody put anything against him on this sheet? One typed character counts.
+function _w9Typed(c){
+  const i=((((window._trkData||{}).w9info)||{})[(c&&c.id)])||{};
+  return ['first','last','w9name','note','status'].some(function(k){ return String(i[k]||'').trim(); });
+}
+function _w9InTracker(c){ return !!c && (_w9on(c) || _w9Typed(c) || _w9Worked(c)); }
+function _w9List(){
+  return (typeof _contractorsCache!=='undefined'?_contractorsCache:[]).filter(_w9InTracker);
+}
+// How many of the directory are being held back, so the screen can say so out loud
+// rather than quietly showing a shorter list than it used to.
+function _w9Hidden(){
+  const all=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]);
+  return all.length - all.filter(_w9InTracker).length;
+}
+async function _w9SetState(id, val){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
+  const v=String(val||'');
+  const c=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).find(function(x){ return x.id===id; })||{};
+  const d=window._trkData||{}; d.w9=d.w9||{};
+  // The four answers are one answer, not a tick plus a note, so picking one clears the
+  // others. Otherwise "on file" and "refusing to give one" could both be true at once.
+  if(v==='onfile') d.w9[id]=true; else delete d.w9[id];
+  window._trkData=d;
+  // _trkSet writes the whole trkData blob and redraws, so the tick above goes with it.
+  await _trkSet('w9info', id, 'status', (v==='none'||v==='refused')?v:'', true);
+  if(typeof _logAudit==='function'){
+    _logAudit('updated','contractor', (c.name||c.business_name||''), 'W-9: '+_w9Meta(v)[1]);
+  }
 }
 function _ctW9On(id){ return !!(((window._trkData||{}).w9||{})[id]); }
 // What the directory shows beside the tick: whose legal name the W-9 is under, and
@@ -30796,15 +30895,28 @@ async function _ctW9Toggle(id){
   }
   renderContractorDirectory();
 }
+// The directory and the tracker show the SAME four answers, because they are the same
+// record. The tick stays a tick - one press is still the common case - but the other
+// three answers are reachable here too, so nobody has to walk over to the tracker to
+// say "we never ask this one for a W-9".
 function _ctW9Cell(c, ro){
-  const on=_ctW9On(c.id), nm=_ctW9Name(c.id);
+  const nm=_ctW9Name(c.id);
   const issues=_ctW9Issues(c);
-  const face=on?'#0F7B54':'#8A5A10';
-  const mark=ro ? (on?'\u2713':'\u2014')
-    : '<span onclick="_ctW9Toggle(\''+c.id+'\')" title="'+(on?'W-9 is on file \u2014 click to un-tick':'No W-9 on file \u2014 click once it is collected')+'" style="cursor:pointer;font-size:16px;color:'+face+'">'+(on?'\u2611':'\u2610')+'</span>';
+  const st=_w9State(c), m=_w9Meta(st);
+  const face=m[2];
+  const mark=ro
+    ? (st==='onfile'?'\u2713':(st?_calEsc(m[1]):'\u2014'))
+    : ((st==='onfile' || st==='')
+      ? '<span onclick="_ctW9Toggle(\''+c.id+'\')" title="'+(st==='onfile'?'W-9 is on file \u2014 click to un-tick':'No W-9 on file \u2014 click once it is collected')+'" style="cursor:pointer;font-size:16px;color:'+face+'">'+(st==='onfile'?'\u2611':'\u2610')+'</span>'
+      : '<span style="font-size:10.5px;font-weight:700;color:'+face+'">'+_calEsc(m[1])+'</span>');
+  const pick=ro ? '' :
+    '<select onchange="_w9SetState(\''+c.id+'\',this.value)" title="What the W-9 answer is for this contractor" style="margin-top:2px;padding:1px 3px;border:0.5px solid #e3e6ec;border-radius:5px;font-size:9.5px;max-width:118px;color:'+face+';background:'+m[3]+'">'
+    + W9_STATES.map(function(x){ return '<option value="'+x[0]+'"'+(x[0]===st?' selected':'')+'>'+_calEsc(x[1])+'</option>'; }).join('')
+    + '</select>';
   return '<div style="font-size:15px;color:'+face+'">'+mark+'</div>'
     + (nm?'<div style="font-size:10px;color:#636b7a;max-width:124px;margin:1px auto 0;line-height:1.2">'+_calEsc(nm)+'</div>':'')
-    + (on?'':'<div style="font-size:9.5px;color:#8A5A10;margin-top:1px">still needed</div>')
+    + (st?'':'<div style="font-size:9.5px;color:#8A5A10;margin-top:1px">still needed</div>')
+    + pick
     + (issues.length?('<div onclick="_ctToW9()" title="'+_calEsc(issues.join(' \u00b7 '))+'" style="font-size:9.5px;color:#B42318;font-weight:700;margin-top:1px;cursor:pointer">\u{1F6A9} '+issues.length+' to fix</div>'):'');
 }
 // ---- the starting counts Bruce read out, ready to apply in one press ----------
@@ -30924,7 +31036,7 @@ function _ctCard(c, ro){
   // Bruce, 25 Sept: he goes looking for "A Solis framing" as often as "Antonio".
   // Searching only the person's name meant half the directory was unfindable.
   const tiers=_ctTrades(c).map(function(t){ const d=_ctTierDef(_ctTier(c.id,t)); return d?(d.label+' '+t):''; }).filter(Boolean).join(' ');
-  const w9bits=_ctW9On(c.id) ? 'w9 w-9 on file' : 'no w9 needs w9 w-9 missing';
+  const w9bits=_w9Settled(c) ? ('w9 w-9 '+_w9Meta(_w9State(c))[1].toLowerCase()) : 'no w9 needs w9 w-9 missing still needed';
   const hay=[c.name,c.business_name,c.trade,c.phone,c.email,tiers,w9bits,
              (_ctW9Issues(c).length?'flagged needs fixing':'')].filter(Boolean).join(' ');
   const lab=function(t){ return '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:#97a0ae;margin-bottom:3px;white-space:nowrap">'+t+'</div>'; };
@@ -31004,7 +31116,7 @@ function _ctTradeBoard(ro){
       +'<div style="min-width:0;flex:1">'
         +'<div style="font-size:13.5px;font-weight:600;color:'+((c.red_flag||noUse)?'#B42318':'#111')+(noUse?';text-decoration:line-through':'')+'">'+(c.red_flag?'\u{1F6A9} ':'')+_calEsc(nm)+'</div>'
         +(sub.length?'<div style="font-size:11.5px;color:#566070">'+_calEsc(sub.join(' · '))+'</div>':'')
-        +'<div style="font-size:11px;color:#8A94A6;margin-top:2px">'+_contractorUses(c.id)+' booking'+(_contractorUses(c.id)===1?'':'s')+(_ctW9On(c.id)?' · W-9 on file':' · no W-9')+'</div>'
+        +'<div style="font-size:11px;color:#8A94A6;margin-top:2px">'+_contractorUses(c.id)+' booking'+(_contractorUses(c.id)===1?'':'s')+(_w9Settled(c)?(' · '+_w9Meta(_w9State(c))[1]):' · no W-9')+'</div>'
       +'</div>'
       +'<span style="font-size:11px;font-weight:700;white-space:nowrap;background:'+(d?d.bg:'#F1F2F6')+';color:'+(d?d.fg:'#8A94A6')+';border-radius:99px;padding:2px 9px">'+(d?d.label:'not ranked')+'</span>'
     +'</div>';
@@ -31047,7 +31159,7 @@ function _ctSheetHtml(){
         +'<td>'+(esc(c.phone)||'<span class="e">—</span>')+'</td>'
         +'<td>'+(esc(c.email)||'<span class="e">—</span>')+'</td>'
         +'<td class="c">'+_contractorUses(c.id)+'</td>'
-        +'<td class="c">'+(_ctW9On(c.id)?'✓':'<span class="e">—</span>')+'</td>'
+        +'<td class="c">'+(_w9State(c)==='onfile'?'✓':(_w9Settled(c)?('<span style="font-size:10px;color:'+_w9Meta(_w9State(c))[2]+'">'+_calEsc(_w9Meta(_w9State(c))[1])+'</span>'):'<span class="e">—</span>'))+'</td>'
       +'</tr>';
     }).join('');
     return '<h2>'+esc(t)+' <span class="n">'+men.length+'</span></h2>'
@@ -32209,7 +32321,7 @@ function renderContractorDirectory(view){
           <span style="font-size:12px;background:#EEF3FA;color:#185FA5;padding:3px 10px;border-radius:99px">${list.length} contractor${list.length===1?'':'s'}</span>
           ${flagged?`<span style="font-size:12px;background:#FBEAE8;color:#B42318;padding:3px 10px;border-radius:99px">🚩 ${flagged} red-flagged — do not hire</span>`:''}
           ${(function(){
-              const noW9=list.filter(function(x){ return !_ctW9On(x.id); }).length;
+              const noW9=list.filter(function(x){ return !_w9Settled(x); }).length;
               const bad=list.filter(function(x){ return _ctW9Issues(x).length; }).length;
               return (noW9
                 ? `<span onclick="_ctSearchFor('no w9')" title="Show only these" style="cursor:pointer;font-size:12px;background:#FBF3E2;color:#8A5A10;padding:3px 10px;border-radius:99px">🧾 ${noW9} with no W-9 on file</span>`
@@ -37265,4 +37377,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-18o prelist-assistant-panel -->
+<!-- build: 2026-10-18p w9-four-answers -->
