@@ -10095,21 +10095,37 @@ window.__mktPrefilled_ = window.__mktPrefilled_ || {};
 // screen as needing confirmation rather than quietly presented as fact - one line from
 // him and the flag comes off. Patience is in every one of them, which is the whole
 // point: these are her monthly one-to-ones with each person she works with.
+//
+// RESET BY BRUCE, 18 OCT. The rota above was dictated on 11 Oct with two slots a week at
+// 8:00 and 8:30, and two of its pairings were my reading rather than his words. He has
+// now given it plainly, and this replaces it outright: ONE slot a week, always 8:30 to
+// 9:00, working through the project team once a month. In his words - "the first Tuesday
+// of the month will be with the project managers ... the second Tuesday of the month will
+// be with the PM assistants, rather it's the start of project assistant or the end of
+// project assistant or both of them together in one Zoom meeting ... the third Tuesday
+// will be with the project director ... the last Tuesday of the month will be with Marlo
+// ... VA Andy will join in on that one ... she just won't have a meeting with Jen."
+//
+// Nothing is marked "confirm" any more, because nothing here is inferred.
+// Her Tuesday starts at 8:30 because of this meeting, and her utilities block that day is
+// an hour and a half instead of two. That is written into the job role SOP as well, so
+// the two agree.
 const VA_MEET_ROTA = [
   { wk:1, name:'First Tuesday', slots:[
-      { t:'8:00 - 8:15 AM', who:['Jen','Patience'], note:'15-minute Zoom' }
+      { t:'8:30 - 9:00 AM', who:['The project managers','Patience'],
+        note:'The houses in flight, and what she can take off them' }
   ]},
   { wk:2, name:'Second Tuesday', slots:[
-      { t:'8:00 - 8:15 AM', who:['Gabe','Patience'], note:'15-minute Zoom' },
-      { t:'8:30 - 9:00 AM', who:['Marlo','Patience','VA Andy'], note:'' }
+      { t:'8:30 - 9:00 AM', who:['PM assistants','Patience'],
+        note:'Start of Project and End of Project \u2014 either one, or both in the one Zoom' }
   ]},
   { wk:3, name:'Third Tuesday', slots:[
-      { t:'8:00 - 8:15 AM', who:['Isaiah','Patience'], note:'15-minute Zoom', confirm:true },
-      { t:'8:30 - 9:00 AM', who:['Andrew','Patience'], note:'', confirm:true }
+      { t:'8:30 - 9:00 AM', who:['Bruce','Patience'],
+        note:'Direction, priorities, and the month\u2019s small projects' }
   ]},
   { wk:0, name:'Last Tuesday', slots:[
-      { t:'8:00 - 8:15 AM', who:['Alex','Patience'], note:'15-minute Zoom', confirm:true },
-      { t:'8:30 - 9:00 AM', who:['Bruce','Patience'], note:'' }
+      { t:'8:30 - 9:00 AM', who:['Marlo','Patience','VA Andy'],
+        note:'Runs off the template from the old fortnightly meeting' }
   ]}
 ];
 // The nth Tuesday of a month, in LOCAL time so it lines up with everything else here.
@@ -16742,7 +16758,7 @@ function openWeeklyMeeting(kind, week){
       </div>`;
     }).join('');
     body=`<div style="background:#F7F8FB;border:0.5px solid #e6e9f0;border-radius:10px;padding:12px 16px;margin-bottom:16px;font-size:13px;color:#444">
-        Patience sits in every one of these. They are her monthly one-to-ones, 8:00 AM on Tuesdays, and the notes below save straight into the meeting record like every other meeting on this screen.
+        Patience sits in every one of these. They are her monthly one-to-ones \u2014 the same half hour, 8:30 to 9:00 every Tuesday, a different seat each week \u2014 and the notes below save straight into the meeting record like every other meeting on this screen. Over a month she has spoken to every part of the project team once.
         ${anyConfirm?'<div style="margin-top:8px;color:#8a5a10"><b>Two of these are my reading, not your words.</b> Your message was dictated and the middle of it came through as dots, so the third Tuesday and the first slot of the last Tuesday are marked above. Tell me the right pairing and I will set it straight.</div>':''}
       </div>${cards}`;
   }
@@ -17912,27 +17928,83 @@ const ROLE_SOPS = {
       ]}
     ]
   },
+  // ---- Virtual Administrative Assistant ----------------------------------------
+  // Bruce, 18 Oct, dictated the whole week: "I want some section into this PDF ... which
+  // would be a Monday, Tuesday, Wednesday, Thursday, Friday breakdown of the order of
+  // operations for the job role."
+  //
+  // What was here before was boilerplate that could have described any remote assistant
+  // anywhere - log into your systems, process data entry, submit a weekly activity log.
+  // It named no screen on this website and no hour of any day. This is his actual week.
+  //
+  // THE SHAPE: an eight-hour day in four two-hour blocks. Utilities is a standing block
+  // EVERY day (an hour and a half on Tuesday, where the standing meeting takes the other
+  // half hour). One block a day belongs to a construction wave, and the waves run
+  // backwards through the week - post-construction early, active construction on
+  // Wednesday, pre-construction at the end - so Friday sets up the houses the project
+  // managers start on Monday.
+  //
+  // The wave names here are the same three the VA Admin Dashboard already draws
+  // (VA_SECS: pre / act / post), so a block on this list is a square on her screen.
   "Virtual Administrative Assistant": {
-    icon: "💻",
+    icon: "\u{1F4BB}",
     sections: [
       { title: "Role Overview", items: [
-        "The Virtual Administrative Assistant performs remote administrative support functions for Legacy Homes.",
-        "Works primarily within digital systems and is responsible for maintaining data accuracy across platforms."
+        "An eight-hour day, Monday to Friday, in four two-hour blocks. No weekends.",
+        "Utilities is a standing block every single day \u2014 two hours, and an hour and a half on Tuesday \u2014 so it never piles up.",
+        "One block each day belongs to a construction wave. The waves move backwards through the week: post-construction early, active construction on Wednesday, pre-construction at the end. Friday is what makes Monday possible.",
+        "Sign-offs are not hers. She gets a step ready and puts it in front of Bruce, Marlo or Tommy."
       ]},
-      { title: "Daily Responsibilities", items: [
-        "Log into all assigned systems at the start of each shift and confirm access is active.",
-        "Process assigned data entry tasks and update records as directed.",
-        "Monitor assigned communication channels and respond or route messages per protocol.",
-        "Complete assigned document preparation tasks and submit for review."
+      { title: "Monday \u2014 10:00 AM to 6:00 PM", items: [
+        "10:00\u201312:00 \u2014 Shape the week. Plan, schedule and organise the week: her own, and team members\u2019 where they need it. Read the notifications first \u2014 they only show what is past due and what is due today.",
+        "12:00\u20132:00 \u2014 Utilities.",
+        "2:00\u20134:00 \u2014 Her own list: what she has to finish this week, and anything left open from last week.",
+        "4:00\u20136:00 \u2014 Post-Construction: Listed on the Market, In Contract, Rental Handoff / RTR, Closed."
       ]},
-      { title: "Weekly Responsibilities", items: [
-        "Submit a weekly activity log summarizing tasks completed.",
-        "Flag any system access issues or data discrepancies to the supervising Senior VA.",
-        "Attend virtual team check-in meeting."
+      { title: "Tuesday \u2014 8:30 AM to 4:30 PM", items: [
+        "8:30\u20139:00 \u2014 The standing Zoom. One person from the project team; the rota runs monthly (see below). This meeting is why Tuesday starts at 8:30.",
+        "9:00\u201311:00 \u2014 Post-Construction, second pass on the same four lists.",
+        "11:00\u201312:30 \u2014 Utilities. An hour and a half today; the half hour went to the meeting.",
+        "12:30\u20132:30 \u2014 Follow up with the project managers, work her own to-do list, and the small projects handed over by the Project Director.",
+        "2:30\u20134:30 \u2014 The website: tidy and organise, go looking for bugs, and keep the Google Doc of edits and ideas up to date."
       ]},
-      { title: "Systems & Processes References", items: [
-        "Refer to the Remote Work & Systems Access SOP for login and security protocols.",
-        "Refer to the Data Entry Standards SOP for formatting and accuracy requirements."
+      { title: "Wednesday \u2014 eight hours", items: [
+        "Hours 1\u20132 \u2014 Active Construction: Framing, MEPs & Exterior; Insulation & Drywall; Finish MEPs; Punch Out & Pre-List Inspections.",
+        "Hours 3\u20134 \u2014 Utilities.",
+        "Hours 5\u20136 \u2014 Books and paperwork: bookkeeping, finding a charge where one needs chasing, W-9s retrieved and filed, and whatever Marlo and the project managers need.",
+        "Hours 7\u20138 \u2014 NOT ASSIGNED YET. The natural fill is a second Active Construction block, since Wednesday is already the active-construction day and that wave otherwise gets only two hours in the week. Waiting on Bruce."
+      ]},
+      { title: "Thursday \u2014 eight hours", items: [
+        "Hours 1\u20132 \u2014 Post-Construction, the last look at the back end before the week turns.",
+        "Hours 3\u20134 \u2014 Utilities.",
+        "Hours 5\u20136 \u2014 Follow-ups with the project managers and team members, then scheduling and organising the week ahead.",
+        "Hours 7\u20138 \u2014 Pre-Construction: Upcoming Takedowns, Occupied / Closed, Vacant on Standby, Pre-Construction."
+      ]},
+      { title: "Friday \u2014 eight hours", items: [
+        "Hours 1\u20132 \u2014 Whatever the admin side needs: tidy the website, and confirm the automations are running before the weekend, when nobody is watching them.",
+        "Hours 3\u20134 \u2014 Utilities.",
+        "Hours 5\u20138 \u2014 Pre-Construction, four hours, worked off the project dashboard. The long block of the week: every house the team starts next week is set up here."
+      ]},
+      { title: "The standing Tuesday meeting \u2014 8:30 to 9:00 AM", items: [
+        "First Tuesday \u2014 the project managers: the houses in flight, and what she can take off them.",
+        "Second Tuesday \u2014 the PM assistants: Start of Project and End of Project, either one or both together in the one Zoom.",
+        "Third Tuesday \u2014 the Project Director: direction, priorities, and the month\u2019s small projects.",
+        "Last Tuesday \u2014 Marlo, with VA Andy sitting in. Runs off the template from the old fortnightly meeting.",
+        "There is no meeting with Jen.",
+        "The rota and the notes live under Meetings \u2192 Monthly VA Assistant."
+      ]},
+      { title: "Rules that do not change", items: [
+        "Utilities gets its block every day. It is never traded away for something louder \u2014 a missed turn-on stops a crew, and a missed removal keeps paying a bill on a house we no longer own.",
+        "Enter it once. A phone number, a W-9 tick or a trade typed in one place shows up everywhere else on the site. Never keep a second copy in a side sheet.",
+        "Flag, do not approve. Sign-offs belong to Bruce, Marlo or Tommy.",
+        "Nothing is finished in your head: a bug, an idea or a request goes in the Google Doc or on a task the same hour it is said.",
+        "Some steps tick themselves from CompanyCam. Do not tick those by hand.",
+        "Anything left open on a wave follows the house to the next one as a carried item. It does not disappear."
+      ]},
+      { title: "Still to settle", items: [
+        "Wednesday hours 7\u20138 are unassigned.",
+        "Start times for Wednesday, Thursday and Friday are not fixed. Only Monday (10:00) and Tuesday (8:30) are.",
+        "In a month with five Tuesdays the fourth has nothing on it \u2014 first, second and third are spoken for and the last is Marlo."
       ]}
     ]
   },
@@ -36540,4 +36612,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-18i rtr-list-bows-to-the-king-list -->
+<!-- build: 2026-10-18j va-job-role-sop -->
