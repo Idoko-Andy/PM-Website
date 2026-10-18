@@ -29534,7 +29534,7 @@ function _ctFilter(){
   const box=document.getElementById('ct-search');
   const t=((box&&box.value)||'').trim().toLowerCase();
   let shown=0, total=0;
-  document.querySelectorAll('tr[data-ct]').forEach(function(r){
+  document.querySelectorAll('[data-ct]').forEach(function(r){
     total++;
     const hit = !t || (r.getAttribute('data-ct')||'').toLowerCase().indexOf(t)>=0;
     r.style.display = hit ? '' : 'none';
@@ -30132,15 +30132,98 @@ async function _ctPriorSeedApply(){
 // contractor, like a little comment section, about them or whatever."
 // It writes to the contractor's own notes column - the same one a merge folds the other
 // record's details into - so a note survives being combined with a duplicate.
-function _ctNotesCell(c, ro){
+function _ctNotesCell(c, ro, wide){
   const v=String((c&&c.notes)||'');
   if(ro) return v
-    ? '<div style="font-size:11.5px;color:#444;max-width:190px;white-space:pre-wrap">'+_calEsc(v)+'</div>'
+    ? '<div style="font-size:'+(wide?'12.5px':'11.5px')+';color:#444;max-width:'+(wide?'none':'190px')+';white-space:pre-wrap">'+_calEsc(v)+'</div>'
     : '<span style="color:#c4c9d2">&mdash;</span>';
   return '<textarea data-ct-notes="1" placeholder="Anything worth remembering about him\u2026" '
     + 'onchange="setContractorField(\''+c.id+'\',\'notes\',this.value)" '
-    + 'style="width:100%;min-width:150px;max-width:210px;padding:5px 7px;border:0.5px solid #e3e6ec;border-radius:6px;'
-    + 'font-size:11.5px;font-family:inherit;resize:vertical;line-height:1.4" rows="'+(v?2:1)+'">'+_calEsc(v)+'</textarea>';
+    + 'style="width:100%;min-width:0;max-width:'+(wide?'none':'210px')+';padding:6px 8px;border:0.5px solid #e3e6ec;border-radius:6px;'
+    + 'font-size:'+(wide?'12.5px':'11.5px')+';font-family:inherit;resize:vertical;line-height:1.45" rows="'+(v?2:1)+'">'+_calEsc(v)+'</textarea>';
+}
+
+// ---- one contractor, read down instead of across -----------------------------
+// Bruce, 18 Oct: "on the contractor directory now that we have more information applied
+// we need to correct the orientation so its all readable but readable without having to
+// scroll from side to side."
+// Ten columns is about four more than any screen has room for, and the ones that got
+// pushed off the right - the notes, the count, the flag - are the ones he added last.
+// Same ten fields, stacked instead: who he is at the top, how you reach him under that,
+// what he does under that, and the paperwork last. Every line WRAPS, so a narrow window
+// makes the card taller and never makes the page wider.
+//
+// His handoff note also asked for the person AND the company on every entry that has
+// both, because a row showing only "Foundation 1st" hides that it is Brandon Chase. The
+// heading carries both; the fields underneath stay labelled so nobody has to remember
+// which column was which.
+function _ctIdentity(c){
+  const nm=String((c&&c.name)||'').trim();
+  const bz=String((c&&c.business_name)||'').trim();
+  if(nm && bz && _ctNormName(nm)!==_ctNormName(bz))
+    return _calEsc(nm)+'<span style="color:#c4c9d2;font-weight:400"> &middot; </span><span style="font-weight:500;color:#44506a">'+_calEsc(bz)+'</span>';
+  return _calEsc(nm||bz||'(no name yet)');
+}
+function _ctCard(c, ro){
+  const booked=_contractorBooked(c.id);
+  const prior=_ctPrior(c.id);
+  const uses=prior+booked;
+  const last=_contractorLastUsed(c.id);
+  // Bruce, 25 Sept: he goes looking for "A Solis framing" as often as "Antonio".
+  // Searching only the person's name meant half the directory was unfindable.
+  const tiers=_ctTrades(c).map(function(t){ const d=_ctTierDef(_ctTier(c.id,t)); return d?(d.label+' '+t):''; }).filter(Boolean).join(' ');
+  const w9bits=_ctW9On(c.id) ? 'w9 w-9 on file' : 'no w9 needs w9 w-9 missing';
+  const hay=[c.name,c.business_name,c.trade,c.phone,c.email,tiers,w9bits,
+             (_ctW9Issues(c).length?'flagged needs fixing':'')].filter(Boolean).join(' ');
+  const lab=function(t){ return '<div style="font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:#97a0ae;margin-bottom:3px;white-space:nowrap">'+t+'</div>'; };
+  const fld=function(field, ph){
+    return ro
+      ? '<div style="font-size:13.5px;color:#333;padding:3px 0;word-break:break-word">'+(_calEsc(c[field])||'<span style="color:#c4c9d2">&mdash;</span>')+'</div>'
+      : '<input value="'+_calEsc(c[field]||'')+'" placeholder="'+ph+'" onchange="setContractorField(\''+c.id+'\',\''+field+'\',this.value)" style="width:100%;padding:6px 8px;border:0.5px solid #e3e6ec;border-radius:6px;font-size:13px;background:#fff"/>';
+  };
+  const box=function(basis, inner){ return '<div style="flex:1 1 '+basis+';min-width:0">'+inner+'</div>'; };
+  const head='<div style="display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;margin-bottom:9px">'
+    + '<div style="font-size:15px;font-weight:600;color:'+(c.red_flag?'#B42318':'#111')+';min-width:0;word-break:break-word">'
+      + (c.red_flag?'&#128681; ':'')+_ctIdentity(c)+'</div>'
+    + '<div style="margin-left:auto;display:flex;gap:14px;align-items:center;flex-wrap:wrap">'
+      + '<div style="text-align:right">'
+        + '<div style="white-space:nowrap">'
+          + '<span onclick="'+(booked?("_contractorJobs('"+c.id+"')"):'')+'" style="font-size:16px;font-weight:600;'+(booked?'color:#185FA5;cursor:pointer;text-decoration:underline':'color:#636b7a')+'">'+uses+'</span>'
+          + '<span style="font-size:11px;color:#8A94A6"> '+(uses===1?'job':'jobs')+'</span>'
+          + '<span style="font-size:11px;color:#a3aab6"> &middot; '+(booked?(_calEsc(last)?('last '+_calEsc(last)):(booked+' booked')):'none booked here')+'</span>'
+        + '</div>'
+        // The starting count he types in by hand has to stay on the man himself. The seed
+        // panel up top only runs once, off a list he read out loud; without this there is
+        // no way to correct one number afterwards.
+        + (ro
+            ? (prior?'<div style="font-size:10px;color:#a3aab6">'+prior+' before the site</div>':'')
+            : '<div style="margin-top:3px;font-size:10px;color:#a3aab6;white-space:nowrap">before the site '
+              + '<input value="'+(prior||'')+'" placeholder="0" title="Jobs he did before this site existed. The construction calendar counts the rest." onchange="_ctPriorSet(\''+c.id+'\',this.value)" style="width:34px;padding:1px 3px;border:0.5px solid #e3e6ec;border-radius:5px;font-size:10.5px;text-align:center"/>'
+              + ' &middot; +'+booked+' booked</div>')
+      + '</div>'
+      // The old outline flag, U+2690, renders as nothing at all on most of their machines,
+      // so the only way to raise one was to already have one. Say it in words.
+      + (ro ? (c.red_flag?'<span style="font-size:11.5px;color:#B42318;font-weight:600;white-space:nowrap">\u{1F6A9} do not hire</span>':'')
+            : (c.red_flag
+                ? '<span onclick="toggleContractorFlag(\''+c.id+'\')" title="Remove the red flag" style="cursor:pointer;font-size:11.5px;font-weight:600;color:#B42318;background:#FBEAE8;border:0.5px solid #F0C7C3;border-radius:99px;padding:2px 9px;white-space:nowrap">\u{1F6A9} do not hire</span>'
+                : '<span onclick="toggleContractorFlag(\''+c.id+'\')" title="Red-flag him \u2014 do not hire" style="cursor:pointer;font-size:11.5px;color:#8A94A6;background:#fff;border:0.5px solid #e3e6ec;border-radius:99px;padding:2px 9px;white-space:nowrap">Flag</span>'))
+      + (ro?'':'<span onclick="deleteContractor(\''+c.id+'\')" style="cursor:pointer;color:#c0392b;font-size:12px;white-space:nowrap">Remove</span>')
+    + '</div></div>';
+  const contact='<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:9px">'
+    + box('150px', lab('Name')+fld('name','Person'))
+    + box('150px', lab('Business name')+fld('business_name','Company'))
+    + box('140px', lab('Phone')+fld('phone','Phone')
+        + (c.phone?'<div style="margin-top:2px"><a href="tel:'+_calEsc(String(c.phone).replace(/[^0-9+]/g,''))+'" style="font-size:11px;color:#185FA5;text-decoration:none">\u{1F4DE} call</a></div>':''))
+    + box('170px', lab('Email')+fld('email','name@company.com')
+        + (c.email?'<div style="margin-top:2px"><a href="mailto:'+_calEsc(c.email)+'" style="font-size:11px;color:#185FA5;text-decoration:none">✉️ email</a></div>':''))
+    + '</div>';
+  const work='<div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start">'
+    + box('230px', lab('Trade &amp; ranking')+_tradeCell(c,ro))
+    + '<div style="flex:0 0 auto;min-width:92px">'+lab('W-9')+_ctW9Cell(c,ro)+'</div>'
+    + box('220px', lab('Notes')+_ctNotesCell(c,ro,true))
+    + '</div>';
+  return '<div data-ct="'+_calEsc(hay)+'" style="padding:14px 16px;border-bottom:0.5px solid #edeff3;'+(c.red_flag?'background:#FDF3F2;':'')+'">'
+    + head + contact + work + '</div>';
 }
 // Straight through to this same contractor on the W-9 Tracker - same record, more fields.
 function _ctToW9(){
@@ -30465,9 +30548,15 @@ function _ctDupGroups(){
   const groups=[];
   const seen=new Set();
   const push=(reason, members)=>{
-    const ids=members.map(m=>m.id).sort().join('|');
+    // One record can arrive twice in the same group - a man whose name and business name
+    // are the same string lands in both maps - and a "group" of one record with itself is
+    // not a duplicate of anything.
+    const uniq=[], seenId={};
+    (members||[]).forEach(function(m){ if(m && m.id && !seenId[m.id]){ seenId[m.id]=1; uniq.push(m); } });
+    if(uniq.length<2) return;
+    const ids=uniq.map(m=>m.id).sort().join('|');
     if(seen.has(ids)) return; seen.add(ids);
-    groups.push({ reason, members });
+    groups.push({ reason, members:uniq });
   };
   // same phone number
   const byPhone={};
@@ -30477,10 +30566,42 @@ function _ctDupGroups(){
   const byName={};
   list.forEach(c=>{ const k=_ctNameKey(c.name); if(k.length>=4){ (byName[k]=byName[k]||[]).push(c); } });
   Object.keys(byName).forEach(k=>{ if(byName[k].length>1) push('the same name', byName[k]); });
-  const keys=Object.keys(byName);
+  // Bruce's handoff note, 18 Oct: "Brandon Chase and Foundation 1st are the same
+  // contractor split across two rows", and so are Erin Ellsworth and Ellsworth Well &
+  // Pump. One record has the man in Name, the other has him in Business - neither map
+  // above can see across to the other, so the pair never showed up.
+  const byBiz={};
+  list.forEach(c=>{ const k=_ctNameKey(c.business_name); if(k.length>=4){ (byBiz[k]=byBiz[k]||[]).push(c); } });
+  // Sharing a company is NOT sharing an identity. Bruce's note, 18 Oct: "Gladis
+  // 614-254-9721 and Jenni 614-615-6716 are two different cleaners at one business - they
+  // stay as two rows." So two records on one business name are only a duplicate when
+  // there are not two different PEOPLE on them. A person's own name repeated as the
+  // business name does not count as a second person.
+  const _people=function(members, bizKey){
+    const seen={};
+    members.forEach(function(c){ const k=_ctNameKey(c.name); if(k.length>=3 && k!==bizKey) seen[k]=1; });
+    return Object.keys(seen).length;
+  };
+  Object.keys(byBiz).forEach(k=>{ if(byBiz[k].length>1 && _people(byBiz[k],k)<2) push('the same business name', byBiz[k]); });
+  Object.keys(byName).forEach(k=>{
+    if(!byBiz[k]) return;
+    push('one entered as a person, one as a business', byName[k].concat(byBiz[k]));
+  });
+  // And the spelling variants: Metro Renovation against Metro Renovations, Rares Duct
+  // Cleaning against Rares Ductwork Cleaning. Compare every name AND every business name,
+  // since the plural is as likely to be on the company as on the man.
+  const allKeys={};
+  list.forEach(c=>{
+    [_ctNameKey(c.name), _ctNameKey(c.business_name)].forEach(function(k){
+      if(k.length>=5){ (allKeys[k]=allKeys[k]||[]).push(c); }
+    });
+  });
+  const keys=Object.keys(allKeys);
   keys.forEach(a=>keys.forEach(b=>{
     if(a>=b) return;
-    if(a===b+'s' || b===a+'s'){ push('almost the same name', byName[a].concat(byName[b])); }
+    if(a===b+'s' || b===a+'s' || a===b+'es' || b===a+'es'){
+      push('almost the same name', allKeys[a].concat(allKeys[b]));
+    }
   }));
   return groups;
 }
@@ -31036,41 +31157,10 @@ function renderContractorDirectory(view){
             || _ctTierRank(a.id,pickedTrade)-_ctTierRank(b.id,pickedTrade)
             || String(a.business_name||a.name||'').localeCompare(String(b.business_name||b.name||'')); }
       : function(a,b){ return (!!a.red_flag)-(!!b.red_flag)
-            || String(a.name||'').localeCompare(String(b.name||'')); });
-  const rows = list.map(c=>{
-    const booked=_contractorBooked(c.id);
-    const prior=_ctPrior(c.id);
-    const uses=prior+booked;
-    const last=_contractorLastUsed(c.id);
-    // Bruce, 25 Sept: he goes looking for "A Solis framing" as often as "Antonio".
-    // Searching only the person's name meant half the directory was unfindable.
-    const tiers=_ctTrades(c).map(function(t){ const d=_ctTierDef(_ctTier(c.id,t)); return d?(d.label+' '+t):''; }).filter(Boolean).join(' ');
-    const w9bits=_ctW9On(c.id) ? 'w9 w-9 on file' : 'no w9 needs w9 w-9 missing';
-    const hay=[c.name,c.business_name,c.trade,c.phone,c.email,tiers,w9bits,
-               (_ctW9Issues(c).length?'flagged needs fixing':'')].filter(Boolean).join(' ');
-    return `<tr data-ct="${_calEsc(hay)}" style="${c.red_flag?'background:#FDF3F2;':''}">
-      <td style="padding:9px 12px;border-bottom:0.5px solid #eee;font-weight:600;color:${c.red_flag?'#B42318':'#111'}">${c.red_flag?'🚩 ':''}${inp(c,'name','Person','100%')}</td>
-      <td style="padding:9px 12px;border-bottom:0.5px solid #eee">${inp(c,'business_name','Business')}</td>
-      <td style="padding:9px 12px;border-bottom:0.5px solid #eee">${inp(c,'phone','Phone')}${c.phone?`<div style="margin-top:2px"><a href="tel:${_calEsc(String(c.phone).replace(/[^0-9+]/g,''))}" style="font-size:11px;color:#185FA5;text-decoration:none">📞 call</a></div>`:''}</td>
-      <td style="padding:9px 12px;border-bottom:0.5px solid #eee">${inp(c,'email','Email')}${c.email?`<div style="margin-top:2px"><a href="mailto:${_calEsc(c.email)}" style="font-size:11px;color:#185FA5;text-decoration:none">✉️ email</a></div>`:''}</td>
-      <td style="padding:9px 12px;border-bottom:0.5px solid #eee;color:#566070">${_tradeCell(c,ro)}</td>
-      <td style="padding:9px 12px;border-bottom:0.5px solid #eee;text-align:center">${_ctW9Cell(c,ro)}</td>
-      <td style="padding:9px 12px;border-bottom:0.5px solid #eee">${_ctNotesCell(c,ro)}</td>
-      <td style="padding:9px 12px;border-bottom:0.5px solid #eee;text-align:center">
-        <div onclick="${booked?`_contractorJobs('${c.id}')`:''}" style="font-size:16px;font-weight:600;${booked?'color:#185FA5;cursor:pointer;text-decoration:underline':'color:#636b7a'}">${uses}</div>
-        <div style="font-size:10.5px;color:#636b7a">${booked?(_calEsc(last)?('last '+_calEsc(last)):(booked+' booked')):'none booked here'}</div>
-        ${ro
-          ? (prior?`<div style="font-size:10px;color:#8A94A6">${prior} before the site</div>`:'')
-          : `<div style="margin-top:3px;display:flex;align-items:center;gap:3px;justify-content:center">
-               <input value="${prior||''}" placeholder="0" title="Jobs before this site existed. The calendar counts the rest." onchange="_ctPriorSet('${c.id}',this.value)" style="width:38px;padding:2px 3px;border:0.5px solid #e3e6ec;border-radius:5px;font-size:11px;text-align:center"/>
-               <span style="font-size:9.5px;color:#a3aab6">+${booked} booked</span>
-             </div>`}</td>
-      <td style="padding:9px 12px;border-bottom:0.5px solid #eee;text-align:center">
-        ${ro?(c.red_flag?'🚩':'—')
-           :`<span onclick="toggleContractorFlag('${c.id}')" title="${c.red_flag?'Remove the red flag':'Red-flag — do not hire'}" style="cursor:pointer;font-size:17px">${c.red_flag?'🚩':'⚐'}</span>`}</td>
-      ${ro?"":`<td style="padding:9px 12px;border-bottom:0.5px solid #eee;text-align:right"><span onclick="deleteContractor('${c.id}')" style="cursor:pointer;color:#c0392b;font-size:13px">Remove</span></td>`}
-    </tr>`;
-  }).join("");
+            // A record with only a business name used to sort as if it were blank and
+            // pile up at the top. Sort on whatever the card actually shows.
+            || String(a.name||a.business_name||'').localeCompare(String(b.name||b.business_name||'')); });
+  const rows = list.map(function(c){ return _ctCard(c, ro); }).join("");
   const flagged=list.filter(c=>c.red_flag).length;
   const addForm = ro ? "" :
     `<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;padding:14px;margin-bottom:16px;display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
@@ -31081,7 +31171,6 @@ function renderContractorDirectory(view){
       <div style="flex:1;min-width:120px"><label style="font-size:12px;color:#566070;display:block;margin-bottom:4px">Trade</label><input id="ct-trade" list="ct-trade-list" placeholder="Plumbing, HVAC…" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px"/><datalist id="ct-trade-list">${_ctAllTrades().slice().sort(function(a,b){return a.toLowerCase().localeCompare(b.toLowerCase());}).map(t=>`<option value="${_calEsc(t)}"></option>`).join('')}</datalist></div>
       <button onclick="_submit('ct-add',this,'Adding…',saveContractor)" style="padding:9px 16px;background:#111;color:#fff;border:none;border-radius:6px;font-size:14px;cursor:pointer">+ Add</button>
     </div>`;
-  const th=(t,align)=>`<th style="text-align:${align||'left'};padding:9px 12px;font-size:12px;color:#566070;text-transform:uppercase;letter-spacing:.04em;white-space:nowrap">${t}</th>`;
   const _cdTab=(k,label,sub)=>`<div onclick="renderContractorDirectory('${k}')" style="padding:8px 15px;border-radius:9px 9px 0 0;cursor:pointer;font-size:13.5px;font-weight:${cdView===k?'600':'400'};color:${cdView===k?'#111':'#566070'};background:${cdView===k?'#fff':'transparent'};border:0.5px solid ${cdView===k?'#e0e4ec':'transparent'};border-bottom:${cdView===k?'0.5px solid #fff':'0.5px solid #e0e4ec'};margin-bottom:-0.5px;white-space:nowrap">${label}${sub?`<span style="font-size:11.5px;color:#8A94A6;font-weight:400"> · ${sub}</span>`:''}</div>`;
   const _cdTabs=`<div style="display:flex;gap:4px;border-bottom:0.5px solid #e0e4ec;margin-bottom:16px;overflow-x:auto">
       ${_cdTab('directory','\u{1F4C7} Directory', list.length+'')}
@@ -31130,13 +31219,8 @@ function renderContractorDirectory(view){
           <button onclick="_ctSheetPrint()" style="padding:8px 14px;background:#fff;border:0.5px solid #cdd7e6;border-radius:8px;font-size:12.5px;color:#185FA5;font-weight:600;cursor:pointer;white-space:nowrap">\u2193 Save as PDF</button>
         </div>
         ${addForm}
-        <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:8px;overflow:auto">
-          <table style="width:100%;border-collapse:collapse;font-size:14px;color:#111">
-            <thead><tr style="background:#fafbfc">
-              ${th('Name')}${th('Business name')}${th('Phone')}${th('Email')}${th('Trade &amp; ranking')}${th('W-9','center')}${th('Notes')}${th('Times used','center')}${th('Red flag','center')}${ro?"":"<th></th>"}
-            </tr></thead>
-            <tbody>${rows || `<tr><td colspan="10" style="padding:24px;text-align:center;color:#636b7a;font-size:14px">No contractors yet.${ro?"":" Add your first one above."}</td></tr>`}</tbody>
-          </table>
+        <div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">
+          ${rows || `<div style="padding:26px 20px;text-align:center;color:#636b7a;font-size:14px">No contractors yet.${ro?"":" Add your first one above \u2014 a name or a business name is enough to start."}</div>`}
         </div>`;
   const _cdTradeBody = `
         <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-bottom:13px">
@@ -31190,7 +31274,12 @@ async function saveContractor(){
       +'Cancel \u2014 go and use the record that is already there. That is almost always the right answer: '
       +'the construction calendar, the mowing route and the W-9 tracker all point at one record per contractor.\n\n'
       +'OK \u2014 add this as a SECOND, separate record anyway.')) return;
-  const { error } = await supabase.from("pm_contractors").insert({name:name||business_name, business_name, phone, email, trade});
+  // Bruce's handoff note, 18 Oct: when only a business was typed, the site copied it into
+  // the Name field, and a company then sat in the directory looking like a man. Leave Name
+  // empty instead. The heading on the card falls back to the business name on its own, so
+  // nothing reads as blank - and the next person who learns whose number it is has an
+  // empty field waiting for them rather than a wrong one to notice and correct.
+  const { error } = await supabase.from("pm_contractors").insert({name:name, business_name, phone, email, trade});
   if(error){ alert("Failed to add contractor: "+(error.message||"unknown error")); return; }
   _logAudit("created","contractor", name, "Added to contractor directory");
   await loadContractorsFromSupabase();
@@ -36143,4 +36232,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-18f phase-workspaces -->
+<!-- build: 2026-10-18g contractor-directory-reads-down -->
