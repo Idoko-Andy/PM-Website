@@ -21674,8 +21674,74 @@ async function approveChecklistItem(propId, key){
   _logAudit("approved","property", card.addr||"", "Checklist approved: "+key+" by "+cur.approvedBy);
   await loadPropertiesFromSupabase(); _pmaRerender();
 }
+// ===================== PRE LIST / PUNCH OUT - THE ASSISTANT'S PANEL ==============
+// This board had the "tell me what this stage needs and I will build it here"
+// placeholder. What it needs is the two things that decide whether a house can be
+// listed: the punch-out walk and the pre-listing form the realtor is waiting on.
+//
+// Both already exist and are already answered elsewhere - the punch-out forms on the
+// property card, the pre-listing form on the realtor's Coming Soon board. Nothing here
+// keeps a second copy of either. This is the same record, shown to the person whose job
+// it is to chase it, with the sheet reachable in one click instead of three screens.
+function preListToolsPanel(cards){
+  const E=_calEsc;
+  // Worst first. A board sorted by address buries the house nobody has touched under
+  // three that are nearly done; the point of this panel is what still needs chasing.
+  const _score=function(c){ return _poCount(c) + (_plPdfReady(c)?PUNCH_ITEMS.length:0); };
+  const list=(cards||[]).slice().sort(function(a,b){
+    const d=_score(a)-_score(b);
+    return d!==0 ? d : String(a.addr||'').localeCompare(String(b.addr||''));
+  });
+  if(!list.length){
+    return '<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:24px;text-align:center;color:#636b7a;font-size:13px">No houses are in pre-list or punch out right now.</div>';
+  }
+  const tot=PUNCH_ITEMS.length;
+  // The two numbers that answer "how far off is this stage" without opening anything.
+  const sheets=list.filter(function(c){ return _plPdfReady(c); }).length;
+  const walks=list.filter(function(c){ return _poCount(c)===tot; }).length;
+  const rows=list.map(function(c){
+    const k=_plCounts(c);
+    const ready=_plPdfReady(c);
+    const po=_poCount(c), open=_poOpenItems(c);
+    const poDone=(po===tot);
+    const chip=function(lab, good, warn){
+      const col=good?'#0F7B54':(warn?'#8A5A10':'#B42318');
+      const bg =good?'#E6F4ED':(warn?'#FBF3E2':'#FBEAE8');
+      return '<span style="font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:99px;background:'+bg+';color:'+col+';white-space:nowrap">'+lab+'</span>';
+    };
+    // Only the first few, named. The rest is a count - a list of twenty is not a panel.
+    const openList=open.length
+      ? '<div style="margin-top:7px;font-size:11.5px;color:#566070;line-height:1.5">Still open: '
+        + open.slice(0,4).map(function(it){ return '<b style="color:#111">'+E(it[1])+'</b>'; }).join(', ')
+        + (open.length>4?(' + '+(open.length-4)+' more'):'') + '</div>'
+      : '<div style="margin-top:7px;font-size:11.5px;color:#0F7B54">&#10003; Punch out is finished on this house.</div>';
+    return '<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:12px 14px;margin-bottom:10px">'
+      +'<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;flex-wrap:wrap">'
+        +'<span onclick="openPropDetail(\''+c.id+'\')" style="cursor:pointer;font-size:14px;font-weight:600;color:#185FA5">'+E(c.addr||'')+'</span>'
+        +'<span style="display:flex;gap:5px;flex-wrap:wrap">'
+          + chip('punch out '+po+' / '+tot, poDone, po>0)
+          + chip(ready?'sheet ready':(k.n?('sheet '+k.n+' / '+k.t):'sheet not started'), ready, k.n>0)
+        +'</span></div>'
+      +'<div style="font-size:11.5px;color:#566070;margin-top:3px">'+(c.pm?('PM '+E(c.pm)):'no PM')+(c.listingAgent?(' · '+E(c.listingAgent)):' · no listing agent')+'</div>'
+      + openList
+      +'<div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:9px">'
+        +'<button onclick="_poOpen(\''+c.id+'\')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12px;color:#185FA5;cursor:pointer;font-weight:600">The punch-out forms</button>'
+        + (ready
+            ? '<button onclick="_plOpenPDF(\''+c.id+'\')" style="padding:6px 12px;background:#122A4A;color:#fff;border:none;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer">↓ The pre-listing sheet</button>'
+            : '<span style="font-size:11.5px;color:#8A5A10;align-self:center">The sheet appears once the PM marks the form complete</span>')
+      +'</div></div>';
+  }).join('');
+  return '<div>'
+    +'<div style="background:#F4F7FC;border:0.5px solid #D6E0EF;border-radius:10px;padding:10px 14px;margin-bottom:12px;font-size:12.5px;color:#2A4365">'
+      +'<b>Two things stand between these houses and a listing:</b> the punch-out walk, and the pre-listing form the realtor writes the listing from. '
+      +'<b>'+walks+' of '+list.length+'</b> have finished punch out; <b>'+sheets+' of '+list.length+'</b> have a sheet ready to send. '
+      +'The form is answered once — here, on the property card, on the realtor’s Coming Soon board and in the field app, it is the same record.</div>'
+    + rows + '</div>';
+}
 function phaseToolsPanel(id,b,cards){
   if(id==='eop-market') return onMarketToolsPanel(cards);
+  // The pre-list board is where the listing gets unblocked - give it the two forms.
+  if(id==='eop-prelist') return preListToolsPanel(cards);
   // Upcoming Takedowns: front-and-center reminders — closing dates, "follow up with Marlo"
   // 24h ahead, and each card's Slack-fed notes without opening the property.
   if(b.phases.includes("Upcoming Takedowns")) return takedownRemindersPanel(cards);
@@ -37199,4 +37265,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-18n va-day-strip -->
+<!-- build: 2026-10-18o prelist-assistant-panel -->
