@@ -372,6 +372,11 @@ let SESSION = null, ACCESS = {}, EDIT_ACCESS = null, CAL_URL = "";
 
 let FLAGS = {}, REVIEW_P = new Set(), REV = {};
 let ITEMS = [], CONTRACTORS = [], TRADES = []; const SHOW_ALL = {};
+// Bruce's handoff note, 18 Oct: "the by-trade page sometimes loads empty the first time."
+// Two different things both looked exactly like an empty list: the page still fetching,
+// and the fetch having failed. Nothing checked the contractor query's own error - the list
+// just came back [] and every dropdown behind it went quietly blank. This says which it is.
+let CT_STATE = 'loading', CT_ERR = '';
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const today = new Date(); today.setHours(0,0,0,0);
@@ -380,16 +385,24 @@ const ago = iso => { if(!iso) return ""; const h = (Date.now()-new Date(iso))/36
 function toast(m){ const t=$("#toast"); t.textContent=m; t.classList.add("show"); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove("show"),2600); }
 
 async function load(){
+  if(!CONTRACTORS.length){ CT_STATE='loading'; CT_ERR=''; if(DIR) renderDir(); if(P1) renderPickOne(); }
   const [a,b] = await Promise.all([
     sb.from("v_rtr_tracker").select("*").not("cc_task_id","is",null).neq("status","cancelled").order("address").order("item_no"),
     sb.from("contractor_directory").select("id,name,trade,phone,vetting_tier,jobs_done_n,is_internal,tracker_props_n,tracker_last_date,contact_name,tracker_name,contact_pref,email").eq("is_archived",false).eq("active",true).order("trade").order("vetting_tier").order("jobs_done_n",{ascending:false,nullsFirst:false}),
   ]);
-  if(a.error){ $("#list").innerHTML=`<div class="empty">Couldn't load remedies: ${esc(a.error.message)}</div>`; return; }
-  ITEMS = a.data||[]; CONTRACTORS = b.data||[];
+  // The contractor list is set FIRST and on its own. It used to be thrown away whenever
+  // the remedies query failed, which is a separate request against a separate view.
+  if(b.error){ CT_STATE='error'; CT_ERR=b.error.message||'unknown error'; }
+  else { CONTRACTORS = b.data||[]; CT_STATE='ok'; CT_ERR=''; }
+  if(a.error){ $("#list").innerHTML=`<div class="empty">Couldn't load remedies: ${esc(a.error.message)}</div>`;
+    if(DIR) renderDir(); if(P1) renderPickOne(); return; }
+  ITEMS = a.data||[];
   await loadNeedsGabe();
   try { const rv = await sb.from("rtr_items").select("id").eq("review_status","pending"); REVIEW_P = new Set((rv.data||[]).map(x=>x.id)); } catch { REVIEW_P = new Set(); }
   try { const f = await sb.from("rtr_items").select("id,mgmt_flagged_at").not("mgmt_flagged_at","is",null); FLAGS = Object.fromEntries((f.data||[]).map(x=>[x.id,x.mgmt_flagged_at])); } catch { FLAGS = {}; }
   TRADES = [...new Set([...CONTRACTORS.map(c=>c.trade), ...ITEMS.map(i=>i.trade)])].filter(Boolean).sort();
+  // Anything already open was drawn against whatever we had a moment ago. Redraw it.
+  if(DIR) renderDir(); if(P1) renderPickOne();
   try { SESSION = (await authSb.auth.getSession()).data.session; } catch { SESSION = null; }
   ACCESS = {};
   const pids = [...new Set(ITEMS.map(i=>i.property_id).filter(Boolean))];
@@ -594,7 +607,7 @@ function renderPickOne(){
   $("#picker").innerHTML = `<div class="modal-bg" onclick="if(event.target===this){P1=null;renderPickOne()}"><div class="modal">
     <div class="modal-h"><b>Ask one contractor for a bid</b><p>#${i.item_no??""} ${esc(i.address)} — ${esc((i.description||"").slice(0,120))}</p></div>
     <div class="dir-tools"><input id="p1-q" placeholder="Search any name, trade or phone…" value="${esc(P1.q)}" oninput="P1.q=this.value;renderPickOne();const e=$('#p1-q');e.focus();e.setSelectionRange(e.value.length,e.value.length)"></div>
-    <div class="modal-b">${list.map(c=>`<div class="pick" onclick="P1=null;renderPickOne();assign('${i.id}','${c.id}')"><span class="nm">${esc(c.name)}<small>${esc(c.trade)}${c.tracker_props_n?` · ${c.tracker_props_n} houses with us`:''}</small></span><span class="tier ${c.phone?'t1':''}">${(c.contact_pref||'text')!=='text'?'📞 '+c.contact_pref+' only':c.phone?esc(c.phone):'no phone'}</span></div>`).join("") || '<div class="sched-empty">No one matches. Try another name, or add them under Contractors by trade.</div>'}</div>
+    <div class="modal-b">${list.map(c=>`<div class="pick" onclick="P1=null;renderPickOne();assign('${i.id}','${c.id}')"><span class="nm">${esc(c.name)}<small>${esc(c.trade)}${c.tracker_props_n?` · ${c.tracker_props_n} houses with us`:''}</small></span><span class="tier ${c.phone?'t1':''}">${(c.contact_pref||'text')!=='text'?'📞 '+c.contact_pref+' only':c.phone?esc(c.phone):'no phone'}</span></div>`).join("") || ctNote() || '<div class="sched-empty">No one matches. Try another name, or add them under Contractors by trade.</div>'}</div>
     <div class="modal-f">${!q?`<button class="ubtn small" onclick="P1.all=!P1.all;renderPickOne()">${P1.all?'Only '+esc(i.trade||''):'Show every trade'}</button>`:''}<button class="ubtn small" onclick="addContractor(ITEMS.find(x=>x.id===P1.id).trade).then(c=>{ if(c){ const id=P1.id; P1=null; renderPickOne(); assign(id, c.id); } })">＋ Someone new</button><button class="ubtn small flagbtn" onclick="const id=P1.id;P1=null;renderPickOne();flagMgmt(id)">🚩 Flag management</button><span class="sp"></span><button class="ubtn small" onclick="P1=null;renderPickOne()">Cancel</button></div>
   </div></div>`;
 }
@@ -1154,8 +1167,16 @@ async function saveHand(){
   await load();
 }
 // ---- Tom 10/14: see every contractor by trade and fix the ones in the wrong dropdown, right here (saves to the directory) ----
+// Why the list you are looking at is empty - never just an empty box.
+function ctNote(){
+  if(CT_STATE==='loading') return '<div class="sched-empty">Still loading the contractor list\u2026</div>';
+  if(CT_STATE==='error') return '<div class="sched-empty" style="color:var(--warn)">The contractor list did not load \u2014 '
+    + esc(CT_ERR) + '.<br><button class="ubtn small" style="margin-top:8px" onclick="load()">Try again</button></div>';
+  if(!CONTRACTORS.length) return '<div class="sched-empty">There is nobody in the by-trade list yet. Add the first one with \uFF0B New contractor.</div>';
+  return '';
+}
 let DIR = null;
-function openDir(){ DIR = { q:"", trade:"" }; renderDir(); }
+function openDir(){ DIR = { q:"", trade:"" }; renderDir(); if(CT_STATE==='loading') load(); }
 function renderDir(){
   if(!DIR){ $("#picker").innerHTML=""; return; }
   const q = DIR.q.toLowerCase();
@@ -1175,9 +1196,9 @@ function renderDir(){
   $("#picker").innerHTML = `<div class="modal-bg" onclick="if(event.target===this){DIR=null;renderDir()}"><div class="modal wide">
     <div class="modal-h"><b>Contractors by trade</b><p>This is the list behind every dropdown. Change someone's trade to move them, ＋ trade to list them in another one too, or Remove to take them out of a trade. Order inside a trade = most houses with us first.</p></div>
     <div class="dir-tools"><input id="dir-q" placeholder="Search name, phone, contact…" value="${esc(DIR.q)}" oninput="DIR.q=this.value;renderDir();const e=$('#dir-q');e.focus();e.setSelectionRange(e.value.length,e.value.length)">
-      <select onchange="DIR.trade=this.value;renderDir()"><option value="">All trades (${CONTRACTORS.length})</option>${tOpts(DIR.trade)}</select>
+      <select onchange="DIR.trade=this.value;renderDir()"><option value="">All trades (${CT_STATE==='ok'?CONTRACTORS.length:'\u2026'})</option>${tOpts(DIR.trade)}</select>
       <button class="ubtn small" onclick="addContractor(DIR.trade||'').then(renderDir)">＋ New contractor</button></div>
-    <div class="modal-b" style="max-height:65vh">${html||'<div class="sched-empty">No one matches.</div>'}</div>
+    <div class="modal-b" style="max-height:65vh">${html || ctNote() || '<div class="sched-empty">No one matches.</div>'}</div>
     <div class="modal-f"><span class="sp"></span><button class="ubtn small primary" onclick="DIR=null;renderDir();load()">Done</button></div>
   </div></div>`;
 }
@@ -1647,5 +1668,6 @@ $("#btn-sync").onclick = async () => { $("#btn-sync").disabled=true; $("#btn-syn
 
 load();
 </script>
+<!-- build: 2026-10-18h by-trade-list-says-why-it-is-empty -->
 </body>
 </html>
