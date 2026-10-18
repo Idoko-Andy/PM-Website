@@ -4924,8 +4924,9 @@ function renderPropertyBoard() {
         ${pc.map(c => {
           const typeStyle = PROP_TYPE_STYLE[c.type] || "background:#f4f5f7;color:#555";
           const pmColor = PROP_PM_COLORS[_canonName(c.pm)] || "#636b7a";
-          const bNum = parseFloat((c.budget||'0').replace(/[^0-9.]/g,''))||0;
-          const sNum = parseFloat((c.spent||'0').replace(/[^0-9.]/g,''))||0;
+          // String() first: a numeric budget used to throw here and blank the tab.
+          const bNum = parseFloat(String(c.budget||'0').replace(/[^0-9.]/g,''))||0;
+          const sNum = parseFloat(String(c.spent||'0').replace(/[^0-9.]/g,''))||0;
           const pct  = bNum>0 ? Math.round((sNum/bNum)*100) : 0;
           const progC = pct>90?'#AF2C2B':pct>70?'#93600A':'#639922';
           const activeSubPhases = (c.subPhases||[]).slice(0,2).map(sp=>
@@ -7353,7 +7354,7 @@ function openPropDetail(id) {
   // and the figure underneath says how far off it this house is, signed.
   const _bv   = _budVs(c);
   const bNum  = _bv.budget || 0;
-  const sNum  = (_bv.spent!=null) ? _bv.spent : (parseFloat((c.spent||'0').replace(/[^0-9.]/g,''))||0);
+  const sNum  = (_bv.spent!=null) ? _bv.spent : (parseFloat(String(c.spent||'0').replace(/[^0-9.]/g,''))||0);
   const pct   = bNum > 0 ? Math.round((sNum/bNum)*100) : 0;
   const progColor = _budColor(_bv.over);
   const typeStyle = PROP_TYPE_STYLE[c.type] || "background:#f4f5f7;color:#555";
@@ -32151,7 +32152,6 @@ function _calKindSelect(st){
     ${opt('all','All categories (real bookings)')}
     ${opt('material','\u{1F4E6} Material deliveries')}
     ${opt('contractor','★ Contractor starts')}
-    ${opt('baseline','\u{1F5D3} Baseline plan \u2014 the generated schedule')}
     ${types.length?('<optgroup label="Your own types">'+types.map(t=>opt('custom::'+t,'• '+t)).join('')+'</optgroup>'):''}
   </select>`;
 }
@@ -32189,8 +32189,17 @@ function renderConstructionCalendar(){
   // card and off the Monday agenda too. The rows are hidden rather than deleted - three
   // quarters of this calendar's history is not something to drop quietly - and anybody
   // who wants to look at the old plan can still pick it out of the category list.
+  // Bruce, 18 Oct: "the automatic construction schedule Tommy told to put in there a
+  // couple of weeks ago ... it's just scheduling tasks out of nowhere and kind of all
+  // crazy." It was off the property card and off the Monday agenda already - the
+  // category list on this calendar was the one door left into it, and picking it filled
+  // the month with steps nobody booked. The option is gone, and a filter left sitting on
+  // it in somebody's open tab falls back to the real bookings instead of showing them a
+  // calendar full of a plan that was switched off in October.
+  if(st.filter==="baseline") st.filter="all";
   const _matchFilter=(e)=>{
     if(st.filter==="all") return e.kind!=="baseline";
+    if(st.filter==="baseline") return false;
     if(st.filter.indexOf("custom::")===0) return e.kind==="custom" && (e.title||"").trim()===st.filter.slice(8);
     return e.kind===st.filter;
   };
@@ -35259,8 +35268,10 @@ function _housekeepingPanel(){
       +'<div style="font-size:14px;font-weight:600;color:#111">\u{1F5D1} Tommy’s baseline schedule</div>'
       +'<div style="font-size:13px;color:#566070;margin-top:3px;line-height:1.5">'
         +s.rows+' pre-scheduled step'+(s.rows===1?'':'s')+' across '+s.houses+' house'+(s.houses===1?'':'s')
-        +' are still sitting in the construction calendar. The baseline was switched off in October — '
-        +'nothing on any screen reads them any more — so they are dead weight on the biggest table in the database. '
+        +' are still sitting in the construction calendar table. <b>As of 18 October nothing on this site shows them any more</b> — '
+        +'they came off the property card and the Monday agenda in October, and the last door, the Baseline category on the '
+        +'construction calendar, is now gone too. So they cannot schedule anything at anybody any more. '
+        +'What is left is dead weight on the biggest table in the database, and only you can clear it. '
         +'Removing them changes nothing you can see. A file with every row is saved to your downloads first, so it can be put back.'
       +'</div>'
       +'<button onclick="_baselinePurge()" style="margin-top:10px;padding:8px 15px;background:#122A4A;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Back up and remove '+s.rows+' row'+(s.rows===1?'':'s')+'</button>'
@@ -36894,4 +36905,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-18k meeting-tab-and-auto-vacant -->
+<!-- build: 2026-10-18l baseline-off-everywhere -->
