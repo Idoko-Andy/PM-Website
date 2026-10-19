@@ -919,7 +919,7 @@ function countClosedThisYear(){
   return propCards.filter(c => {
     if (c.phase !== "Closed") return false;
     if (!c.end) return false;
-    return new Date(c.end).getFullYear() === yr;
+    return _dYearOf(c.end) === yr;
   }).length;
 }
 function countActiveForPM(pmName) {
@@ -5884,7 +5884,7 @@ function _scPreview(scopeId){
   const sc=rec.sc, esc=_calEsc;
   const lines=_scOrdered(rec.lines), nums=_scNumber(lines);
   const items=_scItems(rec.lines);
-  const dt=(v)=>{ if(!v) return ''; try{ return new Date(v).toLocaleDateString(undefined,{day:'numeric',month:'long',year:'numeric'}); }catch(e){ return String(v).slice(0,10); } };
+  const dt=(v)=>_dPretty(v);
 
   const slot=(l)=>{
     const pm=l.price_mode||'own';
@@ -21493,7 +21493,7 @@ function renderRealtorHome(user){
   const tRows=myTasks.length?myTasks.map(t=>`<div onclick="openTaskDetail('${t.id}')" style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:0.5px solid #1e1e1e;cursor:pointer"><div style="min-width:0"><div style="font-size:13px;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(t.title||'')}</div><div style="font-size:11px;color:#666">${_calEsc(_locLabel(t)||'')}</div></div><div style="font-size:11px;color:#1F6C9B;white-space:nowrap">${_calEsc(t.due_date)}</div></div>`).join(''):empty('No upcoming tasks assigned to you');
 
   // ---- closed this year, tied to their name ----
-  const closed=mine.filter(c=>c.phase==='Closed' && c.end && new Date(c.end).getFullYear()===yr);
+  const closed=mine.filter(c=>c.phase==='Closed' && c.end && _dYearOf(c.end)===yr);
   const onMkt=ph(['Listed on the Market','Listed on the Market / Final Inspections']);
   const soon=ph(['Pre List / Punchout Process','Rental Handoff Process']);
   const inCon=ph(['In Contract']);
@@ -32938,6 +32938,32 @@ const _calState = { y:null, m:null, day:null, view:"month", prop:"all", pm:"all"
 const _CAL_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 // Shared day helpers for the calendar Day views.
 function _shiftDay(ds,delta){ const [y,m,d]=ds.split("-").map(Number); const dt=new Date(y,m-1,d); dt.setDate(dt.getDate()+delta); return _ymd(dt); }
+// ---- a day is not a moment -----------------------------------------------------
+// "2026-10-19" is a DAY. JavaScript parses it as midnight UTC, which in Columbus is
+// 8pm on the 18th - so reading it back with local getters lands on the day before.
+// Two places were doing exactly that, and both mattered:
+//   * a house closed on 1 January counted toward the PREVIOUS year's closings;
+//   * the "prices due back" date on the scope of work a contractor prints showed a
+//     day early, which is the kind of mistake that costs a quote.
+// A full timestamp ("2026-10-19T14:02:00Z") is a moment and is already unambiguous,
+// so it is parsed as it stands. Only a bare day gets the local midnight it meant.
+function _dAny(v){
+  const str=String(v==null?'':v).trim();
+  if(!str) return null;
+  if(/^\d{4}-\d{2}-\d{2}$/.test(str)){
+    const p=str.split('-').map(Number);
+    return new Date(p[0], p[1]-1, p[2]);
+  }
+  const d=new Date(str);
+  return isNaN(d.getTime()) ? null : d;
+}
+function _dYearOf(v){ const d=_dAny(v); return d ? d.getFullYear() : NaN; }
+function _dPretty(v, opts){
+  const d=_dAny(v);
+  if(!d) return '';
+  try{ return d.toLocaleDateString(undefined, opts||{day:'numeric',month:'long',year:'numeric'}); }
+  catch(e){ return String(v).slice(0,10); }
+}
 function _prettyDay(ds){ const [y,m,d]=ds.split("-").map(Number); const dt=new Date(y,m-1,d); return dt.toLocaleDateString(undefined,{weekday:"long",month:"long",day:"numeric",year:"numeric"}); }
 function _calRerender(){ const el=document.getElementById("pd-content"); if(el) el.innerHTML=renderConstructionCalendar(); }
 function _propPM(id){ const p=(typeof propCards!=='undefined'?propCards:[]).find(x=>x.id===id); return p?p.pm:""; }
@@ -33877,7 +33903,13 @@ async function _tkSharedToggle(t){
     if(typeof _toast==="function") _toast("Off your list. Still with "+left.join(" and ")+".");
   } else {
     if(t.status==='done'){
-      await supabase.from("pm_tasks").update({status:"open", completed_at:null}).eq("id",t.id);
+      // Putting a task BACK on your list is a person's deliberate act, so it gets the
+      // same check closing one does. Silently failing here is the worst version: the
+      // tick springs back on the next page load and nobody knows why.
+      const _ro=await supabase.from("pm_tasks").update({status:"open", completed_at:null}).eq("id",t.id).select("id");
+      let _bad=_wrote(_ro);
+      if(!_bad && _unsure(_ro)) _bad=await _verified("pm_tasks", t.id, "status", "open");
+      if(_bad){ alert("That would not reopen: "+_bad); return true; }
     }
     if(typeof _logAudit==="function") _logAudit("reopened","task",t.title,me+" put it back on their list");
   }
@@ -37848,4 +37880,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-19c yearly-reports -->
+<!-- build: 2026-10-19d a-day-is-not-a-moment -->
