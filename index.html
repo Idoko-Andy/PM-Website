@@ -409,7 +409,7 @@ body.mobile-on .overlay{z-index:6000 !important;}
       <div class="ddi" onclick="openEndOfDayReports()">🌙 End of Day Reports</div>
       <div class="ddl" style="margin-top:4px">Reports</div>
       <div class="ddi" onclick="openMonthlyReports()">📅 Monthly Reports</div>
-      <div class="ddi" onclick="_notBuiltYet('Yearly Reports')">📆 Yearly Reports</div>
+      <div class="ddi" onclick="openYearlyReports()">📆 Yearly Reports</div>
       <div class="ddi" onclick="openWeeklyMeeting('eop')">🏁 End of Project Reports</div>
     </div>
   </div>
@@ -17666,6 +17666,165 @@ function openClosedByYear(){ _propFromSet('openClosedByYear',[]);
 // A menu item that does nothing when you click it is indistinguishable from a
 // broken one - which is exactly the complaint that led to the task-save fix. Any
 // item we have deliberately not built yet says so out loud instead.
+// ===================== YEARLY REPORTS =========================================
+// Bruce, 19 Oct: "make everything live that can possibly be live."
+//
+// This menu item has been a "not built yet" notice since the beginning. It did not need
+// new data - twelve monthly reports and the closed-properties record were already here;
+// nothing had ever added them up. So nothing below is invented or typed in a second
+// time. Every figure is the sum of the months Bruce has already filled in, and the
+// houses column comes off the same closed-date record the Closed By Year screen reads.
+//
+// The one thing this screen is careful about is NOT lying by omission. A year with four
+// months filled in is not a year's performance, and a total that quietly leaves out the
+// eight missing months is worse than no total at all - so every figure says how many
+// months are behind it, and the months nobody filled in are listed by name.
+function _yrNum(v){
+  const n=parseFloat(String(v==null?'':v).replace(/[^0-9.\-]/g,''));
+  return isNaN(n)?0:n;
+}
+function _yrMoney(n){
+  const neg=n<0; const a=Math.abs(Math.round(n));
+  return (neg?'-$':'$')+a.toLocaleString();
+}
+// Everything known about one year, from the records that already exist.
+function _yrCollect(year){
+  const data=(typeof getMRData==='function')?(getMRData()||{}):{};
+  const months=[];
+  for(let mi=0; mi<12; mi++){
+    const r=data[(typeof mrKey==='function')?mrKey(year,mi):(String(year)+'_'+mi)];
+    months.push({ i:mi, name:(typeof MONTHS!=='undefined'?MONTHS[mi]:String(mi+1)),
+                  has:!!r, submitted:!!(r&&r.submitted), r:r||null });
+  }
+  const filled=months.filter(m=>m.has);
+  const sum=(f)=>filled.reduce((a,m)=>a+_yrNum(m.r[f]),0);
+  // Houses closed in this year, off the property record rather than anybody's memory.
+  const cards=(typeof propCards!=='undefined'?propCards:[]);
+  const closed=cards.filter(function(c){
+    return c.phase==='Closed' && String(c.closedDate||'').slice(0,4)===String(year);
+  });
+  const byMonth={};
+  closed.forEach(function(c){ const m=parseInt(String(c.closedDate).slice(5,7),10)-1; byMonth[m]=(byMonth[m]||0)+1; });
+  return {
+    year:year, months:months, filled:filled.length,
+    submitted:months.filter(m=>m.submitted).length,
+    missing:months.filter(m=>!m.has).map(m=>m.name),
+    mNew:sum('mNew'), mConst:sum('mConst'), mListed:sum('mListed'), mBM:sum('mBM'),
+    fBudgeted:sum('fBudgeted'), fActual:sum('fActual'), fGross:sum('fGross'),
+    closed:closed.length, closedByMonth:byMonth, closedCards:closed
+  };
+}
+function _yrYears(){
+  const out={};
+  const data=(typeof getMRData==='function')?(getMRData()||{}):{};
+  Object.keys(data).forEach(function(k){ const y=k.split('_')[0]; if(/^\d{4}$/.test(y)) out[y]=1; });
+  (typeof propCards!=='undefined'?propCards:[]).forEach(function(c){
+    const y=String(c.closedDate||'').slice(0,4); if(/^\d{4}$/.test(y)) out[y]=1;
+  });
+  out[String(new Date().getFullYear())]=1;
+  return Object.keys(out).sort().reverse();
+}
+function _yrGo(y){ window.__yrYear=String(y); openYearlyReports(); }
+function openYearlyReports(){ _propFromSet('openYearlyReports',[]);
+  document.querySelectorAll(".dd").forEach(x => x.classList.remove("open"));
+  document.querySelectorAll(".ni.has-dd").forEach(x => x.classList.remove("on"));
+  const years=_yrYears();
+  const yr=String(window.__yrYear||years[0]||new Date().getFullYear());
+  const d=_yrCollect(yr);
+  const E=_calEsc;
+  const pill=function(y){
+    const on=(String(y)===yr);
+    return '<span onclick="_yrGo(\''+y+'\')" style="display:inline-block;padding:5px 13px;margin:0 6px 6px 0;border-radius:99px;font-size:13px;cursor:pointer;'
+      +(on?'background:#122A4A;color:#fff;font-weight:600':'background:#fff;color:#444;border:0.5px solid #dde2ec')+'">'+E(y)+'</span>';
+  };
+  // A figure, and how many months are actually behind it.
+  const stat=function(label, value, colour, sub){
+    return '<div style="background:#fff;border:0.5px solid #e0e4ec;border-top:3px solid '+colour+';border-radius:10px;padding:13px 15px">'
+      +'<div style="font-size:12.5px;font-weight:600;color:#111">'+label+'</div>'
+      +'<div style="font-size:25px;font-weight:600;color:'+colour+';margin-top:4px;font-variant-numeric:tabular-nums">'+value+'</div>'
+      +'<div style="font-size:11px;color:#566070;margin-top:1px">'+sub+'</div></div>';
+  };
+  const over=d.fBudgeted? (d.fActual-d.fBudgeted) : 0;
+  const from=d.filled+' month'+(d.filled===1?'':'s')+' filled in';
+  const tiles=
+     stat('Houses closed', String(d.closed), '#4A1D6E', 'from the closing dates on the cards')
+    +stat('New projects', String(d.mNew), '#185FA5', from)
+    +stat('In construction', String(d.mConst), '#B5651D', from)
+    +stat('Listed', String(d.mListed), '#0F7B54', from)
+    +stat('To B&amp;M', String(d.mBM), '#0E7460', from)
+    +stat('Budgeted', _yrMoney(d.fBudgeted), '#566070', from)
+    +stat('Actual', _yrMoney(d.fActual), over>0?'#B42318':'#0F7B54',
+          d.fBudgeted?(over>0?(_yrMoney(over)+' over'):(_yrMoney(-over)+' under')):'no budget recorded')
+    +stat('Gross', _yrMoney(d.fGross), '#122A4A', from);
+
+  const rows=d.months.map(function(m){
+    const r=m.r||{};
+    const cl=d.closedByMonth[m.i]||0;
+    const tone=m.submitted?'#0F7B54':(m.has?'#8A5A10':'#b0b6c0');
+    const state=m.submitted?'submitted':(m.has?'draft':'not filled in');
+    return '<tr style="border-top:0.5px solid #eef0f6;'+(m.has?'':'background:#FCFCFD')+'">'
+      +'<td style="padding:7px 10px"><span onclick="openMonthlyReports()" style="cursor:pointer;color:#185FA5;font-weight:600">'+E(m.name)+'</span>'
+        +'<div style="font-size:10.5px;color:'+tone+'">'+state+'</div></td>'
+      +'<td style="padding:7px;text-align:center;font-variant-numeric:tabular-nums">'+(cl||'<span style="color:#c4c9d2">&mdash;</span>')+'</td>'
+      +['mNew','mConst','mListed','mBM'].map(function(f){
+          return '<td style="padding:7px;text-align:center;font-variant-numeric:tabular-nums">'+(m.has?E(String(r[f]||'0')):'<span style="color:#c4c9d2">&mdash;</span>')+'</td>'; }).join('')
+      +['fBudgeted','fActual','fGross'].map(function(f){
+          return '<td style="padding:7px;text-align:right;font-variant-numeric:tabular-nums">'+(m.has?E(String(r[f]||'')||'—'):'<span style="color:#c4c9d2">&mdash;</span>')+'</td>'; }).join('')
+      +'</tr>';
+  }).join('');
+
+  const warn=d.missing.length
+    ? '<div style="background:#FCF7EB;border:0.5px solid #EAD9A8;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12.5px;color:#6b5310">'
+      +'<b>These totals cover '+d.filled+' of 12 months.</b> Nothing has been filled in for <b>'+d.missing.map(E).join(', ')+'</b>, '
+      +'so every figure above except <b>Houses closed</b> is the sum of the months that exist — not the year. '
+      +'Houses closed is read off the property cards, so that one is the whole year either way.</div>'
+    : '<div style="background:#F2FBF6;border:0.5px solid #BFE5D4;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:12.5px;color:#0F7B54">'
+      +'<b>All twelve months are filled in'+(d.submitted===12?' and submitted':'')+'.</b> These totals are the whole year.</div>';
+
+  // The written sections, gathered rather than re-typed.
+  const gather=function(title, fields){
+    const items=[];
+    d.months.forEach(function(m){
+      if(!m.has) return;
+      fields.forEach(function(f){
+        const v=String((m.r||{})[f]||'').trim();
+        if(v) items.push({ month:m.name, text:v });
+      });
+    });
+    if(!items.length) return '';
+    return '<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;padding:13px 16px;margin-bottom:12px">'
+      +'<div style="font-size:14px;font-weight:700;color:#111;margin-bottom:6px">'+title+' <span style="font-weight:400;color:#566070;font-size:12px">· '+items.length+'</span></div>'
+      +items.map(function(x){
+          return '<div style="display:flex;gap:9px;align-items:baseline;padding:5px 0;border-bottom:0.5px solid #f4f5f7">'
+            +'<span style="font-size:10.5px;font-weight:700;color:#8A94A6;min-width:32px">'+E(x.month.slice(0,3))+'</span>'
+            +'<span style="font-size:13px;color:#111">'+E(x.text)+'</span></div>'; }).join('')
+      +'</div>';
+  };
+
+  document.getElementById('dash-body').innerHTML=
+    '<div style="background:#f4f5f7;min-height:500px"><div style="padding:20px;max-width:1240px;margin:0 auto">'
+    +'<div style="font-size:18px;font-weight:700;color:#111">\u{1F4C6} Yearly Reports</div>'
+    +'<div style="font-size:13px;color:#566070;margin:3px 0 12px">Every monthly report for the year, added up — nothing here is typed in twice. Click a month to open and edit it.</div>'
+    +'<div style="margin-bottom:12px">'+years.map(pill).join('')+'</div>'
+    +warn
+    +'<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:10px;margin-bottom:16px">'+tiles+'</div>'
+    +'<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:11px;overflow:auto;margin-bottom:14px">'
+      +'<table style="width:100%;border-collapse:collapse;font-size:13px;color:#111;min-width:720px">'
+      +'<thead><tr style="background:#122A4A;color:#fff">'
+        +'<th style="padding:9px 10px;text-align:left">Month</th>'
+        +'<th style="padding:9px">Closed</th><th style="padding:9px">New</th><th style="padding:9px">Construction</th>'
+        +'<th style="padding:9px">Listed</th><th style="padding:9px">B&amp;M</th>'
+        +'<th style="padding:9px;text-align:right">Budgeted</th><th style="padding:9px;text-align:right">Actual</th>'
+        +'<th style="padding:9px;text-align:right">Gross</th></tr></thead>'
+      +'<tbody>'+rows+'</tbody></table></div>'
+    + gather('\u{1F3C6} Wins across the year', ['win1','win2','win3'])
+    + gather('⚠️ Challenges raised', ['ch1desc','ch2desc','ch3desc'])
+    + gather('\u{1F465} Team and people', ['team1','team2','team3'])
+    + gather('\u{1F3AF} Priorities set', ['up1init','up2init','up3init','up4init'])
+    +'<div style="font-size:12px;color:#8b95a3;border-top:0.5px solid #e0e4ec;padding-top:10px">'
+      +'Built from the Monthly Reports and the closing dates on the property cards. Fill a month in under Reporting → Monthly Reports and it appears here.</div>'
+    +'</div></div>';
+}
 function _notBuiltYet(name){
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
@@ -29730,7 +29889,7 @@ const SEARCH_INDEX = [
   { title: "Architect Dashboard",               desc: "Architect — Project Dashboard and Design Dashboard", action: () => document.getElementById("arch-t").click() },
   { title: "Design Dashboard",                  desc: "Design dashboard for all roles except VA Assistants", action: () => openDesignDashboard() },
   { title: "Monthly Reports",                  desc: "Fill out and store monthly business overview reports by year and month", action: () => openMonthlyReports() },
-  { title: "Yearly Reports",                   desc: "View yearly reporting dashboard", action: () => document.getElementById("rep-t").click() },
+  { title: "Yearly Reports",                   desc: "Every monthly report for a year, added up", action: () => openYearlyReports() },
   { title: "End of Project Reports",           desc: "View end-of-project reporting dashboard", action: () => document.getElementById("rep-t").click() },
   { title: "SOPs",                             desc: "All standard operating procedures — job roles and systems (under Tools)", action: () => document.getElementById("tools-t").click() },
   { title: "Tools",                            desc: "External tool links including Eagleview", action: () => document.getElementById("tools-t").click() },
@@ -37689,4 +37848,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-19b no-silent-clicks -->
+<!-- build: 2026-10-19c yearly-reports -->
