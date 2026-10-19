@@ -19235,8 +19235,10 @@ async function toggleStarProp(id){
   const card=(typeof propCards!=='undefined'?propCards:[]).find(p=>p.id===id); if(!card) return;
   const cl=Object.assign({},card.checklists||{});
   cl.ceo_star=!cl.ceo_star;
-  const { error }=await supabase.from("pm_properties").update({ checklists:cl }).eq("id",id);
-  if(error){ alert("Couldn't update: "+(error.message||"")); return; }
+  const _r=await supabase.from("pm_properties").update({ checklists:cl }).eq("id",id).select("id");
+  let bad=_wrote(_r);
+  if(!bad && _unsure(_r)) bad=await _verified("pm_properties", id, "checklists", cl);
+  if(bad){ alert("Couldn't update: "+bad); return; }
   card.checklists=cl;
   _logAudit(cl.ceo_star?"starred":"unstarred","property",card.addr||"","CEO monitoring list");
   if(typeof openProjectDashboard==='function') openProjectDashboard('trello');
@@ -30566,10 +30568,56 @@ async function setContractorField(id, field, val){
   if(_blockIfReadOnly()) return;
   const c=(_contractorsCache||[]).find(x=>x.id===id); if(!c) return;
   const patch={}; patch[field]=val;
-  const { error } = await supabase.from("pm_contractors").update(patch).eq("id",id);
-  if(error){ alert("Couldn't save that: "+(error.message||"")); return; }
+  // Ask for the row back so a write that matched nothing can be told from one that
+  // worked. If nothing comes back, do not assume either way - read it and compare.
+  const res=await supabase.from("pm_contractors").update(patch).eq("id",id).select("id");
+  let bad=_wrote(res);
+  if(!bad && _unsure(res)) bad=await _verified("pm_contractors", id, field, val);
+  if(bad){ alert("Couldn't save that: "+bad); return; }
   c[field]=val;
   _logAudit("updated","contractor", c.name||"", field.replace("_"," ")+" set to "+(val||"(blank)"));
+}
+// ---- did that write actually land? -------------------------------------------
+// Bruce, 19 Oct: "make sure everything saves."
+//
+// A Postgres UPDATE that matches NO rows is not an error. It succeeds, changes nothing,
+// and hands back error:null - so a save that was refused by row-level security, or aimed
+// at a row somebody else had already deleted, reads to the app exactly like a save that
+// worked. Most writes on this site survive that because they re-read from the database
+// straight afterwards and the screen corrects itself. A handful do not: they write, see
+// no error, update the copy in memory and move on. On those, the change sits on screen
+// looking saved until the next page load quietly throws it away.
+//
+// Asking for the changed rows back is what tells the two apart. No rows back means
+// nothing was written, and the person needs to hear that while they can still redo it.
+//
+// ONE CAUTION, and it is why this does not simply shout when no rows come back: a policy
+// can allow the UPDATE and still not allow us to SELECT the row afterwards. That writes
+// the change correctly and hands back an empty list - identical, from here, to a write
+// that did nothing. Treating empty as failure would pop a false "it did not save" on a
+// save that worked, which is worse than the bug it chases: people stop believing the
+// warning, and then it is worth nothing on the day it is real.
+//
+// So empty is not a verdict here, it is a question - and _verified() answers it by
+// reading the row back and comparing. Guessing is what caused this; it is not the fix.
+function _wrote(res){
+  if(!res) return 'The save did not come back at all. Check your connection and try again.';
+  if(res.error) return res.error.message || 'The save was refused.';
+  return '';
+}
+// True when the write reported success but told us nothing about what it changed.
+function _unsure(res){ return !!(res && !res.error && Array.isArray(res.data) && res.data.length===0); }
+// Did the value actually land? Only called on that doubtful path, so the extra read
+// costs nothing on the normal one.
+async function _verified(table, id, field, want){
+  try{
+    const r=await supabase.from(table).select(field).eq('id',id).maybeSingle();
+    if(r.error) return '';                       // cannot check - do not cry wolf
+    if(!r.data) return 'That record is no longer there — somebody may have removed it. Reload the page.';
+    const got=r.data[field];
+    const same=(got===want) || (JSON.stringify(got)===JSON.stringify(want));
+    return same ? '' : 'Nothing was saved — you may not have permission to change this. Reload the page and try again.';
+  }catch(e){ return ''; }
 }
 function _contractorName(id){ const c=_contractorsCache.find(x=>x.id===id); return c?c.name:"Contractor"; }
 function _contractorTrade(id){ const c=(typeof _contractorsCache!=="undefined"?_contractorsCache:[]).find(x=>x.id===id); return (c&&c.trade)?c.trade:""; }
@@ -33645,9 +33693,12 @@ async function _tkSharedToggle(t){
   if(res===null) return true;
   if(res==='closed'){
     const st=new Date().toISOString();
-    let { error } = await supabase.from("pm_tasks").update({status:"done", completed_at:st}).eq("id",t.id);
-    if(error && /completed_at/.test(error.message||"")) ({ error } = await supabase.from("pm_tasks").update({status:"done"}).eq("id",t.id));
-    if(error){ alert("Your tick was saved, but the task itself would not close: "+(error.message||"")); return true; }
+    let _tr=await supabase.from("pm_tasks").update({status:"done", completed_at:st}).eq("id",t.id).select("id");
+    let bad=_wrote(_tr);
+    // Older rows predate completed_at; fall back rather than lose the close.
+    if(bad && /completed_at/.test(bad)){ _tr=await supabase.from("pm_tasks").update({status:"done"}).eq("id",t.id).select("id"); bad=_wrote(_tr); }
+    if(!bad && _unsure(_tr)) bad=await _verified("pm_tasks", t.id, "status", "done");
+    if(bad){ alert("Your tick was saved, but the task itself would not close: "+bad); return true; }
     if(typeof _logAudit==="function") _logAudit("completed","task",t.title,"Everyone on it has now ticked it off: "+names.join(", "));
     if(typeof _toast==="function") _toast("Everyone has ticked that off — the task is closed.");
   } else if(res==='partial'){
@@ -37627,4 +37678,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-18t audit-stay-put -->
+<!-- build: 2026-10-19a saves-verified -->
