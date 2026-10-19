@@ -7359,7 +7359,18 @@ function openPropDetail(id) {
     return;
   }
   const c = propCards.find(x => x.id === id);
-  if (!c) return;
+  // A card that is not in memory used to make this return silently: you clicked an
+  // address and nothing whatsoever happened, which reads as a broken button. It happens
+  // for real - a link from a meeting or a PDF to a house somebody has since archived, or
+  // a click that lands before the first load has finished. Say which it is.
+  if (!c) {
+    const loading = !(typeof propCards!=='undefined' && propCards.length);
+    const msg = loading
+      ? "The properties are still loading. Give it a second and try that again."
+      : "That property is not on the board any more \u2014 it may have been archived or removed. Try the Completed Archive, or refresh the page.";
+    if (typeof _toast==='function') _toast(msg); else alert(msg);
+    return;
+  }
   const p = phInfo(c.phase);
   // The budget here is the one WITH contingency - see _budOf. The bar fills toward it
   // and the figure underneath says how far off it this house is, signed.
@@ -37678,4 +37689,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-19a saves-verified -->
+<!-- build: 2026-10-19b no-silent-clicks -->
