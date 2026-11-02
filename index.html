@@ -4974,6 +4974,7 @@ function renderPropertyBoard() {
   }).join('');
 
   return `
+    ${_phPanel()}
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
       <span style="font-size:13px;color:#566070">View:</span>
       <div onclick="setPropBoardPM('all')" style="padding:6px 14px;font-size:13px;cursor:pointer;border-radius:8px;${_propBoardPM==='all'?'background:#111;color:#fff':'background:#fff;color:#555;border:0.5px solid #ddd'}">All Project Managers</div>
@@ -15555,7 +15556,21 @@ async function _avSweep(){
   try{
     if(typeof isReadOnly==='function' && isReadOnly()) return;
     if(window.__avRunning) return;
-    if(!window._trkLoaded) return;          // without the record we cannot tell what already moved
+    // Bruce, 2 Nov: "for some reason the automations quit working."
+    //
+    // They never reliably started. This needs the trackers record to know which houses
+    // have already moved themselves - and it used to just GIVE UP if that record was not
+    // loaded yet. Nothing on the way into the Monday meeting loads it, so the sweep only
+    // ever ran if somebody happened to open a Trackers screen earlier in the same browser
+    // session. Open the meeting first thing on a Monday and nothing moved, with no error
+    // and nothing on screen to say so. That is my bug, in since the day I wrote it.
+    //
+    // Fetch the record instead of walking away from it. Only give up if it will not come.
+    if(!window._trkLoaded){
+      if(typeof _trkLoad!=='function') return;
+      try{ await _trkLoad(); }catch(e){ return; }
+      if(!window._trkLoaded) return;
+    }
     const due=_avDue();
     if(!due.length) return;
     window.__avRunning=true;
@@ -15582,6 +15597,107 @@ async function _avSweep(){
     if(typeof loadPropertiesFromSupabase==='function') await loadPropertiesFromSupabase();
     if(typeof _wmRerenderIfOpen==='function') _wmRerenderIfOpen();
   }catch(e){ window.__avRunning=false; }
+}
+// ===================== HOUSES SITTING IN THE WRONG CATEGORY ====================
+// Bruce, 2 Nov: "4521 St. Margaret got listed on the market, and it's still in the wrong
+// category. So did a few others, so we need to double check that shit."
+//
+// Only ONE phase move has ever been automatic: a takedown we have bought, that has gone
+// vacant, onto the construction walk. Everything after that has always been somebody
+// remembering to change a dropdown - and when they forget, the house carries on showing
+// up on the wrong board, in the wrong meeting, in front of the wrong people.
+//
+// This does not move anything. It reads the evidence a house has already generated and
+// says where that evidence puts it, next to where the dropdown says it is. A human
+// presses the button. The reason is always on screen, because "the computer thinks so"
+// is not a reason anybody can check.
+function _phIdx(name){ return PROP_PHASES.findIndex(function(p){ return p.name===name; }); }
+// Everything a house has done that implies it has reached a phase.
+function _phEvidence(c){
+  const out=[];
+  if(!c) return out;
+  const today=_ymd(new Date());
+  // Listed: the on-market checklist is only ever filled in for a house that is listed.
+  if(String(c.checklistMarketLast||'').trim())
+    out.push({ phase:'Listed on the Market', why:'the on-the-market checklist was filled in on '+c.checklistMarketLast });
+  // Listed: somebody has recorded showings against it.
+  try{
+    if(typeof _shwTotalFor==='function' && _shwTotalFor([c])>0)
+      out.push({ phase:'Listed on the Market', why:'showings have been recorded against it' });
+  }catch(e){}
+  // Under contract: a sale closing date is not set until there is a buyer.
+  if(String(c.closingDateSell||'').trim())
+    out.push({ phase:'In Contract', why:'it has a sale closing date of '+c.closingDateSell });
+  // Closed: the close has been approved and dated.
+  if(c.closeApproved && String(c.closedDate||'').trim())
+    out.push({ phase:'Closed', why:'the closing was approved and dated '+c.closedDate });
+  // Ours and empty: the rule the sweep already acts on, shown here too so a house the
+  // sweep could not move still gets seen by a person.
+  if(c.purchaseConfirmed && String(c.vacancyDate||'').trim() && String(c.vacancyDate)<=today)
+    out.push({ phase:'Vacant / On Standby', why:'we own it and it went vacant on '+c.vacancyDate });
+  return out;
+}
+// The furthest-on phase the evidence supports, if that is ahead of where it sits.
+function _phMismatch(c){
+  if(!c || c.archived) return null;
+  const here=_phIdx(c.phase);
+  if(here<0) return null;
+  const ev=_phEvidence(c);
+  if(!ev.length) return null;
+  let best=null;
+  ev.forEach(function(e){
+    const i=_phIdx(e.phase);
+    if(i>here && (!best || i>best.i)) best={ i:i, phase:e.phase, why:e.why };
+  });
+  if(!best) return null;
+  // Every reason that points at or past the suggested phase, so the row can show them all.
+  best.reasons=ev.filter(function(e){ return _phIdx(e.phase)>here; }).map(function(e){ return e.why; });
+  return best;
+}
+function _phMismatches(){
+  return (typeof propCards!=='undefined'?propCards:[])
+    .map(function(c){ const m=_phMismatch(c); return m?{ c:c, m:m }:null; })
+    .filter(Boolean)
+    .sort(function(a,b){ return (b.m.i-_phIdx(b.c.phase))-(a.m.i-_phIdx(a.c.phase)); });
+}
+async function _phFix(pid){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===pid; });
+  if(!c) return;
+  const m=_phMismatch(c);
+  if(!m){ if(typeof _toast==='function') _toast('That one already matches its evidence.'); return; }
+  if(!confirm('Move "'+(c.addr||'')+'"\n\nfrom:  '+c.phase+'\nto:      '+m.phase+'\n\nBecause '+m.reasons.join('; and ')+'.')) return;
+  const r=await supabase.from("pm_properties").update({ phase:m.phase }).eq("id",pid).select("id");
+  let bad=(typeof _wrote==='function')?_wrote(r):(r.error?r.error.message:'');
+  if(!bad && typeof _unsure==='function' && _unsure(r)) bad=await _verified("pm_properties", pid, "phase", m.phase);
+  if(bad){ alert("Couldn't move it: "+bad); return; }
+  if(typeof _logAudit==='function') _logAudit('updated','property', c.addr||'',
+    'Phase corrected from '+c.phase+' to '+m.phase+' — '+m.reasons.join('; '));
+  if(typeof loadPropertiesFromSupabase==='function') await loadPropertiesFromSupabase();
+  if(typeof _wmRerenderIfOpen==='function') _wmRerenderIfOpen();
+  if(typeof _trkRedraw==='function') _trkRedraw();
+}
+// The panel. Shown on the Monday meeting and on the property board.
+function _phPanel(){
+  const list=_phMismatches();
+  if(!list.length) return '';
+  const E=_calEsc;
+  const ro=(typeof isReadOnly==='function')?isReadOnly():false;
+  return '<div style="background:#FCF7EB;border:1px solid #EAD9A8;border-radius:11px;padding:12px 15px;margin-bottom:14px">'
+    +'<div style="font-size:13.5px;font-weight:700;color:#6b5310;margin-bottom:3px">'
+      +list.length+' house'+(list.length===1?'':'s')+' '+(list.length===1?'is':'are')+' further on than '+(list.length===1?'its':'their')+' category says</div>'
+    +'<div style="font-size:12px;color:#6b5310;margin-bottom:8px">Nothing has been moved. Each one below has done something that only happens at a later stage — press the button and it moves, with the reason written to the history.</div>'
+    + list.map(function(x){
+        return '<div style="background:#fff;border:0.5px solid #EAD9A8;border-radius:9px;padding:9px 12px;margin-bottom:7px">'
+          +'<div style="display:flex;justify-content:space-between;align-items:baseline;gap:9px;flex-wrap:wrap">'
+            +'<span onclick="openPropDetail(\''+x.c.id+'\')" style="cursor:pointer;font-size:13.5px;font-weight:700;color:#185FA5">'+E(x.c.addr||'')+'</span>'
+            +'<span style="font-size:12px;color:#566070;white-space:nowrap">'+E(x.c.phase)+' → <b style="color:#111">'+E(x.m.phase)+'</b></span>'
+          +'</div>'
+          +'<div style="font-size:11.5px;color:#566070;margin-top:3px">Because '+E(x.m.reasons.join('; and '))+'.</div>'
+          +(ro?'':'<div style="margin-top:7px"><button onclick="_phFix(\''+x.c.id+'\')" style="padding:5px 12px;background:#122A4A;color:#fff;border:none;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer">Move it to '+E(x.m.phase)+'</button></div>')
+        +'</div>';
+      }).join('')
+  +'</div>';
 }
 // The notice. It sits at the top of the Monday meeting until somebody reads it.
 function _avNotice(){
@@ -17298,7 +17414,7 @@ function openWeeklyMeeting(kind, week){
   document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div data-wm-doc="${kind}" data-wm-week="${wk}" style="padding:20px ${_wmWide?'26px':'20px'};max-width:${_wmWide?'none':'1000px'};margin:0 auto">
     <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:4px"><div style="font-size:18px;font-weight:700;color:#111">${titles[kind]||'Weekly Meeting'}</div><div style="font-size:13px;color:#566070">${kind==='va'?_calEsc(_vaMeetMonthLabel(wk)):'Week of '+_calEsc(_wmLabel(wk))} &middot; ${_wmWhenLabel(kind)}${isPast?' &middot; archived':''}</div></div>
     <div style="font-size:12.5px;color:#566070;margin-bottom:14px">Auto-prefilled from live data. <b style="color:#0F7B54">Everything saves itself as you type</b> — the Save buttons still work, you just don't need them. Notes are shared with everyone for this week's meeting.${isPast?' <b style="color:#8a6d1a">You are looking back at a past week.</b>':''}</div>
-    ${kind==='team'?_avNotice():''}
+    ${kind==='team'?_avNotice():''}${kind==='team'?_phPanel():''}
     ${_wmArchive(kind, wk)}
     ${(kind==='team'||kind==='market') && typeof _ctlPanel==='function' ? _ctlPanel(isReadOnly()||isPast) : ''}
     ${body}
@@ -37880,4 +37996,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-10-19d a-day-is-not-a-moment -->
+<!-- build: 2026-11-02a automations-actually-run -->
