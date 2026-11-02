@@ -20582,10 +20582,19 @@ function _rltCalYM(sel){
   // Open on the month where the work is: the earliest thing still outstanding on this
   // house, or today if there is nothing left.
   const dates=[].concat(
-    _ppEventsOn(sel.id).filter(function(e){ return !e.completed; }).map(function(e){ return e.event_date; }),
-    _ppTasksOn(sel.id).filter(function(t){ return t.status!=='done'; }).map(function(t){ return t.due_date; })
+    _ppEventsOn(sel.id).filter(function(e){ return !e.completed; }).map(function(e){ return e.end_date||e.event_date; }),
+    _ppTasksOn(sel.id).filter(function(t){ return t.status!=='done'; }).map(function(t){ return t.due_date; }),
+    (typeof _tvItems==='function'? _tvItems().filter(function(t){ return _tvPid(t.house)===sel.id; }).map(function(t){ return t.de; }) : [])
   ).filter(function(d){ return /^\d{4}-\d{2}-\d{2}$/.test(String(d||'')); }).sort();
-  const d = dates.length ? new Date(dates[0]+'T00:00:00') : new Date();
+  // Bruce, 2 Nov: a house's calendar was opening on October while the painter was booked
+  // for Wednesday - one task that had run out last week pulled the whole month back and
+  // hid everything still to come. A late item belongs on a late list, not in the month
+  // you are shown. So: the month of the next thing due, and today's month when the only
+  // things left are already behind us.
+  const _tdy=_ymd(new Date());
+  const ahead=dates.filter(function(d){ return d>=_tdy; });
+  const pick = ahead.length ? ahead[0] : '';
+  const d = pick ? new Date(pick+'T00:00:00') : new Date();
   const out={ pid:sel.id, y:d.getFullYear(), m:d.getMonth() };
   window.__rltCalYM=out;
   return out;
@@ -20594,6 +20603,13 @@ function _rltCalMove(n){
   const st=window.__rltCalYM; if(!st) return;
   const d=new Date(st.y, st.m+n, 1);
   window.__rltCalYM={ pid:st.pid, y:d.getFullYear(), m:d.getMonth() };
+  openRealtorDashboard();
+}
+// Jump the house calendar to the month a given day falls in.
+function _rltCalGoTo(ymd){
+  const st=window.__rltCalYM; if(!st) return;
+  const m=String(ymd||'').match(/^(\d{4})-(\d{2})-(\d{2})$/); if(!m) return;
+  window.__rltCalYM={ pid:st.pid, y:Number(m[1]), m:Number(m[2])-1 };
   openRealtorDashboard();
 }
 function _rltCalToday(){
@@ -20614,6 +20630,7 @@ function _rltMonthGrid(sel){
   // A booking with an end date sits on every day it runs, which is the whole reason to
   // draw a calendar rather than list a start date.
   const evs=_ppEventsOn(sel.id), tks=_ppTasksOn(sel.id);
+  const tvs=(typeof _tvItems==='function')? _tvItems().filter(function(t){ return _tvPid(t.house)===sel.id; }) : [];
   const onDay=function(day){
     const k=ds(day), out=[];
     evs.forEach(function(e){
@@ -20630,6 +20647,10 @@ function _rltMonthGrid(sel){
       const late=(t.status!=='done') && k<today;
       out.push({ t:'t', done:t.status==='done', icon:'✓', label:t.title||'task', col:late?'#B42318':'#185FA5', id:t.id });
     });
+    tvs.forEach(function(x){
+      if(k<x.ds || k>x.de) return;
+      out.push({ t:'tv', done:false, icon:'\u{1F4FA}', label:_tvLabel(x), col:'#6A2E86', tvid:x.id });
+    });
     return out;
   };
   const head=['S','M','T','W','T','F','S'].map(function(x){
@@ -20639,7 +20660,7 @@ function _rltMonthGrid(sel){
   for(let d=1; d<=days; d++){
     const k=ds(d), items=onDay(d), isToday=(k===today);
     const chips=items.slice(0,3).map(function(x){
-      return '<div '+(x.id?('onclick="openTaskDetail(\''+x.id+'\')" style="cursor:pointer;'):'style="')
+      return '<div '+(x.id?('onclick="openTaskDetail(\''+x.id+'\')" style="cursor:pointer;'):(x.tvid?('onclick="_tvDetail(\''+x.tvid+'\')" style="cursor:pointer;'):'style="'))
         +'font-size:9px;line-height:1.3;color:'+(x.done?'#8A94A6':x.col)+';'+(x.done?'text-decoration:line-through;':'')
         +'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px" title="'+E(x.label)+'">'
         +x.icon+' '+E(x.label)+'</div>';
@@ -20899,9 +20920,30 @@ function _rltStagePane(which, cards){
       +(on?'background:#122A4A;color:#fff':'background:#fff;color:#566070;border:0.5px solid #dde2ea')+'">'+label+'</span>';
   };
   const _toggle='<div style="display:flex;gap:6px;flex-wrap:wrap">'+_seg('cal','\u{1F4C5} Calendar')+_seg('list','\u2630 List')+'</div>';
+  const tvHouse=(typeof _tvItems==='function')? _tvItems().filter(function(t){ return _tvPid(t.house)===sel.id && t.de>=today; }) : [];
+  const tvRows=tvHouse.length
+    ? ('<div style="font-size:12px;font-weight:700;color:#6A2E86;text-transform:uppercase;letter-spacing:.05em;margin:13px 0 4px">\u{1F4FA} On the Legacy TV schedule</div>'
+       + tvHouse.slice(0,10).map(function(x){
+           return '<div onclick="_tvDetail(\''+x.id+'\')" style="cursor:pointer;display:flex;align-items:baseline;gap:9px;padding:6px 0;border-bottom:0.5px solid #f4f5f7">'
+             +'<span style="flex-shrink:0">\u{1F4FA}</span>'
+             +'<div style="flex:1;min-width:0;font-size:13px;color:#111;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+_calEsc(_tvLabel(x))+'</div>'
+             +'<div style="font-size:11.5px;color:#6A2E86;flex-shrink:0">'+_calEsc(x.ds)+(x.de!==x.ds?(' \u2192 '+_calEsc(x.de)):'')+'</div></div>';
+         }).join('')
+       + (tvHouse.length>10?'<div style="padding:7px 0;font-size:11.5px;color:#566070">+ '+(tvHouse.length-10)+' more</div>':''))
+    : '';
+  // A month view only shows one month. Anything open that is already behind us would
+  // simply not be on the grid, and work you cannot see is work that does not get done -
+  // so the calendar says so out loud and offers the month it is sitting in.
+  const _lateOpen=tOpen.filter(function(t){ return t.due_date && t.due_date<today; })
+    .concat(evOpen.filter(function(e){ return (e.end_date||e.event_date) && (e.end_date||e.event_date)<today; }));
+  const _lateNote=(_cv==='cal' && _lateOpen.length)
+    ? ('<div onclick="_rltCalGoTo(\''+_calEsc(_lateOpen.map(function(x){ return x.due_date||x.end_date||x.event_date; }).sort()[0])+'\')" style="cursor:pointer;background:#FDF3F2;border:0.5px solid #F3C9C3;border-radius:8px;padding:7px 11px;margin-bottom:8px;font-size:12px;color:#8C2A1C">'
+       +'<b>'+_lateOpen.length+'</b> thing'+(_lateOpen.length===1?'':'s')+' still open '+(_lateOpen.length===1?'is':'are')+' dated before today, so '+(_lateOpen.length===1?'it is':'they are')+' not on this month. <span style="text-decoration:underline">Show me the month '+(_lateOpen.length===1?'it is':'the oldest is')+' in &rsaquo;</span></div>')
+    : '';
   const _body=(_cv==='cal')
-    ? _rltMonthGrid(sel)
+    ? (_lateNote+_rltMonthGrid(sel))
     : ('<div style="font-size:12px;font-weight:700;color:#566070;text-transform:uppercase;letter-spacing:.05em;margin:2px 0 4px">Booked on site</div>'+evRows
+       + tvRows
        +'<div style="font-size:12px;font-weight:700;color:#566070;text-transform:uppercase;letter-spacing:.05em;margin:13px 0 4px">Scheduled tasks</div>'+taskRows);
   const evSec='<div data-rlt-when="1" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:13px 16px;margin-bottom:11px">'
     +'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:3px">'
@@ -21287,12 +21329,22 @@ function _rltGo(t){
   window._rltStageSel=''; window._rltStagePid=null;
   openRealtorDashboard();
 }
+// Is the realtor dashboard the thing on screen at this moment? Asked by anything that
+// finishes loading later and wants to redraw: a redraw is only ever allowed to refresh
+// the screen somebody is actually looking at, never to carry them back to this one.
+function _rltOnScreen(){
+  try{ return !!document.querySelector('[data-rlt-screen]'); }catch(e){ return false; }
+}
 function openRealtorDashboard(tab){
   window.__rltOpen=true;
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
   if(tab) window._rltTabSel=tab;
   _propFromSet('openRealtorDashboard',[window._rltTabSel||'main']);
+  // The Legacy TV schedule shows on a house's own calendar here too, so it is pulled
+  // from this screen as well as from the construction calendar - whichever one the
+  // person opens first. Redrawn when it lands, so nobody sees a short calendar.
+  try{ _tvPidMemo={}; _tvEnsure(function(){ if(_rltOnScreen()) openRealtorDashboard(); }); }catch(e){}
   // Showings and feedback live in two places: what the Slack sync wrote, and what a
   // person corrected in the trackers row. Both are loaded lazily, once, and the page
   // redraws itself when they land - so a realtor who opens this first does not see
@@ -21301,7 +21353,7 @@ function openRealtorDashboard(tab){
     const jobs=[];
     if(window._shwData===undefined){ window._shwData=null; jobs.push(_mktLoadShowings()); }
     if(window._trkLoaded!==true && typeof _trkLoad==='function'){ jobs.push(_trkLoad()); }
-    if(jobs.length){ Promise.all(jobs).then(function(){ if(window.__rltOpen) openRealtorDashboard(); }); }
+    if(jobs.length){ Promise.all(jobs).then(function(){ if(_rltOnScreen()) openRealtorDashboard(); }); }
   }
   const _rt=_rltTab();
   // Bruce, 11 Oct: "when I click on Katie Har and Will Har, I want their dashboard to
@@ -21453,7 +21505,7 @@ function openRealtorDashboard(tab){
     + (_stageNow ? _rltStagePane(_stageNow, _stagePools[_stageNow]||[]) : overviewBody);
   const _mainWide=!!_stageNow;
 
-  document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div style="padding:20px;max-width:${_mainWide?1320:1000}px;margin:0 auto">
+  document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div data-rlt-screen="1" style="padding:20px;max-width:${_mainWide?1320:1000}px;margin:0 auto">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
       <div style="font-size:18px;font-weight:700;color:#111">🔑 Realtor Dashboard</div>
       ${isReadOnly()?'':`<button onclick="_rltAddTask()" style="padding:8px 15px;background:#122A4A;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">＋ Schedule a task</button>`}
@@ -38222,4 +38274,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-11-02b tv-schedule-on-our-calendar -->
+<!-- build: 2026-11-02c house-calendar-opens-where-the-work-is -->
