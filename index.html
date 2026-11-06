@@ -7611,7 +7611,7 @@ function _pdLinked(c, which){
   const evRow=(e)=>{
     const con=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).find(x=>x.id===e.contractor_id);
     const label=con?(con.business_name||con.name):(e.title||'');
-    const icon=e.kind==='material'?'&#128230;':(e.kind==='contractor'?'&#9733;':'&bull;');
+    const icon=_isTvEvent(e)?'&#128250;':(e.kind==='material'?'&#128230;':(e.kind==='contractor'?'&#9733;':'&bull;'));
     return `<div style="display:flex;align-items:baseline;gap:9px;padding:6px 0;border-bottom:0.5px solid #f4f5f7">
       <span style="flex-shrink:0">${icon}</span>
       <div style="flex:1;min-width:0;font-size:13px;color:${e.completed?'#566070':'#111'};overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_calEsc(label)||'&mdash;'}</div>
@@ -11283,7 +11283,7 @@ function _wmItems(pid, from, to){
     out.push({key:'e:'+e.id, id:e.id, type:'event', date:d, endDate:(e.end_date||''), running:running,
               when:_wmSpan(d, e.end_date||''),
               title:isC?(_contractorName(e.contractor_id)||'Contractor'):(isB?bstep:(e.title||(e.kind==='material'?'Material':'Event'))),
-              sub:isC?(trade?('Contractor \u00b7 '+trade):'Contractor booking'):(isB?'Baseline schedule':(e.kind==='material'?'Material / delivery':'Scheduled')),
+              sub:_isTvEvent(e)?('\u{1F4FA} Legacy TV schedule'+(String(e.notes||'').replace(/\s*\u2014?\s*from the Legacy TV schedule$/,'').trim()?(' \u00b7 '+String(e.notes||'').replace(/\s*\u2014?\s*from the Legacy TV schedule$/,'').trim()):'')):(isC?(trade?('Contractor \u00b7 '+trade):'Contractor booking'):(isB?'Baseline schedule':(e.kind==='material'?'Material / delivery':'Scheduled'))),
               // Bruce, 13 Oct: "don't even have the word contractor booked. Replace it
               // with what they're doing or what trade's going there." The trade is what
               // is HAPPENING, so the summary leads with it and keeps the name underneath.
@@ -17410,11 +17410,14 @@ function openWeeklyMeeting(kind, week){
   // A takedown we have bought and that has gone vacant moves itself onto the
   // construction walk. Fired here because this is the screen the mistake showed up on.
   if(kind==='team'){ try{ window.__wmLastWeek=wk; Promise.resolve(_avSweep()); }catch(e){} }
+  // The Legacy TV bookings are rows on our own calendar, so the only thing this screen
+  // has to do is make sure they have come across before it draws the week.
+  if(kind==='team'){ try{ _tvEnsureSynced(function(){ _wmRerenderIfOpen(); }); }catch(e){} }
   const _wmWide = (kind==='team');
   document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div data-wm-doc="${kind}" data-wm-week="${wk}" style="padding:20px ${_wmWide?'26px':'20px'};max-width:${_wmWide?'none':'1000px'};margin:0 auto">
     <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:4px"><div style="font-size:18px;font-weight:700;color:#111">${titles[kind]||'Weekly Meeting'}</div><div style="font-size:13px;color:#566070">${kind==='va'?_calEsc(_vaMeetMonthLabel(wk)):'Week of '+_calEsc(_wmLabel(wk))} &middot; ${_wmWhenLabel(kind)}${isPast?' &middot; archived':''}</div></div>
     <div style="font-size:12.5px;color:#566070;margin-bottom:14px">Auto-prefilled from live data. <b style="color:#0F7B54">Everything saves itself as you type</b> — the Save buttons still work, you just don't need them. Notes are shared with everyone for this week's meeting.${isPast?' <b style="color:#8a6d1a">You are looking back at a past week.</b>':''}</div>
-    ${kind==='team'?_avNotice():''}${kind==='team'?_phPanel():''}${kind==='team'?_tvWeekPanel(wk):''}
+    ${kind==='team'?_avNotice():''}${kind==='team'?_phPanel():''}
     ${_wmArchive(kind, wk)}
     ${(kind==='team'||kind==='market') && typeof _ctlPanel==='function' ? _ctlPanel(isReadOnly()||isPast) : ''}
     ${body}
@@ -20630,7 +20633,6 @@ function _rltMonthGrid(sel){
   // A booking with an end date sits on every day it runs, which is the whole reason to
   // draw a calendar rather than list a start date.
   const evs=_ppEventsOn(sel.id), tks=_ppTasksOn(sel.id);
-  const tvs=(typeof _tvItems==='function')? _tvItems().filter(function(t){ return _tvPid(t.house)===sel.id; }) : [];
   const onDay=function(day){
     const k=ds(day), out=[];
     evs.forEach(function(e){
@@ -20639,17 +20641,13 @@ function _rltMonthGrid(sel){
       if(k<a || k>(b||a)) return;
       const con=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).find(function(x){ return x.id===e.contractor_id; });
       const label=con?(con.business_name||con.name||''):(e.title||'');
-      out.push({ t:'e', done:!!e.completed, icon:(e.kind==='material')?'\u{1F4E6}':((e.kind==='contractor')?'★':'•'),
-                 label:label||'booking', col:(e.kind==='material')?'#8A5A10':'#4A7318' });
+      out.push({ t:'e', done:!!e.completed, icon:_evIcon(e),
+                 label:label||'booking', col:_isTvEvent(e)?'#6A2E86':((e.kind==='material')?'#8A5A10':'#4A7318') });
     });
     tks.forEach(function(t){
       if(String(t.due_date||'')!==k) return;
       const late=(t.status!=='done') && k<today;
       out.push({ t:'t', done:t.status==='done', icon:'✓', label:t.title||'task', col:late?'#B42318':'#185FA5', id:t.id });
-    });
-    tvs.forEach(function(x){
-      if(k<x.ds || k>x.de) return;
-      out.push({ t:'tv', done:false, icon:'\u{1F4FA}', label:_tvLabel(x), col:'#6A2E86', tvid:x.id });
     });
     return out;
   };
@@ -20660,7 +20658,7 @@ function _rltMonthGrid(sel){
   for(let d=1; d<=days; d++){
     const k=ds(d), items=onDay(d), isToday=(k===today);
     const chips=items.slice(0,3).map(function(x){
-      return '<div '+(x.id?('onclick="openTaskDetail(\''+x.id+'\')" style="cursor:pointer;'):(x.tvid?('onclick="_tvDetail(\''+x.tvid+'\')" style="cursor:pointer;'):'style="'))
+      return '<div '+(x.id?('onclick="openTaskDetail(\''+x.id+'\')" style="cursor:pointer;'):'style="')
         +'font-size:9px;line-height:1.3;color:'+(x.done?'#8A94A6':x.col)+';'+(x.done?'text-decoration:line-through;':'')
         +'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:1px" title="'+E(x.label)+'">'
         +x.icon+' '+E(x.label)+'</div>';
@@ -20904,7 +20902,7 @@ function _rltStagePane(which, cards){
     ? evOpen.slice(0,10).map(function(e){
         const con=(typeof _contractorsCache!=='undefined'?_contractorsCache:[]).find(function(x){ return x.id===e.contractor_id; });
         const label=con?(con.business_name||con.name):(e.title||'');
-        const icon=(e.kind==='material')?'&#128230;':((e.kind==='contractor')?'&#9733;':'&bull;');
+        const icon=_isTvEvent(e)?'&#128250;':((e.kind==='material')?'&#128230;':((e.kind==='contractor')?'&#9733;':'&bull;'));
         return '<div style="display:flex;align-items:baseline;gap:9px;padding:6px 0;border-bottom:0.5px solid #f4f5f7">'
           +'<span style="flex-shrink:0">'+icon+'</span>'
           +'<div style="flex:1;min-width:0;font-size:13px;color:#111;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+(_calEsc(label)||'&mdash;')+'</div>'
@@ -20920,20 +20918,6 @@ function _rltStagePane(which, cards){
       +(on?'background:#122A4A;color:#fff':'background:#fff;color:#566070;border:0.5px solid #dde2ea')+'">'+label+'</span>';
   };
   const _toggle='<div style="display:flex;gap:6px;flex-wrap:wrap">'+_seg('cal','\u{1F4C5} Calendar')+_seg('list','\u2630 List')+'</div>';
-  const tvHouse=(typeof _tvItems==='function')? _tvItems().filter(function(t){ return _tvPid(t.house)===sel.id && t.de>=today; }) : [];
-  const tvRows=tvHouse.length
-    ? ('<div style="font-size:12px;font-weight:700;color:#6A2E86;text-transform:uppercase;letter-spacing:.05em;margin:13px 0 4px">\u{1F4FA} On the Legacy TV schedule</div>'
-       + tvHouse.slice(0,10).map(function(x){
-           return '<div onclick="_tvDetail(\''+x.id+'\')" style="cursor:pointer;display:flex;align-items:baseline;gap:9px;padding:6px 0;border-bottom:0.5px solid #f4f5f7">'
-             +'<span style="flex-shrink:0">\u{1F4FA}</span>'
-             +'<div style="flex:1;min-width:0;font-size:13px;color:#111;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+_calEsc(_tvLabel(x))+'</div>'
-             +'<div style="font-size:11.5px;color:#6A2E86;flex-shrink:0">'+_calEsc(x.ds)+(x.de!==x.ds?(' \u2192 '+_calEsc(x.de)):'')+'</div></div>';
-         }).join('')
-       + (tvHouse.length>10?'<div style="padding:7px 0;font-size:11.5px;color:#566070">+ '+(tvHouse.length-10)+' more</div>':''))
-    : '';
-  // A month view only shows one month. Anything open that is already behind us would
-  // simply not be on the grid, and work you cannot see is work that does not get done -
-  // so the calendar says so out loud and offers the month it is sitting in.
   const _lateOpen=tOpen.filter(function(t){ return t.due_date && t.due_date<today; })
     .concat(evOpen.filter(function(e){ return (e.end_date||e.event_date) && (e.end_date||e.event_date)<today; }));
   const _lateNote=(_cv==='cal' && _lateOpen.length)
@@ -20943,7 +20927,6 @@ function _rltStagePane(which, cards){
   const _body=(_cv==='cal')
     ? (_lateNote+_rltMonthGrid(sel))
     : ('<div style="font-size:12px;font-weight:700;color:#566070;text-transform:uppercase;letter-spacing:.05em;margin:2px 0 4px">Booked on site</div>'+evRows
-       + tvRows
        +'<div style="font-size:12px;font-weight:700;color:#566070;text-transform:uppercase;letter-spacing:.05em;margin:13px 0 4px">Scheduled tasks</div>'+taskRows);
   const evSec='<div data-rlt-when="1" style="background:#fff;border:0.5px solid #e0e4ec;border-radius:12px;padding:13px 16px;margin-bottom:11px">'
     +'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:3px">'
@@ -21344,7 +21327,7 @@ function openRealtorDashboard(tab){
   // The Legacy TV schedule shows on a house's own calendar here too, so it is pulled
   // from this screen as well as from the construction calendar - whichever one the
   // person opens first. Redrawn when it lands, so nobody sees a short calendar.
-  try{ _tvPidMemo={}; _tvEnsure(function(){ if(_rltOnScreen()) openRealtorDashboard(); }); }catch(e){}
+  try{ _tvEnsureSynced(function(){ if(_rltOnScreen()) openRealtorDashboard(); }); }catch(e){}
   // Showings and feedback live in two places: what the Slack sync wrote, and what a
   // person corrected in the trackers row. Both are loaded lazily, once, and the page
   // redraws itself when they land - so a realtor who opens this first does not see
@@ -33286,6 +33269,7 @@ function _calKindSelect(st){
     ${opt('all','All categories (real bookings)')}
     ${opt('material','\u{1F4E6} Material deliveries')}
     ${opt('contractor','★ Contractor starts')}
+    ${opt('tv','\u{1F4FA} Legacy TV schedule')}
     ${types.length?('<optgroup label="Your own types">'+types.map(t=>opt('custom::'+t,'• '+t)).join('')+'</optgroup>'):''}
   </select>`;
 }
@@ -33304,6 +33288,7 @@ const TV_URL  = "https://qvafioufadayimnjmben.supabase.co";
 const TV_KEY  = "sb_publishable_889gSOrXh-6b34C1Uh4h6A_26b2tADm";
 const TV_LINK = "https://zombie-tv-dashboard.vercel.app/";
 const TV_TTL_MS = 5*60*1000;
+const TV_FETCH_MS = 12000;
 let _tvCache=null, _tvAt=0, _tvErr=null, _tvBusy=false, _tvPidMemo={};
 
 // Addresses are typed by hand on both sides, so they never match character for
@@ -33343,16 +33328,37 @@ function _tvPid(house){
   return id;
 }
 function _tvDay(v){ const m=String(v==null?"":v).match(/^(\d{4})-(\d{2})-(\d{2})/); return m?m[0]:""; }
-function _tvOn(){ return _calState.tv!==false; }
-function calToggleTV(){ _calState.tv=!_tvOn(); _calRerender(); }
-async function calRefreshTV(){ await _tvLoad(true); _tvPidMemo={}; _calRerender(); }
+// A booking off the Legacy TV schedule, once it is a row on our calendar like any other.
+function _isTvEvent(e){ return !!e && e.kind==='tv'; }
+function _evIcon(e){
+  return _isTvEvent(e) ? '\u{1F4FA}'
+       : (e&&e.kind==='material') ? '\u{1F4E6}'
+       : (e&&e.kind==='contractor') ? '\u2605'
+       : (e&&e.kind==='baseline') ? '\u{1F5D3}' : '\u2022';
+}
+function _evWhat(e){
+  if(!e) return '';
+  if(_isTvEvent(e)) return e.title||'Scheduled work';
+  if(e.kind==='contractor') return (typeof _contractorName==='function'?_contractorName(e.contractor_id):'')||'Contractor';
+  return e.title||(e.kind==='material'?'Material':'Event');
+}
 
 async function _tvLoad(force){
   if(_tvBusy) return;
   if(!force && _tvCache && (Date.now()-_tvAt)<TV_TTL_MS) return;
   _tvBusy=true;
   try{
-    const r=await fetch(TV_URL+"/rest/v1/houses?select=id,data",{headers:{apikey:TV_KEY,Authorization:"Bearer "+TV_KEY}});
+    // A request that is refused comes back and says so. A request that is swallowed -
+    // a blocked network, a host that accepts the connection and then goes quiet - never
+    // comes back at all, and without a clock on it this would sit on "Reading the
+    // Legacy TV schedule..." for the rest of the day without ever admitting it failed.
+    const ctl=(typeof AbortController!=="undefined")?new AbortController():null;
+    const bell=ctl?setTimeout(function(){ try{ ctl.abort(); }catch(e){} }, TV_FETCH_MS):null;
+    let r;
+    try{
+      r=await fetch(TV_URL+"/rest/v1/houses?select=id,data",
+        {headers:{apikey:TV_KEY,Authorization:"Bearer "+TV_KEY}, signal:ctl?ctl.signal:undefined});
+    } finally { if(bell) clearTimeout(bell); }
     if(!r.ok) throw new Error("the TV site answered "+r.status);
     const rows=await r.json();
     const out=[];
@@ -33385,7 +33391,8 @@ async function _tvLoad(force){
     _tvCache=out; _tvAt=Date.now(); _tvErr=null;
   }catch(e){
     // A schedule we could not fetch is said out loud, never shown as an empty week.
-    _tvErr=(e&&e.message)?e.message:"could not reach the TV site";
+    _tvErr=(e&&e.name==="AbortError") ? "the TV site did not answer"
+          : ((e&&e.message)?e.message:"could not reach the TV site");
     if(!_tvCache) _tvCache=[];
     _tvAt=Date.now();
   }
@@ -33404,107 +33411,212 @@ function _tvLabel(t){
   const who=t.company||t.contact||"";
   return (t.kind==="filming"?"Filming":(t.title||"Scheduled work"))+(who?(" — "+who):"");
 }
-function _tvWhere(t){ const pid=_tvPid(t.house); return pid?(_propAddr(pid)||t.house):t.house; }
-function _tvDays(t){ return t.ds===t.de ? _prettyDay(t.ds) : (_prettyDay(t.ds)+" → "+_prettyDay(t.de)); }
-// A TV item answers to the calendar's property filter the same way ours do, but only
-// once we know which house it is. One we cannot match is never hidden by a filter it
-// cannot be judged against - it just stops showing when you narrow to one house.
-function _tvPassesFilter(t){
-  const st=_calState;
-  if(st.prop!=="all") return _tvPid(t.house)===st.prop;
-  if(st.pm!=="all"){ const pid=_tvPid(t.house); return !!pid && _sameAssignee(_propPM(pid),st.pm); }
-  if(st.rtrOnly) return false;
-  return true;
-}
-function _tvChip(t){
-  const lbl="📺 "+_tvLabel(t);
-  return '<div onclick="event.stopPropagation();_tvDetail(\''+t.id+'\')" title="Legacy TV schedule — '+_calEsc(_tvWhere(t))+' (read-only; edited on the TV site)" style="cursor:pointer;font-size:11px;background:#F7EDFB;color:#6A2E86;border:1px dashed #DCBCEA;border-radius:4px;padding:2px 5px;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+_calEsc(lbl)+'</div>';
-}
-function _tvDetail(id){
-  const t=_tvItems().find(function(x){ return x.id===id; });
-  if(!t){ alert("That booking is no longer on the TV schedule. Refresh to pull it again."); return; }
-  const E=_calEsc;
-  const pid=_tvPid(t.house);
-  const row=function(k,v){ return v?('<div style="display:flex;gap:10px;padding:7px 0;border-bottom:0.5px solid #f1f3f7"><div style="width:120px;flex:none;font-size:12.5px;color:#566070">'+E(k)+'</div><div style="font-size:13.5px;color:#111;min-width:0">'+E(v)+'</div></div>'):''; };
-  const html=''
-    + '<button class="modal-close" onclick="closeModal(\'calevent-modal\')">✕</button>'
-    + '<h2>'+E(t.kind==="filming"?"Filming day":(t.title||"Scheduled work"))+'</h2>'
-    + '<div style="background:#F7EDFB;border:1px solid #DCBCEA;border-radius:9px;padding:10px 13px;margin-bottom:14px;font-size:12.5px;color:#6A2E86;line-height:1.6">'
-      + 'This is on the <b>Legacy TV</b> schedule, not ours. It shows here so the two calendars agree, but it is changed on the TV dashboard — nothing you do on this page can move it.'
-    + '</div>'
-    + row("House", t.house)
-    + (pid? row("Our property", _propAddr(pid)) : '<div style="display:flex;gap:10px;padding:7px 0;border-bottom:0.5px solid #f1f3f7"><div style="width:120px;flex:none;font-size:12.5px;color:#566070">Our property</div><div style="font-size:13px;color:#8a6d1a;min-width:0">Not matched to a property card here.</div></div>')
-    + row("When", _tvDays(t))
-    + row("Company", t.company)
-    + row("Contact", t.contact)
-    + row("Phone", t.phone)
-    + '<div style="margin-top:16px;display:flex;gap:9px;flex-wrap:wrap">'
-      + '<button onclick="window.open(\''+TV_LINK+'\',\'_blank\')" style="padding:9px 15px;background:#122A4A;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Open the TV dashboard ↗</button>'
-      + (pid?'<button onclick="closeModal(\'calevent-modal\');openPropDetail(\''+pid+'\')" style="padding:9px 15px;background:#fff;color:#185FA5;border:0.5px solid #cdd7e6;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Open '+E(_propAddr(pid))+'</button>':'')
-    + '</div>';
-  document.getElementById("calevent-inner").innerHTML=html;
-  openModal("calevent-modal");
-}
-// The strip above the calendar: what came across, when, and the switch to hide it.
-function _tvBar(){
-  const n=_tvItems().length;
-  const on=_tvOn();
-  const E=_calEsc;
-  const state=_tvErr
-      ? '<span style="color:#9a3b2f">Could not read the TV schedule — '+E(_tvErr)+'.</span>'
-      : (!_tvCache ? '<span style="color:#566070">Reading the Legacy TV schedule…</span>'
-        : (n? ('<span style="color:#6A2E86"><b>'+n+'</b> booking'+(n===1?'':'s')+' pulled from the Legacy TV schedule.</span>')
-            : '<span style="color:#566070">Nothing is booked on the Legacy TV schedule.</span>'));
-  return '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#FBF6FD;border:0.5px solid #E6D2F0;border-radius:9px;padding:8px 12px;margin-bottom:12px;font-size:12.5px">'
-    + '<span>📺</span><span style="min-width:0">'+state+'</span>'
-    + '<span onclick="calToggleTV()" style="margin-left:auto;cursor:pointer;color:#6A2E86;font-weight:600;white-space:nowrap">'+(on?"Hide them":"Show them")+'</span>'
-    + '<span onclick="calRefreshTV()" style="cursor:pointer;color:#185FA5;white-space:nowrap">Refresh</span>'
-  + '</div>';
-}
-// The Monday meeting doc. Same week the rest of the page is showing.
-function _tvWeekPanel(wk){
-  if(!/^\d{4}-\d{2}-\d{2}$/.test(String(wk||""))) return '';
-  _tvEnsure(function(){ if(typeof _wmRerenderIfOpen==="function") _wmRerenderIfOpen(); });
-  const E=_calEsc;
-  const end=_shiftDay(wk,6);
-  if(_tvErr && !_tvItems().length){
-    return '<div style="background:#FBF6FD;border:1px solid #E6D2F0;border-radius:11px;padding:11px 15px;margin-bottom:14px;font-size:12.5px;color:#6A2E86">📺 The Legacy TV schedule could not be read just now — '+E(_tvErr)+'. Nothing below is missing from our own calendar; this week’s TV bookings simply are not showing.</div>';
-  }
-  if(!_tvCache) return '<div style="background:#FBF6FD;border:1px solid #E6D2F0;border-radius:11px;padding:11px 15px;margin-bottom:14px;font-size:12.5px;color:#6A2E86">📺 Reading this week’s Legacy TV schedule…</div>';
-  const items=_tvInRange(wk,end);
-  if(!items.length) return '';
-  // Grouped by house, because that is how the walk goes.
-  const byHouse={};
-  items.forEach(function(t){ (byHouse[t.house]=byHouse[t.house]||[]).push(t); });
-  const houses=Object.keys(byHouse).sort();
-  const dayShort=function(ds){ try{ const p=ds.split("-").map(Number); return new Date(p[0],p[1]-1,p[2]).toLocaleDateString(undefined,{weekday:"short",month:"numeric",day:"numeric"}); }catch(e){ return ds; } };
-  return '<div style="background:#FBF6FD;border:1px solid #E6D2F0;border-radius:11px;padding:12px 15px;margin-bottom:14px">'
-    + '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:3px">'
-      + '<div style="font-size:13.5px;font-weight:700;color:#6A2E86">📺 Legacy TV schedule this week</div>'
-      + '<span onclick="window.open(\''+TV_LINK+'\',\'_blank\')" style="cursor:pointer;font-size:12px;color:#185FA5;font-weight:600;white-space:nowrap">Open the TV dashboard ↗</span>'
-    + '</div>'
-    + '<div style="font-size:12px;color:#6A2E86;margin-bottom:9px">'+items.length+' booking'+(items.length===1?'':'s')+' on the show houses between '+E(dayShort(wk))+' and '+E(dayShort(end))+'. Read-only — these are changed on the TV site.</div>'
-    + houses.map(function(h){
-        const pid=_tvPid(h);
-        const rows=byHouse[h].slice().sort(function(a,b){ return a.ds.localeCompare(b.ds); });
-        return '<div style="background:#fff;border:0.5px solid #E6D2F0;border-radius:9px;padding:9px 12px;margin-bottom:7px">'
-          + '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:9px;flex-wrap:wrap;margin-bottom:4px">'
-            + (pid
-               ? '<span onclick="openPropDetail(\''+pid+'\')" style="cursor:pointer;font-size:13.5px;font-weight:700;color:#185FA5">'+E(_propAddr(pid)||h)+'</span>'
-               : '<span style="font-size:13.5px;font-weight:700;color:#111">'+E(h)+'</span>')
-            + (pid?'':'<span style="font-size:11.5px;color:#8a6d1a;white-space:nowrap">Not one of our property cards</span>')
-          + '</div>'
-          + rows.map(function(t){
-              return '<div onclick="_tvDetail(\''+t.id+'\')" style="cursor:pointer;display:flex;gap:9px;align-items:baseline;padding:3px 0;font-size:12.5px">'
-                + '<span style="color:#6A2E86;white-space:nowrap;min-width:92px;flex:none">'+E(t.ds===t.de?dayShort(t.ds):(dayShort(t.ds)+"–"+dayShort(t.de)))+'</span>'
-                + '<span style="color:#111;min-width:0">'+E(_tvLabel(t))+'</span>'
-              + '</div>';
-            }).join('')
-        + '</div>';
-      }).join('')
-  + '</div>';
-}
+// ===================== LEGACY TV SCHEDULE — THE IMPORT =====================
+// Bruce, 6 Nov: "that should be imported into our construction calendar on our website
+// as well and pop up on the meeting tab as it does everything else that's on our
+// construction calendar."
+// Showing their schedule beside ours was the wrong answer. A booking that is only
+// drawn on top of the calendar is not ON the calendar: it cannot be confirmed in the
+// Monday meeting, it is not on the property card, it is not in the 48-hour list, and
+// every screen that reads bookings has to be taught about it one at a time. So the
+// bookings come ACROSS. They are written into pm_calendar_events as real rows, and
+// from that moment every part of this site treats them like any other booking.
+//
+// They are written with kind 'tv', and that is what makes this safe to run again and
+// again: 'tv' marks a row as one this import owns. Nothing else in the app writes that
+// kind, so the import can work out what it put there last time without needing to
+// guess, and without a bookkeeping tag buried in a notes box somebody types into.
+//
+// What it will and will not do, which is the whole of the safety of it:
+//   · it ADDS a booking that is on the TV schedule and not yet on ours
+//   · it REMOVES one of its OWN rows when that booking is gone from the TV schedule
+//   · it never touches a row anybody else made - only kind 'tv'
+//   · it never removes one of its own rows that somebody has ticked off, rescheduled
+//     or written a note on. A person's decision outlives the schedule that caused it.
+//   · it never unticks anything.
+//   · if a single run would write more than TV_SYNC_CAP rows it stops and says so,
+//     rather than pouring a mistake into the calendar Bruce runs the business from.
+const TV_SYNC_CAP = 400;
+let _tvSyncBusy=false, _tvSyncAt=0, _tvSyncLast=null, _tvSyncErr=null, _tvSyncHeld=null;
 
+// The one line of notes a booking carries across: who is coming, and who they are.
+function _tvNotes(t){
+  const bits=[];
+  if(t.company) bits.push(t.company);
+  if(t.contact && t.contact!==t.company) bits.push(t.contact);
+  if(t.phone) bits.push(t.phone);
+  return (bits.join(" · ") ? (bits.join(" · ")+" — ") : "") + "from the Legacy TV schedule";
+}
+// Two bookings are the same booking when they are the same work, on the same house,
+// over the same days. Nothing in this key is a field a person edits, so a note typed
+// on a row here never makes the import think it is looking at something new.
+function _tvRowKey(r){
+  return [r.property_id||"", r.location||"", r.event_date||"", r.end_date||"", String(r.title||"").trim()].join("|");
+}
+// What the TV schedule says our calendar should hold.
+function _tvWanted(){
+  const out=[];
+  _tvItems().forEach(function(t){
+    const pid=_tvPid(t.house);
+    out.push({
+      property_id: pid||null,
+      // A show house we do not carry as a property card still belongs on the calendar;
+      // it goes on by address, exactly as a booking typed in for an address would.
+      location: pid?null:t.house,
+      event_date: t.ds,
+      end_date: (t.de && t.de!==t.ds) ? t.de : null,
+      kind: "tv",
+      title: (t.kind==="filming") ? "Filming" : (t.title||"Scheduled work"),
+      contractor_id: null,
+      notes: (t.kind==="filming") ? "Filming day — from the Legacy TV schedule" : _tvNotes(t)
+    });
+  });
+  return out;
+}
+// A row this import owns that somebody has since acted on. Hands off.
+function _tvTouched(e){
+  if(!e) return false;
+  // Ticked off, or moved on purpose. Both are somebody's decision about the job, and a
+  // schedule changing at the other end is not a reason to throw either of them away.
+  // A note is deliberately NOT on this list: a note written on a booking that no longer
+  // exists is an orphan row on the calendar for ever, which is worse than losing a line
+  // of text, and the card says so before anybody types into it.
+  if(e.completed) return true;
+  if(Number(e.reschedule_count||0)>0) return true;
+  return false;
+}
+// Work out the difference without writing anything. Everything the import does is
+// decided here, so it can be shown to somebody before a single row moves.
+function _tvPlan(){
+  const want=_tvWanted();
+  const have=(typeof _calEventsCache!=="undefined"?_calEventsCache:[]).filter(function(e){ return e && e.kind==="tv"; });
+  const byKey={};
+  have.forEach(function(e){ const k=_tvRowKey(e); (byKey[k]=byKey[k]||[]).push(e); });
+  const need={};
+  want.forEach(function(r){ const k=_tvRowKey(r); (need[k]=need[k]||[]).push(r); });
+  const add=[], del=[], kept=[];
+  Object.keys(need).forEach(function(k){
+    const got=(byKey[k]||[]).length;
+    const n=need[k].length;
+    for(let i=got;i<n;i++) add.push(need[k][i]);
+    for(let i=0;i<Math.min(got,n);i++) kept.push(byKey[k][i]);
+  });
+  Object.keys(byKey).forEach(function(k){
+    const n=(need[k]||[]).length;
+    byKey[k].slice(n).forEach(function(e){
+      if(_tvTouched(e)) kept.push(e);      // somebody has worked on it - it stays
+      else del.push(e);
+    });
+  });
+  return { add:add, del:del, kept:kept, have:have.length, want:want.length };
+}
+// Run it. `force` goes ahead with a plan that was held back for being too big.
+async function _tvSync(force){
+  if(_tvSyncBusy) return null;
+  if(typeof supabase==="undefined" || !supabase) return null;
+  if(typeof isReadOnly==="function" && isReadOnly()) return null;
+  if(!_tvCache) return null;
+  if(_tvErr && !_tvItems().length) return null;    // never reconcile against a failed read
+  const plan=_tvPlan();
+  if(!plan.add.length && !plan.del.length){
+    _tvSyncAt=Date.now(); _tvSyncHeld=null; _tvSyncErr=null;
+    _tvSyncLast={ added:0, removed:0, held:0, at:Date.now(), total:plan.have };
+    return _tvSyncLast;
+  }
+  // The stop. A schedule that suddenly wants hundreds of changes is far more likely to
+  // be something gone wrong at one end than a real week's work.
+  if(!force && (plan.add.length+plan.del.length) > TV_SYNC_CAP){
+    _tvSyncHeld=plan; _tvSyncAt=Date.now();
+    return null;
+  }
+  _tvSyncBusy=true;
+  let added=0, removed=0, err=null;
+  try{
+    // Inserted in batches so one long schedule is not one enormous request.
+    for(let i=0;i<plan.add.length && !err;i+=100){
+      const chunk=plan.add.slice(i,i+100);
+      const res=await supabase.from("pm_calendar_events").insert(chunk);
+      if(res.error) err=res.error.message||"insert failed"; else added+=chunk.length;
+    }
+    if(!err && plan.del.length){
+      const ids=plan.del.map(function(e){ return e.id; });
+      for(let i=0;i<ids.length && !err;i+=100){
+        const chunk=ids.slice(i,i+100);
+        const res=await supabase.from("pm_calendar_events").delete().in("id",chunk);
+        if(res.error) err=res.error.message||"remove failed"; else removed+=chunk.length;
+      }
+    }
+  }catch(e){ err=(e&&e.message)||"the import could not finish"; }
+  _tvSyncBusy=false;
+  _tvSyncAt=Date.now(); _tvSyncHeld=null; _tvSyncErr=err;
+  if(!err && (added||removed)){
+    try{ _logAudit("synced","calendar","Legacy TV schedule",
+      added+" booking"+(added===1?"":"s")+" added, "+removed+" removed"); }catch(e){}
+  }
+  _tvSyncLast={ added:added, removed:removed, held:0, at:Date.now(), total:plan.have+added-removed };
+  if(added||removed){ try{ await loadCalendarEventsFromSupabase(); }catch(e){} }
+  return _tvSyncLast;
+}
+// Pull the schedule, then bring it across, then redraw whatever asked.
+// The callback here REDRAWS the screen, and the screen it redraws calls this function
+// again. So the clock has to be started BEFORE the work, never after it: a run that
+// ends early - nothing to do, a read-only user, a schedule that could not be read -
+// would otherwise leave the clock unset, and the redraw would come straight back in.
+// That is not a slow page, it is a page that never stops, and it took out every screen
+// behind it. The stamp goes on first, on every path, without exception.
+function _tvEnsureSynced(after){
+  const done=function(){ if(typeof after==="function"){ try{ after(); }catch(e){} } };
+  const run=function(){
+    _tvPidMemo={};
+    _tvSyncAt=Date.now();
+    Promise.resolve(_tvSync(false)).then(done, done);
+  };
+  if(_tvSyncAt && (Date.now()-_tvSyncAt)<TV_TTL_MS) return;     // already done, recently
+  if(_tvCache && (Date.now()-_tvAt)<TV_TTL_MS){ run(); return; }
+  if(_tvBusy) return;
+  _tvSyncAt=Date.now();
+  Promise.resolve(_tvLoad(false)).then(run, done);
+}
+async function _tvSyncNow(){
+  _tvSyncErr=null;
+  await _tvLoad(true);
+  _tvPidMemo={};
+  await _tvSync(false);
+  _calRerender();
+}
+async function _tvSyncAnyway(){
+  if(!_tvSyncHeld) return;
+  if(!confirm("Bring across "+_tvSyncHeld.add.length+" new booking"+(_tvSyncHeld.add.length===1?"":"s")
+    +" and take off "+_tvSyncHeld.del.length+"?\n\nThat is a bigger change than a normal week, which is why it stopped to ask.")) return;
+  await _tvSync(true);
+  _calRerender();
+}
+// The strip on the construction calendar: what came across, and when.
+function _tvSyncBar(){
+  const E=_calEsc;
+  const ro=(typeof isReadOnly==="function")?isReadOnly():false;
+  const mine=((typeof _calEventsCache!=="undefined"?_calEventsCache:[])||[]).filter(function(e){ return e&&e.kind==="tv"; }).length;
+  let line;
+  if(_tvSyncHeld){
+    line='<span style="color:#8C2A1C">The Legacy TV schedule wants to change <b>'
+      +(_tvSyncHeld.add.length+_tvSyncHeld.del.length)+'</b> bookings at once — more than a normal week, so nothing has been changed.</span>'
+      +(ro?'':' <span onclick="_tvSyncAnyway()" style="cursor:pointer;color:#185FA5;font-weight:600;text-decoration:underline">Look at it and go ahead &rsaquo;</span>');
+  } else if(_tvSyncErr){
+    line='<span style="color:#9a3b2f">The last import did not finish — '+E(_tvSyncErr)+'.</span>';
+  } else if(_tvErr && !_tvItems().length){
+    line='<span style="color:#9a3b2f">Could not read the Legacy TV schedule — '+E(_tvErr)+'. Nothing already on this calendar has been changed.</span>';
+  } else if(!_tvCache){
+    line='<span style="color:#566070">Reading the Legacy TV schedule…</span>';
+  } else {
+    const l=_tvSyncLast;
+    line='<span style="color:#6A2E86"><b>'+mine+'</b> booking'+(mine===1?'':'s')+' on this calendar came from the Legacy TV schedule.'
+      +(l&&(l.added||l.removed)?(' Last check: '+l.added+' added, '+l.removed+' taken off.'):'')+'</span>';
+  }
+  return '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#FBF6FD;border:0.5px solid #E6D2F0;border-radius:9px;padding:8px 12px;margin-bottom:12px;font-size:12.5px">'
+    + '<span>📺</span><span style="min-width:0;flex:1">'+line+'</span>'
+    + (ro?'':'<span onclick="_tvSyncNow()" style="cursor:pointer;color:#185FA5;white-space:nowrap;font-weight:600">Check it now</span>')
+  + '</div>';
+}
 function renderConstructionCalendar(){
   const st=_calState;
   if(st.y==null){ const d=new Date(); st.y=d.getFullYear(); st.m=d.getMonth(); }
@@ -33517,7 +33629,7 @@ function renderConstructionCalendar(){
   // The Legacy TV schedule, read from their database. Pulled once and redrawn when
   // it lands, so a slow answer from their end never holds up our own calendar.
   _tvPidMemo={};
-  _tvEnsure(_calRerender);
+  _tvEnsureSynced(_calRerender);
   const props=(typeof propCards!=='undefined'?propCards:[]);
   const ro=isReadOnly();
   // One button that says which house you are on, with a type-to-search panel under it.
@@ -33568,12 +33680,14 @@ function renderConstructionCalendar(){
   const evChip=(e)=>{
     const done=!!e.completed; const deco=done?"text-decoration:line-through;opacity:0.55;":"";
     const isBase=e.kind==="baseline"; const bn=isBase?(_baselineNotes(e)||{}):null;
-    const lbl = e.kind==="contractor" ? ("★ "+_contractorName(e.contractor_id))
+    const isTv=_isTvEvent(e);
+    const lbl = isTv ? ("📺 "+(e.title||'Scheduled work'))
+              : e.kind==="contractor" ? ("★ "+_contractorName(e.contractor_id))
               : e.kind==="custom" ? ("• "+(e.title||'Event'))
               : isBase ? ("🗓 "+(bn.step||e.title||'Baseline'))
               : ("📦 "+(e.title||'Material'));
-    const bg = e.kind==="contractor"?"#1a2744":e.kind==="custom"?"#EEEDFE":isBase?"#F1F3F0":"#E6F1FB";
-    const col= e.kind==="contractor"?"#fff":e.kind==="custom"?"#3C3489":isBase?"#4E5E5C":"#0C447C";
+    const bg = isTv?"#F7EDFB":e.kind==="contractor"?"#1a2744":e.kind==="custom"?"#EEEDFE":isBase?"#F1F3F0":"#E6F1FB";
+    const col= isTv?"#6A2E86":e.kind==="contractor"?"#fff":e.kind==="custom"?"#3C3489":isBase?"#4E5E5C":"#0C447C";
     const bord= isBase?"border:1px dashed #9FB0AB;":"";
     return `<div onclick="event.stopPropagation();openCalEventDetail('${e.id}')" title="Click to open / edit / delete: ${_calEsc(e.title||lbl)}" style="cursor:pointer;font-size:11px;background:${bg};color:${col};${bord}border-radius:4px;padding:2px 5px;margin-bottom:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${deco}">${done?'✓ ':''}${_calEsc(lbl)}</div>`;
   };
@@ -33582,11 +33696,9 @@ function renderConstructionCalendar(){
   for(let day=1; day<=daysInMonth; day++){
     const ds=`${st.y}-${String(st.m+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
     const evs=eventsForDay(day);
-    const tvs=_tvOn()?_tvOnDay(ds).filter(_tvPassesFilter):[];
     const isToday=ds===todayStr;
-    const shown=evs.slice(0,3).map(evChip).join("")+tvs.slice(0,2).map(_tvChip).join("");
-    const hid=(evs.length>3?evs.length-3:0)+(tvs.length>2?tvs.length-2:0);
-    const more=hid?`<div style="font-size:11px;color:#566070">+${hid} more</div>`:"";
+    const shown=evs.slice(0,3).map(evChip).join("");
+    const more=evs.length>3?`<div style="font-size:11px;color:#566070">+${evs.length-3} more</div>`:"";
     const addBtn=ro?"":`<div onclick="openAddCalEvent('${ds}')" style="position:absolute;top:4px;right:5px;font-size:13px;color:#636b7a;cursor:pointer" title="Add to this day">＋</div>`;
     cells.push(`<div style="position:relative;background:#fff;min-height:92px;min-width:0;overflow:hidden;border:0.5px solid #edf0f4;padding:4px 5px">
       <div style="font-size:12px;font-weight:${isToday?'600':'400'};color:${isToday?'#185FA5':'#566070'};margin-bottom:3px">${day}</div>
@@ -33601,16 +33713,17 @@ function renderConstructionCalendar(){
     </div>`;
   if(st.view==='day'){
     const dayStr=st.day||todayStr;
-    const evs=_calEventsCache.filter(e=> e.event_date===dayStr && (st.prop==="all"||e.property_id===st.prop) && (st.pm==="all"||_sameAssignee(_propPM(e.property_id),st.pm)) && _matchFilter(e)).sort((a,b)=>(a.completed?1:0)-(b.completed?1:0));
+    // A booking that runs from Monday to Friday is on site on the Wednesday. The month
+    // grid has always drawn it that way; this view was only ever matching the start
+    // date, so a long job vanished from the Day view the day after it began.
+    const evs=_calEventsCache.filter(e=> (e.event_date===dayStr || (e.end_date && e.event_date<=dayStr && dayStr<=e.end_date)) && (st.prop==="all"||e.property_id===st.prop) && (st.pm==="all"||_sameAssignee(_propPM(e.property_id),st.pm)) && _matchFilter(e)).sort((a,b)=>(a.completed?1:0)-(b.completed?1:0));
     const isToday=dayStr===todayStr;
     const rowFor=(e)=>{ const done=!!e.completed;
-      const lbl = e.kind==="contractor" ? ("★ Contractor start — "+_contractorName(e.contractor_id)) : e.kind==="custom" ? ("• "+(e.title||'Event')) : e.kind==="baseline" ? ("🗓 Baseline — "+((_baselineNotes(e)||{}).step||e.title||'Step')) : ("📦 Material delivery — "+(e.title||'Material'));
+      const lbl = _isTvEvent(e) ? ("📺 Legacy TV — "+(e.title||'Scheduled work')) : e.kind==="contractor" ? ("★ Contractor start — "+_contractorName(e.contractor_id)) : e.kind==="custom" ? ("• "+(e.title||'Event')) : e.kind==="baseline" ? ("🗓 Baseline — "+((_baselineNotes(e)||{}).step||e.title||'Step')) : ("📦 Material delivery — "+(e.title||'Material'));
       return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:0.5px solid #f1f3f7;${done?'opacity:0.6;':''}"><div onclick="event.stopPropagation();toggleCalEventDone('${e.id}')" title="Mark ${done?'not done':'done'}" style="font-size:21px;cursor:pointer;line-height:1">${done?'✅':'⬜'}</div><div onclick="openCalEventDetail('${e.id}')" style="cursor:pointer;min-width:0;flex:1"><div style="font-size:15px;font-weight:500;color:#111;${done?'text-decoration:line-through;':''}">${_calEsc(lbl)}</div><div style="font-size:13px;color:#566070;margin-top:2px">${_calEsc(_locLabel(e)||'—')}</div></div><div onclick="openCalEventDetail('${e.id}')" style="font-size:12px;color:#566070;white-space:nowrap;cursor:pointer">Edit ›</div></div>`; };
-    const tvRow=(t)=>`<div onclick="_tvDetail('${t.id}')" style="cursor:pointer;display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:0.5px solid #f1f3f7;background:#FDFAFE"><div style="font-size:19px;line-height:1">\uD83D\uDCFA</div><div style="min-width:0;flex:1"><div style="font-size:15px;font-weight:500;color:#111">${_calEsc(_tvLabel(t))}</div><div style="font-size:13px;color:#6A2E86;margin-top:2px">${_calEsc(_tvWhere(t))} &middot; Legacy TV schedule</div></div><div style="font-size:12px;color:#566070;white-space:nowrap">View \u203A</div></div>`;
-    const tvDay=_tvOn()?_tvOnDay(dayStr).filter(_tvPassesFilter):[];
-    const dayBody=(evs.length||tvDay.length)?`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">${evs.map(rowFor).join("")}${tvDay.map(tvRow).join("")}</div>`:`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:34px;text-align:center;color:#636b7a;font-size:14px">Nothing scheduled for this day.</div>`;
+    const dayBody=evs.length?`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">${evs.map(rowFor).join("")}</div>`:`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:34px;text-align:center;color:#636b7a;font-size:14px">Nothing scheduled for this day.</div>`;
     return `<div style="padding:20px;max-width:760px;margin:0 auto">
-      ${_tvBar()}
+      ${_tvSyncBar()}
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">${propPick}${kindPick}${clearBtn}</div>
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">${viewToggle}${addTop}</div>
       <div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:14px">
@@ -33623,7 +33736,7 @@ function renderConstructionCalendar(){
     </div>`;
   }
   return `<div style="padding:20px">
-    ${_tvBar()}
+    ${_tvSyncBar()}
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">${propPick}${kindPick}${clearBtn}</div>
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px">
       <div style="display:flex;align-items:center;gap:12px">
@@ -33803,8 +33916,51 @@ async function toggleCalEventDone(id){
 }
 
 // ---- View / edit / delete a construction event ----
+// A booking that came across from the Legacy TV schedule. It opens on its own card
+// rather than the edit form: the type dropdown has no honest answer for it, and a date
+// changed here would be put back the next time the schedule is checked. What a person
+// CAN do - tick it off, write a note on it - is exactly what the import promises to
+// leave alone, so those two are the only things on it.
+function _tvEventDetail(e){
+  const E=_calEsc, ro=isReadOnly();
+  const done=!!e.completed;
+  const said=String(e.notes||"").replace(/\s*\u2014?\s*from the Legacy TV schedule$/,"").trim();
+  const when=(e.end_date&&e.end_date!==e.event_date)?(_prettyDay(e.event_date)+" \u2192 "+_prettyDay(e.end_date)):_prettyDay(e.event_date||"");
+  const row=function(k,v){ return v?('<div style="display:flex;gap:10px;padding:7px 0;border-bottom:0.5px solid #f1f3f7"><div style="width:110px;flex:none;font-size:12.5px;color:#566070">'+E(k)+'</div><div style="font-size:13.5px;color:#111;min-width:0">'+E(v)+'</div></div>'):''; };
+  document.getElementById("calevent-inner").innerHTML=''
+    + '<button class="modal-close" onclick="closeModal(\'calevent-modal\')">\u2715</button>'
+    + '<h2>\u{1F4FA} '+E(e.title||'Scheduled work')+'</h2>'
+    + '<div style="background:#F7EDFB;border:1px solid #DCBCEA;border-radius:9px;padding:10px 13px;margin-bottom:14px;font-size:12.5px;color:#6A2E86;line-height:1.6">'
+      + 'This booking came across from the <b>Legacy TV</b> schedule, so it is on this calendar like any other. The dates and the trade are changed on the TV site \u2014 moving them here would be put back next time we check. Ticking it off and anything you write below are yours, and are left alone.'
+    + '</div>'
+    + row("House", _locLabel(e)||"\u2014")
+    + row("When", when)
+    + row("Who / note", said)
+    + (ro?'':'<button class="btn-full" style="background:'+(done?'#eef4ea':'#e8f0fe')+';color:'+(done?'#3B6D11':'#1a56db')+';margin:14px 0 4px" onclick="toggleCalEventDone(\''+e.id+'\');closeModal(\'calevent-modal\')">'+(done?'\u2713 Completed \u2014 tap to reopen':'Mark completed')+'</button>')
+    + (ro?'':'<div class="form-row" style="margin-top:10px"><label>Your note on this booking</label><input type="text" id="tve-note" value="'+E(said)+'" placeholder="Anything the team should know" /></div>'
+       + '<div style="font-size:11.5px;color:#566070;margin:-4px 0 10px">Kept for as long as this booking is on the TV schedule. If the booking comes off their schedule, the row comes off ours and the note goes with it \u2014 a tick stays either way.</div>'
+       + '<button class="btn-full" onclick="_tvSaveNote(\''+e.id+'\')">Save the note</button>')
+    + '<div style="margin-top:14px"><button onclick="window.open(\''+TV_LINK+'\',\'_blank\')" style="padding:9px 15px;background:#fff;color:#185FA5;border:0.5px solid #cdd7e6;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Open the TV dashboard \u2197</button></div>';
+  openModal("calevent-modal");
+}
+async function _tvSaveNote(id){
+  if(_blockIfReadOnly()) return;
+  const el=document.getElementById("tve-note"); if(!el) return;
+  const v=String(el.value||"").trim();
+  // A note box left exactly as the import wrote it is not a person's note. Put the
+  // row back to the import's own wording so it does not read as touched for ever.
+  const e=(_calEventsCache||[]).find(x=>x.id===id)||{};
+  const base=(v?(v+" \u2014 "):"")+"from the Legacy TV schedule";
+  const res=await supabase.from("pm_calendar_events").update({ notes:base }).eq("id",id);
+  if(res && res.error){ alert("Could not save that note: "+(res.error.message||"")); return; }
+  try{ _logAudit("updated","calendar",_locLabel(e)||"", "Note on a Legacy TV booking"); }catch(err){}
+  await loadCalendarEventsFromSupabase();
+  closeModal("calevent-modal");
+  _trkRedraw();
+}
 function openCalEventDetail(id){
   const e=(_calEventsCache||[]).find(x=>x.id===id); if(!e){ alert("Event not found."); return; }
+  if(_isTvEvent(e)){ _tvEventDetail(e); return; }
   const ro=isReadOnly();
   const props=(typeof propCards!=='undefined'?propCards:[]);
   const propOpts=props.map(p=>`<option value="${p.id}" ${e.property_id===p.id?"selected":""}>${_calEsc(p.addr)}</option>`).join("");
@@ -38274,4 +38430,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-11-02c house-calendar-opens-where-the-work-is -->
+<!-- build: 2026-11-06a tv-schedule-imported-not-overlaid -->
