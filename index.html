@@ -6974,7 +6974,7 @@ function _ppTasksOn(pid){
 // date for selling a house ended up sitting there looking like a job. Found while
 // chasing Bruce's "Sold (target)" sighting on 1445 S High, 11 Oct.
 function _ppEventsOn(pid){
-  return ((typeof _calEventsCache!=='undefined'?_calEventsCache:[])||[])
+  return _cxLive((typeof _calEventsCache!=='undefined'?_calEventsCache:[])||[])
     .filter(function(e){ return e && e.property_id===pid && e.kind!=='baseline'; })
     .sort(function(a,b){ return String(a.event_date||'').localeCompare(String(b.event_date||'')); });
 }
@@ -10959,6 +10959,105 @@ function _meetingDenied(kind){
     <p style="color:#566070;font-size:16px;font-weight:500">${names[kind]||'Meeting'}</p>
     <p style="color:#555;font-size:14px;margin-top:6px;max-width:440px;margin-left:auto;margin-right:auto">${extra} Ask Bruce to turn it on for your account in Settings &rarr; Permissions.</p></div>`;
 }
+// ===================== CANCELLED WORK =====================
+// Bruce, 6 Nov, on 3339 Daglow: "I'm looking at Ray from the schedule ... it says trash
+// pickup. Right now I have it marked as not completed, but realistically I cancelled
+// them. So I would like to add a feature to click cancelled, and then it also removes
+// it from the construction calendar."
+//
+// "Not completed" and "cancelled" are two different facts and the room was having to
+// pick the wrong one. Not completed means it still has to happen; cancelled means it
+// never will. Only one of those should keep taking up a slot on the calendar.
+//
+// Where the fact is kept matters. It does NOT go on the booking's own row, because the
+// Legacy TV import owns those rows and rebuilds them - a cancellation written there
+// would be wiped the next time their schedule came across, and the trash pickup would
+// quietly reappear. It lives in a record of our own, keyed so that it still matches the
+// same booking after the import has deleted and re-added it. So a booking Bruce
+// cancelled stays cancelled, however many times their end sends it over again.
+const CX_KEY='cancelled_work';
+let _cxData=null, _cxLoadOk=null, _cxBusy=false;
+async function _cxLoad(){
+  if(_cxBusy) return;
+  _cxBusy=true;
+  const r=await _pmSettingsRead(CX_KEY);
+  // A failed read is not an empty record. Treating it as empty would show every
+  // cancelled booking as live again, and - far worse - let the import put them back.
+  if(r===null){ _cxLoadOk=false; if(!_cxData) _cxData={}; }
+  else { _cxLoadOk=true; _cxData=r; }
+  _cxBusy=false;
+}
+function _cxEnsure(after){
+  if(_cxData!==null) return;
+  _cxData={};                       // so nothing asks twice while the read is in flight
+  Promise.resolve(_cxLoad()).then(function(){ if(typeof after==='function'){ try{ after(); }catch(e){} } });
+}
+// The name a cancellation is filed under. A booking that came from the Legacy TV
+// schedule is filed by WHAT IT IS - house, days, trade - because its row id changes
+// every time the import rebuilds it. Ours is filed by its row id, which does not.
+function _cxKeyFor(e){
+  if(!e) return '';
+  if(_isTvEvent(e)) return 'tv:'+_tvRowKey(e);
+  return 'e:'+e.id;
+}
+function _cxOff(e){
+  if(!e || !_cxData) return false;
+  return !!_cxData[_cxKeyFor(e)];
+}
+function _cxOffKey(k){ return !!(_cxData && k && _cxData[k]); }
+// Everything on this list that is still live. One call, so a screen cannot forget.
+function _cxLive(list){ return (list||[]).filter(function(e){ return !_cxOff(e); }); }
+function _cxRec(e){ return (_cxData && _cxData[_cxKeyFor(e)]) || null; }
+// Cancel a booking, or put it back. Nothing is deleted here: the booking stays on the
+// record with a note of who called it off and when, and the Legacy TV import reads the
+// same list so it does not bring a cancelled booking back the next time it runs.
+async function _cxSet(id, on, why){
+  if(_blockIfReadOnly()) return false;
+  const e=(typeof _calEventsCache!=='undefined'?_calEventsCache:[]).find(function(x){ return x.id===id; });
+  if(!e){ alert("That booking is no longer on the calendar."); return false; }
+  if(_cxData===null) await _cxLoad();
+  if(_cxLoadOk===false){
+    alert("The cancelled list could not be read a moment ago, so changing it now could put back something somebody else called off. Nothing was changed — refresh and try again.");
+    return false;
+  }
+  const k=_cxKeyFor(e);
+  const mine=Object.assign({}, _cxData||{});
+  if(on){
+    mine[k]={ at:new Date().toISOString(), by:(typeof _miWho==='function'?_miWho():''),
+              what:String(e.title||''), where:(typeof _locLabel==='function'?_locLabel(e):'')||'',
+              when:String(e.event_date||''), why:String(why||'') };
+  } else {
+    delete mine[k];
+  }
+  const res=await _pmMergeWrite(CX_KEY, mine, [[k]]);
+  if(res.err){ alert("That was NOT saved — "+res.err); return false; }
+  _cxData=res.base||mine; _cxLoadOk=true;
+  try{ _logAudit(on?'cancelled':'reinstated','calendar',
+        (typeof _locLabel==='function'?_locLabel(e):'')||'',
+        (e.title||'Booking')+(on&&why?(' — '+why):'')); }catch(err){}
+  return true;
+}
+// The tick itself. It asks once, because a cancellation takes the work off the
+// calendar for everybody and the room should mean it.
+async function _cxToggle(wk, id){
+  const e=(typeof _calEventsCache!=='undefined'?_calEventsCache:[]).find(function(x){ return x.id===id; });
+  if(!e) return;
+  const on=_cxOff(e);
+  if(!on){
+    const w=prompt("Cancel “"+(e.title||'this booking')+"”"+((typeof _locLabel==='function'&&_locLabel(e))?(" on "+_locLabel(e)):"")
+      +"?\n\nIt comes off the construction calendar and stays off, even if the Legacy TV schedule sends it over again.\n\nWhy was it cancelled? (optional)");
+    if(w===null) return;                       // they changed their mind
+    if(!(await _cxSet(id, true, w))) return;
+  } else {
+    if(!(await _cxSet(id, false, ''))) return;
+  }
+  // Marking it cancelled is the whole answer, so any "not completed" the room had put
+  // against it is cleared - the line should not read as two things at once.
+  if(!on && wk){ try{ await _wmSetMetaAt(wk,'team','__done','e:'+id, function(cur){ return cur==='no'?undefined:cur; }); }catch(err){} }
+  if(wk) openWeeklyMeeting('team', wk);
+  else { try{ _trkRedraw(); }catch(err){} }
+}
+
 // ===================== MONDAY MEETING — CARRIED ITEMS =====================
 // Three things in the Monday meeting are not "this week's notes". They follow
 // the room forward until somebody closes them out:
@@ -11290,7 +11389,8 @@ function _wmItems(pid, from, to){
               trade:isC?(trade||''):(e.kind==='material'?'Material':''),
               who:isC?(_contractorName(e.contractor_id)||''):'',
               note:enote,
-              done:!!e.completed, kind:isC?'c':'m', kindLabel:isC?'Contractor':(isB?'Baseline':(e.kind==='material'?'Material':'Scheduled'))});
+              done:!!e.completed, cancelled:_cxOff(e), cxWhy:((_cxRec(e)||{}).why||''),
+              kind:isC?'c':'m', kindLabel:isC?'Contractor':(isB?'Baseline':(e.kind==='material'?'Material':'Scheduled'))});
   });
   return out.sort((a,b)=>a.date<b.date?-1:(a.date>b.date?1:String(a.title).localeCompare(String(b.title))));
 }
@@ -17039,6 +17139,15 @@ function openWeeklyMeeting(kind, week){
     // Drawn through _wmReschedCell so that an open date box is redrawn open, with the
     // date still in it, every time the meeting refreshes underneath the room.
     const rsBtn=(it)=>roNow?'':_wmReschedCell(it.key, it.date);
+    // Bruce, 6 Nov: "I have it marked as not completed, but realistically I cancelled
+    // them ... add a feature to click cancelled, and then it also removes it from the
+    // construction calendar." Only on bookings: a task that is off is deleted or ticked,
+    // but a booking that is called off has to stop holding a slot on the calendar.
+    const cxBtn=(it)=>{
+      if(it.type!=='event') return '';
+      if(roNow) return it.cancelled?'<span style="font-size:11.5px;color:#B42318">&#9745; Cancelled</span>':'';
+      return `<label onclick="_cxToggle('${wk}','${it.id}')" title="${it.cancelled?'Put it back on the calendar':'Called off \u2014 take it off the calendar'}" style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:${it.cancelled?'#B42318':'#566070'};cursor:pointer"><span style="font-size:14px">${it.cancelled?'&#9745;':'&#9744;'}</span>Cancelled</label>`;
+    };
 
     const blocks=cards.map(c=>{
       const _m=_wmCalc(c);
@@ -17090,9 +17199,9 @@ function openWeeklyMeeting(kind, week){
         return `<div style="display:flex;gap:10px;align-items:flex-start;padding:${it.done?'5px':'7px'} 0;border-bottom:0.5px solid #f4f5f7;${it.done?'opacity:.62':''}">
           <div style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:#566070;width:88px;flex-shrink:0;padding-top:2px">${dayLbl(it.date)}${it.endDate&&it.endDate!==it.date?`<div style="font-size:11px;color:#636b7a">to ${dayLbl(it.endDate)}</div>`:''}${it.running?'<div style="font-size:11px;color:#8A5A10;font-weight:600">already on site</div>':''}</div>
           <div style="flex:1;min-width:0">
-            <div style="font-size:15px;color:${it.done?'#0F7B54':'#111'}">${kindPill(it.kind,it.kindLabel)}${_calEsc(it.title)}${it.hold?(' '+_hldPill({on_hold:true,hold_reason:it.holdWhy})):''}</div>
-            <div style="font-size:12.5px;color:#566070;margin-top:2px">${_calEsc(it.sub)}</div>${it.note?`<div style="font-size:13.5px;color:#333;margin-top:3px;line-height:1.45">${_calEsc(it.note)}</div>`:''}${it.hold?`<div style="font-size:12.5px;color:#7A4E00;margin-top:3px">&#9208; ${_calEsc(it.holdWhy||'No reason written down')}${it.holdSince?(' &middot; '+_calEsc(it.holdSince)):''}</div>`:''}
-            <div style="display:flex;gap:13px;flex-wrap:wrap;align-items:center;margin-top:${it.done?'3px':'5px'}">${tick('yes','Completed','#0F7B54')}${it.done?'':tick('no','Not completed','#B42318')+rsBtn(it)}${(it.kind==='t'&&!it.done)?_hldBtn('t',it.id,'',!!it.hold):''}</div>
+            <div style="font-size:15px;color:${it.cancelled?'#B42318':(it.done?'#0F7B54':'#111')};${it.cancelled?'text-decoration:line-through;':''}">${kindPill(it.kind,it.kindLabel)}${_calEsc(it.title)}${it.hold?(' '+_hldPill({on_hold:true,hold_reason:it.holdWhy})):''}</div>
+            <div style="font-size:12.5px;color:#566070;margin-top:2px">${_calEsc(it.sub)}</div>${it.note?`<div style="font-size:13.5px;color:#333;margin-top:3px;line-height:1.45">${_calEsc(it.note)}</div>`:''}${it.cancelled?`<div style="font-size:12.5px;color:#B42318;margin-top:3px">Cancelled &mdash; off the construction calendar${it.cxWhy?(': '+_calEsc(it.cxWhy)):''}</div>`:''}${it.hold?`<div style="font-size:12.5px;color:#7A4E00;margin-top:3px">&#9208; ${_calEsc(it.holdWhy||'No reason written down')}${it.holdSince?(' &middot; '+_calEsc(it.holdSince)):''}</div>`:''}
+            <div style="display:flex;gap:13px;flex-wrap:wrap;align-items:center;margin-top:${it.done?'3px':'5px'}">${tick('yes','Completed','#0F7B54')}${it.done?'':tick('no','Not completed','#B42318')+cxBtn(it)+rsBtn(it)}${(it.kind==='t'&&!it.done)?_hldBtn('t',it.id,'',!!it.hold):''}</div>
           </div></div>`;
       }).join(''):'<div style="font-size:12.5px;color:#636b7a;padding:8px 0">Nothing was scheduled on this property last week.</div>';
 
@@ -17112,11 +17221,11 @@ function openWeeklyMeeting(kind, week){
         return `<div style="display:flex;gap:10px;align-items:flex-start;padding:${it.done?'5px':'7px'} 0;border-bottom:0.5px solid #f4f5f7;${it.done?'opacity:.62':''}">
           <div style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:#566070;width:88px;flex-shrink:0;padding-top:2px">${dayLbl(it.date)}${it.endDate&&it.endDate!==it.date?`<div style="font-size:11px;color:#636b7a">to ${dayLbl(it.endDate)}</div>`:''}${it.running?'<div style="font-size:11px;color:#8A5A10;font-weight:600">already on site</div>':''}</div>
           <div style="flex:1;min-width:0">
-            <div style="font-size:15px;color:${it.done?'#0F7B54':'#111'}">${kindPill(it.kind,it.kindLabel)}${_calEsc(it.title)}${it.done?' <span style="font-size:9.5px;font-weight:700;color:#0F7B54;background:#E6F4ED;padding:1px 6px;border-radius:99px;vertical-align:middle">DONE</span>':''}${it.hold?(' '+_hldPill({on_hold:true,hold_reason:it.holdWhy})):''}</div>
-            <div style="font-size:12.5px;color:#566070;margin-top:2px">${_calEsc(it.sub)}</div>${it.note?`<div style="font-size:13.5px;color:#333;margin-top:3px;line-height:1.45">${_calEsc(it.note)}</div>`:''}${it.hold?`<div style="font-size:12.5px;color:#7A4E00;margin-top:3px">&#9208; ${_calEsc(it.holdWhy||'No reason written down')}${it.holdSince?(' &middot; '+_calEsc(it.holdSince)):''}</div>`:''}
+            <div style="font-size:15px;color:${it.cancelled?'#B42318':(it.done?'#0F7B54':'#111')};${it.cancelled?'text-decoration:line-through;':''}">${kindPill(it.kind,it.kindLabel)}${_calEsc(it.title)}${it.done?' <span style="font-size:9.5px;font-weight:700;color:#0F7B54;background:#E6F4ED;padding:1px 6px;border-radius:99px;vertical-align:middle">DONE</span>':''}${it.cancelled?' <span style="font-size:9.5px;font-weight:700;color:#B42318;background:#FDECEA;padding:1px 6px;border-radius:99px;vertical-align:middle">CANCELLED</span>':''}${it.hold?(' '+_hldPill({on_hold:true,hold_reason:it.holdWhy})):''}</div>
+            <div style="font-size:12.5px;color:#566070;margin-top:2px">${_calEsc(it.sub)}</div>${it.note?`<div style="font-size:13.5px;color:#333;margin-top:3px;line-height:1.45">${_calEsc(it.note)}</div>`:''}${it.cancelled?`<div style="font-size:12.5px;color:#B42318;margin-top:3px">Cancelled &mdash; off the construction calendar${it.cxWhy?(': '+_calEsc(it.cxWhy)):''}</div>`:''}${it.hold?`<div style="font-size:12.5px;color:#7A4E00;margin-top:3px">&#9208; ${_calEsc(it.holdWhy||'No reason written down')}${it.holdSince?(' &middot; '+_calEsc(it.holdSince)):''}</div>`:''}
             ${it.done
               ? `<div style="display:flex;gap:13px;flex-wrap:wrap;align-items:center;margin-top:4px">${doneBox(it)}${note?`<span style="font-size:11.5px;color:#566070">&middot; ${_calEsc(note)}</span>`:''}</div>`
-              : `<div style="display:flex;gap:13px;flex-wrap:wrap;align-items:center;margin-top:5px">${doneBox(it)}${box('c','Confirmed starting?')}${box('f','Followed up?')}${box('e','They have everything they need')}${rsBtn(it)}${it.kind==='t'?_hldBtn('t',it.id,'',!!it.hold):''}</div>
+              : `<div style="display:flex;gap:13px;flex-wrap:wrap;align-items:center;margin-top:5px">${doneBox(it)}${it.cancelled?'':box('c','Confirmed starting?')+box('f','Followed up?')+box('e','They have everything they need')}${cxBtn(it)}${rsBtn(it)}${it.kind==='t'?_hldBtn('t',it.id,'',!!it.hold):''}</div>
             ${roNow?(note?`<div style="font-size:12px;color:#555;margin-top:5px;background:#F7F8FB;border-radius:6px;padding:6px 9px">${_calEsc(note)}</div>`:'')
               :`<textarea onchange="_miItemNote('${it.key}',this.value)" placeholder="What are we waiting on?" style="width:100%;min-height:30px;margin-top:5px;padding:5px 8px;border:0.5px solid #e6e8ee;border-radius:6px;font-size:12.5px;resize:vertical;font-family:inherit">${_calEsc(note)}</textarea>`}`}
           </div></div>`;
@@ -17371,7 +17480,7 @@ function openWeeklyMeeting(kind, week){
   if(kind==='team'){ try{ window.__wmLastWeek=wk; Promise.resolve(_avSweep()); }catch(e){} }
   // The Legacy TV bookings are rows on our own calendar, so the only thing this screen
   // has to do is make sure they have come across before it draws the week.
-  if(kind==='team'){ try{ _tvEnsureSynced(function(){ _wmRerenderIfOpen(); }); }catch(e){} }
+  if(kind==='team'){ try{ _cxEnsure(function(){ _wmRerenderIfOpen(); }); _tvEnsureSynced(function(){ _wmRerenderIfOpen(); }); }catch(e){} }
   const _wmWide = (kind==='team');
   document.getElementById("dash-body").innerHTML=`<div style="background:#f4f5f7;min-height:500px" id="pd-root"><div id="pd-content"><div data-wm-doc="${kind}" data-wm-week="${wk}" style="padding:20px ${_wmWide?'26px':'20px'};max-width:${_wmWide?'none':'1000px'};margin:0 auto">
     <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:6px;margin-bottom:4px"><div style="font-size:18px;font-weight:700;color:#111">${titles[kind]||'Weekly Meeting'}</div><div style="font-size:13px;color:#566070">${kind==='va'?_calEsc(_vaMeetMonthLabel(wk)):'Week of '+_calEsc(_wmLabel(wk))} &middot; ${_wmWhenLabel(kind)}${isPast?' &middot; archived':''}</div></div>
@@ -33346,8 +33455,7 @@ async function _tvLoad(force){
                    title:"Filming", company:"", contact:"", phone:"", ds:ds, de:ds });
       });
     });
-    out.sort(function(a,b){ return a.ds.localeCompare(b.ds) || a.house.localeCompare(b.house) || a.title.localeCompare(b.title); });
-    _tvCache=out; _tvAt=Date.now(); _tvErr=null;
+    _tvCache=_tvMerge(out); _tvAt=Date.now(); _tvErr=null;
   }catch(e){
     // A schedule we could not fetch is said out loud, never shown as an empty week.
     _tvErr=(e&&e.name==="AbortError") ? "the TV site did not answer"
@@ -33362,6 +33470,53 @@ function _tvEnsure(after){
   if(_tvCache && (Date.now()-_tvAt)<TV_TTL_MS) return;
   if(_tvBusy) return;
   Promise.resolve(_tvLoad(false)).then(function(){ _tvPidMemo={}; if(typeof after==="function") try{ after(); }catch(e){} });
+}
+// Bruce, 6 Nov, on 3339 Daglow: "why there's so many duplicates of the same thing.
+// Interior doors and beams delivered, door trim and ceiling beam work. We got to clean
+// up the duplicates."
+// They are not duplicates at their end and they are not a mistake at ours: the TV site
+// enters a job that runs several days as ONE ENTRY PER DAY. Alberto's door, trim and
+// ceiling beam work is four separate entries - the 3rd, the 4th, the 5th, the 6th - so
+// four bookings came across and the week reads as the same job over and over.
+// They are stitched back into one booking with a start and a finish, which is what the
+// rest of this site already understands: the calendar draws it across every day it
+// runs and the Monday walk says "already on site" once it has started.
+// Two runs only ever join if they touch or overlap. Alberto's demolition was the 14th
+// to the 21st of July and then the 31st to the 1st of August - two separate stints ten
+// days apart, and they stay two. No weekend is ever bridged either: a job shown as
+// Friday to Monday would be claiming somebody was there on the Saturday.
+function _tvMerge(list){
+  const by={};
+  (list||[]).forEach(function(t){
+    // Same house, same job, same people. A cleanout by Junk X and a cleanout by Ray
+    // Ellis over the same days are two bookings, not one, so the company is in the key.
+    const k=[t.house,t.kind,String(t.title||'').trim().toLowerCase(),
+             String(t.company||'').trim().toLowerCase(),
+             String(t.contact||'').trim().toLowerCase()].join('|');
+    (by[k]=by[k]||[]).push(t);
+  });
+  const out=[];
+  Object.keys(by).forEach(function(k){
+    const runs=by[k].slice().sort(function(a,b){ return a.ds.localeCompare(b.ds) || a.de.localeCompare(b.de); });
+    let cur=null;
+    runs.forEach(function(t){
+      if(cur && _tvDayAdd(cur.de,1) >= t.ds){        // touching or overlapping
+        if(t.de>cur.de) cur.de=t.de;
+        cur.merged=(cur.merged||1)+1;
+        return;
+      }
+      cur=Object.assign({},t);
+      out.push(cur);
+    });
+  });
+  out.sort(function(a,b){ return a.ds.localeCompare(b.ds) || a.house.localeCompare(b.house) || a.title.localeCompare(b.title); });
+  return out;
+}
+function _tvDayAdd(ymd,k){
+  const m=String(ymd||'').match(/^(\d{4})-(\d{2})-(\d{2})$/); if(!m) return ymd;
+  const d=new Date(Number(m[1]),Number(m[2])-1,Number(m[3]));
+  d.setDate(d.getDate()+k);
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 }
 function _tvItems(){ return _tvCache||[]; }
 function _tvOnDay(ds){ return _tvItems().filter(function(t){ return t.ds<=ds && ds<=t.de; }); }
@@ -33417,7 +33572,7 @@ function _tvWanted(){
   const out=[];
   _tvItems().forEach(function(t){
     const pid=_tvPid(t.house);
-    out.push({
+    const row={
       property_id: pid||null,
       // A show house we do not carry as a property card still belongs on the calendar;
       // it goes on by address, exactly as a booking typed in for an address would.
@@ -33428,7 +33583,12 @@ function _tvWanted(){
       title: (t.kind==="filming") ? "Filming" : (t.title||"Scheduled work"),
       contractor_id: null,
       notes: (t.kind==="filming") ? "Filming day — from the Legacy TV schedule" : _tvNotes(t)
-    });
+    };
+    // Cancelled here means cancelled. Their schedule can keep sending it over; it
+    // does not come back, and the row we are already holding for it is taken off on
+    // this same run, because it is no longer on the list of what we want.
+    if(_cxOffKey('tv:'+_tvRowKey(row))) return;
+    out.push(row);
   });
   return out;
 }
@@ -33588,6 +33748,7 @@ function renderConstructionCalendar(){
   // The Legacy TV schedule, read from their database. Pulled once and redrawn when
   // it lands, so a slow answer from their end never holds up our own calendar.
   _tvPidMemo={};
+  _cxEnsure(_calRerender);
   _tvEnsureSynced(_calRerender);
   const props=(typeof propCards!=='undefined'?propCards:[]);
   const ro=isReadOnly();
@@ -33630,7 +33791,7 @@ function renderConstructionCalendar(){
   };
   const eventsForDay=(day)=>{
     const ds=`${st.y}-${String(st.m+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
-    return _calEventsCache.filter(e=> (e.event_date===ds || (e.end_date && e.event_date<=ds && ds<=e.end_date))
+    return _cxLive(_calEventsCache).filter(e=> (e.event_date===ds || (e.end_date && e.event_date<=ds && ds<=e.end_date))
       && (st.prop==="all"||e.property_id===st.prop)
       && (st.pm==="all"||_sameAssignee(_propPM(e.property_id),st.pm))
       && (!st.rtrOnly || ["RTR In Process","RTR Completed (Pending Closing)"].includes(_propPhase(e.property_id)))
@@ -33675,7 +33836,7 @@ function renderConstructionCalendar(){
     // A booking that runs from Monday to Friday is on site on the Wednesday. The month
     // grid has always drawn it that way; this view was only ever matching the start
     // date, so a long job vanished from the Day view the day after it began.
-    const evs=_calEventsCache.filter(e=> (e.event_date===dayStr || (e.end_date && e.event_date<=dayStr && dayStr<=e.end_date)) && (st.prop==="all"||e.property_id===st.prop) && (st.pm==="all"||_sameAssignee(_propPM(e.property_id),st.pm)) && _matchFilter(e)).sort((a,b)=>(a.completed?1:0)-(b.completed?1:0));
+    const evs=_cxLive(_calEventsCache).filter(e=> (e.event_date===dayStr || (e.end_date && e.event_date<=dayStr && dayStr<=e.end_date)) && (st.prop==="all"||e.property_id===st.prop) && (st.pm==="all"||_sameAssignee(_propPM(e.property_id),st.pm)) && _matchFilter(e)).sort((a,b)=>(a.completed?1:0)-(b.completed?1:0));
     const isToday=dayStr===todayStr;
     const rowFor=(e)=>{ const done=!!e.completed;
       const lbl = _isTvEvent(e) ? ("📺 Legacy TV — "+(e.title||'Scheduled work')) : e.kind==="contractor" ? ("★ Contractor start — "+_contractorName(e.contractor_id)) : e.kind==="custom" ? ("• "+(e.title||'Event')) : e.kind==="baseline" ? ("🗓 Baseline — "+((_baselineNotes(e)||{}).step||e.title||'Step')) : ("📦 Material delivery — "+(e.title||'Material'));
@@ -38389,4 +38550,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-11-06b one-place-to-mark-last-week-off -->
+<!-- build: 2026-11-06c cancelled-comes-off-the-calendar -->
