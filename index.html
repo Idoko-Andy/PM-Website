@@ -11780,56 +11780,15 @@ function _wmCarryBlock(wk, c, roNow){
     return `<div style="display:flex;gap:8px;align-items:flex-start;padding:5px 0;border-bottom:0.5px solid #f4f5f7">
       ${tick}<div style="flex:1;min-width:0;font-size:14.5px;line-height:1.45;color:${x.done?'#566070':'#111'};${x.done?'text-decoration:line-through':''}">${_calEsc(x.text)}
       <span style="font-size:10px;color:#636b7a"> &middot; from ${_calEsc(String(x.from||'').slice(0,10))}</span></div></div>`;
-  }).join(''):'<div style="font-size:12px;color:#636b7a;padding:4px 0">Nothing carried over onto this one.</div>';
+  }).join(''):'<div style="font-size:12px;color:#636b7a;padding:4px 0">Nothing carried forward onto this one.</div>';
   const add=roNow?'':`<div style="display:flex;gap:6px;margin-top:7px">
     <input id="${id}" placeholder="Something that must not be forgotten next week&hellip;" style="flex:1;min-width:0;padding:6px 9px;border:0.5px solid #ddd;border-radius:6px;font-size:12.5px"/>
     <button onclick="_wmCarryAdd('${wk}','${c.id}','${id}')" style="padding:6px 12px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12.5px;cursor:pointer">Add</button></div>`;
-  const undone=_wmUndoneBlock(wk, c, roNow);
   return `<div style="border:0.5px solid #EAD9A8;background:#FFFCF4;border-radius:9px;padding:9px 12px;margin-top:10px">
-    <div style="font-size:13.5px;font-weight:700;color:#8A5A10;margin-bottom:5px">\u{1F4CC} Carried over${open.length?(' &middot; '+open.length+' still open'):''}</div>
-    <div style="font-size:11px;color:#8A5A10;margin-bottom:6px">Each line you write about the weeks ahead arrives here next Monday. Tick one off when it is no longer relevant &mdash; anything left keeps coming back.</div>
-    ${rows}${add}${undone}</div>`;
+    <div style="font-size:13.5px;font-weight:700;color:#8A5A10;margin-bottom:5px">\u{1F4CC} Still to deal with${open.length?(' &middot; '+open.length+' open'):''}</div>
+    <div style="font-size:11px;color:#8A5A10;margin-bottom:6px">Lines written about the weeks ahead, carried forward from earlier Mondays. Tick one off when it is no longer relevant &mdash; anything left keeps coming back. Work that was booked and did not happen is on the <b>Last week</b> tab, where it is marked off or moved.</div>
+    ${rows}${add}</div>`;
 }
-// Bruce, 28 Sept: "on the carried over tab we need to be able to reschedule tasks that
-// did not get done on the full project meeting tasks or construction calendar events."
-//
-// The carried-over box only ever held lines somebody typed. The work that actually
-// slipped - a task nobody ticked, a contractor who did not turn up - was one section
-// further up and got scrolled past. So the real unfinished items from last week now sit
-// here too, each with the same Reschedule button, and a booking gets both its dates.
-function _wmUndoneFor(wk, pid){
-  if(typeof _wmItems!=='function' || typeof _wmRange!=='function' || typeof _wmPrevWeek!=='function') return [];
-  const last=_wmRange(_wmPrevWeek(wk),1);
-  // the same ticks the room makes in the meeting, so something ticked off up there
-  // does not reappear down here as still outstanding
-  const done=(typeof _wmMeta==='function')?(_wmMeta(wk,'team','__done')||{}):{};
-  return _wmItems(pid, last.from, last.to).filter(function(it){
-    if(it.done) return false;                                   // ticked on the record
-    if(done && done[it.key]==='yes') return false;              // ticked in the meeting
-    return true;
-  });
-}
-function _wmUndoneBlock(wk, c, roNow){
-  const list=_wmUndoneFor(wk, c.id);
-  if(!list.length) return '';
-  const row=function(it){
-    const ev=(it.type==='event');
-    const when=it.when||it.date;
-    return `<div style="display:flex;gap:9px;align-items:flex-start;padding:6px 0;border-top:0.5px solid #F0E4C4;flex-wrap:wrap">
-      <span style="font-size:14px;flex-shrink:0">\u2b1c</span>
-      <div style="flex:1;min-width:150px">
-        <div style="font-size:14px;color:#111">${_calEsc(it.title)}</div>
-        <div style="font-size:11px;color:#8A5A10;margin-top:1px">${_calEsc(it.kindLabel||'')}${it.sub?(' \u00b7 '+_calEsc(it.sub)):''} \u00b7 was ${_calEsc(when)}</div>
-      </div>
-      ${roNow?'':_wmReschedCell(it.key, it.date, ev?(it.endDate||''):'')}
-    </div>`;
-  };
-  return `<div style="margin-top:9px;padding-top:8px;border-top:0.5px dashed #E7D6A8">
-    <div style="font-size:12.5px;font-weight:700;color:#8A5A10;margin-bottom:2px">\u21bb Did not get done last week \u00b7 ${list.length}</div>
-    <div style="font-size:11px;color:#8A5A10;margin-bottom:3px">Straight off last week's list \u2014 move it to a new date here rather than going hunting for it. A contractor booking takes a new start and a new finish.</div>
-    ${list.map(row).join('')}</div>`;
-}
-
 // ===================== MONDAY MEETING — THE TWO FINISH DATES =====================
 // Committed finish (c.end) is agreed once in the project meeting and then left
 // alone — it is the only thing on-time-versus-late is scored against, so if it
@@ -16400,12 +16359,12 @@ function _wmTdTopics(wk, c, roNow, ta2, kn){
 
   body.last = `<div style="font-size:11.5px;color:#566070;margin-bottom:6px">${lastR.from} &rarr; ${lastR.to}</div>`
     + listOf(lastR.from,lastR.to)
-    + _wmCarryBlock(wk, c, roNow)
     + _sub('How last week actually went') + ta2(c.id+'::lastc','The recap in your words&hellip;',44)
     + _sub('&#127942; Wins') + _wmAutoWins(c, wk) + ta2(c.id+'::wins','What went right on this one this week?');
 
   body.next = `<div style="font-size:11.5px;color:#566070;margin-bottom:6px">${fwdR.from} &rarr; ${fwdR.to} &middot; in date order</div>`
     + listOf(fwdR.from,fwdR.to)
+    + _wmCarryBlock(wk, c, roNow)
     + _sub('Anything about what is coming up')
     + ta2(c.id+'::nextc','One thought per line &mdash; each line carries into next Monday as its own tickable item&hellip;',44)
     + bar(roNow?'':`<button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">&#65291; Add task</button><button onclick="_wmAddEvent('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#4A7318;cursor:pointer;font-weight:600">&#65291; Add calendar event</button>`);
@@ -17260,7 +17219,6 @@ function openWeeklyMeeting(kind, week){
 
           body.last = `<div style="font-size:11.5px;color:#566070;margin-bottom:6px">${lastItems.length?(lastItems.filter(x=>x.done).length+' of '+lastItems.length+' done &middot; '):''}${_wmLabel(lastWk).replace(/^\w+, /,'')} &rarr; Sun</div>`
             + lastRows
-            + _wmCarryBlock(wk, c, roNow)
             + _sub('How last week actually went')
             + _wmPlanWas(wk, c)
             + ta2(c.id+'::lastc','The recap in your words&hellip;',44)
@@ -17270,6 +17228,7 @@ function openWeeklyMeeting(kind, week){
 
           body.next = `<div style="font-size:11.5px;color:#566070;margin-bottom:6px">${fwdItems.length?(fwdItems.filter(x=>x.done).length+' of '+fwdItems.length+' done &middot; '):''}${fwdR.from} &rarr; ${fwdR.to} &middot; in date order</div>`
             + fwdRows
+            + _wmCarryBlock(wk, c, roNow)
             + _sub('Anything about what is coming up')
             + ta2(c.id+'::nextc','One thought per line &mdash; each line carries into next Monday as its own tickable item&hellip;',44)
             + _bar(roNow?'':`<button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">&#65291; Add task</button><button onclick="_wmAddEvent('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#4A7318;cursor:pointer;font-weight:600">&#65291; Add calendar event</button>`);
@@ -38430,4 +38389,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-11-06a tv-schedule-imported-not-overlaid -->
+<!-- build: 2026-11-06b one-place-to-mark-last-week-off -->
