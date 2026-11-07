@@ -11307,32 +11307,120 @@ async function _wmTick(wk, itemKey, val){
 // It is stored as an ordinary meeting note - pid::sched::<person> - so it autosaves,
 // travels into the PDFs and obeys every rule the other boxes already obey, rather than
 // being a second kind of note with its own half of the plumbing.
-// The brain-dump box itself, one per person, used by the construction card and the
-// takedown card alike so the two cannot drift apart. `ta2` comes from the caller
-// because it is what knows how to autosave this week's notes.
+// Open/closed state for each person's tab and for the add-somebody form, kept across
+// the redraws the meeting does constantly so a box does not shut under somebody's hands.
+function _schOpenKey(pid, person){ return 's:'+pid+'::'+String(person||'').toLowerCase(); }
+function _schIsOpen(pid, person){ return !!((window._schOpen||{})[_schOpenKey(pid,person)]); }
+function _schSetOpen(pid, person, on){ (window._schOpen=window._schOpen||{})[_schOpenKey(pid,person)]=!!on; }
+function _schAddOpen(pid){ return !!((window._schAddOn||{})[pid]); }
+function _schAddToggle(pid, on){
+  (window._schAddOn=window._schAddOn||{})[pid]=(on===undefined)?!_schAddOpen(pid):!!on;
+  const box=document.getElementById('schadd-'+_wmReschedId(pid));
+  if(box){ box.style.display=_schAddOpen(pid)?'':'none';
+    const sel=document.getElementById('schsel-'+_wmReschedId(pid));
+    if(sel && _schAddOpen(pid)){ try{ sel.focus(); }catch(e){} } }
+}
+// Bruce, 7 Nov: "make it to where I can select a person when I'm adding a task or
+// adding notes for somebody else. Right now, it's not able to."
+// It was a typed prompt, so you had to know how somebody's name is spelled on the
+// roster and get it right. It is a list of the team now, with a line for a name that
+// is not on it yet.
+async function _schAddPick(wk, pid){
+  if(_blockIfReadOnly()) return;
+  const sel=document.getElementById('schsel-'+_wmReschedId(pid));
+  const other=document.getElementById('schoth-'+_wmReschedId(pid));
+  let name=sel?String(sel.value||''):'';
+  if(name==='__other') name=other?String(other.value||''):'';
+  const v=_schSlug(name);
+  if(!v){ if(sel) try{ sel.focus(); }catch(e){} return; }
+  const cur=_schWhoMap(wk)[pid];
+  const list=(Array.isArray(cur)?cur.slice():[]);
+  const c=(typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===pid; })||{};
+  const already=_schWho(wk, c, (((window._wmData||{})[wk]||{})['team'])||{});
+  if(already.some(function(x){ return _sameAssignee(x,v); })){ alert(v+" already has a box on this one."); return; }
+  list.push(v);
+  if(await _wmSetMetaAt(wk,'team','__sched_who',pid,function(){ return list; })){
+    _schSetOpen(pid, v, true);                 // open the box they just made
+    (window._schAddOn=window._schAddOn||{})[pid]=false;
+    openWeeklyMeeting('team', wk);
+  }
+}
+function _schOtherToggle(pid){
+  const sel=document.getElementById('schsel-'+_wmReschedId(pid));
+  const row=document.getElementById('schothrow-'+_wmReschedId(pid));
+  if(sel && row) row.style.display=(sel.value==='__other')?'':'none';
+}
+// The block. Bruce, 7 Nov: "that just needs to be like a little form to type looking
+// thing where you can open and close it. Same thing for the PM, like a little open and
+// close tab within that box. That way we can keep things clean, organized,
+// user-friendly, easily to read."
+// So: one closed tab per person, saying at a glance whether there is anything in it,
+// and a form to add somebody that is folded away until it is wanted.
 function _schBlock(wk, c, roNow, ta2, notes){
   const E=_calEsc;
   const who=_schWho(wk, c, notes);
-  const boxes=who.map(function(pn){
+  const rid=_wmReschedId(c.id);
+  const filled=who.filter(function(pn){ return String((notes||{})[_schKey(c.id,pn)]||'').trim(); }).length;
+  const tabs=who.map(function(pn){
     const k=_schKey(c.id, pn);
+    const txt=String((notes||{})[k]||'').trim();
     const isPM=_sameAssignee(pn, c.pm||'');
-    const drop=(roNow||isPM)?'':'<span onclick="_schDropPerson(\''+_argEsc(wk)+'\',\''+_argEsc(c.id)+'\',\''+_argEsc(pn)+'\')" title="Take this box off &mdash; only while it is empty" style="cursor:pointer;font-size:11.5px;color:#8A94A6">remove</span>';
-    return '<div style="margin-top:10px">'
-      +'<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:4px">'
-        +'<div style="font-size:12px;font-weight:700;color:#185FA5">'+E(pn)+(isPM?'<span style="font-size:10.5px;font-weight:600;color:#566070"> \u00b7 PM on this house</span>':'')+'</div>'
+    const open=_schIsOpen(c.id, pn) || (!!txt && !roNow && false);
+    const first=String(pn).split(' ')[0];
+    const peek=txt ? E(txt.replace(/\s+/g,' ').slice(0,70))+(txt.length>70?'…':'')
+                   : '<span style="color:#8A94A6">nothing yet</span>';
+    const drop=(roNow||isPM)?'':'<span onclick="event.preventDefault();event.stopPropagation();_schDropPerson(\''+_argEsc(wk)+'\',\''+_argEsc(c.id)+'\',\''+_argEsc(pn)+'\')" title="Take this box off &mdash; only while it is empty" style="cursor:pointer;font-size:11.5px;color:#8A94A6;white-space:nowrap">remove</span>';
+    const task=roNow?'':'<div style="margin-top:7px"><button type="button" onclick="_wmAddTaskFor(\''+_argEsc(c.id)+'\',\''+_argEsc(pn)+'\')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">&#65291; Task for '+E(first)+'</button></div>';
+    return '<details '+(open?'open':'')+' data-sch-tab="'+E(_schOpenKey(c.id,pn))+'"'
+      +' ontoggle="_schSetOpen(\''+_argEsc(c.id)+'\',\''+_argEsc(pn)+'\',this.open)"'
+      +' style="border:0.5px solid #e6e8ee;border-radius:8px;background:#fff;margin-top:7px">'
+      +'<summary style="list-style:none;cursor:pointer;display:flex;gap:9px;align-items:center;padding:8px 11px">'
+        +'<span style="font-size:11px;color:#8A94A6;width:9px;flex:none">'+(open?'&#9662;':'&#9656;')+'</span>'
+        +'<span style="min-width:0;flex:1">'
+          +'<span style="font-size:13px;font-weight:700;color:#185FA5">'+E(pn)+'</span>'
+          +(isPM?'<span style="font-size:10.5px;color:#566070"> &middot; PM</span>':'')
+          +'<div style="font-size:11.5px;color:#566070;margin-top:1px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+peek+'</div>'
+        +'</span>'
+        +(txt?'<span style="font-size:9.5px;font-weight:700;color:#0F7B54;background:#E6F4ED;padding:1px 7px;border-radius:99px;white-space:nowrap">written</span>':'')
         +drop
+      +'</summary>'
+      +'<div style="padding:0 11px 11px">'
+        +ta2(k,'Anything '+E(first)+' needs to get on the calendar for this house…',52)
+        +task
       +'</div>'
-      +ta2(k,'Anything '+E(String(pn).split(' ')[0])+' needs to get on the calendar for this house\u2026',52)
-    +'</div>';
+    +'</details>';
   }).join('');
-  const addBtn=roNow?'':'<div style="margin-top:9px"><span onclick="_schAddPerson(\''+_argEsc(wk)+'\',\''+_argEsc(c.id)+'\')" style="cursor:pointer;font-size:12.5px;color:#185FA5;font-weight:600">&#65291; Add a section for somebody else</span></div>';
+
+  // The add-somebody form, folded away.
+  const team=((typeof teamMembers==='function')?teamMembers():[])
+    .filter(function(n){ return !who.some(function(x){ return _sameAssignee(x,n); }); });
+  const opts=team.map(function(n){ return '<option value="'+E(n)+'">'+E(n)+'</option>'; }).join('');
+  const addForm=roNow?'':''
+    +'<div style="margin-top:9px">'
+      +'<span onclick="_schAddToggle(\''+_argEsc(c.id)+'\')" style="cursor:pointer;font-size:12.5px;color:#185FA5;font-weight:600">&#65291; Add a section for somebody else</span>'
+      +'<div id="schadd-'+rid+'" style="display:'+(_schAddOpen(c.id)?'':'none')+';margin-top:7px;background:#F7F8FB;border:0.5px solid #e6e8ee;border-radius:8px;padding:9px 11px">'
+        +'<div style="font-size:11.5px;color:#566070;margin-bottom:5px">Pick whose list this goes on. They get their own box here, and it comes out on their weekly sheet.</div>'
+        +'<div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center">'
+          +'<select id="schsel-'+rid+'" onchange="_schOtherToggle(\''+_argEsc(c.id)+'\')" style="flex:1;min-width:160px;padding:7px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px;background:#fff">'
+            +(opts||'')
+            +'<option value="__other">Somebody not on this list…</option>'
+          +'</select>'
+          +'<button type="button" onclick="_schAddPick(\''+_argEsc(wk)+'\',\''+_argEsc(c.id)+'\')" style="padding:7px 14px;background:#111;color:#fff;border:none;border-radius:7px;font-size:12.5px;cursor:pointer;font-weight:600">Add</button>'
+          +'<span onclick="_schAddToggle(\''+_argEsc(c.id)+'\',false)" style="cursor:pointer;font-size:12px;color:#8A94A6">Cancel</span>'
+        +'</div>'
+        +'<div id="schothrow-'+rid+'" style="display:none;margin-top:7px">'
+          +'<input id="schoth-'+rid+'" type="text" placeholder="Type their name" style="width:100%;padding:7px 9px;border:0.5px solid #d8dce6;border-radius:7px;font-size:13px"/>'
+        +'</div>'
+      +'</div>'
+    +'</div>';
+
   return '<div style="border:0.5px solid #e6e8ee;border-radius:9px;margin-top:11px;overflow:hidden">'
     +'<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;background:#F7F8FB;border-radius:8px 8px 0 0;padding:7px 12px;border-bottom:0.5px solid #eef0f6">'
       +'<div style="font-size:12px;font-weight:700;color:#111">\u{1F5D2} Get it on the calendar</div>'
-      +'<div style="font-size:11.5px;color:#566070">lands on their weekly PDF</div></div>'
+      +'<div style="font-size:11.5px;color:#566070">'+(filled?(filled+' written'):'lands on their weekly PDF')+'</div></div>'
     +'<div style="padding:9px 12px">'
-      +'<div style="font-size:11.5px;color:#566070;margin-bottom:2px">Say it, write it, move on. Nobody works out a date in the meeting \u2014 whatever goes in here comes out on that person\u2019s own sheet afterwards, with this house named on it.</div>'
-      +boxes+addBtn
+      +'<div style="font-size:11.5px;color:#566070">Say it, write it, move on. Nobody works out a date in the meeting — whatever goes in here comes out on that person’s own sheet afterwards, with this house named on it.</div>'
+      +tabs+addForm
     +'</div></div>';
 }
 function _schSlug(name){ return String(name||'').replace(/:/g,'').replace(/\s+/g,' ').trim(); }
@@ -11355,22 +11443,6 @@ function _schWho(wk, c, notes){
     if(String(notes[k]||'').trim()) add(k.slice(pre.length));
   });
   return out;
-}
-async function _schAddPerson(wk, pid){
-  if(_blockIfReadOnly()) return;
-  const team=(typeof teamMembers==='function')?teamMembers():[];
-  const name=prompt("Whose list should this go on?\n\nType a name. Whatever you write here lands on that person's weekly PDF under this house."
-    +(team.length?("\n\nOn the team: "+team.join(', ')):''));
-  if(name===null) return;
-  const v=_schSlug(name);
-  if(!v) return;
-  const cur=_schWhoMap(wk)[pid];
-  const list=(Array.isArray(cur)?cur.slice():[]);
-  if(list.some(function(x){ return _sameAssignee(x,v); })){ alert(v+" already has a box on this one."); return; }
-  list.push(v);
-  if(await _wmSetMetaAt(wk,'team','__sched_who',pid,function(){ return list; })){
-    openWeeklyMeeting('team', wk);
-  }
 }
 async function _schDropPerson(wk, pid, person){
   if(_blockIfReadOnly()) return;
@@ -33705,14 +33777,50 @@ function _tvEnsure(after){
 // to the 21st of July and then the 31st to the 1st of August - two separate stints ten
 // days apart, and they stay two. No weekend is ever bridged either: a job shown as
 // Friday to Monday would be claiming somebody was there on the Saturday.
+// Bruce, 7 Nov: "there's still duplicates of interior paint on 82 North Belmar ...
+// same thing with backsplash install ... also a duplicate of the window install."
+// Looking at their data: the same job is often entered twice, once with the crew on it
+// and once with the company left blank - Interior Paint on the 9th is there as
+// "Alberto Suarez" and again as nobody - and sometimes the second one is worded as the
+// start of it ("Starting Backsplash Install" against "Backsplash Install"). Two lines,
+// same work. The blank one has no crew, so it could not even be bundled under a
+// contractor, and it sat on its own looking like a second job.
+// So the wording is reduced to what the job IS before anything is compared, and a copy
+// with nobody on it takes the crew from the copy that has one. Nothing is invented: the
+// name only ever comes from another entry for the same work on the same house.
+function _tvTitleKey(t){
+  return String(t==null?'':t).toLowerCase()
+    .replace(/[^a-z0-9]+/g,' ')
+    // "start the tiling" and "tiling" are the same job being talked about twice.
+    // Only the words about PROGRESS come off - never a word that says what the work is,
+    // which is why "final clean" keeps its "final".
+    .replace(/^(?:start|starting|continue|continuing|cont)\s+/,'')
+    .replace(/\belectric\b/g,'electrical')
+    .replace(/\s+/g,' ').trim();
+}
 function _tvMerge(list){
+  // First pass: a job with nobody on it borrows the crew from the same job on the same
+  // house that does have one.
+  const crew={};
+  (list||[]).forEach(function(t){
+    if(!String(t.company||'').trim()) return;
+    const k=t.house+'|'+t.kind+'|'+_tvTitleKey(t.title);
+    if(!crew[k]) crew[k]={ company:t.company, contact:t.contact, phone:t.phone };
+  });
+  (list||[]).forEach(function(t){
+    if(String(t.company||'').trim()) return;
+    const c=crew[t.house+'|'+t.kind+'|'+_tvTitleKey(t.title)];
+    if(!c) return;
+    t.company=c.company; t.adopted=true;
+    if(!String(t.contact||'').trim()) t.contact=c.contact;
+    if(!String(t.phone||'').trim()) t.phone=c.phone;
+  });
   const by={};
   (list||[]).forEach(function(t){
     // Same house, same job, same people. A cleanout by Junk X and a cleanout by Ray
     // Ellis over the same days are two bookings, not one, so the company is in the key.
-    const k=[t.house,t.kind,String(t.title||'').trim().toLowerCase(),
-             String(t.company||'').trim().toLowerCase(),
-             String(t.contact||'').trim().toLowerCase()].join('|');
+    const k=[t.house,t.kind,_tvTitleKey(t.title),
+             String(t.company||'').trim().toLowerCase()].join('|');
     (by[k]=by[k]||[]).push(t);
   });
   const out=[];
@@ -33723,6 +33831,14 @@ function _tvMerge(list){
       if(cur && _tvDayAdd(cur.de,1) >= t.ds){        // touching or overlapping
         if(t.de>cur.de) cur.de=t.de;
         cur.merged=(cur.merged||1)+1;
+        // Keep the wording that says the most. "Backsplash Install" beats "Starting
+        // Backsplash Install" for a run that covers both.
+        if(!/^(?:start|starting|continue|continuing)\b/i.test(String(t.title||'').trim())
+           && /^(?:start|starting|continue|continuing)\b/i.test(String(cur.title||'').trim())){
+          cur.title=t.title;
+        }
+        if(!String(cur.contact||'').trim() && String(t.contact||'').trim()) cur.contact=t.contact;
+        if(!String(cur.phone||'').trim() && String(t.phone||'').trim()) cur.phone=t.phone;
         return;
       }
       cur=Object.assign({},t);
@@ -35195,7 +35311,7 @@ function openAddTask(dateStr, pre){
     </div>
     <div>
     <div class="form-row"><label>Assign to (pick any number — leave all unchecked for Unassigned)</label>
-      <div style="border:0.5px solid #ddd;border-radius:8px;padding:4px;max-height:150px;overflow-y:auto;background:#fff">${asgChecks}</div>
+      <div style="border:0.5px solid #ddd;border-radius:8px;padding:4px;max-height:280px;overflow-y:auto;background:#fff">${asgChecks}</div>
     </div>
     <div class="form-two">
       <div class="form-row"><label>Repeat</label>
@@ -35489,7 +35605,7 @@ function openTaskDetail(id){
     </div>
     <div class="form-row" id="task-cat-new-row" style="display:none"><label>New header</label><input type="text" id="task-cat-new" placeholder="e.g. Build Scope of Work" /></div>
     <div class="form-row"><label>Assign to (pick any number — leave all unchecked for Unassigned)</label>
-      <div style="border:0.5px solid #ddd;border-radius:8px;padding:4px;max-height:150px;overflow-y:auto;background:#fff">${asgChecks}</div>
+      <div style="border:0.5px solid #ddd;border-radius:8px;padding:4px;max-height:280px;overflow-y:auto;background:#fff">${asgChecks}</div>
     </div>
     <div class="form-two">
       <div class="form-row"><label>Start date (optional)</label><input type="date" id="task-start" value="${_calEsc(t.start_date||'')}" ${dis} /></div>
@@ -38896,4 +39012,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-11-07b get-it-on-the-calendar -->
+<!-- build: 2026-11-07c tabs-a-picker-and-the-blank-crew-duplicates -->
