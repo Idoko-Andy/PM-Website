@@ -11292,6 +11292,73 @@ async function _kickCovered(wk, pid){
 async function _wmTick(wk, itemKey, val){
   if(await _wmSetMetaAt(wk,'team','__done',itemKey, function(cur){ return cur===val?undefined:val; })) openWeeklyMeeting('team', wk);
 }
+// ---- One line per contractor ------------------------------------------------
+// Bruce, 7 Nov, on 3339 Daglow: "there's still duplicates ... categorize that as one,
+// put it on the left side dates or something."
+// They are not duplicates. Villegas is on that house seven times between the 5th and
+// the 14th, and their end gives each visit its own wording - "Finish Electrical install
+// 100%", "Finish Electric Install 100%", "Finish Electrical Install Kitchen 100%" - so
+// the week reads as the same job over and over.
+// Joining them into one booking would be wrong: Creative Stone's three visits are the
+// bathroom granite, the kitchen granite and the last piece, and Alberto has twenty-two
+// genuinely different jobs on Belmar. The work is real; it is the LIST that is wrong.
+// So a crew that is on a house more than once in the window gets ONE line - who they
+// are, how many visits, the days down the left - and opens to the visits themselves,
+// each with its own ticks exactly as before. Nothing is merged and nothing is hidden.
+function _wmGrpKey(pid, who){ return 'g:'+pid+'::'+String(who||'').trim().toLowerCase(); }
+function _wmGrpIsOpen(pid, who){ return !!((window._wmGrpOpen||{})[_wmGrpKey(pid,who)]); }
+function _wmGrpSet(pid, who, on){ (window._wmGrpOpen=window._wmGrpOpen||{})[_wmGrpKey(pid,who)]=!!on; }
+function _wmGrpDay(ds){
+  try{ const p=String(ds).split('-').map(Number); return new Date(p[0],p[1]-1,p[2]).toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'}); }
+  catch(e){ return ds; }
+}
+// Build the list for one house: plain rows for one-off work, a single foldable line
+// for anybody who is on site more than once. Order is kept - a group sits where its
+// first visit sits, so the week still reads in date order.
+function _wmGroupRows(pid, items, rowFn){
+  const E=_calEsc;
+  const order=[], by={};
+  (items||[]).forEach(function(it){
+    const who=String(it.who||'').trim();
+    // Only work with a crew attached groups. A material delivery or a one-off event
+    // has nobody to group under and stays exactly as it was.
+    const k=who?who.toLowerCase():('@'+it.key);
+    if(!by[k]){ by[k]={who:who, items:[]}; order.push(k); }
+    by[k].items.push(it);
+  });
+  return order.map(function(k){
+    const g=by[k];
+    if(!g.who || g.items.length<2) return g.items.map(rowFn).join('');
+    const days=g.items.map(function(x){ return x.date; }).filter(Boolean).sort();
+    const ends=g.items.map(function(x){ return x.endDate||x.date; }).filter(Boolean).sort();
+    const from=days[0], to=ends[ends.length-1];
+    const done=g.items.filter(function(x){ return x.done; }).length;
+    const off=g.items.filter(function(x){ return x.cancelled; }).length;
+    const live=g.items.length-off;
+    const open=_wmGrpIsOpen(pid,g.who);
+    const span=(from===to)?_wmGrpDay(from):(_wmGrpDay(from)+' → '+_wmGrpDay(to));
+    const what=g.items.slice(0,3).map(function(x){ return String(x.title||'').trim(); }).filter(Boolean);
+    const more=g.items.length-what.length;
+    return '<details '+(open?'open':'')+' data-wm-grp="'+E(_wmGrpKey(pid,g.who))+'"'
+      +' ontoggle="_wmGrpSet(\''+_argEsc(pid)+'\',\''+_argEsc(g.who)+'\',this.open)"'
+      +' style="border-bottom:0.5px solid #f4f5f7">'
+      +'<summary style="list-style:none;cursor:pointer;display:flex;gap:10px;align-items:flex-start;padding:7px 0">'
+        +'<div style="font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:#566070;width:88px;flex-shrink:0;padding-top:2px">'+E(span)+'</div>'
+        +'<div style="flex:1;min-width:0">'
+          +'<div style="font-size:15px;color:#111"><b>'+E(g.who)+'</b>'
+            +'<span style="font-size:12px;color:#566070"> · '+g.items.length+' visit'+(g.items.length===1?'':'s')+'</span>'
+            +(done?('<span style="font-size:9.5px;font-weight:700;color:#0F7B54;background:#E6F4ED;padding:1px 6px;border-radius:99px;margin-left:6px;vertical-align:middle">'+done+' DONE</span>'):'')
+            +(off?('<span style="font-size:9.5px;font-weight:700;color:#B42318;background:#FDECEA;padding:1px 6px;border-radius:99px;margin-left:6px;vertical-align:middle">'+off+' CANCELLED</span>'):'')
+          +'</div>'
+          +'<div style="font-size:12.5px;color:#566070;margin-top:2px">'+E(what.join(' · '))+(more>0?(' · +'+more+' more'):'')+'</div>'
+          +'<div style="font-size:11.5px;color:#185FA5;margin-top:3px">'+(open?'Hide the '+live+' visit'+(live===1?'':'s'):'Open the '+g.items.length+' visit'+(g.items.length===1?'':'s')+' to tick them off')+' ›</div>'
+        +'</div>'
+      +'</summary>'
+      +'<div style="padding-left:12px;border-left:2px solid #eef0f6;margin:0 0 6px 10px">'+g.items.map(rowFn).join('')+'</div>'
+      +'</details>';
+  }).join('');
+}
+
 // ---- Marking it done in the meeting marks it done, full stop ------------------
 // Bruce, 4 Sept: "on the full project meeting we need to be able to mark tasks
 // completed as well, rather it's scheduled last week or scheduled this week."
@@ -11387,7 +11454,9 @@ function _wmItems(pid, from, to){
               // with what they're doing or what trade's going there." The trade is what
               // is HAPPENING, so the summary leads with it and keeps the name underneath.
               trade:isC?(trade||''):(e.kind==='material'?'Material':''),
-              who:isC?(_contractorName(e.contractor_id)||''):'',
+              who:isC?(_contractorName(e.contractor_id)||''):(_isTvEvent(e)
+                    ? String(e.notes||'').replace(/\s*\u2014?\s*from the Legacy TV schedule$/,'').split('\u00b7')[0].trim()
+                    : ''),
               note:enote,
               done:!!e.completed, cancelled:_cxOff(e), cxWhy:((_cxRec(e)||{}).why||''),
               kind:isC?'c':'m', kindLabel:isC?'Contractor':(isB?'Baseline':(e.kind==='material'?'Material':'Scheduled'))});
@@ -17186,7 +17255,7 @@ function openWeeklyMeeting(kind, week){
 
       // ---- last week ----
       const lastItems=_wmItems(c.id,lastR.from,lastR.to);
-      const lastRows=lastItems.length?lastItems.map(it=>{
+      const rowLast=(it)=>{
         const st=doneMap[it.key]||(it.done?'yes':'');
         // "Completed" is the real record - it ticks the task itself, not a note about
         // the task. "Not completed" is the meeting's own judgement and stays local.
@@ -17203,11 +17272,12 @@ function openWeeklyMeeting(kind, week){
             <div style="font-size:12.5px;color:#566070;margin-top:2px">${_calEsc(it.sub)}</div>${it.note?`<div style="font-size:13.5px;color:#333;margin-top:3px;line-height:1.45">${_calEsc(it.note)}</div>`:''}${it.cancelled?`<div style="font-size:12.5px;color:#B42318;margin-top:3px">Cancelled &mdash; off the construction calendar${it.cxWhy?(': '+_calEsc(it.cxWhy)):''}</div>`:''}${it.hold?`<div style="font-size:12.5px;color:#7A4E00;margin-top:3px">&#9208; ${_calEsc(it.holdWhy||'No reason written down')}${it.holdSince?(' &middot; '+_calEsc(it.holdSince)):''}</div>`:''}
             <div style="display:flex;gap:13px;flex-wrap:wrap;align-items:center;margin-top:${it.done?'3px':'5px'}">${tick('yes','Completed','#0F7B54')}${it.done?'':tick('no','Not completed','#B42318')+cxBtn(it)+rsBtn(it)}${(it.kind==='t'&&!it.done)?_hldBtn('t',it.id,'',!!it.hold):''}</div>
           </div></div>`;
-      }).join(''):'<div style="font-size:12.5px;color:#636b7a;padding:8px 0">Nothing was scheduled on this property last week.</div>';
+      };
+      const lastRows=lastItems.length?_wmGroupRows(c.id, lastItems, rowLast):'<div style="font-size:12.5px;color:#636b7a;padding:8px 0">Nothing was scheduled on this property last week.</div>';
 
       // ---- this week and next ----
       const fwdItems=_wmItems(c.id,fwdR.from,fwdR.to);
-      const fwdRows=fwdItems.length?fwdItems.map(it=>{
+      const rowFwd=(it)=>{
         const cf=confMap[it.key]||{};
         const box=(f,label)=>roNow
           ? `<span style="font-size:11.5px;color:${cf[f]?'#0F7B54':'#636b7a'}">${cf[f]?'&#9745;':'&#9744;'} ${label}</span>`
@@ -17229,7 +17299,8 @@ function openWeeklyMeeting(kind, week){
             ${roNow?(note?`<div style="font-size:12px;color:#555;margin-top:5px;background:#F7F8FB;border-radius:6px;padding:6px 9px">${_calEsc(note)}</div>`:'')
               :`<textarea onchange="_miItemNote('${it.key}',this.value)" placeholder="What are we waiting on?" style="width:100%;min-height:30px;margin-top:5px;padding:5px 8px;border:0.5px solid #e6e8ee;border-radius:6px;font-size:12.5px;resize:vertical;font-family:inherit">${_calEsc(note)}</textarea>`}`}
           </div></div>`;
-      }).join(''):'<div style="font-size:12.5px;color:#636b7a;padding:8px 0">Nothing booked on this property for the next two weeks.</div>';
+      };
+      const fwdRows=fwdItems.length?_wmGroupRows(c.id, fwdItems, rowFwd):'<div style="font-size:12.5px;color:#636b7a;padding:8px 0">Nothing booked on this property for the next two weeks.</div>';
 
       // ---- lag-time items, carried until they close ----
       const lagRows=_miBlockRows('lag', c, roNow);
@@ -33525,6 +33596,99 @@ function _tvLabel(t){
   const who=t.company||t.contact||"";
   return (t.kind==="filming"?"Filming":(t.title||"Scheduled work"))+(who?(" — "+who):"");
 }
+// ===================== DUPLICATE BOOKINGS =====================
+// Bruce, 7 Nov: "We also have duplicates on 2808 Powell Road with Patricia on the final
+// cleaning. You got two of them for November 17th."
+// Those two are not on the TV schedule at all any more - their end has her on the 14th.
+// They are left over from the one-off bulk load of the Legacy TV schedule on 28 Sept,
+// which dropped it straight into our calendar as ordinary bookings. Nothing owns those
+// rows, so when the live import started they were not recognised, not updated and not
+// cleaned up - and every booking that was in that load now has a second copy.
+//
+// Two halves to the fix. The import stops MAKING any more of them: a booking that is
+// already on the calendar, whoever put it there, counts as already there and no second
+// copy is added. And the ones already sitting there get named here, on the calendar,
+// with a button - never a silent delete, because some of them have been ticked off or
+// written on and that is somebody's work.
+function _dupNorm(t){
+  return String(t==null?'':t).toLowerCase()
+    .replace(/[^a-z0-9]+/g,' ')
+    .replace(/\b(the|a|an|and|to|be|of|for|on|in|at|is|100)\b/g,' ')
+    .replace(/\belectric\b/g,'electrical')
+    .replace(/\s+/g,' ').trim();
+}
+// What makes two rows the same booking: same house, same days, same work.
+function _dupKey(e){
+  return [ e.property_id||'', String(e.location||'').trim().toLowerCase(),
+           e.event_date||'', e.end_date||'', _dupNorm(e.title) ].join('|');
+}
+// A row somebody has acted on is never the copy we drop.
+function _dupWeight(e){
+  let w=0;
+  if(e.completed) w+=8;
+  if(Number(e.reschedule_count||0)>0) w+=4;
+  const nt=String(e.notes||'').trim();
+  if(nt && !/from the Legacy TV schedule$/.test(nt)) w+=2;   // somebody wrote on it
+  if(e.kind==='tv') w+=1;                                    // the one the import keeps current
+  return w;
+}
+// Every set of rows that is the same booking more than once, with the one to keep
+// picked first. Baseline rows are left out: they are switched off everywhere already.
+function _dupGroups(){
+  const rows=((typeof _calEventsCache!=='undefined'?_calEventsCache:[])||[])
+    .filter(function(e){ return e && e.kind!=='baseline' && (e.property_id||e.location) && e.event_date; });
+  const by={};
+  rows.forEach(function(e){ const k=_dupKey(e); (by[k]=by[k]||[]).push(e); });
+  const out=[];
+  Object.keys(by).forEach(function(k){
+    const g=by[k];
+    if(g.length<2) return;
+    const sorted=g.slice().sort(function(a,b){
+      const d=_dupWeight(b)-_dupWeight(a); if(d) return d;
+      return String(a.id).localeCompare(String(b.id));     // steady order, so the same one is kept every time
+    });
+    out.push({ key:k, keep:sorted[0], extra:sorted.slice(1) });
+  });
+  out.sort(function(a,b){ return String(a.keep.event_date).localeCompare(String(b.keep.event_date)); });
+  return out;
+}
+function _dupCount(){ return _dupGroups().reduce(function(a,g){ return a+g.extra.length; },0); }
+// Clear the extra copies. Asks first, names the number, and never touches the one it
+// is keeping - so a tick, a note or a reschedule on any of them survives.
+async function _dupClear(){
+  if(_blockIfReadOnly()) return;
+  const groups=_dupGroups();
+  const extra=[]; groups.forEach(function(g){ g.extra.forEach(function(e){ extra.push(e); }); });
+  if(!extra.length){ alert("Nothing is on this calendar twice."); return; }
+  const touched=extra.filter(function(e){ return _dupWeight(e)>=2; }).length;
+  if(!confirm("Remove "+extra.length+" extra cop"+(extra.length===1?'y':'ies')+" of "+groups.length+" booking"+(groups.length===1?'':'s')+"?\n\n"
+    +"One of each is kept — whichever has been ticked off, rescheduled or written on."
+    +(touched?("\n\n"+touched+" of the copies being removed have something on them too; the kept one has more."):"")
+    +"\n\nThis cannot be undone.")) return;
+  const ids=extra.map(function(e){ return e.id; });
+  let gone=0, err=null;
+  for(let i=0;i<ids.length && !err;i+=100){
+    const chunk=ids.slice(i,i+100);
+    const res=await supabase.from("pm_calendar_events").delete().in("id",chunk);
+    if(res.error) err=res.error.message||"could not remove them"; else gone+=chunk.length;
+  }
+  try{ _logAudit("cleaned","calendar","Construction calendar", gone+" duplicate booking"+(gone===1?'':'s')+" removed"); }catch(e){}
+  await loadCalendarEventsFromSupabase();
+  if(err) alert("Removed "+gone+", then stopped — "+err);
+  _calRerender();
+}
+function _dupBar(){
+  const n=_dupCount();
+  if(!n) return '';
+  const ro=(typeof isReadOnly==='function')?isReadOnly():false;
+  const g=_dupGroups().length;
+  return '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#FDF3F2;border:0.5px solid #F0C9C4;border-radius:9px;padding:8px 12px;margin-bottom:12px;font-size:12.5px">'
+    + '<span>⚠️</span>'
+    + '<span style="min-width:0;flex:1;color:#8C2A1C"><b>'+g+'</b> booking'+(g===1?' is':'s are')+' on this calendar more than once — <b>'+n+'</b> extra cop'+(n===1?'y':'ies')+'. Most are left over from the one-off load of the Legacy TV schedule in September, before the live import existed.</span>'
+    + (ro?'':'<span onclick="_dupClear()" style="cursor:pointer;color:#185FA5;white-space:nowrap;font-weight:600">Clear the extra copies</span>')
+  + '</div>';
+}
+
 // ===================== LEGACY TV SCHEDULE — THE IMPORT =====================
 // Bruce, 6 Nov: "that should be imported into our construction calendar on our website
 // as well and pop up on the meeting tab as it does everything else that's on our
@@ -33608,7 +33772,21 @@ function _tvTouched(e){
 // decided here, so it can be shown to somebody before a single row moves.
 function _tvPlan(){
   const want=_tvWanted();
-  const have=(typeof _calEventsCache!=="undefined"?_calEventsCache:[]).filter(function(e){ return e && e.kind==="tv"; });
+  const all=(typeof _calEventsCache!=="undefined"?_calEventsCache:[])||[];
+  const have=all.filter(function(e){ return e && e.kind==="tv"; });
+  // Bruce, 7 Nov: duplicates on Powell. The September bulk load put the TV schedule on
+  // this calendar as ordinary bookings, and the import could not see them - so it added
+  // its own copy of every one. A booking that is already here is already here, whoever
+  // put it there, so it is counted and no second copy is made. Those rows are never
+  // removed by the import either; they are not its to remove.
+  const mine={};
+  have.forEach(function(e){ mine[e.id]=true; });
+  const theirs={};
+  all.forEach(function(e){
+    if(!e || mine[e.id] || e.kind==="baseline") return;
+    const k=_tvRowKey(e);
+    theirs[k]=(theirs[k]||0)+1;
+  });
   const byKey={};
   have.forEach(function(e){ const k=_tvRowKey(e); (byKey[k]=byKey[k]||[]).push(e); });
   const need={};
@@ -33616,8 +33794,9 @@ function _tvPlan(){
   const add=[], del=[], kept=[];
   Object.keys(need).forEach(function(k){
     const got=(byKey[k]||[]).length;
+    const already=theirs[k]||0;          // the same booking, put there by somebody else
     const n=need[k].length;
-    for(let i=got;i<n;i++) add.push(need[k][i]);
+    for(let i=got+already;i<n;i++) add.push(need[k][i]);
     for(let i=0;i<Math.min(got,n);i++) kept.push(byKey[k][i]);
   });
   Object.keys(byKey).forEach(function(k){
@@ -33843,7 +34022,7 @@ function renderConstructionCalendar(){
       return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px;border-bottom:0.5px solid #f1f3f7;${done?'opacity:0.6;':''}"><div onclick="event.stopPropagation();toggleCalEventDone('${e.id}')" title="Mark ${done?'not done':'done'}" style="font-size:21px;cursor:pointer;line-height:1">${done?'✅':'⬜'}</div><div onclick="openCalEventDetail('${e.id}')" style="cursor:pointer;min-width:0;flex:1"><div style="font-size:15px;font-weight:500;color:#111;${done?'text-decoration:line-through;':''}">${_calEsc(lbl)}</div><div style="font-size:13px;color:#566070;margin-top:2px">${_calEsc(_locLabel(e)||'—')}</div></div><div onclick="openCalEventDetail('${e.id}')" style="font-size:12px;color:#566070;white-space:nowrap;cursor:pointer">Edit ›</div></div>`; };
     const dayBody=evs.length?`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;overflow:hidden">${evs.map(rowFor).join("")}</div>`:`<div style="background:#fff;border:0.5px solid #e0e4ec;border-radius:10px;padding:34px;text-align:center;color:#636b7a;font-size:14px">Nothing scheduled for this day.</div>`;
     return `<div style="padding:20px;max-width:760px;margin:0 auto">
-      ${_tvSyncBar()}
+      ${_dupBar()}${_tvSyncBar()}
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">${propPick}${kindPick}${clearBtn}</div>
       <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px">${viewToggle}${addTop}</div>
       <div style="display:flex;align-items:center;justify-content:center;gap:14px;margin-bottom:14px">
@@ -33856,7 +34035,7 @@ function renderConstructionCalendar(){
     </div>`;
   }
   return `<div style="padding:20px">
-    ${_tvSyncBar()}
+    ${_dupBar()}${_tvSyncBar()}
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px">${propPick}${kindPick}${clearBtn}</div>
     <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px">
       <div style="display:flex;align-items:center;gap:12px">
@@ -38550,4 +38729,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-11-06c cancelled-comes-off-the-calendar -->
+<!-- build: 2026-11-07a one-line-per-contractor-and-no-duplicates -->
