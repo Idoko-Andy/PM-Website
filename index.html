@@ -11292,6 +11292,135 @@ async function _kickCovered(wk, pid){
 async function _wmTick(wk, itemKey, val){
   if(await _wmSetMetaAt(wk,'team','__done',itemKey, function(cur){ return cur===val?undefined:val; })) openWeeklyMeeting('team', wk);
 }
+// ===================== GET IT ON THE CALENDAR =====================
+// Bruce, 7 Nov: "below anything about coming up this week, we need a section for notes
+// for PM to get on calendar or schedule. So we can just brain dump a bunch of stuff in
+// there, and then after the meeting the PM can go through each of their properties and
+// get all that stuff scheduled out. That way we can keep the meeting moving and
+// fluently running ... and that'll also save onto their PDF. You can click add a
+// section to add a person in there as well, if needed, and that'll go to their PDF."
+//
+// The room should never stop to work out a date. Somebody says it, it goes in the box,
+// the meeting carries on, and the person whose job it is finds it on their own sheet
+// afterwards with the house's name on it.
+//
+// It is stored as an ordinary meeting note - pid::sched::<person> - so it autosaves,
+// travels into the PDFs and obeys every rule the other boxes already obey, rather than
+// being a second kind of note with its own half of the plumbing.
+// The brain-dump box itself, one per person, used by the construction card and the
+// takedown card alike so the two cannot drift apart. `ta2` comes from the caller
+// because it is what knows how to autosave this week's notes.
+function _schBlock(wk, c, roNow, ta2, notes){
+  const E=_calEsc;
+  const who=_schWho(wk, c, notes);
+  const boxes=who.map(function(pn){
+    const k=_schKey(c.id, pn);
+    const isPM=_sameAssignee(pn, c.pm||'');
+    const drop=(roNow||isPM)?'':'<span onclick="_schDropPerson(\''+_argEsc(wk)+'\',\''+_argEsc(c.id)+'\',\''+_argEsc(pn)+'\')" title="Take this box off &mdash; only while it is empty" style="cursor:pointer;font-size:11.5px;color:#8A94A6">remove</span>';
+    return '<div style="margin-top:10px">'
+      +'<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:4px">'
+        +'<div style="font-size:12px;font-weight:700;color:#185FA5">'+E(pn)+(isPM?'<span style="font-size:10.5px;font-weight:600;color:#566070"> \u00b7 PM on this house</span>':'')+'</div>'
+        +drop
+      +'</div>'
+      +ta2(k,'Anything '+E(String(pn).split(' ')[0])+' needs to get on the calendar for this house\u2026',52)
+    +'</div>';
+  }).join('');
+  const addBtn=roNow?'':'<div style="margin-top:9px"><span onclick="_schAddPerson(\''+_argEsc(wk)+'\',\''+_argEsc(c.id)+'\')" style="cursor:pointer;font-size:12.5px;color:#185FA5;font-weight:600">&#65291; Add a section for somebody else</span></div>';
+  return '<div style="border:0.5px solid #e6e8ee;border-radius:9px;margin-top:11px;overflow:hidden">'
+    +'<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;background:#F7F8FB;border-radius:8px 8px 0 0;padding:7px 12px;border-bottom:0.5px solid #eef0f6">'
+      +'<div style="font-size:12px;font-weight:700;color:#111">\u{1F5D2} Get it on the calendar</div>'
+      +'<div style="font-size:11.5px;color:#566070">lands on their weekly PDF</div></div>'
+    +'<div style="padding:9px 12px">'
+      +'<div style="font-size:11.5px;color:#566070;margin-bottom:2px">Say it, write it, move on. Nobody works out a date in the meeting \u2014 whatever goes in here comes out on that person\u2019s own sheet afterwards, with this house named on it.</div>'
+      +boxes+addBtn
+    +'</div></div>';
+}
+function _schSlug(name){ return String(name||'').replace(/:/g,'').replace(/\s+/g,' ').trim(); }
+function _schKey(pid, person){ return pid+'::sched::'+_schSlug(person); }
+// Who has a box on this house: the people somebody has added, plus the house's own PM,
+// plus anybody who already has something written against it.
+function _schWhoMap(wk){ const m=_wmMeta(wk,'team','__sched_who'); return (m&&typeof m==='object')?m:{}; }
+function _schWho(wk, c, notes){
+  const out=[];
+  const add=(n)=>{ const v=_schSlug(n); if(!v) return;
+    if(!out.some(function(x){ return _sameAssignee(x,v); })) out.push(v); };
+  add(c&&c.pm);
+  const saved=_schWhoMap(wk)[c.id];
+  (Array.isArray(saved)?saved:[]).forEach(add);
+  // Anybody with words already against this house keeps their box, even if their name
+  // was taken off the list - the writing must never become unreachable.
+  const pre=c.id+'::sched::';
+  Object.keys(notes||{}).forEach(function(k){
+    if(k.indexOf(pre)!==0) return;
+    if(String(notes[k]||'').trim()) add(k.slice(pre.length));
+  });
+  return out;
+}
+async function _schAddPerson(wk, pid){
+  if(_blockIfReadOnly()) return;
+  const team=(typeof teamMembers==='function')?teamMembers():[];
+  const name=prompt("Whose list should this go on?\n\nType a name. Whatever you write here lands on that person's weekly PDF under this house."
+    +(team.length?("\n\nOn the team: "+team.join(', ')):''));
+  if(name===null) return;
+  const v=_schSlug(name);
+  if(!v) return;
+  const cur=_schWhoMap(wk)[pid];
+  const list=(Array.isArray(cur)?cur.slice():[]);
+  if(list.some(function(x){ return _sameAssignee(x,v); })){ alert(v+" already has a box on this one."); return; }
+  list.push(v);
+  if(await _wmSetMetaAt(wk,'team','__sched_who',pid,function(){ return list; })){
+    openWeeklyMeeting('team', wk);
+  }
+}
+async function _schDropPerson(wk, pid, person){
+  if(_blockIfReadOnly()) return;
+  const notes=(((window._wmData||{})[wk]||{})['team'])||{};
+  if(String(notes[_schKey(pid,person)]||'').trim()){
+    alert("There is something written in "+person+"'s box on this one. Clear the box first — taking the box away would take the writing with it.");
+    return;
+  }
+  const cur=_schWhoMap(wk)[pid];
+  const list=(Array.isArray(cur)?cur:[]).filter(function(x){ return !_sameAssignee(x,person); });
+  if(await _wmSetMetaAt(wk,'team','__sched_who',pid,function(){ return list; })){
+    openWeeklyMeeting('team', wk);
+  }
+}
+// Everything written for one person this week, house by house. This is what reaches
+// their own sheet.
+function _schForPerson(wk, person){
+  const notes=(((window._wmData||{})[wk]||{})['team'])||{};
+  const out=[];
+  Object.keys(notes).forEach(function(k){
+    const ix=k.indexOf('::sched::'); if(ix<0) return;
+    const who=k.slice(ix+9);
+    if(!_sameAssignee(who, person)) return;
+    const txt=String(notes[k]||'').trim(); if(!txt) return;
+    const pid=k.slice(0,ix);
+    const c=(typeof propCards!=='undefined'?propCards:[]).find(function(x){ return x.id===pid; });
+    out.push({ pid:pid, addr:(c&&c.addr)||'', text:txt });
+  });
+  const num=(x)=>{ const m=String(x||'').match(/\d+/); return m?parseInt(m[0],10):999999; };
+  out.sort(function(a,b){ return num(a.addr)-num(b.addr)||String(a.addr).localeCompare(String(b.addr)); });
+  return out;
+}
+// Everything written this week, for the Monday summary.
+function _schAll(wk){
+  const notes=(((window._wmData||{})[wk]||{})['team'])||{};
+  const byPid={};
+  Object.keys(notes).forEach(function(k){
+    const ix=k.indexOf('::sched::'); if(ix<0) return;
+    const txt=String(notes[k]||'').trim(); if(!txt) return;
+    const pid=k.slice(0,ix), who=k.slice(ix+9);
+    (byPid[pid]=byPid[pid]||[]).push({ who:who, text:txt });
+  });
+  const cards=(typeof propCards!=='undefined'?propCards:[]);
+  const num=(x)=>{ const m=String(x||'').match(/\d+/); return m?parseInt(m[0],10):999999; };
+  return Object.keys(byPid).map(function(pid){
+    const c=cards.find(function(x){ return x.id===pid; });
+    return { pid:pid, addr:(c&&c.addr)||'', rows:byPid[pid].sort(function(a,b){ return String(a.who).localeCompare(String(b.who)); }) };
+  }).sort(function(a,b){ return num(a.addr)-num(b.addr)||String(a.addr).localeCompare(String(b.addr)); });
+}
+
 // ---- One line per contractor ------------------------------------------------
 // Bruce, 7 Nov, on 3339 Daglow: "there's still duplicates ... categorize that as one,
 // put it on the left side dates or something."
@@ -12578,6 +12707,21 @@ function _wmSummaryHtml(wk){
     D.wins.map(x=>`<div class="win"><b>${esc(x.c.addr||'')}</b><div class="wt">${esc(x.t)}</div></div>`).join('')+
     '</div>':none('No wins written up for last week.');
 
+  // Bruce, 7 Nov: the brain dump, so nothing said in the room goes unrecorded.
+  const schAll=(typeof _schAll==='function')?_schAll(wk):[];
+  const schList=schAll.length
+    ? '<div class="items">'+schAll.map(function(g){
+        return '<div class="item"><div style="min-width:0;flex:1"><b>'+esc(g.addr||'(property)')+'</b>'
+          + g.rows.map(function(r){
+              return '<div class="bub"><div style="font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:#185FA5;margin-bottom:2px">'
+                +esc(r.who)+'</div>'+esc(r.text).replace(/\n/g,'<br>')+'</div>';
+            }).join('')
+        +'</div></div>';
+      }).join('')+'</div>'
+    : none('Nothing was put down for anybody to schedule this week.');
+  const schCount=(function(){ const k=schAll.reduce(function(a,g){ return a+g.rows.length; },0);
+    return k+' note'+(k===1?'':'s')+' \u00b7 '+schAll.length+' propert'+(schAll.length===1?'y':'ies'); })();
+
   const present=D.closed.by?('Closed by '+esc(D.closed.by)):'Not yet marked complete';
   return `<!doctype html><html><head><meta charset="utf-8"><title>Monday Meeting Summary — week of ${esc(wk)}</title>
 <style>
@@ -12692,6 +12836,7 @@ function _wmSummaryHtml(wk){
     </div>
     ${sec('Booked this week', D.booked.length+' items &middot; '+D.bookByProp.length+' properties', bookTbl)}
     ${sec('Lag-time items still open', D.lag.length+' open across '+D.lagByProp.length+' properties', lagList)}
+    ${sec('\u{1F5D2} To get on the calendar', schCount, schList)}
     ${sec('Wins \u2014 the week just gone', D.wins.length+' propert'+(D.wins.length===1?'y':'ies'), winList)}
   </div>
   <div class="foot"><span>Generated from the live property cards &middot; Legacy Homes PM Hub</span><span>${esc(_wmWhen(new Date().toISOString()))}</span></div>
@@ -12742,6 +12887,9 @@ function _wmSummaryText(wk){
       +' '+_wmDateShort(it.date)).join('; ')));
   sect('Lag-time items still open', D.lagByProp.map(g=>
     g.addr+': '+g.items.map(x=>x.text+' ['+_miAgeLabel(x.raised)+']').join('; ')));
+  sect('To get on the calendar', ((typeof _schAll==='function')?_schAll(wk):[]).map(function(g){
+    return (g.addr||'(property)')+': '+g.rows.map(function(r){ return r.who+' - '+String(r.text).replace(/\s+/g,' '); }).join('; ');
+  }));
   sect('Wins - the week just gone', D.wins.map(x=>(x.c.addr||'')+': '+x.t));
   L.push('Full detail, including every property note, is in the PDF attached.');
   return L.join('\n');
@@ -16536,6 +16684,7 @@ function _wmTdTopics(wk, c, roNow, ta2, kn){
     + _wmCarryBlock(wk, c, roNow)
     + _sub('Anything about what is coming up')
     + ta2(c.id+'::nextc','One thought per line &mdash; each line carries into next Monday as its own tickable item&hellip;',44)
+    + _schBlock(wk, c, roNow, ta2, (((window._wmData||{})[wk]||{})['team'])||{})
     + bar(roNow?'':`<button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">&#65291; Add task</button><button onclick="_wmAddEvent('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#4A7318;cursor:pointer;font-weight:600">&#65291; Add calendar event</button>`);
 
   // Bruce, 28 Sept: "the fifth section should be closing, vacancy and any questions -
@@ -17202,7 +17351,6 @@ function openWeeklyMeeting(kind, week){
       : `${_fwdStale(key)?`<div style="font-size:12px;color:#633806;background:#FFF7E0;border:0.5px solid #EAD9A8;border-radius:8px;padding:7px 11px;margin-bottom:6px">${/::money$/.test(key)?'Last week&rsquo;s money note is shown above. This box is yours for this week.':'Last week&rsquo;s plan moved across into <b>How last week actually went</b>. This box is yours for the week ahead.'}</div>`:''}<textarea id="wm-${key}" placeholder="${ph}" style="width:100%;min-height:${minH?(minH+22):76}px;padding:11px 13px;border:0.5px solid #d8dce6;border-radius:8px;font-size:15px;line-height:1.5;color:#222;resize:vertical;font-family:inherit">${_fwdStale(key)?'':_calEsc(notes[key]||'')}</textarea>
          <div style="display:flex;align-items:center;gap:8px;margin-top:4px"><button onclick="_wmSaveNote('${kind}','${key}','${wk}')" style="padding:5px 13px;background:#111;color:#fff;border:none;border-radius:6px;font-size:12px;cursor:pointer">Save</button><span id="wm-ok-${key}" style="display:none;font-size:12px;color:#16794C">Saved &#10003;</span></div>`;
     const secHead=(t,right)=>`<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;background:#F7F8FB;border-radius:8px 8px 0 0;padding:7px 12px;border-bottom:0.5px solid #eef0f6"><div style="font-size:12px;font-weight:700;color:#111">${t}</div><div style="font-size:11.5px;color:#566070">${right||''}</div></div>`;
-    const secWrap=(head,inner)=>`<div style="border:0.5px solid #e6e8ee;border-radius:9px;margin-top:11px;overflow:hidden">${head}<div style="padding:9px 12px">${inner}</div></div>`;
     const kindPill=(k,l)=>{ const st=k==='c'?'background:#E1F5EE;color:#0F7B54':k==='m'?'background:#FBF3E2;color:#8A5A10':'background:#E7EFF8;color:#185FA5'; return `<span style="font-size:9.5px;text-transform:uppercase;letter-spacing:.05em;padding:1px 6px;border-radius:99px;font-weight:600;margin-right:6px;${st}">${l}</span>`; };
     const dayLbl=(d)=>{ try{ return new Date(d+"T00:00:00").toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short'}); }catch(e){ return d; } };
     // Drawn through _wmReschedCell so that an open date box is redrawn open, with the
@@ -17411,6 +17559,7 @@ function openWeeklyMeeting(kind, week){
             + _wmCarryBlock(wk, c, roNow)
             + _sub('Anything about what is coming up')
             + ta2(c.id+'::nextc','One thought per line &mdash; each line carries into next Monday as its own tickable item&hellip;',44)
+            + _schBlock(wk, c, roNow, ta2, notes)
             + _bar(roNow?'':`<button onclick="_wmAddTask('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#185FA5;cursor:pointer;font-weight:600">&#65291; Add task</button><button onclick="_wmAddEvent('${c.id}')" style="padding:6px 12px;background:#fff;border:0.5px solid #cdd7e6;border-radius:7px;font-size:12.5px;color:#4A7318;cursor:pointer;font-weight:600">&#65291; Add calendar event</button>`);
 
           body.lag = _sub('Lag-time items &middot; carried until they close') + lagRows + lagAdd
@@ -37650,7 +37799,7 @@ function _prioNearFinish(c){
 }
 // The meeting recap for one house, in the words the room actually wrote. This is the
 // "full project team meeting recap, but only for their properties" Bruce asked for.
-function _prioRecapFor(wk, c){
+function _prioRecapFor(wk, c, person){
   const N=(((window._wmData||{})[wk]||{})['team'])||{};
   const n=(f)=>String(N[c.id+'::'+f]||'').trim();
   const bits=[];
@@ -37663,9 +37812,18 @@ function _prioRecapFor(wk, c){
   // Bruce, 26 Sept: Jen's permit comments are a section of their own, so they travel
   // as their own line rather than being blended into everybody else's.
   push('Permits \u2014 from the architect', n('permjen'));
+  // Bruce, 7 Nov: "upcoming takedowns needs to be included in that PDF as well."
+  // A takedown's card asks a different set of questions - the vacancy box is the one
+  // that matters on a house we have not bought yet - and this only ever read the
+  // construction ones, so a takedown printed with nothing under it.
+  push('Vacancy, access and utilities', n('access'));
   const carry=(typeof _wmCarryFor==='function'?_wmCarryFor(wk,c.id):[]).filter(function(x){ return !x.done; });
   const m=(typeof _wmCalc==='function')?_wmCalc(c):null;
-  return { pid:c.id, label:c.addr||'', phase:c.phase||'', bits:bits, carry:carry,
+  // What the room asked THIS person to get on the calendar for THIS house. Kept apart
+  // from the rest of the recap, because the recap is to read and this is to do.
+  const sched=person?String(N[_schKey(c.id,person)]||'').trim():'';
+  return { pid:c.id, label:c.addr||'', phase:c.phase||'', bits:bits, carry:carry, sched:sched,
+           takedown:(typeof _wmIsTakedown==='function')?_wmIsTakedown(c):false,
            money:m?{b:m.b, s:m.s, left:m.left}:null,
            vacancy:c.vacancyDate||'', closing:c.closingDate||'', sell:c.closingDateSell||'' };
 }
@@ -37939,7 +38097,7 @@ function _prioPack(person, wk){
   const mine=_prioMyCards(person);
   const seen={}; const recaps=[]; const notes=[];
   const addRecap=(c, why)=>{ if(!c || seen[c.id]) return; seen[c.id]=true;
-    const r=_prioRecapFor(wk,c); r.why=why; recaps.push(r); };
+    const r=_prioRecapFor(wk,c,person); r.why=why; recaps.push(r); };
 
   if(kind==='pm'){
     mine.forEach(function(c){ addRecap(c,'you are the PM'); });
@@ -38364,7 +38522,12 @@ function _prioPreview(person, wk){
     const bits=r.bits.length?r.bits.map(function(b){ return `<p class="lb">${b.label}</p><p class="bd">${esc(b.text)}</p>`; }).join('')
       : `<p class="bd dim">Nothing was written about this one in the meeting.</p>`;
     const carry=r.carry.length?`<p class="lb">Still carrying</p>${r.carry.map(function(x){ return '<div class="job"><span class="box"></span><span class="what"><span class="t">'+esc(x.text)+'</span></span><span class="meta"></span></div>'; }).join('')}`:'';
-    return `<section class="rec"><div class="rh">${esc(r.label)}<span class="rp">${esc(r.phase)}${r.why?(' · '+r.why):''}</span></div>${money(r.money)}${dates?`<p class="m">${dates}</p>`:''}${bits}${carry}</section>`;
+    // Bruce, 7 Nov: the brain dump from the meeting. First thing under the house and
+    // marked as a job, because every other line here is something to read and this is
+    // the only one that is something to do.
+    const sched=r.sched?`<div class="todo"><p class="lb">Get it on the calendar</p><div class="job"><span class="box"></span><span class="what"><span class="t">${esc(r.sched)}</span></span></div></div>`:'';
+    const tdp=r.takedown?'<span class="tdp">Upcoming takedown</span>':'';
+    return `<section class="rec"><div class="rh">${esc(r.label)}${tdp}<span class="rp">${esc(r.phase)}${r.why?(' · '+r.why):''}</span></div>${sched}${money(r.money)}${dates?`<p class="m">${dates}</p>`:''}${bits}${carry}</section>`;
   }).join('');
 
   const html=`<!DOCTYPE html><html><head><meta charset="utf-8">
@@ -38495,6 +38658,10 @@ function _prioPreview(person, wk){
     section.rec{margin-top:14px;break-inside:avoid}
     .rh{font-size:14.5px;font-weight:700;border-bottom:1px solid #E3E7EE;padding-bottom:4px}
     .rp{font-size:11px;font-weight:600;color:#5B6472;margin-left:7px;text-transform:none;letter-spacing:0}
+    .tdp{display:inline-block;font-size:9px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;
+         color:#633806;background:#FFF7E0;border:1px solid #EAD9A8;padding:2px 7px;border-radius:99px;margin-left:8px;vertical-align:2px}
+    .todo{margin-top:8px;background:#F4F9F4;border:1px solid #CFE3CF;border-radius:10px;padding:8px 11px;break-inside:avoid}
+    .todo .lb{margin-top:0;color:#2F6B2F}
     p.lb{margin:9px 0 1px;font-size:10px;font-weight:700;color:#5B6472;text-transform:uppercase;letter-spacing:.05em}
     p.bd{margin:0;font-size:13.5px;line-height:1.5;white-space:pre-wrap}
     p.bd.dim{color:#9AA3B2}
@@ -38729,4 +38896,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-11-07a one-line-per-contractor-and-no-duplicates -->
+<!-- build: 2026-11-07b get-it-on-the-calendar -->
