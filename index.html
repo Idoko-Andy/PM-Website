@@ -3066,10 +3066,23 @@ async function loadPropertiesFromSupabase() {
     .select(PROP_SELECT_COLS)
     .order("created_at", { ascending: true });
   if (error) {
+    // Bruce, 22 Nov: "make sure everything still communicates properly."
+    // This used to empty the board and say nothing. A read that failed is not an empty
+    // company: everyone got a blank screen with no explanation, and every screen built
+    // from this list - the boards, the Monday walk, the reports - quietly agreed there
+    // was nothing there. Keep what we already have, and say out loud that it is not
+    // current rather than pretending the houses are gone.
     console.error("loadPropertiesFromSupabase failed:", error);
-    propCards = [];
+    window.__propLoadOk = false;
+    if (!(propCards && propCards.length)) propCards = [];
+    try{
+      if (typeof _toast === 'function' && !window.__propLoadToldAt)
+        _toast('The property list could not be read just now, so this may not be current. Check your connection.', 'bad');
+      window.__propLoadToldAt = Date.now();
+    }catch(e){}
     return;
   }
+  window.__propLoadOk = true; window.__propLoadToldAt = 0;
   propCards = (data || []).map(_propRowToCard);
   await _maybeArchiveClosed();
   if(typeof _maybeScheduleMarketChecklists==='function') await _maybeScheduleMarketChecklists();
@@ -3083,8 +3096,11 @@ async function _maybeArchiveClosed(){
     const cutoff=_ymd(new Date(Date.now()-28*86400000));
     const due=propCards.filter(c=>c.phase==="Closed" && !c.archived && c.closedDate && c.closedDate<=cutoff);
     for(const c of due){
-      const { error } = await supabase.from("pm_properties").update({ archived:true }).eq("id",c.id);
-      if(!error){ c.archived=true; _logAudit("updated","property", c.addr||"", "Auto-filed to Completed archive (4 weeks after closing)"); }
+      // .select() matters: a refused write comes back error:null with no rows, and
+      // without this the house would be marked archived on screen and an audit line
+      // written for a filing that never happened.
+      const r = await supabase.from("pm_properties").update({ archived:true }).eq("id",c.id).select("id");
+      if(!r.error && r.data && r.data.length){ c.archived=true; _logAudit("updated","property", c.addr||"", "Auto-filed to Completed archive (4 weeks after closing)"); }
     }
   }catch(e){ /* never block load */ }
 }
@@ -11147,6 +11163,36 @@ async function _miClose(kind, id){
     openWeeklyMeeting('team');
   }
 }
+// Bruce, 23 Nov: "also need the option to delete a lagtime item on the meeting doc too."
+//
+// "Figured out?" closes an item - it happened, and it stops being carried. That is not
+// the same as an item that should never have been on the list: a typo, a duplicate, or
+// something raised against the wrong house. Closing one of those says it was dealt with,
+// which is a small lie that stays in the record for good.
+//
+// So this removes it properly. It asks first and says it cannot be undone, and the full
+// wording goes into the edit history before it goes, so a line deleted by mistake can
+// still be read back and retyped.
+async function _miDelete(kind, id){
+  if(_blockIfReadOnly()) return;
+  const d=window._miData||{}; const rec=(d[kind]||{})[id]; if(!rec) return;
+  const what = kind==='lag' ? 'long-lead item' : 'question';
+  if(!confirm('Delete this '+what+'?\n\n"'+(rec.text||'')+'"\n\n'
+    +'It comes off this meeting and every week after it. This cannot be undone — use '
+    +'"Figured out?" instead if it actually happened.')) return;
+  delete d[kind][id];
+  window._miData=d; _miTouch(kind, id);
+  if(await _miSave()){
+    _logAudit('deleted', kind==='lag'?'lag item':'question', (rec.text||'').slice(0,80),
+      'Deleted from the Monday meeting — raised '+(rec.raised||'')+' by '+(rec.by||'')
+      +(rec.note?(' — note: '+String(rec.note).slice(0,120)):''));
+    if(typeof _toast==='function') _toast('Deleted.');
+    openWeeklyMeeting('team', window.__wmLastWeek||undefined);
+  } else {
+    // The save refused, so it is still on the list. Put it back in memory to match.
+    d[kind][id]=rec; window._miData=d;
+  }
+}
 async function _miNote(kind, id, val){
   if(_blockIfReadOnly()) return;
   const d=window._miData||{}; const rec=(d[kind]||{})[id]; if(!rec) return;
@@ -15941,7 +15987,9 @@ async function _avSweep(){
     window.__avRunning=false;
     if(!moved.length) return;
     try{ await _trkSave(); }catch(e){}
-    window.__avMoved=(window.__avMoved||[]).concat(moved.map(function(c){ return { addr:c.addr||'', from:c.phase, v:c.vacancyDate||'' }; }));
+    // The id travels with it so the notice can offer to put it back. c.phase is still
+    // the phase it was in, because propCards has not been reloaded yet.
+    window.__avMoved=(window.__avMoved||[]).concat(moved.map(function(c){ return { id:c.id, addr:c.addr||'', from:c.phase, v:c.vacancyDate||'' }; }));
     if(typeof loadPropertiesFromSupabase==='function') await loadPropertiesFromSupabase();
     if(typeof _wmRerenderIfOpen==='function') _wmRerenderIfOpen();
   }catch(e){ window.__avRunning=false; }
@@ -15960,6 +16008,218 @@ async function _avSweep(){
 // presses the button. The reason is always on screen, because "the computer thinks so"
 // is not a reason anybody can check.
 function _phIdx(name){ return PROP_PHASES.findIndex(function(p){ return p.name===name; }); }
+// Where a showings count came from, in words. The number on its own invites exactly the
+// question Bruce asked; naming the source answers it before he has to ask.
+function _phShowWhy(s){
+  const n=s.total, v=(n===1?'showing has':'showings have');
+  if(s.auto>0 && s.extra>0)
+    return n+' '+v+' been recorded against it \u2014 '+s.auto+' on the showings record'
+      +(s.asof?(' as of '+s.asof):'')+', and '+s.extra+' added by hand';
+  if(s.extra>0)
+    return n+' '+v+' been added against it by hand on the showings screen';
+  return n+' '+v+' been recorded against it on the showings record'
+    +(s.asof?(', as of '+s.asof):'');
+}
+// ===================== A SUGGESTION YOU HAVE TURNED OFF =======================
+// Bruce, 22 Nov, on 82 N Belmar: "no, I don't want to move it to listed on the market,
+// and there's no option to click that button."
+//
+// He was right, and it was my mistake. The panel offered exactly one answer - move it -
+// so a house that is meant to stay where it is had no way of saying so. The suggestion
+// came back on every screen, every day, and the only thing that would end it was doing
+// the thing he did not want done.
+//
+// Saying no is a human decision, so it is kept the way human decisions are kept here:
+// in a record of our own, not on the property row, which loadPropertiesFromSupabase
+// rebuilds from the database every time it runs. It is not a silent hide either - who
+// turned it off and when is written down, it is listed at the foot of the panel, and it
+// goes back in one click. Turning a suggestion off never moves the house and never
+// changes anything about it.
+const PHX_KEY='phase_suggestion_off';
+let _phxData=null, _phxLoadOk=null, _phxBusy=false;
+function _phxKey(pid, phase){ return String(pid)+'::'+String(phase); }
+async function _phxLoad(){
+  if(_phxBusy) return;
+  _phxBusy=true;
+  const r=await _pmSettingsRead(PHX_KEY);
+  // A read that failed is not an empty record. Treating it as empty would put every
+  // declined suggestion back on screen as though nobody had ever answered it.
+  if(r===null){ _phxLoadOk=false; if(!_phxData) _phxData={}; }
+  else { _phxLoadOk=true; _phxData=r; }
+  _phxBusy=false;
+}
+function _phxEnsure(after){
+  if(_phxData!==null) return;
+  _phxData={};                    // so two screens drawing at once only ask for it once
+  Promise.resolve(_phxLoad()).then(function(){ if(typeof after==='function'){ try{ after(); }catch(e){} } });
+}
+function _phxOff(pid, phase){ return !!(_phxData && _phxData[_phxKey(pid,phase)]); }
+function _phxCard(pid){
+  return (typeof propCards!=='undefined'?propCards:[]).find(function(x){ return String(x.id)===String(pid); });
+}
+// Everything currently turned off, for the list at the foot of the panel.
+function _phxList(){
+  const d=_phxData||{}, out=[];
+  Object.keys(d).forEach(function(k){
+    const i=k.indexOf('::'); if(i<0) return;
+    const c=_phxCard(k.slice(0,i));
+    if(!c || c.archived) return;            // a house that has gone is not a row
+    out.push({ c:c, phase:k.slice(i+2), rec:d[k]||{} });
+  });
+  return out.sort(function(a,b){ return String(a.c.addr||'').localeCompare(String(b.c.addr||'')); });
+}
+async function _phxSet(pid, phase, on){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return false;
+  if(_phxData===null) await _phxLoad();
+  if(_phxLoadOk===false){
+    alert("The list of suggestions you have turned off could not be read a moment ago, so changing it now could undo somebody else's answer. Nothing was changed \u2014 refresh and try again.");
+    return false;
+  }
+  const k=_phxKey(pid, phase);
+  const mine=Object.assign({}, _phxData||{});
+  if(on) mine[k]={ at:new Date().toISOString(), by:(typeof _miWho==='function'?_miWho():''), phase:String(phase) };
+  else delete mine[k];
+  const res=await _pmMergeWrite(PHX_KEY, mine, [[k]]);
+  if(res.err){ alert("That was NOT saved \u2014 "+res.err); return false; }
+  _phxData=res.base||mine; _phxLoadOk=true;
+  return true;
+}
+// Say no. Nothing moves; the house stays exactly where it is.
+async function _phDismiss(pid, phase){
+  const c=_phxCard(pid);
+  if(!c) return;
+  if(!confirm('Leave "'+(c.addr||'')+'" in '+c.phase+'.\n\nIt will stop suggesting '
+    +phase+' for this house. Nothing moves and nothing about the house changes. You can '
+    +'put the suggestion back at the bottom of this panel whenever you want.')) return;
+  if(!await _phxSet(pid, phase, true)) return;
+  if(typeof _logAudit==='function') _logAudit('updated','property', c.addr||'',
+    'Suggestion to move it to '+phase+' was turned off \u2014 it stays in '+c.phase);
+  _phRedraw();
+}
+async function _phUndismiss(pid, phase){
+  if(!await _phxSet(pid, phase, false)) return;
+  const c=_phxCard(pid);
+  if(typeof _logAudit==='function') _logAudit('updated','property', (c&&c.addr)||'',
+    'Suggestion to move it to '+phase+' was turned back on');
+  _phRedraw();
+}
+// ===================== SAYING NO TO ANY SUGGESTION ===========================
+// Bruce, 22 Nov: "i need to be able to mark NO on those pop ups please fix that on all
+// pages."
+//
+// Six boxes around the site proposed something and offered one button: do it. There was
+// no way to say no, so a suggestion you had already decided against came back on every
+// screen, every day, and the only thing that would make it stop was doing the thing you
+// did not want done. That is not a question, it is nagging.
+//
+// One record holds every answer, so a no given on the calendar is the same no on the
+// contractor directory. It is kept in our own settings row - not on the thing being
+// suggested about, which the imports and loaders rebuild - with who said it and when.
+// Nothing is hidden for good: where a suggestion has been turned off, the box says so
+// in one quiet line with a way to turn it back on.
+//
+// The id is built from WHAT is being suggested, not when. So the same suggestion stays
+// off, and a genuinely new one - a new duplicate, a bigger change from the TV schedule -
+// comes back and asks.
+const SG_KEY='suggestions_off';
+let _sgData=null, _sgLoadOk=null, _sgBusy=false;
+async function _sgLoad(){
+  if(_sgBusy) return;
+  _sgBusy=true;
+  try{
+    const r=await _pmSettingsRead(SG_KEY);
+    // A read that failed is not an empty record. Treating it as empty would put every
+    // answered suggestion back on screen as though nobody had ever said no.
+    if(r===null){ _sgLoadOk=false; if(!_sgData) _sgData={}; }
+    else { _sgLoadOk=true; _sgData=r; }
+  } finally { _sgBusy=false; }
+}
+function _sgEnsure(after){
+  if(_sgData!==null) return;
+  _sgData={};                     // so several screens drawing at once only ask once
+  Promise.resolve(_sgLoad()).then(function(){ if(typeof after==='function'){ try{ after(); }catch(e){} } });
+}
+function _sgOff(id){ return !!(_sgData && _sgData[id]); }
+function _sgRec(id){ return (_sgData && _sgData[id]) || null; }
+function _sgSig(parts){ return String(_liveHash((parts||[]).join('\u0001'))); }
+async function _sgSet(id, on, what){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return false;
+  if(_sgData===null) await _sgLoad();
+  if(_sgLoadOk===false){
+    alert("The list of suggestions you have turned off could not be read a moment ago, so changing it now could undo somebody else's answer. Nothing was changed \u2014 refresh and try again.");
+    return false;
+  }
+  const mine=Object.assign({}, _sgData||{});
+  if(on) mine[id]={ at:new Date().toISOString(), by:(typeof _miWho==='function'?_miWho():''), what:String(what||'') };
+  else delete mine[id];
+  const res=await _pmMergeWrite(SG_KEY, mine, [[id]]);
+  if(res.err){ alert("That was NOT saved \u2014 "+res.err); return false; }
+  _sgData=res.base||mine; _sgLoadOk=true;
+  return true;
+}
+// The No button's handler. Asks once, saves the answer, writes it to the history, and
+// redraws whichever screen the box was on.
+async function _sgNo(id, what, question, redraw){
+  if(question && !confirm(question)) return;
+  if(!await _sgSet(id, true, what)) return;
+  if(typeof _logAudit==='function') _logAudit('updated','suggestion', String(what||''),
+    'Turned off \u2014 it will not be suggested again until something changes');
+  _sgRedraw(redraw);
+}
+async function _sgYes(id, redraw){
+  if(!await _sgSet(id, false)) return;
+  if(typeof _logAudit==='function') _logAudit('updated','suggestion', String((_sgRec(id)||{}).what||''),
+    'Turned back on');
+  _sgRedraw(redraw);
+}
+function _sgRedraw(fn){
+  try{ if(fn && typeof window[fn]==='function'){ window[fn](); return; } }catch(e){}
+  try{ if(typeof _phRedraw==='function') _phRedraw(); }catch(e){}
+}
+// A question and its answer are held here and referred to by a short key, so nothing
+// has to survive being written into an onclick attribute. Quoting a sentence with
+// apostrophes and line breaks through HTML and then through JavaScript is how these
+// buttons break; this way the only thing in the attribute is a key.
+window.__sgQ = window.__sgQ || {}; window.__sgN = window.__sgN || 0;
+function _sgReg(id, what, q, redraw){
+  const k='sq'+(++window.__sgN);
+  window.__sgQ[k]={ id:id, what:what, q:q, redraw:redraw };
+  return k;
+}
+function _sgAsk(k){ const a=window.__sgQ[k]; if(!a) return; _sgNo(a.id, a.what, a.q, a.redraw); }
+function _sgAgain(k){ const a=window.__sgQ[k]; if(!a) return; _sgYes(a.id, a.redraw); }
+const SG_BTN='padding:7px 14px;background:#fff;color:#2b3a51;border:1px solid #c9d0db;border-radius:8px;font-size:12.5px;font-weight:600;cursor:pointer';
+function _sgNoBtn(id, what, q, redraw, label){
+  const k=_sgReg(id, what, q, redraw);
+  return '<button onclick="_sgAsk(\''+k+'\')" style="'+SG_BTN+'">'+_calEsc(label||'No')+'</button>';
+}
+function _sgNoLink(id, what, q, redraw, label){
+  const k=_sgReg(id, what, q, redraw);
+  // A bordered pill, not a plain word: No has to look as pressable as the thing it is
+  // declining, or it reads as a label and nobody presses it.
+  return '<span onclick="_sgAsk(\''+k+'\')" style="cursor:pointer;color:#2b3a51;white-space:nowrap;font-weight:600;'
+    +'border:1px solid #c9d0db;background:#fff;border-radius:99px;padding:4px 12px">'+_calEsc(label||'No')+'</span>';
+}
+// The quiet line a box leaves behind, so saying no is never the same as the app
+// forgetting. Shown in place of the suggestion it replaced.
+function _sgBackLine(id, label, redraw){
+  const r=_sgRec(id)||{};
+  const at=String(r.at||'').slice(0,10), by=String(r.by||'').trim();
+  const ro=(typeof isReadOnly==='function')?isReadOnly():false;
+  const k=_sgReg(id, label, '', redraw);
+  return '<div style="display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;font-size:11.5px;color:#8A94A6;margin-bottom:10px">'
+    +'<span>'+_calEsc(label)+' — you said no'+(at?((by?(', '+_calEsc(by)):'')+' on '+_calEsc(at)):'')+'.</span>'
+    +(ro?'':'<span onclick="_sgAgain(\''+k+'\')" style="cursor:pointer;color:#185FA5;font-weight:600">Ask me again</span>')
+  +'</div>';
+}
+// Redraw every copy of the panel that is on screen, wherever it has been drawn, so the
+// property board and an open meeting never disagree about what is still being suggested.
+function _phRedraw(){
+  try{
+    const hosts=document.querySelectorAll('.ph-panel-host');
+    for(let i=0;i<hosts.length;i++) hosts[i].innerHTML=_phPanelInner();
+  }catch(e){}
+}
 // Everything a house has done that implies it has reached a phase.
 function _phEvidence(c){
   const out=[];
@@ -15969,9 +16229,18 @@ function _phEvidence(c){
   if(String(c.checklistMarketLast||'').trim())
     out.push({ phase:'Listed on the Market', why:'the on-the-market checklist was filled in on '+c.checklistMarketLast });
   // Listed: somebody has recorded showings against it.
+  //
+  // Bruce, 22 Nov, on 82 N Belmar: "showings have been recorded against it ... not sure
+  // where it's getting that information from." Fair question, and the old wording gave
+  // him no way to answer it - it named neither how many nor where they came from, so
+  // there was nothing to go and check. Say both, and put the showings screen one click
+  // away so a wrong count can be corrected at the source instead of argued with here.
   try{
-    if(typeof _shwTotalFor==='function' && _shwTotalFor([c])>0)
-      out.push({ phase:'Listed on the Market', why:'showings have been recorded against it' });
+    if(typeof _mktShowTotal==='function'){
+      const _s=_mktShowTotal(c.id);
+      if(_s && _s.total>0)
+        out.push({ phase:'Listed on the Market', why:_phShowWhy(_s), showings:true });
+    }
   }catch(e){}
   // Under contract: a sale closing date is not set until there is a buyer.
   if(String(c.closingDateSell||'').trim())
@@ -15990,7 +16259,10 @@ function _phMismatch(c){
   if(!c || c.archived) return null;
   const here=_phIdx(c.phase);
   if(here<0) return null;
-  const ev=_phEvidence(c);
+  // Anything turned off for this house is not evidence any more. Filtering here, rather
+  // than hiding the finished row, means turning off "Listed on the Market" cannot also
+  // swallow a later "In Contract" that nobody has answered.
+  const ev=_phEvidence(c).filter(function(e){ return !_phxOff(c.id, e.phase); });
   if(!ev.length) return null;
   let best=null;
   ev.forEach(function(e){
@@ -16000,6 +16272,7 @@ function _phMismatch(c){
   if(!best) return null;
   // Every reason that points at or past the suggested phase, so the row can show them all.
   best.reasons=ev.filter(function(e){ return _phIdx(e.phase)>here; }).map(function(e){ return e.why; });
+  best.showings=ev.some(function(e){ return e.showings && _phIdx(e.phase)>here; });
   return best;
 }
 function _phMismatches(){
@@ -16024,28 +16297,84 @@ async function _phFix(pid){
   if(typeof loadPropertiesFromSupabase==='function') await loadPropertiesFromSupabase();
   if(typeof _wmRerenderIfOpen==='function') _wmRerenderIfOpen();
   if(typeof _trkRedraw==='function') _trkRedraw();
+  _phRedraw();
 }
 // The panel. Shown on the Monday meeting and on the property board.
 function _phPanel(){
+  // The answers live in their own record, which has to be fetched. Ask for it once and
+  // redraw when it lands, so a suggestion somebody already said no to never flashes up.
+  _phxEnsure(_phRedraw);
+  return '<div class="ph-panel-host">'+_phPanelInner()+'</div>';
+}
+function _phPanelInner(){
   const list=_phMismatches();
-  if(!list.length) return '';
+  const off=_phxList();
+  if(!list.length && !off.length) return '';
   const E=_calEsc;
   const ro=(typeof isReadOnly==='function')?isReadOnly():false;
-  return '<div style="background:#FCF7EB;border:1px solid #EAD9A8;border-radius:11px;padding:12px 15px;margin-bottom:14px">'
-    +'<div style="font-size:13.5px;font-weight:700;color:#6b5310;margin-bottom:3px">'
+  const q=function(v){ return String(v==null?'':v).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); };
+  let h='<div style="background:#FCF7EB;border:1px solid #EAD9A8;border-radius:11px;padding:12px 15px;margin-bottom:14px">';
+  if(list.length){
+    h+='<div style="font-size:13.5px;font-weight:700;color:#6b5310;margin-bottom:3px">'
       +list.length+' house'+(list.length===1?'':'s')+' '+(list.length===1?'is':'are')+' further on than '+(list.length===1?'its':'their')+' category says</div>'
-    +'<div style="font-size:12px;color:#6b5310;margin-bottom:8px">Nothing has been moved. Each one below has done something that only happens at a later stage — press the button and it moves, with the reason written to the history.</div>'
-    + list.map(function(x){
+      +'<div style="font-size:12px;color:#6b5310;margin-bottom:8px">Nothing has been moved, and nothing will move on its own. Each one below has done something that usually only happens at a later stage. Move it, or say no and it stops asking.</div>'
+      + list.map(function(x){
+        const pid=q(x.c.id), to=q(x.m.phase);
         return '<div style="background:#fff;border:0.5px solid #EAD9A8;border-radius:9px;padding:9px 12px;margin-bottom:7px">'
           +'<div style="display:flex;justify-content:space-between;align-items:baseline;gap:9px;flex-wrap:wrap">'
-            +'<span onclick="openPropDetail(\''+x.c.id+'\')" style="cursor:pointer;font-size:13.5px;font-weight:700;color:#185FA5">'+E(x.c.addr||'')+'</span>'
+            +'<span onclick="openPropDetail(\''+pid+'\')" style="cursor:pointer;font-size:13.5px;font-weight:700;color:#185FA5">'+E(x.c.addr||'')+'</span>'
             +'<span style="font-size:12px;color:#566070;white-space:nowrap">'+E(x.c.phase)+' → <b style="color:#111">'+E(x.m.phase)+'</b></span>'
           +'</div>'
           +'<div style="font-size:11.5px;color:#566070;margin-top:3px">Because '+E(x.m.reasons.join('; and '))+'.</div>'
-          +(ro?'':'<div style="margin-top:7px"><button onclick="_phFix(\''+x.c.id+'\')" style="padding:5px 12px;background:#122A4A;color:#fff;border:none;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer">Move it to '+E(x.m.phase)+'</button></div>')
+          +(x.m.showings?('<div style="font-size:11.5px;color:#185FA5;margin-top:3px;cursor:pointer" onclick="if(typeof _rltGo===\'function\')_rltGo(\'showings\')">If that showings count is wrong, correct it on the showings screen ›</div>'):'')
+          +(ro?'':'<div style="margin-top:8px;display:flex;gap:7px;flex-wrap:wrap">'
+            +'<button onclick="_phFix(\''+pid+'\')" style="padding:6px 13px;background:#122A4A;color:#fff;border:none;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer">Move it to '+E(x.m.phase)+'</button>'
+            +'<button onclick="_phDismiss(\''+pid+'\',\''+to+'\')" style="padding:6px 13px;background:#fff;color:#2b3a51;border:1px solid #c9d0db;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer">No — leave it in '+E(x.c.phase)+'</button>'
+          +'</div>')
         +'</div>';
-      }).join('')
-  +'</div>';
+      }).join('');
+  }
+  // What has been turned off, so saying no is never the same as the app forgetting.
+  if(off.length){
+    h+='<details'+(list.length?' style="margin-top:2px"':'')+'>'
+      +'<summary style="cursor:pointer;font-size:12px;font-weight:600;color:#6b5310">'
+        +off.length+' suggestion'+(off.length===1?'':'s')+' you have turned off</summary>'
+      +'<div style="margin-top:6px">'
+      + off.map(function(x){
+          const by=String(x.rec.by||'').trim(), at=String(x.rec.at||'').slice(0,10);
+          return '<div style="background:#fff;border:0.5px solid #EAD9A8;border-radius:9px;padding:8px 12px;margin-bottom:6px">'
+            +'<div style="font-size:13px;font-weight:600;color:#2b3a51">'+E(x.c.addr||'')+'</div>'
+            +'<div style="font-size:11.5px;color:#566070;margin-top:2px">Stays in '+E(x.c.phase)+'. Not being suggested for '+E(x.phase)+''
+              +(at?(' — turned off'+(by?(' by '+E(by)):'')+' on '+E(at)):'')+'.</div>'
+            +(ro?'':'<div style="margin-top:6px"><button onclick="_phUndismiss(\''+q(x.c.id)+'\',\''+q(x.phase)+'\')" style="padding:5px 11px;background:#fff;color:#2b3a51;border:1px solid #c9d0db;border-radius:7px;font-size:11.5px;font-weight:600;cursor:pointer">Start suggesting it again</button></div>')
+          +'</div>';
+        }).join('')
+      +'</div></details>';
+  }
+  return h+'</div>';
+}
+// Bruce, 22 Nov: "i need to be able to mark NO on those pop ups."
+// This one had already acted, so no is not "stop asking" - it is put it back. The house
+// goes to the phase it was in, and the record that says it has had its automatic move
+// is deliberately KEPT, so the sweep does not simply move it again tonight. A person
+// overruling an automation is the end of the conversation.
+async function _avUndo(pid){
+  if(typeof _blockIfReadOnly==='function' && _blockIfReadOnly()) return;
+  const m=(window.__avMoved||[]).find(function(x){ return String(x.id)===String(pid); });
+  if(!m) return;
+  if(!confirm('Put "'+m.addr+'" back to '+m.from+'?\n\nIt will stay there. It will not move itself again.')) return;
+  const r=await supabase.from("pm_properties").update({ phase:m.from }).eq("id",pid).select("id");
+  // A refusal comes back error:null with no rows, so rows are what counts.
+  if(r.error || !r.data || !r.data.length){
+    alert("That was NOT changed — "+((r.error&&r.error.message)||"the database accepted the request but changed nothing. Refresh and try again."));
+    return;
+  }
+  if(typeof _logAudit==='function') _logAudit('updated','property', m.addr||'',
+    'Put back to '+m.from+' by hand — it will not move itself again');
+  window.__avMoved=(window.__avMoved||[]).filter(function(x){ return String(x.id)!==String(pid); });
+  if(typeof loadPropertiesFromSupabase==='function') await loadPropertiesFromSupabase();
+  if(typeof _wmRerenderIfOpen==='function') _wmRerenderIfOpen();
+  if(typeof _toast==='function') _toast(m.addr+' is back in '+m.from+'.');
 }
 // The notice. It sits at the top of the Monday meeting until somebody reads it.
 function _avNotice(){
@@ -16055,7 +16384,12 @@ function _avNotice(){
     +'<div style="font-size:13.5px;font-weight:700;color:#174a7c;margin-bottom:3px">'
       +m.length+' house'+(m.length===1?'':'s')+' moved '+(m.length===1?'itself':'themselves')+' to Vacant / On Standby</div>'
     +'<div style="font-size:12px;color:#174a7c;margin-bottom:6px">We own '+(m.length===1?'it':'them')+' and '+(m.length===1?'it has':'they have')+' gone vacant, so '+(m.length===1?'it is':'they are')+' construction work now, not a takedown. '+(m.length===1?'It':'They')+' moved off the takedown tab and onto the construction walk.</div>'
-    + m.map(function(x){ return '<div style="font-size:12.5px;color:#111;padding:2px 0"><b>'+_calEsc(x.addr)+'</b><span style="color:#566070"> \u2014 was '+_calEsc(x.from)+', vacant since '+_calEsc(x.v||'(no date)')+'</span></div>'; }).join('')
+    + m.map(function(x){ return '<div style="display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;font-size:12.5px;color:#111;padding:3px 0">'
+        +'<span style="min-width:0;flex:1"><b>'+_calEsc(x.addr)+'</b><span style="color:#566070"> — was '+_calEsc(x.from)+', vacant since '+_calEsc(x.v||'(no date)')+'</span></span>'
+        +((x.id && !(typeof isReadOnly==='function' && isReadOnly()))
+            ? '<span onclick="_avUndo(\'' + String(x.id).replace(/'/g,"\\'") + '\')" style="cursor:pointer;color:#185FA5;font-weight:600;white-space:nowrap">No — put it back</span>'
+            : '')
+      +'</div>'; }).join('')
     +'<div style="margin-top:8px"><span onclick="window.__avMoved=[];openWeeklyMeeting(\'team\',window.__wmLastWeek||undefined)" style="cursor:pointer;font-size:12px;color:#185FA5;font-weight:600">Got it &rsaquo;</span></div>'
   +'</div>';
 }
@@ -16171,9 +16505,11 @@ function _miBlockRows(kind, c, roNow){
     const tail = kind==='lag'
       ? (roNow?(x.note?`<div style="font-size:12px;color:#555;margin-top:5px">${_calEsc(x.note)}</div>`:'')
              :`<div style="display:flex;gap:10px;align-items:center;margin-top:5px;flex-wrap:wrap">
-                 <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:#566070;cursor:pointer"><input type="checkbox" onchange="_miClose('lag','${x.id}')" style="width:14px;height:14px;cursor:pointer"/>Figured out?</label></div>
+                 <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;color:#566070;cursor:pointer"><input type="checkbox" onchange="_miClose('lag','${x.id}')" style="width:14px;height:14px;cursor:pointer"/>Figured out?</label>
+                 <span onclick="_miDelete('lag','${x.id}')" title="Take it off the list for good" style="font-size:11.5px;color:#B42318;cursor:pointer;font-weight:600">Delete</span></div>
                <textarea onchange="_miNote('lag','${x.id}',this.value)" placeholder="Where did this land this week?" style="width:100%;min-height:30px;margin-top:5px;padding:5px 8px;border:0.5px solid #e6e8ee;border-radius:6px;font-size:12.5px;resize:vertical;font-family:inherit">${_calEsc(x.note||'')}</textarea>`)
-      : (roNow?'':`<div style="margin-top:5px"><button onclick="_miClose('q','${x.id}')" style="padding:3px 10px;border:0.5px solid #cdd7e6;border-radius:6px;background:#fff;font-size:11.5px;color:#185FA5;cursor:pointer">Answer it</button></div>`);
+      : (roNow?'':`<div style="display:flex;gap:10px;align-items:center;margin-top:5px;flex-wrap:wrap"><button onclick="_miClose('q','${x.id}')" style="padding:3px 10px;border:0.5px solid #cdd7e6;border-radius:6px;background:#fff;font-size:11.5px;color:#185FA5;cursor:pointer">Answer it</button>
+          <span onclick="_miDelete('q','${x.id}')" title="Take it off the list for good" style="font-size:11.5px;color:#B42318;cursor:pointer;font-weight:600">Delete</span></div>`);
     return `<div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:0.5px solid #f4f5f7">${head}
       <div style="flex:1;min-width:0">
         <div style="font-size:13px;color:#111">${_calEsc(x.text)}</div>
@@ -17312,7 +17648,44 @@ const _WM_WHEN = {
   ceo:     'Bruce and Tommy, as needed'
 };
 function _wmWhenLabel(kind){ return _WM_WHEN[kind] || 'weekly'; }
+// ---- the meeting's house list is only as current as propCards ------------------
+// Bruce, 22 Nov, on 1093 Garden: "I changed the phase for 1093 Garden because we pulled
+// it off the market to rehab it ... so I needed to pop up on the Monday project meeting
+// tab."
+//
+// Pre Construction is already on the Monday walk, so the category was right. The list
+// was stale. The meeting builds itself from propCards, and nothing on the way into the
+// meeting ever re-read it - so a house moved on a phone, or in a tab that has been open
+// since this morning, simply is not there, with nothing on screen to say why. His rule
+// is that a thing typed once shows up everywhere; this was a place it did not.
+//
+// So the meeting fetches the property list when it opens. Two things keep that safe:
+// it redraws ONLY when a house has actually moved, because a redraw while somebody is
+// mid-sentence in a notes box costs them the sentence; and it leaves the screen alone
+// if the fetch comes back empty, because loadPropertiesFromSupabase empties the list
+// when the database refuses it, and an empty meeting is worse than a stale one.
+let _wmPropsAt=0;
+const WM_PROPS_TTL_MS=60000;
+function _wmPropsPrint(){
+  return (typeof propCards!=='undefined'?propCards:[])
+    .map(function(c){ return c.id+':'+c.phase+':'+(c.archived?1:0); }).sort().join('|');
+}
+function _wmFreshProps(kind, week){
+  if(typeof loadPropertiesFromSupabase!=='function') return;
+  if(Date.now()-_wmPropsAt < WM_PROPS_TTL_MS) return;
+  // Stamped BEFORE the work, on every path. A redraw calls openWeeklyMeeting again, and
+  // if the stamp waited until afterwards the two would feed each other without end.
+  _wmPropsAt=Date.now();
+  const before=_wmPropsPrint(), had=(typeof propCards!=='undefined'?propCards.length:0);
+  Promise.resolve(loadPropertiesFromSupabase()).then(function(){
+    if(had && !(typeof propCards!=='undefined'?propCards.length:0)) return;  // refused
+    if(_wmPropsPrint()===before) return;                 // nothing moved, leave it alone
+    if(window.__wmLastKind!==kind) return;               // they are on another screen now
+    openWeeklyMeeting(kind, week);
+  }, function(){});
+}
 function openWeeklyMeeting(kind, week){
+  _wmFreshProps(kind, week);
   document.querySelectorAll(".dd").forEach(x=>x.classList.remove("open"));
   document.querySelectorAll(".ni.has-dd").forEach(x=>x.classList.remove("on"));
   // Hiding the menu item is not the same as closing the door - this screen can
@@ -31934,9 +32307,13 @@ function _ctPriorSeedMatch(){
 }
 function _ctPriorSeedPanel(ro){
   if(ro) return '';
+  _sgEnsure(renderContractorDirectory);
   const rows=_ctPriorSeedMatch();
   const todo=rows.filter(function(r){ return r.hits.length===1 && !r.done; });
   if(!todo.length) return '';
+  const sid='ct-prior-seed:'+_sgSig(todo.map(function(r){ return r.seed.want+':'+r.seed.n; }).sort());
+  const swhat='Starting job counts for '+todo.length+' contractor'+(todo.length===1?'':'s');
+  if(_sgOff(sid)) return _sgBackLine(sid, swhat, 'renderContractorDirectory');
   const line=function(r){
     const one=r.hits.length===1, none=r.hits.length===0;
     const who=one?(r.hits[0].business_name||r.hits[0].name||'(unnamed)'):'';
@@ -31954,7 +32331,10 @@ function _ctPriorSeedPanel(ro){
     +'<div style="font-size:14px;font-weight:700;color:#111">\u{1F522} Starting counts you read out</div>'
     +'<div style="font-size:11.5px;color:#566070;margin:2px 0 8px">Work these men did before the site existed. It is added to what the construction calendar counts, so the calendar keeps counting from here. Nothing is written until you press the button, and anything that matched more than one record is skipped rather than guessed.</div>'
     +rows.map(line).join('')
-    +'<button onclick="_ctPriorSeedApply()" style="margin-top:9px;padding:8px 15px;background:#122A4A;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Set '+todo.length+' starting count'+(todo.length===1?'':'s')+'</button>'
+    +'<div style="margin-top:9px;display:flex;gap:7px;flex-wrap:wrap;align-items:center">'
+      +'<button onclick="_ctPriorSeedApply()" style="padding:8px 15px;background:#122A4A;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Set '+todo.length+' starting count'+(todo.length===1?'':'s')+'</button>'
+      +_sgNoBtn(sid, swhat, 'Leave these counts alone?\n\nNothing is written. This stops asking, and asks again if the numbers change.', 'renderContractorDirectory', 'No — leave them')
+    +'</div>'
   +'</div>';
 }
 async function _ctPriorSeedApply(){
@@ -32719,8 +33099,16 @@ function _ctDupGroups(){
   return groups;
 }
 function _ctDupPanel(){
-  const groups=_ctDupGroups();
-  if(!groups.length) return '';
+  _sgEnsure(renderContractorDirectory);
+  const all=_ctDupGroups();
+  // Keyed on exactly which records are being paired up, so "these are two different
+  // men" stays answered, and a genuinely new pairing still gets asked about.
+  const gid=(g)=>'ctdup:'+g.members.map(m=>m.id).sort().join('|');
+  const groups=all.filter(g=>!_sgOff(gid(g)));
+  const said=all.filter(g=>_sgOff(gid(g)));
+  const saidLines=said.map(g=>_sgBackLine(gid(g),
+    g.members.map(m=>m.name||m.business_name||'(no name)').join(' and '), 'renderContractorDirectory')).join('');
+  if(!groups.length) return said.length?('<div style="margin-bottom:14px">'+saidLines+'</div>'):'';
   const ro=isReadOnly();
   const cards=groups.map((g,gi)=>{
     const rows=g.members.map(m=>{
@@ -32738,12 +33126,16 @@ function _ctDupPanel(){
       <div style="font-size:12px;color:#8a6d1f;font-weight:600">${g.members.length} records share ${_calEsc(g.reason)}</div>
       ${rows}
       <div style="font-size:11px;color:#566070;margin-top:7px;border-top:0.5px solid #f1f3f7;padding-top:7px">Keeping one folds the others into it &mdash; their bookings move across, and anything blank on the record you keep is filled in from the others. Nothing is lost.</div>
+      ${ro?'':`<div style="margin-top:8px">${_sgNoBtn(gid(g),
+        g.members.map(m=>m.name||m.business_name||'(no name)').join(' and '),
+        'These are different people?\n\nNothing is merged. This pair stops being suggested, and you can put it back at the bottom of this box.',
+        'renderContractorDirectory', 'No — these are different people')}</div>`}
     </div>`;
   }).join('');
   return `<div style="background:#FFF7E0;border:1px solid #EAD9A8;border-radius:11px;padding:13px 15px;margin-bottom:16px">
     <div style="font-size:14px;font-weight:700;color:#6b5310;margin-bottom:3px">&#9888; ${groups.length} possible duplicate${groups.length===1?'':'s'}</div>
-    <div style="font-size:12.5px;color:#6b5310;margin-bottom:9px">These records look like the same person entered twice. Say which name is the right one and the rest are folded into it.</div>
-    ${cards}</div>`;
+    <div style="font-size:12.5px;color:#6b5310;margin-bottom:9px">These records look like the same person entered twice. Say which name is the right one and the rest are folded into it &mdash; or say they are different people and it stops asking.</div>
+    ${cards}${saidLines}</div>`;
 }
 // Fold one or more contractor records into the one being kept.
 async function _ctMerge(keepId, dropIds){
@@ -33943,14 +34335,22 @@ async function _dupClear(){
   _calRerender();
 }
 function _dupBar(){
+  _sgEnsure(_calRerender);
   const n=_dupCount();
   if(!n) return '';
   const ro=(typeof isReadOnly==='function')?isReadOnly():false;
-  const g=_dupGroups().length;
+  const groups=_dupGroups();
+  const g=groups.length;
+  // Tied to WHICH bookings look doubled, so a no sticks for these and a new double
+  // tomorrow still gets asked about.
+  const id='cal-dupes:'+_sgSig(groups.map(function(x){ return x.key||''; }).sort());
+  if(_sgOff(id)) return _sgBackLine(id, g+' booking'+(g===1?'':'s')+' on this calendar more than once', '_calRerender');
+  const q='Leave these bookings exactly as they are?\n\nNothing is removed. This stops asking about these ones, and comes back if a new double turns up.';
   return '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#FDF3F2;border:0.5px solid #F0C9C4;border-radius:9px;padding:8px 12px;margin-bottom:12px;font-size:12.5px">'
     + '<span>⚠️</span>'
     + '<span style="min-width:0;flex:1;color:#8C2A1C"><b>'+g+'</b> booking'+(g===1?' is':'s are')+' on this calendar more than once — <b>'+n+'</b> extra cop'+(n===1?'y':'ies')+'. Most are left over from the one-off load of the Legacy TV schedule in September, before the live import existed.</span>'
     + (ro?'':'<span onclick="_dupClear()" style="cursor:pointer;color:#185FA5;white-space:nowrap;font-weight:600">Clear the extra copies</span>')
+    + (ro?'':_sgNoLink(id, g+' booking'+(g===1?'':'s')+' on the calendar more than once', q, '_calRerender', 'No — leave them'))
   + '</div>';
 }
 
@@ -34161,9 +34561,19 @@ function _tvSyncBar(){
   const mine=((typeof _calEventsCache!=="undefined"?_calEventsCache:[])||[]).filter(function(e){ return e&&e.kind==="tv"; }).length;
   let line;
   if(_tvSyncHeld){
-    line='<span style="color:#8C2A1C">The Legacy TV schedule wants to change <b>'
-      +(_tvSyncHeld.add.length+_tvSyncHeld.del.length)+'</b> bookings at once — more than a normal week, so nothing has been changed.</span>'
-      +(ro?'':' <span onclick="_tvSyncAnyway()" style="cursor:pointer;color:#185FA5;font-weight:600;text-decoration:underline">Look at it and go ahead &rsaquo;</span>');
+    const nch=_tvSyncHeld.add.length+_tvSyncHeld.del.length;
+    const hid='tv-held:'+nch;
+    const what='A change of '+nch+' bookings from the Legacy TV schedule';
+    if(_sgOff(hid)){
+      line=_sgBackLine(hid, what, '_calRerender');
+    } else {
+      line='<span style="color:#8C2A1C">The Legacy TV schedule wants to change <b>'
+        +nch+'</b> bookings at once — more than a normal week, so nothing has been changed.</span>'
+        +(ro?'':' <span onclick="_tvSyncAnyway()" style="cursor:pointer;color:#185FA5;font-weight:600;text-decoration:underline">Look at it and go ahead &rsaquo;</span>')
+        +(ro?'':' '+_sgNoLink(hid, what,
+            'Leave the calendar as it is?\n\nNothing is changed either way. This stops asking about a change of this size, and asks again if their schedule wants a different one.',
+            '_calRerender', 'No — leave it'));
+    }
   } else if(_tvSyncErr){
     line='<span style="color:#9a3b2f">The last import did not finish — '+E(_tvSyncErr)+'.</span>';
   } else if(_tvErr && !_tvItems().length){
@@ -37349,8 +37759,15 @@ async function _baselinePurge(){
 function _housekeepingPanel(){
   const u=(typeof currentUser==='function')?currentUser():null;
   if(!u || !(u.isSuperAdmin || (typeof isBruce==='function' && isBruce(u)))) return '';
+  _sgEnsure(openAutomations);
   const s=_baselineStats();
   if(!s.rows) return '';
+  const hkid='baseline-purge';
+  const hkwhat=s.rows+' leftover baseline row'+(s.rows===1?'':'s');
+  if(_sgOff(hkid)) return '<div style="margin-bottom:18px">'
+    +'<div style="font-size:14px;font-weight:600;color:#111;margin-bottom:8px">Housekeeping</div>'
+    +_sgBackLine(hkid, hkwhat, 'openAutomations')
+  +'</div>';
   return '<div style="margin-bottom:18px">'
     +'<div style="font-size:14px;font-weight:600;color:#111;margin-bottom:8px">Housekeeping</div>'
     +'<div data-hk="baseline" style="background:#fff;border:0.5px solid #e0e4ec;border-left:3px solid #BA7517;border-radius:10px;padding:13px 15px">'
@@ -37363,7 +37780,10 @@ function _housekeepingPanel(){
         +'What is left is dead weight on the biggest table in the database, and only you can clear it. '
         +'Removing them changes nothing you can see. A file with every row is saved to your downloads first, so it can be put back.'
       +'</div>'
-      +'<button onclick="_baselinePurge()" style="margin-top:10px;padding:8px 15px;background:#122A4A;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Back up and remove '+s.rows+' row'+(s.rows===1?'':'s')+'</button>'
+      +'<div style="margin-top:10px;display:flex;gap:7px;flex-wrap:wrap;align-items:center">'
+        +'<button onclick="_baselinePurge()" style="padding:8px 15px;background:#122A4A;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer">Back up and remove '+s.rows+' row'+(s.rows===1?'':'s')+'</button>'
+        +_sgNoBtn(hkid, hkwhat, 'Leave these rows where they are?\n\nNothing is removed. This stops asking.', 'openAutomations', 'No — leave them')
+      +'</div>'
     +'</div></div>';
 }
 async function openAutomations(){
@@ -38896,7 +39316,16 @@ const LIVE_MS = 45000;
 // did not cause it; it just happened to be what he was doing when the timer came round.
 // Every screen that takes over dash-body belongs here. The ones left off deliberately are
 // the login screen, the boot screens and goHome, which clears the pointer instead.
+// Bruce, 22 Nov: "make sure everything is being updated and up to date."
+// Five more screens that take over dash-body were never on this list, so each one sat
+// on whatever it had loaded when it opened. Start of Project and End of Project are
+// property boards - the same staleness that hid 1093 Garden from the Monday walk - and
+// Trackers is where the showings counts are typed. The 45-second refresh already refuses
+// to redraw while somebody is typing or has a box open, so adding them cannot throw
+// anybody out of what they are filling in.
 const LIVE_SCREENS = ['openProjectDashboard','openAdminDashboard','openPMAssistantDashboard',
+  'openStartOfProjectDashboard','openEndOfProjectDashboard','openTrackers',
+  'openMonthlyReports','openYearlyReports',
   'openRealtorDashboard','openDesignDashboard','openArchitectDashboard','openSeniorVADashboard',
   'openVAAdminDashboard','openPermitDashboard','openDirectorCEODashboard','openPMDashboard',
   'openClosedByYear','openDataSection','openTaskDataHousing','openDollarsDayHousing',
@@ -39012,4 +39441,4 @@ _renderGoogleButton();
 </body>
 </html>
 
-<!-- build: 2026-11-07c tabs-a-picker-and-the-blank-crew-duplicates -->
+<!-- build: 2026-11-23b no-on-every-suggestion-delete-a-lag-item-and-screens-that-keep-themselves-current -->
