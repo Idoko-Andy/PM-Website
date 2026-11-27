@@ -656,7 +656,7 @@ function row(i, b){
       ${NG.texts.some(t=>t.item_id===i.id)?`<button class="ngtag" onclick="openNG()">💬 Needs Gabe</button>`:''}
     </td>
     <td class="stand">${stand}</td>
-    <td class="act">${actionCell(i, b)}${b<4 && !isHold(i) && !(i.bundle_id && !i.bundle_primary) ? `<div class="or"><a href="#" class="byhand" onclick="logHand('${i.id}');return false">✍ Log it by hand</a></div>` : ""}</td>
+    <td class="act">${actionCell(i, b)}${b<4 && !isHold(i) && !(i.bundle_id && !i.bundle_primary) ? `<div class="or"><a href="#" class="byhand" onclick="logHand('${i.id}');return false">✍ Log it by hand</a></div>` : ""}${undoBtn(i, b)}</td>
   </tr>`;
 }
 
@@ -691,6 +691,29 @@ async function assign(id, contractor_id){
   toast("Sending…");
   const r = await fn("rtr-dispatch", { action:"assign", item_id:id, contractor_id });
   toast(r.error ? r.error : r.maintenance ? "Queued for maintenance — moved to 4 · In progress" : `Asked ${c.name} for a bid — waiting on their price`);
+  await load();
+}
+// Tom 11/27: Undo on every line item — sends it back to the step before, in case a button was clicked by mistake.
+function backTo(i, b){
+  if(b===1) return "Review";
+  if(b===2) return i.scope_check==="pending" ? "Review" : "Scope check";
+  if(b===3) return i.warranty ? "Scope check" : "Get bids";
+  if(b===4) return i.cc_done ? "" : "In progress";
+  return "";
+}
+function undoBtn(i, b){
+  if(isHold(i) || (i.bundle_id && !i.bundle_primary)) return "";
+  const to = backTo(i, b); if(!to) return "";
+  return `<div class="or"><a href="#" class="byhand" style="color:var(--warn)" onclick="undoStep('${i.id}',${b});return false">↩ Undo — back to ${to}</a></div>`;
+}
+async function undoStep(id, b){
+  const i = ITEMS.find(x=>x.id===id); const to = backTo(i, b);
+  const warn = b===2 && biddingOut(i) ? "\n\nBid texts that already went out can't be unsent. The contractors won't get any more reminders." :
+               b===3 ? "\n\nAny text that already went out can't be unsent — let the contractor know if needed." : "";
+  if(!confirm(`Send ${i.address} #${i.item_no} back to ${to}?${warn}`)) return;
+  const { data, error } = await sb.rpc("rtr_step_back", { p_id: id, p_from: b, p_by: (SESSION?.user?.email||"Remedies page").split("@")[0] });
+  if(error) return toast("Couldn't undo: "+error.message);
+  toast(data || ("Moved back to "+to));
   await load();
 }
 const isHold = i => /^HOLD\b/i.test(i.description||"");
